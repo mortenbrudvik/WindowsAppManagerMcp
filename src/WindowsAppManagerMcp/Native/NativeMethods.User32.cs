@@ -138,5 +138,9 @@ internal static partial class NativeMethods
 
         [LibraryImport("user32.dll")]
         public static partial uint GetWindowThreadProcessId(nint hWnd, nint lpdwProcessId);
+
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool PostMessageW(nint hWnd, uint Msg, nint wParam, nint lParam);
     }
 }

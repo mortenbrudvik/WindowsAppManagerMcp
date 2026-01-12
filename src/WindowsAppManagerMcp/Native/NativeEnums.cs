@@ -64,4 +64,7 @@ internal static class NativeEnums
     public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     public const uint PROCESS_VM_READ = 0x0010;
+
+    // Window messages
+    public const uint WM_CLOSE = 0x0010;
 }

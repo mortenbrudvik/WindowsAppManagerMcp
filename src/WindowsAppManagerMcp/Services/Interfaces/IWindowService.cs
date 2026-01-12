@@ -32,4 +32,6 @@ public interface IWindowService
     bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center");
 
     bool IsValidWindow(nint handle);
+
+    bool CloseWindow(nint handle);
 }

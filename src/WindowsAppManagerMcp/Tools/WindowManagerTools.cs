@@ -141,6 +141,22 @@ public class WindowManagerTools
         return new WindowOperationResult(Success: success);
     }
 
+    [McpServerTool(Name = "close_window")]
+    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. Returns true if the close message was sent successfully.")]
+    public WindowOperationResult CloseWindow(
+        [Description("Window handle (as integer)")]
+        long handle)
+    {
+        var hwnd = (nint)handle;
+        if (!_windowService.IsValidWindow(hwnd))
+        {
+            return new WindowOperationResult(false, Error: "Invalid window handle");
+        }
+
+        var success = _windowService.CloseWindow(hwnd);
+        return new WindowOperationResult(Success: success);
+    }
+
     [McpServerTool(Name = "snap_window")]
     [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen.")]
     public WindowOperationResult SnapWindow(

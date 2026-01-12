@@ -283,6 +283,15 @@ public class WindowService : IWindowService
         return handle != nint.Zero && NativeMethods.User32.IsWindow(handle);
     }
 
+    public bool CloseWindow(nint handle)
+    {
+        if (!IsValidWindow(handle))
+            return false;
+
+        // Send WM_CLOSE for graceful close - the application can cancel this
+        return NativeMethods.User32.PostMessageW(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+    }
+
     private WindowInfo? GetWindowInfoInternal(nint hWnd)
     {
         // Get window title

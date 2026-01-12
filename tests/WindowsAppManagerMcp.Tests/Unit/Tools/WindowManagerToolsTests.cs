@@ -257,6 +257,59 @@ public class WindowManagerToolsTests
 
     #endregion
 
+    #region CloseWindow Tests
+
+    [Fact]
+    public void CloseWindow_WithInvalidHandle_ReturnsFailure()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
+            .Returns(false);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CloseWindow(99999);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Invalid window handle");
+    }
+
+    [Fact]
+    public void CloseWindow_WithValidHandle_CallsService()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.CloseWindow(handle)).Returns(true);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CloseWindow(12345);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _mockWindowService.Verify(w => w.CloseWindow(handle), Times.Once);
+    }
+
+    [Fact]
+    public void CloseWindow_WhenServiceReturnsFalse_ReturnsFalse()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.CloseWindow(handle)).Returns(false);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CloseWindow(12345);
+
+        // Assert
+        result.Success.Should().BeFalse();
+    }
+
+    #endregion
+
     #region SnapWindow Tests
 
     [Fact]
