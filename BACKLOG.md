@@ -183,6 +183,38 @@
 
 ---
 
+## Phase 7: Enhancements (from Code Review)
+
+*Items identified from external code review feedback*
+
+| # | Task | Status | Priority | Notes |
+|---|------|--------|----------|-------|
+| 7.1 | Add input validation for `launch_application` | ⏳ Pending | High | Path sanitization, block `..` traversal, warn on suspicious executables |
+| 7.2 | Add `close_window` tool | ⏳ Pending | Medium | Send WM_CLOSE to gracefully close windows |
+| 7.3 | Add version field to `LayoutPreset` | ⏳ Pending | Low | Add `"version": 1` for future schema evolution |
+| 7.4 | Standardize error codes as enum | ⏳ Pending | Medium | Replace string errors with typed codes (WindowNotFound, InvalidHandle, etc.) |
+| 7.5 | Write unit tests for services | ⏳ Pending | High | Mock native layer, test WindowService, MonitorService, ProcessService, LayoutService |
+| 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
+
+---
+
+## Progress Summary
+
+| Phase | Progress |
+|-------|----------|
+| Phase 1: Foundation | ██████████ 100% |
+| Phase 2: Window Discovery | ██████████ 100% |
+| Phase 3: Window Control | ██████████ 100% |
+| Phase 4: Application Launch | ██████████ 100% |
+| Phase 5: Layout Presets | ██████████ 100% |
+| Phase 6: Polish & Testing | ████████░░ 80% |
+| Phase 7: Enhancements | ░░░░░░░░░░ 0% |
+
+**Core Implementation: ~97%**
+**With Enhancements: ~85%**
+
+---
+
 ## Next Steps
 
 1. **Test with Claude Desktop** - Add to `claude_desktop_config.json`:
@@ -197,6 +229,10 @@
    }
    ```
 
-2. **Optional: Add DPI Awareness** - Implement per-monitor DPI scaling
+2. **High Priority Enhancements:**
+   - 7.1: Input validation for `launch_application` (security)
+   - 7.5: Unit tests for services
 
-3. **Optional: Add Unit Tests** - Create test project for services
+3. **Medium Priority Enhancements:**
+   - 7.2: Add `close_window` tool
+   - 7.4: Standardize error codes
