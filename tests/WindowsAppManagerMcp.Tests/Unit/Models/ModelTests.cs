@@ -266,6 +266,29 @@ public class ModelTests
     }
 
     [Fact]
+    public void LayoutPreset_HasDefaultVersionOf1()
+    {
+        // Arrange & Act
+        var preset = new LayoutPreset("Test", null, new List<WindowPlacement>());
+
+        // Assert
+        preset.Version.Should().Be(1);
+    }
+
+    [Fact]
+    public void LayoutPreset_Serialization_IncludesVersion()
+    {
+        // Arrange
+        var preset = new LayoutPreset("Test", null, new List<WindowPlacement>());
+
+        // Act
+        var json = JsonSerializer.Serialize(preset, JsonOptions);
+
+        // Assert
+        json.Should().Contain("\"version\": 1");
+    }
+
+    [Fact]
     public void LayoutPreset_Serialization_RoundTrips()
     {
         // Arrange

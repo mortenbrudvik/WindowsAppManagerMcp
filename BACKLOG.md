@@ -125,6 +125,8 @@
 - `src/WindowsAppManagerMcp/Services/ProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/LayoutService.cs`
 - `src/WindowsAppManagerMcp/Services/InputValidationService.cs`
+- `src/WindowsAppManagerMcp/Services/Interfaces/INativeWindowWrapper.cs`
+- `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs`
 
 ### ✅ Complete - MCP Tools
 - `src/WindowsAppManagerMcp/Tools/WindowFinderTools.cs`
@@ -195,9 +197,9 @@
 |---|------|--------|----------|-------|
 | 7.1 | Add input validation for `launch_application` | ✅ Complete | High | InputValidationService: path traversal, shell metacharacters, protocol validation |
 | 7.2 | Add `close_window` tool | ✅ Complete | Medium | Send WM_CLOSE via PostMessage for graceful close |
-| 7.3 | Add version field to `LayoutPreset` | ⏳ Pending | Low | Add `"version": 1` for future schema evolution |
+| 7.3 | Add version field to `LayoutPreset` | ✅ Complete | Low | Added `Version` property with default 1 for schema evolution |
 | 7.4 | Standardize error codes as enum | ✅ Complete | Medium | WindowErrorCode, LaunchErrorCode, LayoutErrorCode enums; ErrorCode field in all results |
-| 7.5 | Write unit tests for services | ✅ Complete | High | 306 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
+| 7.5 | Write unit tests for services | ✅ Complete | High | 309 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
 | 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
 
 ---
@@ -239,10 +241,10 @@
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
 | Phase 6: Polish & Testing | █████████░ 90% |
-| Phase 7: Enhancements | ████████░░ 80% |
+| Phase 7: Enhancements | █████████░ 90% |
 
 **Core Implementation: ~98%**
-**With Enhancements: ~95%**
+**With Enhancements: ~97%**
 
 ---
 
@@ -266,6 +268,6 @@
 
 3. **Testing:**
    - ✅ CI/CD pipeline with GitHub Actions (complete)
-   - ✅ 306 tests (269 unit + 37 integration)
+   - ✅ 309 tests (272 unit + 37 integration)
    - ✅ Integration tests complete (T7)
    - Target: Increase coverage to 75%+ (currently ~65%)
