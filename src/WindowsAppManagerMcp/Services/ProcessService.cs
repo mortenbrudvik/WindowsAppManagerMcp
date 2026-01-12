@@ -11,10 +11,34 @@ public class ProcessService : IProcessService
     private readonly IWindowService _windowService;
     private readonly IInputValidationService _validationService;
 
+    // Known browser executables that support --new-window flag
+    private static readonly HashSet<string> BrowserExecutables = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "chrome.exe",
+        "msedge", "msedge.exe",
+        "firefox", "firefox.exe",
+        "brave", "brave.exe",
+        "opera", "opera.exe"
+    };
+
     public ProcessService(IWindowService windowService, IInputValidationService validationService)
     {
         _windowService = windowService;
         _validationService = validationService;
+    }
+
+    private static bool IsBrowserExecutable(string executable)
+    {
+        var name = Path.GetFileName(executable);
+        return BrowserExecutables.Contains(name) ||
+               BrowserExecutables.Contains(Path.GetFileNameWithoutExtension(name));
+    }
+
+    private static bool ContainsUrl(string[]? arguments)
+    {
+        return arguments?.Any(a =>
+            a.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            a.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) ?? false;
     }
 
     public LaunchResult LaunchApplication(
@@ -40,6 +64,15 @@ public class ProcessService : IProcessService
 
         // Combine warnings
         var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
+
+        // Auto-inject --new-window for browsers opening URLs
+        if (IsBrowserExecutable(executable) && ContainsUrl(arguments))
+        {
+            if (arguments?.All(a => a != "--new-window") ?? true)
+            {
+                arguments = new[] { "--new-window" }.Concat(arguments ?? []).ToArray();
+            }
+        }
 
         try
         {
