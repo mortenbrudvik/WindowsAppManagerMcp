@@ -82,7 +82,7 @@
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | 6.1 | Add comprehensive error handling | ✅ Complete | Validation in tools |
-| 6.2 | Implement DPI awareness | ⏳ Pending | Per-monitor DPI |
+| 6.2 | Implement DPI awareness | ✅ Complete | Per-monitor DPI via shcore.dll |
 | 6.3 | Add logging | ✅ Complete | Logging to stderr |
 | 6.4 | Create appsettings.json | ⏳ Pending | Optional configuration |
 | 6.5 | Test with Claude Desktop | ⏳ Pending | Integration testing |
@@ -109,6 +109,7 @@
 ### ✅ Complete - Native Interop
 - `src/WindowsAppManagerMcp/Native/NativeMethods.User32.cs`
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Kernel32.cs`
+- `src/WindowsAppManagerMcp/Native/NativeMethods.Shcore.cs`
 - `src/WindowsAppManagerMcp/Native/NativeStructs.cs`
 - `src/WindowsAppManagerMcp/Native/NativeEnums.cs`
 
@@ -150,9 +151,9 @@
 | Phase 3: Window Control | ██████████ 100% |
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
-| Phase 6: Polish & Testing | ██████░░░░ 60% |
+| Phase 6: Polish & Testing | ████████░░ 80% |
 
-**Overall Progress: ~93%**
+**Overall Progress: ~97%**
 
 ---
 

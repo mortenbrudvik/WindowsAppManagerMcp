@@ -2,9 +2,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 using WindowsAppManagerMcp.Tools;
+
+// Set per-monitor DPI awareness for accurate window positioning on high-DPI displays
+try
+{
+    NativeMethods.Shcore.SetProcessDpiAwareness(PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE);
+}
+catch
+{
+    // Windows 8.1+ required for SetProcessDpiAwareness, ignore on older versions
+}
 
 var builder = Host.CreateApplicationBuilder(args);
 

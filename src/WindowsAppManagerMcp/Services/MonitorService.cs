@@ -50,8 +50,26 @@ public class MonitorService : IMonitorService
 
     private static double GetScaleFactor(nint hMonitor)
     {
-        // Default to 1.0 for non-DPI-aware scenarios
-        return 1.0;
+        try
+        {
+            int result = NativeMethods.Shcore.GetDpiForMonitor(
+                hMonitor,
+                MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
+                out uint dpiX,
+                out uint _);
+
+            if (result == 0) // S_OK
+            {
+                // Standard DPI is 96, scale factor = actual DPI / 96
+                return dpiX / 96.0;
+            }
+        }
+        catch
+        {
+            // Fallback for older Windows versions (pre-8.1)
+        }
+
+        return 1.0; // Default to no scaling
     }
 
     public IReadOnlyList<MonitorInfo> GetAllMonitors()
