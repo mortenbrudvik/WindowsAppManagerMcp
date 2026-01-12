@@ -5,5 +5,6 @@ public record LaunchResult(
     int? ProcessId = null,
     nint? WindowHandle = null,
     string? ErrorMessage = null,
+    string? ErrorCode = null,
     string? Warning = null
 );

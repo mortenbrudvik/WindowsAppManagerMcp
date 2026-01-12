@@ -120,7 +120,8 @@ public class LayoutPresetTools
         var success = await _layoutService.DeletePresetAsync(name, cancellationToken);
         return new DeleteLayoutResultDto(
             Success: success,
-            Error: success ? null : "Failed to delete layout preset"
+            Error: success ? null : "Failed to delete layout preset",
+            ErrorCode: success ? null : nameof(LayoutErrorCode.DeleteFailed)
         );
     }
 }
@@ -157,7 +158,8 @@ public record SaveLayoutResultDto(
     bool Success,
     string LayoutName,
     int WindowCount,
-    string? Error = null
+    string? Error = null,
+    string? ErrorCode = null
 );
 
 public record ApplyLayoutResultDto(
@@ -166,10 +168,12 @@ public record ApplyLayoutResultDto(
     int WindowsArranged,
     int WindowsNotFound,
     int WindowsLaunched,
-    IReadOnlyList<string>? Errors
+    IReadOnlyList<string>? Errors,
+    string? ErrorCode = null
 );
 
 public record DeleteLayoutResultDto(
     bool Success,
-    string? Error = null
+    string? Error = null,
+    string? ErrorCode = null
 );

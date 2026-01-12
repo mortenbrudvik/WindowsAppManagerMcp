@@ -28,6 +28,46 @@ public class ProcessServiceTests
 
     private ProcessService CreateSut() => new ProcessService(_mockWindowService.Object, _mockValidationService.Object);
 
+    #region LaunchApplication Error Code Tests
+
+    [Fact]
+    public void LaunchApplication_WhenValidationFails_ReturnsErrorCode()
+    {
+        // Arrange
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns(new ExecutableValidationResult(false, Error: "Path traversal detected", ErrorCode: "PathTraversal"));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("..\\..\\cmd.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("Path traversal detected");
+        result.ErrorCode.Should().Be("PathTraversal");
+    }
+
+    [Fact]
+    public void LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
+    {
+        // Arrange
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns(new ExecutableValidationResult(true, SanitizedExecutable: "notepad.exe"));
+        _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
+            .Returns(new PathValidationResult(false, Error: "Invalid working directory", ErrorCode: "InvalidWorkingDirectory"));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("notepad.exe", workingDirectory: "invalid|path");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("Invalid working directory");
+        result.ErrorCode.Should().Be("InvalidWorkingDirectory");
+    }
+
+    #endregion
+
     #region T4.2: GetRunningProcesses Tests
 
     [Fact]

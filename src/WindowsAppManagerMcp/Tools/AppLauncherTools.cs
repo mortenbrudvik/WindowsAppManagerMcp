@@ -40,6 +40,7 @@ public class AppLauncherTools
             ProcessId: result.ProcessId,
             WindowHandle: result.WindowHandle?.ToInt64(),
             Error: result.ErrorMessage,
+            ErrorCode: result.ErrorCode,
             Warning: result.Warning
         );
     }
@@ -69,6 +70,7 @@ public record LaunchResultDto(
     int? ProcessId = null,
     long? WindowHandle = null,
     string? Error = null,
+    string? ErrorCode = null,
     string? Warning = null
 );
 

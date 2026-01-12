@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
+using static WindowsAppManagerMcp.Models.WindowErrorCode;
 
 namespace WindowsAppManagerMcp.Tools;
 
@@ -28,7 +29,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.MoveWindow(hwnd, x, y);
@@ -53,7 +54,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.ResizeWindow(hwnd, width, height);
@@ -82,7 +83,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.SetWindowBounds(hwnd, x, y, width, height);
@@ -105,7 +106,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var windowState = state.ToLowerInvariant() switch
@@ -134,7 +135,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.FocusWindow(hwnd);
@@ -150,7 +151,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.CloseWindow(hwnd);
@@ -170,13 +171,13 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var snapPosition = ParseSnapPosition(position);
         if (snapPosition == null)
         {
-            return new WindowOperationResult(false, Error: $"Invalid snap position: {position}");
+            return new WindowOperationResult(false, Error: $"Invalid snap position: {position}", ErrorCode: nameof(InvalidSnapPosition));
         }
 
         var success = _windowService.SnapWindow(hwnd, snapPosition.Value, monitorIndex);
@@ -201,7 +202,7 @@ public class WindowManagerTools
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: "Invalid window handle");
+            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
         var success = _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning);
@@ -240,5 +241,6 @@ public record WindowOperationResult(
     bool Success,
     BoundsDto? NewBounds = null,
     string? NewState = null,
-    string? Error = null
+    string? Error = null,
+    string? ErrorCode = null
 );

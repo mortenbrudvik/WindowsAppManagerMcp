@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
@@ -65,7 +66,7 @@ public partial class InputValidationService : IInputValidationService
     {
         if (string.IsNullOrWhiteSpace(executable))
         {
-            return new ExecutableValidationResult(false, Error: "Executable path cannot be empty");
+            return new ExecutableValidationResult(false, Error: "Executable path cannot be empty", ErrorCode: nameof(LaunchErrorCode.EmptyExecutablePath));
         }
 
         executable = executable.Trim();
@@ -82,7 +83,8 @@ public partial class InputValidationService : IInputValidationService
         {
             return new ExecutableValidationResult(
                 false,
-                Error: "Executable contains invalid characters that could enable command injection");
+                Error: "Executable contains invalid characters that could enable command injection",
+                ErrorCode: nameof(LaunchErrorCode.InvalidCharacters));
         }
 
         // Validate as file path
@@ -104,14 +106,15 @@ public partial class InputValidationService : IInputValidationService
         {
             return new PathValidationResult(
                 false,
-                Error: "Working directory contains invalid characters");
+                Error: "Working directory contains invalid characters",
+                ErrorCode: nameof(LaunchErrorCode.InvalidWorkingDirectory));
         }
 
         // Check for path traversal
         var traversalResult = CheckPathTraversal(workingDirectory);
         if (!traversalResult.IsValid)
         {
-            return new PathValidationResult(false, Error: traversalResult.Error);
+            return new PathValidationResult(false, Error: traversalResult.Error, ErrorCode: traversalResult.ErrorCode);
         }
 
         string? warning = null;
@@ -227,18 +230,18 @@ public partial class InputValidationService : IInputValidationService
             fileName.Equals(s, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static (bool IsValid, string? Error, string? NormalizedPath) CheckPathTraversal(string path)
+    private static (bool IsValid, string? Error, string? ErrorCode, string? NormalizedPath) CheckPathTraversal(string path)
     {
         // Skip path validation for simple executable names (resolved by PATH)
         if (!path.Contains('\\') && !path.Contains('/') && !path.Contains(".."))
         {
-            return (true, null, path);
+            return (true, null, null, path);
         }
 
         // Detect explicit path traversal attempts
         if (path.Contains(".."))
         {
-            return (false, "Path traversal sequences ('..') are not allowed for security reasons", null);
+            return (false, "Path traversal sequences ('..') are not allowed for security reasons", nameof(LaunchErrorCode.PathTraversal), null);
         }
 
         try
@@ -256,11 +259,11 @@ public partial class InputValidationService : IInputValidationService
                 // (This catches encoded traversal or other tricks)
             }
 
-            return (true, null, normalized);
+            return (true, null, null, normalized);
         }
         catch (Exception ex)
         {
-            return (false, $"Invalid path: {ex.Message}", null);
+            return (false, $"Invalid path: {ex.Message}", nameof(LaunchErrorCode.InvalidPath), null);
         }
     }
 

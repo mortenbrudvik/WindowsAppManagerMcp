@@ -103,6 +103,7 @@
 - `src/WindowsAppManagerMcp/Models/RelativePosition.cs`
 - `src/WindowsAppManagerMcp/Models/WindowPlacement.cs`
 - `src/WindowsAppManagerMcp/Models/LayoutPreset.cs`
+- `src/WindowsAppManagerMcp/Models/ErrorCodes.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LaunchResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LayoutApplyResult.cs`
 
@@ -195,8 +196,8 @@
 | 7.1 | Add input validation for `launch_application` | ✅ Complete | High | InputValidationService: path traversal, shell metacharacters, protocol validation |
 | 7.2 | Add `close_window` tool | ✅ Complete | Medium | Send WM_CLOSE via PostMessage for graceful close |
 | 7.3 | Add version field to `LayoutPreset` | ⏳ Pending | Low | Add `"version": 1` for future schema evolution |
-| 7.4 | Standardize error codes as enum | ⏳ Pending | Medium | Replace string errors with typed codes (WindowNotFound, InvalidHandle, etc.) |
-| 7.5 | Write unit tests for services | ✅ Complete | High | 267 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
+| 7.4 | Standardize error codes as enum | ✅ Complete | Medium | WindowErrorCode, LaunchErrorCode, LayoutErrorCode enums; ErrorCode field in all results |
+| 7.5 | Write unit tests for services | ✅ Complete | High | 269 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
 | 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
 
 ---
@@ -212,7 +213,7 @@
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/LayoutServiceTests.cs` (23 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/WindowServiceTests.cs` (39 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/MonitorServiceTests.cs` (20 tests)
-- `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs` (9 tests)
+- `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs` (11 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputValidationServiceTests.cs` (57 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Models/ModelTests.cs` (29 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/WindowFinderToolsTests.cs` (14 tests)
@@ -233,10 +234,10 @@
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
 | Phase 6: Polish & Testing | ████████░░ 80% |
-| Phase 7: Enhancements | █████░░░░░ 50% |
+| Phase 7: Enhancements | ███████░░░ 67% |
 
 **Core Implementation: ~97%**
-**With Enhancements: ~91%**
+**With Enhancements: ~93%**
 
 ---
 
@@ -254,14 +255,11 @@
    }
    ```
 
-2. **Medium Priority Enhancements:**
-   - 7.4: Standardize error codes
-
-3. **Low Priority Enhancements:**
+2. **Low Priority Enhancements:**
    - 7.3: Add version field to LayoutPreset
    - 7.6: Add `kill_process` tool
 
-4. **Testing:**
+3. **Testing:**
    - ✅ CI/CD pipeline with GitHub Actions (complete)
    - ✅ Coverage at 68.4% (above 60% threshold)
    - Target: Increase coverage to 75%+

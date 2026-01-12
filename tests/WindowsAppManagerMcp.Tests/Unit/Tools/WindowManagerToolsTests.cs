@@ -33,6 +33,7 @@ public class WindowManagerToolsTests
         // Assert
         result.Success.Should().BeFalse();
         result.Error.Should().Be("Invalid window handle");
+        result.ErrorCode.Should().Be("InvalidHandle");
     }
 
     [Fact]
@@ -342,6 +343,7 @@ public class WindowManagerToolsTests
         // Assert
         result.Success.Should().BeFalse();
         result.Error.Should().Contain("Invalid snap position");
+        result.ErrorCode.Should().Be("InvalidSnapPosition");
     }
 
     [Theory]

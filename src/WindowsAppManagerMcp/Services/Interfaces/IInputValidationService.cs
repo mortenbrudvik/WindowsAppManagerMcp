@@ -27,6 +27,7 @@ public record ExecutableValidationResult(
     bool IsValid,
     string? SanitizedExecutable = null,
     string? Error = null,
+    string? ErrorCode = null,
     string? Warning = null
 );
 
@@ -37,5 +38,6 @@ public record PathValidationResult(
     bool IsValid,
     string? SanitizedPath = null,
     string? Error = null,
+    string? ErrorCode = null,
     string? Warning = null
 );

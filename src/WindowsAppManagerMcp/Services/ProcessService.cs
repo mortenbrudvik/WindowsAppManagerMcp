@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -27,14 +28,14 @@ public class ProcessService : IProcessService
         var executableValidation = _validationService.ValidateExecutable(executable);
         if (!executableValidation.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: executableValidation.Error);
+            return new LaunchResult(false, ErrorMessage: executableValidation.Error, ErrorCode: executableValidation.ErrorCode);
         }
 
         // Validate working directory
         var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
         if (!workingDirValidation.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: workingDirValidation.Error);
+            return new LaunchResult(false, ErrorMessage: workingDirValidation.Error, ErrorCode: workingDirValidation.ErrorCode);
         }
 
         // Combine warnings
@@ -58,7 +59,7 @@ public class ProcessService : IProcessService
             var process = Process.Start(startInfo);
             if (process == null)
             {
-                return new LaunchResult(false, ErrorMessage: "Failed to start process", Warning: warning);
+                return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
             }
 
             nint? windowHandle = null;
@@ -77,7 +78,7 @@ public class ProcessService : IProcessService
         }
         catch (Exception ex)
         {
-            return new LaunchResult(false, ErrorMessage: ex.Message, Warning: warning);
+            return new LaunchResult(false, ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: warning);
         }
     }
 
