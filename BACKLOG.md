@@ -197,7 +197,7 @@
 | 7.2 | Add `close_window` tool | ✅ Complete | Medium | Send WM_CLOSE via PostMessage for graceful close |
 | 7.3 | Add version field to `LayoutPreset` | ⏳ Pending | Low | Add `"version": 1` for future schema evolution |
 | 7.4 | Standardize error codes as enum | ✅ Complete | Medium | WindowErrorCode, LaunchErrorCode, LayoutErrorCode enums; ErrorCode field in all results |
-| 7.5 | Write unit tests for services | ✅ Complete | High | 269 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
+| 7.5 | Write unit tests for services | ✅ Complete | High | 306 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
 | 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
 
 ---
@@ -222,6 +222,11 @@
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/AppLauncherToolsTests.cs` (14 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/LayoutPresetToolsTests.cs` (23 tests)
 
+### ✅ Complete - Integration Tests
+- `tests/WindowsAppManagerMcp.Tests/Integration/LayoutServiceIntegrationTests.cs` (14 tests)
+- `tests/WindowsAppManagerMcp.Tests/Integration/FilePersistenceTests.cs` (10 tests)
+- `tests/WindowsAppManagerMcp.Tests/Integration/DependencyInjectionTests.cs` (13 tests)
+
 ---
 
 ## Progress Summary
@@ -233,11 +238,11 @@
 | Phase 3: Window Control | ██████████ 100% |
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
-| Phase 6: Polish & Testing | ████████░░ 80% |
-| Phase 7: Enhancements | ███████░░░ 67% |
+| Phase 6: Polish & Testing | █████████░ 90% |
+| Phase 7: Enhancements | ████████░░ 80% |
 
-**Core Implementation: ~97%**
-**With Enhancements: ~93%**
+**Core Implementation: ~98%**
+**With Enhancements: ~95%**
 
 ---
 
@@ -261,5 +266,6 @@
 
 3. **Testing:**
    - ✅ CI/CD pipeline with GitHub Actions (complete)
-   - ✅ Coverage at 68.4% (above 60% threshold)
-   - Target: Increase coverage to 75%+
+   - ✅ 306 tests (269 unit + 37 integration)
+   - ✅ Integration tests complete (T7)
+   - Target: Increase coverage to 75%+ (currently ~65%)

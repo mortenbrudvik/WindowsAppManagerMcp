@@ -333,34 +333,48 @@ This document contains granular, actionable testing tasks following TDD principl
 
 ---
 
-## T7: Integration Tests
+## T7: Integration Tests ✅
 
 *Service interaction and file I/O tests. Target: 20% of total tests.*
 
-### T7.1: LayoutService Integration
+> **Note**: Integration tests are in `tests/WindowsAppManagerMcp.Tests/Integration/`. 37 tests added.
+
+### T7.1: LayoutService Integration ✅
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T7.1.1 | Test save and load preset roundtrip | P0 | [ ] | End-to-end |
-| T7.1.2 | Test capture and apply layout cycle | P0 | [ ] | Full workflow |
-| T7.1.3 | Test LayoutService with real WindowService mock | P1 | [ ] | Service interaction |
-| T7.1.4 | Test LayoutService with real MonitorService mock | P1 | [ ] | Service interaction |
+| T7.1.1 | Test save and load preset roundtrip | P0 | [x] | End-to-end |
+| T7.1.2 | Test capture and apply layout cycle | P0 | [x] | Full workflow |
+| T7.1.3 | Test LayoutService with real WindowService mock | P1 | [x] | Service interaction |
+| T7.1.4 | Test LayoutService with real MonitorService mock | P1 | [x] | Service interaction |
+| T7.1.5 | Test match by process only | P1 | [x] | Match strategy |
+| T7.1.6 | Test match by title only | P1 | [x] | Match strategy |
+| T7.1.7 | Test match by process and title | P1 | [x] | Match strategy |
+| T7.1.8 | Test delete removes from disk and cache | P1 | [x] | Cleanup |
+| T7.1.9 | Test multiple presets independent storage | P1 | [x] | No conflicts |
+| T7.1.10 | Test multi-monitor layout | P1 | [x] | Bounds calculation |
 
-### T7.2: File Persistence Tests
-
-| ID | Task | Priority | Status | Notes |
-|----|------|----------|--------|-------|
-| T7.2.1 | Test preset files created in correct directory | P1 | [ ] | File location |
-| T7.2.2 | Test preset file naming convention | P1 | [ ] | Filename |
-| T7.2.3 | Test preset directory created if not exists | P2 | [ ] | Directory handling |
-| T7.2.4 | Test concurrent save operations | P2 | [ ] | Thread safety |
-
-### T7.3: DI Container Tests
+### T7.2: File Persistence Tests ✅
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T7.3.1 | Test all services resolve from container | P2 | [ ] | DI validation |
-| T7.3.2 | Test service lifetimes are correct | P2 | [ ] | Singleton vs Transient |
+| T7.2.1 | Test preset files created in correct directory | P1 | [x] | File location |
+| T7.2.2 | Test preset file naming convention | P1 | [x] | Filename |
+| T7.2.3 | Test preset directory created if not exists | P2 | [x] | Directory handling |
+| T7.2.4 | Test concurrent save operations | P2 | [x] | Thread safety |
+| T7.2.5 | Test load valid JSON files | P1 | [x] | All loaded |
+| T7.2.6 | Test invalid JSON skipped | P1 | [x] | Error handling |
+| T7.2.7 | Test mixed valid/invalid loads valid only | P1 | [x] | Robustness |
+| T7.2.8 | Test JSON format camelCase and indented | P1 | [x] | Format verification |
+
+### T7.3: DI Container Tests ✅
+
+| ID | Task | Priority | Status | Notes |
+|----|------|----------|--------|-------|
+| T7.3.1 | Test all services resolve from container | P2 | [x] | DI validation |
+| T7.3.2 | Test service lifetimes are correct | P2 | [x] | Singleton vs Transient |
+| T7.3.3 | Test no circular dependencies | P2 | [x] | Dependency graph |
+| T7.3.4 | Test all MCP tools resolve | P2 | [x] | Tool dependencies |
 
 ---
 
@@ -385,11 +399,11 @@ This document contains granular, actionable testing tasks following TDD principl
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 207 |
-| **Passing** | 207 (100%) |
-| **Line Coverage** | 64.4% |
-| **Branch Coverage** | 56.3% |
-| **Method Coverage** | 84.6% |
+| **Total Tests** | 306 |
+| **Passing** | 306 (100%) |
+| **Line Coverage** | ~65% |
+| **Branch Coverage** | ~57% |
+| **Method Coverage** | ~85% |
 
 ### Task Completion by Category
 
@@ -401,8 +415,8 @@ This document contains granular, actionable testing tasks following TDD principl
 | T4: ProcessService | ✅ Complete | 9 | 46.3% |
 | T5: LayoutService | ✅ Complete | 23 | 89.2% |
 | T6: Models | ✅ Complete | 29 | 100% |
-| T7: Integration | ⏳ Pending | 0 | - |
-| T8: CI/CD | ⏳ Pending | 0 | - |
+| T7: Integration | ✅ Complete | 37 | - |
+| T8: CI/CD | ✅ Complete | - | - |
 
 *\* MonitorService coverage shows 0% because tests use a helper method to test the algorithm logic without P/Invoke.*
 
@@ -416,15 +430,23 @@ This document contains granular, actionable testing tasks following TDD principl
 | AppLauncherTools | 14 | 100% |
 | LayoutPresetTools | 23 | 100% |
 
+### Integration Tests (T7)
+
+| Test Class | Tests | Focus |
+|------------|-------|-------|
+| LayoutServiceIntegrationTests | 14 | End-to-end workflows |
+| FilePersistenceTests | 10 | File I/O and JSON handling |
+| DependencyInjectionTests | 13 | DI container validation |
+
 ### Remaining Work
 
 1. **T1.A**: Native layer wrapper interface (for higher service coverage)
-2. **T7**: Integration tests
 
 ### Completed Infrastructure
 
 - **CI/CD**: GitHub Actions workflows for test and build
 - **Coverage**: Automatic reporting with 60% threshold gate
+- **Integration Tests**: 37 tests covering E2E workflows, file persistence, DI
 
 ---
 
