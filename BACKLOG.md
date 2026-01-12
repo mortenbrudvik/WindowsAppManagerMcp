@@ -85,7 +85,7 @@
 | 6.2 | Implement DPI awareness | ✅ Complete | Per-monitor DPI via shcore.dll |
 | 6.3 | Add logging | ✅ Complete | Logging to stderr |
 | 6.4 | Create appsettings.json | ⏳ Pending | Optional configuration |
-| 6.5 | Test with Claude Desktop | ⏳ Pending | Integration testing |
+| 6.5 | Test with Claude Desktop | ✅ Complete | Self-contained exe via publish directory |
 | 6.6 | Create example layout presets | ✅ Complete | work-setup, dual-monitor, focus-mode |
 
 ---
@@ -157,7 +157,7 @@
 | Phase 3: Window Control | ██████████ 100% |
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
-| Phase 6: Polish & Testing | ████████░░ 80% |
+| Phase 6: Polish & Testing | █████████░ 90% |
 
 **Overall Progress: ~97%**
 
@@ -252,17 +252,17 @@
 
 ## Next Steps
 
-1. **Test with Claude Desktop** - Add to `claude_desktop_config.json`:
+1. ✅ **Claude Desktop Integration Complete** - Configuration in `claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {
        "windows-app-manager": {
-         "command": "dotnet",
-         "args": ["run", "--project", "C:\\path\\to\\WindowsAppManagerMcp\\src\\WindowsAppManagerMcp"]
+         "command": "C:\\code\\projects\\WindowsAppManagerMcp\\publish\\WindowsAppManagerMcp.exe"
        }
      }
    }
    ```
+   Build command: `dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./publish`
 
 2. **Optional Tasks:**
    - 6.4: Create appsettings.json for configuration
