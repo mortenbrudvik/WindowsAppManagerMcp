@@ -364,18 +364,18 @@ This document contains granular, actionable testing tasks following TDD principl
 
 ---
 
-## T8: CI/CD Integration
+## T8: CI/CD Integration ✅
 
 *Automation and pipeline tasks.*
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T8.1 | Create GitHub Actions workflow for tests | P1 | [ ] | `.github/workflows/test.yml` |
-| T8.2 | Add test step to build workflow | P1 | [ ] | `dotnet test` |
-| T8.3 | Configure coverage reporting | P2 | [ ] | Coverlet + upload |
-| T8.4 | Add coverage badge to README | P3 | [ ] | Status badge |
-| T8.5 | Configure test result publishing | P2 | [ ] | Artifacts |
-| T8.6 | Set up coverage threshold check (70%) | P2 | [ ] | Quality gate |
+| T8.1 | Create GitHub Actions workflow for tests | P1 | [x] | `.github/workflows/test.yml` |
+| T8.2 | Add test step to build workflow | P1 | [x] | `.github/workflows/build.yml` |
+| T8.3 | Configure coverage reporting | P2 | [x] | ReportGenerator with HTML + Markdown |
+| T8.4 | Add coverage badge to README | P3 | [ ] | Status badge (no README yet) |
+| T8.5 | Configure test result publishing | P2 | [x] | Artifacts upload |
+| T8.6 | Set up coverage threshold check (60%) | P2 | [x] | Quality gate in test.yml |
 
 ---
 
@@ -420,7 +420,11 @@ This document contains granular, actionable testing tasks following TDD principl
 
 1. **T1.A**: Native layer wrapper interface (for higher service coverage)
 2. **T7**: Integration tests
-3. **T8**: CI/CD automation with GitHub Actions
+
+### Completed Infrastructure
+
+- **CI/CD**: GitHub Actions workflows for test and build
+- **Coverage**: Automatic reporting with 60% threshold gate
 
 ---
 

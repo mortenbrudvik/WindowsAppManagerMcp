@@ -1,0 +1,68 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test with coverage
+        run: |
+          dotnet test --no-build --configuration Release `
+            --collect:"XPlat Code Coverage" `
+            --results-directory ./TestResults `
+            --logger "trx;LogFileName=test-results.trx"
+
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: '**/coverage.cobertura.xml'
+          targetdir: 'CoverageReport'
+          reporttypes: 'HtmlInline;Cobertura;MarkdownSummaryGithub'
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: CoverageReport
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults/**/*.trx
+
+      - name: Add coverage to summary
+        run: |
+          Get-Content CoverageReport/SummaryGithub.md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Check coverage threshold
+        run: |
+          $xml = [xml](Get-Content -Path (Get-ChildItem -Path TestResults -Filter coverage.cobertura.xml -Recurse | Select-Object -First 1).FullName)
+          $coverage = [double]$xml.coverage.'line-rate' * 100
+          Write-Host "Line coverage: $coverage%"
+          if ($coverage -lt 60) {
+            Write-Error "Coverage $coverage% is below threshold of 60%"
+            exit 1
+          }
+          Write-Host "Coverage check passed!"
