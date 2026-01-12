@@ -8,19 +8,21 @@ namespace WindowsAppManagerMcp.Services;
 public class WindowService : IWindowService
 {
     private readonly IMonitorService _monitorService;
+    private readonly INativeWindowWrapper _nativeWrapper;
 
-    public WindowService(IMonitorService monitorService)
+    public WindowService(IMonitorService monitorService, INativeWindowWrapper nativeWrapper)
     {
         _monitorService = monitorService;
+        _nativeWrapper = nativeWrapper;
     }
 
     public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true)
     {
         var windows = new List<WindowInfo>();
 
-        NativeMethods.User32.EnumWindowsProc callback = (hWnd, lParam) =>
+        _nativeWrapper.EnumWindows(hWnd =>
         {
-            if (!NativeMethods.User32.IsWindowVisible(hWnd))
+            if (!_nativeWrapper.IsWindowVisible(hWnd))
                 return true;
 
             var info = GetWindowInfoInternal(hWnd);
@@ -32,9 +34,8 @@ public class WindowService : IWindowService
                 }
             }
             return true;
-        };
+        });
 
-        NativeMethods.User32.EnumWindows(callback, nint.Zero);
         return windows;
     }
 
@@ -47,9 +48,9 @@ public class WindowService : IWindowService
     {
         var windows = new List<WindowInfo>();
 
-        NativeMethods.User32.EnumWindowsProc callback = (hWnd, lParam) =>
+        _nativeWrapper.EnumWindows(hWnd =>
         {
-            if (visibleOnly && !NativeMethods.User32.IsWindowVisible(hWnd))
+            if (visibleOnly && !_nativeWrapper.IsWindowVisible(hWnd))
                 return true;
 
             // Filter by handle if specified
@@ -80,15 +81,14 @@ public class WindowService : IWindowService
 
             windows.Add(info);
             return true;
-        };
+        });
 
-        NativeMethods.User32.EnumWindows(callback, nint.Zero);
         return windows;
     }
 
     public WindowInfo? GetForegroundWindow()
     {
-        var hWnd = NativeMethods.User32.GetForegroundWindow();
+        var hWnd = _nativeWrapper.GetForegroundWindow();
         if (hWnd == nint.Zero)
             return null;
 
@@ -108,15 +108,15 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return false;
 
-        if (!NativeMethods.User32.GetWindowRect(handle, out var rect))
+        var rect = _nativeWrapper.GetWindowRect(handle);
+        if (rect == null)
             return false;
 
-        var width = rect.Right - rect.Left;
-        var height = rect.Bottom - rect.Top;
+        var width = rect.Value.Right - rect.Value.Left;
+        var height = rect.Value.Bottom - rect.Value.Top;
 
-        return NativeMethods.User32.SetWindowPos(
+        return _nativeWrapper.SetWindowPos(
             handle,
-            nint.Zero,
             x, y, width, height,
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
@@ -126,13 +126,13 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return false;
 
-        if (!NativeMethods.User32.GetWindowRect(handle, out var rect))
+        var rect = _nativeWrapper.GetWindowRect(handle);
+        if (rect == null)
             return false;
 
-        return NativeMethods.User32.SetWindowPos(
+        return _nativeWrapper.SetWindowPos(
             handle,
-            nint.Zero,
-            rect.Left, rect.Top, width, height,
+            rect.Value.Left, rect.Value.Top, width, height,
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
 
@@ -142,14 +142,13 @@ public class WindowService : IWindowService
             return false;
 
         // Restore window first if minimized
-        if (NativeMethods.User32.IsIconic(handle))
+        if (_nativeWrapper.IsIconic(handle))
         {
-            NativeMethods.User32.ShowWindow(handle, NativeEnums.SW_RESTORE);
+            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return NativeMethods.User32.SetWindowPos(
+        return _nativeWrapper.SetWindowPos(
             handle,
-            nint.Zero,
             x, y, width, height,
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
@@ -167,7 +166,7 @@ public class WindowService : IWindowService
             _ => NativeEnums.SW_RESTORE
         };
 
-        return NativeMethods.User32.ShowWindow(handle, cmd);
+        return _nativeWrapper.ShowWindow(handle, cmd);
     }
 
     public bool FocusWindow(nint handle)
@@ -176,18 +175,18 @@ public class WindowService : IWindowService
             return false;
 
         // If window is minimized, restore it first
-        if (NativeMethods.User32.IsIconic(handle))
+        if (_nativeWrapper.IsIconic(handle))
         {
-            NativeMethods.User32.ShowWindow(handle, NativeEnums.SW_RESTORE);
+            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
         // Try SetForegroundWindow first
-        if (NativeMethods.User32.SetForegroundWindow(handle))
+        if (_nativeWrapper.SetForegroundWindow(handle))
             return true;
 
         // Fallback: try BringWindowToTop
-        NativeMethods.User32.BringWindowToTop(handle);
-        return NativeMethods.User32.SetForegroundWindow(handle);
+        _nativeWrapper.BringWindowToTop(handle);
+        return _nativeWrapper.SetForegroundWindow(handle);
     }
 
     public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null)
@@ -214,11 +213,12 @@ public class WindowService : IWindowService
         var workArea = targetMonitor.WorkArea;
 
         // Get current window size
-        if (!NativeMethods.User32.GetWindowRect(handle, out var rect))
+        var rect = _nativeWrapper.GetWindowRect(handle);
+        if (rect == null)
             return false;
 
-        var width = rect.Right - rect.Left;
-        var height = rect.Bottom - rect.Top;
+        var width = rect.Value.Right - rect.Value.Left;
+        var height = rect.Value.Bottom - rect.Value.Top;
 
         int x, y;
 
@@ -266,21 +266,20 @@ public class WindowService : IWindowService
         }
 
         // Restore if minimized
-        if (NativeMethods.User32.IsIconic(handle))
+        if (_nativeWrapper.IsIconic(handle))
         {
-            NativeMethods.User32.ShowWindow(handle, NativeEnums.SW_RESTORE);
+            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return NativeMethods.User32.SetWindowPos(
+        return _nativeWrapper.SetWindowPos(
             handle,
-            nint.Zero,
             x, y, width, height,
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
 
     public bool IsValidWindow(nint handle)
     {
-        return handle != nint.Zero && NativeMethods.User32.IsWindow(handle);
+        return handle != nint.Zero && _nativeWrapper.IsWindow(handle);
     }
 
     public bool CloseWindow(nint handle)
@@ -289,56 +288,50 @@ public class WindowService : IWindowService
             return false;
 
         // Send WM_CLOSE for graceful close - the application can cancel this
-        return NativeMethods.User32.PostMessageW(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+        return _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
     }
 
     private WindowInfo? GetWindowInfoInternal(nint hWnd)
     {
         // Get window title
-        var titleLength = NativeMethods.User32.GetWindowTextLengthW(hWnd);
-        var title = string.Empty;
-        if (titleLength > 0)
-        {
-            var titleBuffer = new char[titleLength + 1];
-            NativeMethods.User32.GetWindowTextW(hWnd, titleBuffer, titleBuffer.Length);
-            title = new string(titleBuffer, 0, titleLength);
-        }
+        var title = _nativeWrapper.GetWindowText(hWnd);
 
         // Skip windows with empty titles (usually not user-facing windows)
         if (string.IsNullOrEmpty(title))
             return null;
 
         // Get process ID and name
-        NativeMethods.User32.GetWindowThreadProcessId(hWnd, out var processId);
+        var processId = _nativeWrapper.GetWindowThreadProcessId(hWnd);
         var processName = GetProcessNameFromId((int)processId);
 
         // Skip our own process
-        if (processId == NativeMethods.Kernel32.GetCurrentProcessId())
+        if (processId == _nativeWrapper.GetCurrentProcessId())
             return null;
 
         // Get window rectangle
-        if (!NativeMethods.User32.GetWindowRect(hWnd, out var rect))
+        var rect = _nativeWrapper.GetWindowRect(hWnd);
+        if (rect == null)
             return null;
 
         // Get window state
         var state = WindowState.Normal;
-        if (NativeMethods.User32.IsIconic(hWnd))
+        if (_nativeWrapper.IsIconic(hWnd))
             state = WindowState.Minimized;
-        else if (NativeMethods.User32.IsZoomed(hWnd))
+        else if (_nativeWrapper.IsZoomed(hWnd))
             state = WindowState.Maximized;
 
         // Get monitor index
         var monitorIndex = _monitorService.GetMonitorIndex(hWnd);
 
-        // Check if this is the foreground window
-        var isVisible = NativeMethods.User32.IsWindowVisible(hWnd);
+        // Check if this is visible
+        var isVisible = _nativeWrapper.IsWindowVisible(hWnd);
 
         return new WindowInfo(
             Handle: hWnd,
             Title: title,
             ProcessName: processName,
             ProcessId: (int)processId,
-            Bounds: WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom),
+            Bounds: WindowRect.FromLTRB(rect.Value.Left, rect.Value.Top, rect.Value.Right, rect.Value.Bottom),
             State: state,
             IsVisible: isVisible,
             MonitorIndex: monitorIndex

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Native;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
@@ -8,17 +9,20 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 ///
 /// Note: WindowService uses P/Invoke for window management.
 /// These tests focus on behavior that can be safely tested without side effects.
+/// Tests use the real NativeWindowWrapper to verify actual Windows API behavior.
 /// </summary>
 public class WindowServiceTests
 {
     private readonly Mock<IMonitorService> _mockMonitorService;
+    private readonly INativeWindowWrapper _nativeWrapper;
 
     public WindowServiceTests()
     {
         _mockMonitorService = TestDataFactory.CreateMockMonitorService();
+        _nativeWrapper = new NativeWindowWrapper();
     }
 
-    private WindowService CreateSut() => new WindowService(_mockMonitorService.Object);
+    private WindowService CreateSut() => new WindowService(_mockMonitorService.Object, _nativeWrapper);
 
     #region T2.1: GetAllWindows Tests
 

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Integration;
@@ -24,6 +25,7 @@ public class DependencyInjectionTests : IDisposable
         var services = new ServiceCollection();
 
         // Register services exactly as in Program.cs
+        services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
         services.AddSingleton<IMonitorService, MonitorService>();
         services.AddSingleton<IWindowService, WindowService>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
@@ -61,12 +63,14 @@ public class DependencyInjectionTests : IDisposable
     public void ServiceProvider_AllServicesResolve_Successfully()
     {
         // Act & Assert - All services should resolve without exception
+        var nativeWrapper = _serviceProvider.GetService<INativeWindowWrapper>();
         var windowService = _serviceProvider.GetService<IWindowService>();
         var monitorService = _serviceProvider.GetService<IMonitorService>();
         var processService = _serviceProvider.GetService<IProcessService>();
         var layoutService = _serviceProvider.GetService<ILayoutService>();
         var inputValidationService = _serviceProvider.GetService<IInputValidationService>();
 
+        nativeWrapper.Should().NotBeNull();
         windowService.Should().NotBeNull();
         monitorService.Should().NotBeNull();
         processService.Should().NotBeNull();
@@ -76,7 +80,22 @@ public class DependencyInjectionTests : IDisposable
 
     #endregion
 
-    #region T7.3.2: IWindowService Singleton
+    #region T7.3.2: INativeWindowWrapper Singleton
+
+    [Fact]
+    public void INativeWindowWrapper_Singleton_SameInstance()
+    {
+        // Act
+        var instance1 = _serviceProvider.GetRequiredService<INativeWindowWrapper>();
+        var instance2 = _serviceProvider.GetRequiredService<INativeWindowWrapper>();
+
+        // Assert
+        instance1.Should().BeSameAs(instance2);
+    }
+
+    #endregion
+
+    #region T7.3.3: IWindowService Singleton
 
     [Fact]
     public void IWindowService_Singleton_SameInstance()

@@ -28,6 +28,7 @@ builder.Logging.AddConsole(options =>
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
 // Register services
+builder.Services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
 builder.Services.AddSingleton<IMonitorService, MonitorService>();
 builder.Services.AddSingleton<IWindowService, WindowService>();
 builder.Services.AddSingleton<IInputValidationService, InputValidationService>();

@@ -54,17 +54,17 @@ This document contains granular, actionable testing tasks following TDD principl
 | T1.11 | Add test project to solution | P0 | [x] | Update `.sln` file |
 | T1.12 | Verify `dotnet test` runs successfully | P0 | [x] | 207 tests passing |
 
-### T1.A: Native Layer Testability
+### T1.A: Native Layer Testability ✅
 
 *Required for mocking P/Invoke calls in WindowService tests.*
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T1.A1 | Create `INativeWindowWrapper` interface | P1 | [ ] | Abstract P/Invoke calls |
-| T1.A2 | Create `NativeWindowWrapper` implementation | P1 | [ ] | Production wrapper |
-| T1.A3 | Update `WindowService` constructor to accept `INativeWindowWrapper` | P1 | [ ] | Dependency injection |
-| T1.A4 | Update DI registration in `Program.cs` | P1 | [ ] | Register wrapper |
-| T1.A5 | Create `MockNativeWindowWrapper` for tests | P1 | [ ] | Test double |
+| T1.A1 | Create `INativeWindowWrapper` interface | P1 | [x] | Abstract P/Invoke calls |
+| T1.A2 | Create `NativeWindowWrapper` implementation | P1 | [x] | Production wrapper |
+| T1.A3 | Update `WindowService` constructor to accept `INativeWindowWrapper` | P1 | [x] | Dependency injection |
+| T1.A4 | Update DI registration in `Program.cs` | P1 | [x] | Register wrapper |
+| T1.A5 | Create `MockNativeWindowWrapper` for tests | P1 | [x] | Test double in TestDataFactory |
 
 ---
 
@@ -399,8 +399,8 @@ This document contains granular, actionable testing tasks following TDD principl
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 306 |
-| **Passing** | 306 (100%) |
+| **Total Tests** | 307 |
+| **Passing** | 307 (100%) |
 | **Line Coverage** | ~65% |
 | **Branch Coverage** | ~57% |
 | **Method Coverage** | ~85% |

@@ -175,5 +175,72 @@ public static class TestDataFactory
         return mock;
     }
 
+    public static Mock<INativeWindowWrapper> CreateMockNativeWindowWrapper(
+        IReadOnlyList<WindowInfo>? windows = null)
+    {
+        var mock = new Mock<INativeWindowWrapper>();
+        var testWindows = windows ?? CreateTypicalWindowSet();
+
+        // EnumWindows - calls callback for each window
+        mock.Setup(n => n.EnumWindows(It.IsAny<Func<nint, bool>>()))
+            .Callback<Func<nint, bool>>(callback =>
+            {
+                foreach (var w in testWindows)
+                {
+                    if (!callback(w.Handle))
+                        break;
+                }
+            });
+
+        // IsWindow - valid for test windows
+        mock.Setup(n => n.IsWindow(It.Is<nint>(h => h != nint.Zero)))
+            .Returns(true);
+        mock.Setup(n => n.IsWindow(nint.Zero))
+            .Returns(false);
+
+        // IsWindowVisible - based on test data
+        foreach (var w in testWindows)
+        {
+            mock.Setup(n => n.IsWindowVisible(w.Handle)).Returns(w.IsVisible);
+            mock.Setup(n => n.IsIconic(w.Handle)).Returns(w.State == WindowState.Minimized);
+            mock.Setup(n => n.IsZoomed(w.Handle)).Returns(w.State == WindowState.Maximized);
+            mock.Setup(n => n.GetWindowText(w.Handle)).Returns(w.Title);
+            mock.Setup(n => n.GetWindowThreadProcessId(w.Handle)).Returns((uint)w.ProcessId);
+            mock.Setup(n => n.GetWindowRect(w.Handle))
+                .Returns((w.Bounds.X, w.Bounds.Y, w.Bounds.X + w.Bounds.Width, w.Bounds.Y + w.Bounds.Height));
+        }
+
+        // Default behaviors for unknown handles
+        mock.Setup(n => n.IsWindowVisible(It.Is<nint>(h => !testWindows.Any(w => w.Handle == h))))
+            .Returns(false);
+        mock.Setup(n => n.GetWindowText(It.Is<nint>(h => !testWindows.Any(w => w.Handle == h))))
+            .Returns(string.Empty);
+        mock.Setup(n => n.GetWindowRect(It.Is<nint>(h => !testWindows.Any(w => w.Handle == h))))
+            .Returns((ValueTuple<int, int, int, int>?)null);
+
+        // Window manipulation - return true for valid handles
+        mock.Setup(n => n.SetWindowPos(It.Is<nint>(h => h != nint.Zero),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
+            .Returns(true);
+        mock.Setup(n => n.ShowWindow(It.Is<nint>(h => h != nint.Zero), It.IsAny<int>()))
+            .Returns(true);
+        mock.Setup(n => n.SetForegroundWindow(It.Is<nint>(h => h != nint.Zero)))
+            .Returns(true);
+        mock.Setup(n => n.BringWindowToTop(It.Is<nint>(h => h != nint.Zero)))
+            .Returns(true);
+        mock.Setup(n => n.PostMessage(It.Is<nint>(h => h != nint.Zero),
+                It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()))
+            .Returns(true);
+
+        // GetForegroundWindow - return first test window or zero
+        mock.Setup(n => n.GetForegroundWindow())
+            .Returns(testWindows.Count > 0 ? testWindows[0].Handle : nint.Zero);
+
+        // GetCurrentProcessId - return a fake PID that won't match test windows
+        mock.Setup(n => n.GetCurrentProcessId()).Returns(99999u);
+
+        return mock;
+    }
+
     #endregion
 }
