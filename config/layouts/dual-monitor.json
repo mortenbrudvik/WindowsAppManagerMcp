@@ -1,0 +1,76 @@
+{
+  "name": "dual-monitor",
+  "description": "Dual monitor development setup - IDE on primary, browser and chat on secondary",
+  "placements": [
+    {
+      "matcher": {
+        "processName": "Code",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 0,
+      "position": {
+        "x": 0,
+        "y": 0,
+        "width": 1.0,
+        "height": 1.0
+      },
+      "launchCommand": "code",
+      "focus": true,
+      "order": 1
+    },
+    {
+      "matcher": {
+        "processName": "chrome",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 1,
+      "position": {
+        "x": 0,
+        "y": 0,
+        "width": 0.6,
+        "height": 1.0
+      },
+      "launchCommand": "chrome",
+      "focus": false,
+      "order": 2
+    },
+    {
+      "matcher": {
+        "processName": "Slack",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 1,
+      "position": {
+        "x": 0.6,
+        "y": 0,
+        "width": 0.4,
+        "height": 0.5
+      },
+      "launchCommand": null,
+      "focus": false,
+      "order": 3
+    },
+    {
+      "matcher": {
+        "processName": "Spotify",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 1,
+      "position": {
+        "x": 0.6,
+        "y": 0.5,
+        "width": 0.4,
+        "height": 0.5
+      },
+      "launchCommand": null,
+      "focus": false,
+      "order": 4
+    }
+  ],
+  "createdAt": "2026-01-12T00:00:00Z",
+  "updatedAt": "2026-01-12T00:00:00Z"
+}

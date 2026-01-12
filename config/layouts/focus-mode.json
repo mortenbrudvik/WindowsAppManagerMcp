@@ -1,0 +1,25 @@
+{
+  "name": "focus-mode",
+  "description": "Minimalist focus layout - single centered application",
+  "placements": [
+    {
+      "matcher": {
+        "processName": "Code",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 0,
+      "position": {
+        "x": 0.1,
+        "y": 0.05,
+        "width": 0.8,
+        "height": 0.9
+      },
+      "launchCommand": "code",
+      "focus": true,
+      "order": 1
+    }
+  ],
+  "createdAt": "2026-01-12T00:00:00Z",
+  "updatedAt": "2026-01-12T00:00:00Z"
+}

@@ -1,0 +1,59 @@
+{
+  "name": "work-setup",
+  "description": "Development setup with IDE on left, browser on right, terminal bottom-right",
+  "placements": [
+    {
+      "matcher": {
+        "processName": "Code",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 0,
+      "position": {
+        "x": 0,
+        "y": 0,
+        "width": 0.5,
+        "height": 1.0
+      },
+      "launchCommand": "code",
+      "focus": false,
+      "order": 1
+    },
+    {
+      "matcher": {
+        "processName": "chrome",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 0,
+      "position": {
+        "x": 0.5,
+        "y": 0,
+        "width": 0.5,
+        "height": 0.6
+      },
+      "launchCommand": "chrome",
+      "focus": true,
+      "order": 2
+    },
+    {
+      "matcher": {
+        "processName": "WindowsTerminal",
+        "titleContains": null,
+        "className": null
+      },
+      "monitorIndex": 0,
+      "position": {
+        "x": 0.5,
+        "y": 0.6,
+        "width": 0.5,
+        "height": 0.4
+      },
+      "launchCommand": "wt",
+      "focus": false,
+      "order": 3
+    }
+  ],
+  "createdAt": "2026-01-12T00:00:00Z",
+  "updatedAt": "2026-01-12T00:00:00Z"
+}
