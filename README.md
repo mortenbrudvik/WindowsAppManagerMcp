@@ -18,21 +18,21 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - Windows 10/11
 - .NET 8.0 Runtime (or use self-contained build)
 
-### Option 1: Build from Source
+### Option 1: Claude Code Plugin (Recommended)
+
+Install as a Claude Code plugin:
 
 ```bash
-git clone https://github.com/mortenbrudvik/WindowsAppManagerMcp.git
-cd WindowsAppManagerMcp
-dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./publish
+# Add the marketplace
+/plugin marketplace add mortenbrudvik/WindowsAppManagerMcp
+
+# Install the plugin
+/plugin install windows-app-manager@windows-app-manager-marketplace
 ```
 
-### Option 2: Download Release
+Then restart Claude Code. The plugin includes a skill with usage guidance.
 
-Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
-
-## Configuration
-
-### Claude Desktop
+### Option 2: Claude Desktop (Manual)
 
 Add to your `claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
 
@@ -48,9 +48,17 @@ Add to your `claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
 
 Then restart Claude Desktop.
 
-### Claude Code
+### Option 3: Build from Source
 
-The server works with Claude Code via the same MCP protocol.
+```bash
+git clone https://github.com/mortenbrudvik/WindowsAppManagerMcp.git
+cd WindowsAppManagerMcp
+dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./bin
+```
+
+### Option 4: Download Release
+
+Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
 ## Available Tools (21)
 
@@ -148,6 +156,13 @@ dotnet test --collect:"XPlat Code Coverage"
 
 ```
 WindowsAppManagerMcp/
+├── .claude-plugin/      # Claude Code plugin configuration
+│   ├── plugin.json      # Plugin metadata and MCP server config
+│   └── marketplace.json # Marketplace distribution manifest
+├── skills/              # Claude Code skills
+│   └── using-windows-app-manager/
+│       └── SKILL.md     # Usage guidance and trigger patterns
+├── bin/                 # Pre-built executable (for plugin)
 ├── src/WindowsAppManagerMcp/
 │   ├── Models/          # Data models and DTOs
 │   ├── Native/          # P/Invoke declarations

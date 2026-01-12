@@ -244,9 +244,11 @@
 | Phase 5: Layout Presets | ██████████ 100% |
 | Phase 6: Polish & Testing | █████████░ 90% |
 | Phase 7: Enhancements | ██████████ 100% |
+| Phase 8: Claude Code Plugin | ███████░░░ 70% |
 
 **Core Implementation: ~98%**
 **With Enhancements: ~99%**
+**With Plugin: ~70% (testing pending)**
 
 ---
 
@@ -273,3 +275,38 @@
    - ✅ 325 tests (288 unit + 37 integration)
    - ✅ Integration tests complete (T7)
    - Target: Increase coverage to 75%+ (currently ~65%)
+
+---
+
+## Phase 8: Claude Code Plugin
+
+*Convert MCP server to Claude Code plugin for marketplace distribution*
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 8.1 | Create `.claude-plugin/plugin.json` | ✅ Complete | Plugin metadata + MCP server config |
+| 8.2 | Create `.claude-plugin/marketplace.json` | ✅ Complete | Marketplace distribution manifest |
+| 8.3 | Build exe to `bin/` directory | ✅ Complete | `dotnet publish -o ./bin` |
+| 8.4 | Create `skills/using-windows-app-manager/SKILL.md` | ✅ Complete | Skill file with trigger patterns |
+| 8.5 | Update README.md with plugin installation | ✅ Complete | Add Claude Code install instructions |
+| 8.6 | Test local plugin installation | ⏳ Pending | `/plugin marketplace add`, `/plugin install` |
+| 8.7 | Test GitHub-based installation | ⏳ Pending | `mortenbrudvik/WindowsAppManagerMcp` |
+
+### Plugin Structure
+
+```
+WindowsAppManagerMcp/
+├── .claude-plugin/
+│   ├── plugin.json              # Plugin metadata + MCP server config
+│   └── marketplace.json         # For marketplace distribution
+├── skills/
+│   └── using-windows-app-manager/
+│       └── SKILL.md             # How to use the 21 tools effectively
+├── bin/
+│   └── WindowsAppManagerMcp.exe # Pre-built self-contained executable
+```
+
+### Compatibility
+
+- **Claude Desktop**: Still works via manual `claude_desktop_config.json` configuration
+- **Claude Code**: Installable via `/plugin install` command
