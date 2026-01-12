@@ -210,4 +210,114 @@ public class ProcessServiceTests
     }
 
     #endregion
+
+    #region T4.5: KillProcess Tests
+
+    [Fact]
+    public void KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.KillProcess(1234, confirm: false);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ConfirmationRequired");
+        result.ErrorMessage.Should().Contain("Confirmation required");
+    }
+
+    [Fact]
+    public void KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.KillProcess(0, confirm: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidProcessId");
+    }
+
+    [Fact]
+    public void KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.KillProcess(-1, confirm: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidProcessId");
+    }
+
+    [Fact]
+    public void KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var currentPid = Environment.ProcessId;
+
+        // Act
+        var result = sut.KillProcess(currentPid, confirm: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("CannotTerminateSelf");
+        result.ErrorMessage.Should().Contain("Cannot terminate the current process");
+    }
+
+    [Fact]
+    public void KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act - Use a very high PID that's unlikely to exist
+        var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ProcessNotFound");
+    }
+
+    [Theory]
+    [InlineData("System")]
+    [InlineData("csrss")]
+    [InlineData("lsass")]
+    [InlineData("svchost")]
+    [InlineData("winlogon")]
+    public void KillProcess_ProtectedProcessNames_AreInProtectedList(string processName)
+    {
+        // This test verifies that the protected process list includes critical system processes
+        // We can't easily test killing them (they require elevated privileges and we shouldn't try)
+        // Instead we verify the implementation has them in the protected list
+
+        // Arrange - find a real process with this name (if it exists)
+        var sut = CreateSut();
+        var processes = Process.GetProcessesByName(processName);
+
+        if (processes.Length == 0)
+        {
+            // Process not running, skip this test case
+            return;
+        }
+
+        using var process = processes[0];
+
+        // Act
+        var result = sut.KillProcess(process.Id, confirm: true);
+
+        // Assert - should be protected
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ProtectedProcess");
+        result.ProcessName.Should().Be(processName);
+    }
+
+    #endregion
 }

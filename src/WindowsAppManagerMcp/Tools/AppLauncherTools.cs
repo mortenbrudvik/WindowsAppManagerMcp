@@ -63,7 +63,36 @@ public class AppLauncherTools
             MemoryUsageMB: p.MemoryUsageMB.HasValue ? Math.Round(p.MemoryUsageMB.Value, 1) : null
         )).ToList();
     }
+
+    [McpServerTool(Name = "kill_process")]
+    [Description("Terminate a process by its ID. Requires explicit confirmation for safety. Attempts graceful close first unless forceKill is true.")]
+    public KillResultDto KillProcess(
+        [Description("The process ID to terminate (get from list_processes tool)")]
+        int processId,
+        [Description("Must be set to true to confirm termination - this is a safety requirement")]
+        bool confirm,
+        [Description("If true, immediately kills the process. If false (default), attempts graceful close first.")]
+        bool forceKill = false)
+    {
+        var result = _processService.KillProcess(processId, confirm, forceKill);
+
+        return new KillResultDto(
+            Success: result.Success,
+            ProcessId: result.ProcessId,
+            ProcessName: result.ProcessName,
+            Error: result.ErrorMessage,
+            ErrorCode: result.ErrorCode
+        );
+    }
 }
+
+public record KillResultDto(
+    bool Success,
+    int ProcessId,
+    string? ProcessName = null,
+    string? Error = null,
+    string? ErrorCode = null
+);
 
 public record LaunchResultDto(
     bool Success,

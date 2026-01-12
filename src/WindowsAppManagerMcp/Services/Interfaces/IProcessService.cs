@@ -16,6 +16,15 @@ public interface IProcessService
     string? GetProcessName(int processId);
 
     string? GetProcessPath(int processId);
+
+    /// <summary>
+    /// Terminates a process by its ID.
+    /// </summary>
+    /// <param name="processId">The process ID to terminate.</param>
+    /// <param name="confirm">Must be true to confirm termination (safety check).</param>
+    /// <param name="forceKill">If true, kills immediately. If false, attempts graceful close first.</param>
+    /// <returns>Result indicating success or failure with error details.</returns>
+    KillResult KillProcess(int processId, bool confirm, bool forceKill = false);
 }
 
 public record ProcessInfo(

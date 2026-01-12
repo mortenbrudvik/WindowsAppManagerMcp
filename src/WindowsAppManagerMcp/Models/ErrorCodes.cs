@@ -73,6 +73,36 @@ public enum LaunchErrorCode
 }
 
 /// <summary>
+/// Error codes for process termination operations.
+/// </summary>
+public enum ProcessErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>The process ID is invalid (zero or negative).</summary>
+    InvalidProcessId = 1,
+
+    /// <summary>The process was not found or has already exited.</summary>
+    ProcessNotFound = 2,
+
+    /// <summary>The process is protected and cannot be terminated.</summary>
+    ProtectedProcess = 3,
+
+    /// <summary>Cannot terminate the current process.</summary>
+    CannotTerminateSelf = 4,
+
+    /// <summary>Access denied - insufficient permissions to terminate the process.</summary>
+    AccessDenied = 5,
+
+    /// <summary>The confirmation parameter was not set to true.</summary>
+    ConfirmationRequired = 6,
+
+    /// <summary>An exception occurred during termination.</summary>
+    TerminationException = 7
+}
+
+/// <summary>
 /// Error codes for layout preset operations.
 /// </summary>
 public enum LayoutErrorCode

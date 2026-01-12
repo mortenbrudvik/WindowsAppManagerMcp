@@ -207,6 +207,119 @@ public class ProcessService : IProcessService
         return null;
     }
 
+    // Protected system processes that should not be terminated
+    private static readonly HashSet<string> ProtectedProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "System", "smss", "csrss", "wininit", "services", "lsass", "lsm",
+        "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression"
+    };
+
+    public KillResult KillProcess(int processId, bool confirm, bool forceKill = false)
+    {
+        // Safety check: require explicit confirmation
+        if (!confirm)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Confirmation required. Set confirm=true to terminate the process.",
+                ErrorCode: nameof(ProcessErrorCode.ConfirmationRequired));
+        }
+
+        // Validate process ID
+        if (processId <= 0)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Invalid process ID. Must be a positive integer.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidProcessId));
+        }
+
+        // Cannot kill self
+        if (processId == Environment.ProcessId)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Cannot terminate the current process.",
+                ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            var processName = process.ProcessName;
+
+            // Check if it's a protected system process
+            if (ProtectedProcesses.Contains(processName))
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
+                    ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+            }
+
+            // Attempt graceful close first if not forcing
+            if (!forceKill)
+            {
+                try
+                {
+                    if (process.CloseMainWindow())
+                    {
+                        // Wait briefly for graceful exit
+                        if (process.WaitForExit(3000))
+                        {
+                            return new KillResult(
+                                Success: true,
+                                ProcessId: processId,
+                                ProcessName: processName);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Graceful close failed, fall through to force kill
+                }
+            }
+
+            // Force kill
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(1000);
+
+            return new KillResult(
+                Success: true,
+                ProcessId: processId,
+                ProcessName: processName);
+        }
+        catch (ArgumentException)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Process not found. It may have already exited.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Access denied. Insufficient permissions to terminate this process.",
+                ErrorCode: nameof(ProcessErrorCode.AccessDenied));
+        }
+        catch (Exception ex)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: ex.Message,
+                ErrorCode: nameof(ProcessErrorCode.TerminationException));
+        }
+    }
+
     private nint? WaitForMainWindow(Process process, int timeoutMs)
     {
         var stopwatch = Stopwatch.StartNew();

@@ -106,6 +106,7 @@
 - `src/WindowsAppManagerMcp/Models/ErrorCodes.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LaunchResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LayoutApplyResult.cs`
+- `src/WindowsAppManagerMcp/Models/Results/KillResult.cs`
 
 ### ✅ Complete - Native Interop
 - `src/WindowsAppManagerMcp/Native/NativeMethods.User32.cs`
@@ -162,7 +163,7 @@
 
 ---
 
-## MCP Tools Summary (19 Tools)
+## MCP Tools Summary (20 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -181,6 +182,7 @@
 | `get_primary_monitor` | Monitor Info | Get primary display details |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
+| `kill_process` | App Launch | Terminate process by PID (with safeguards) |
 | `list_layouts` | Layout Presets | List saved presets |
 | `get_layout` | Layout Presets | Get preset details |
 | `save_layout` | Layout Presets | Save current arrangement |
@@ -199,8 +201,8 @@
 | 7.2 | Add `close_window` tool | ✅ Complete | Medium | Send WM_CLOSE via PostMessage for graceful close |
 | 7.3 | Add version field to `LayoutPreset` | ✅ Complete | Low | Added `Version` property with default 1 for schema evolution |
 | 7.4 | Standardize error codes as enum | ✅ Complete | Medium | WindowErrorCode, LaunchErrorCode, LayoutErrorCode enums; ErrorCode field in all results |
-| 7.5 | Write unit tests for services | ✅ Complete | High | 309 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
-| 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
+| 7.5 | Write unit tests for services | ✅ Complete | High | 325 tests. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
+| 7.6 | Add `kill_process` tool | ✅ Complete | Low | Terminate process by PID with safeguards: confirmation required, protected process list, graceful close |
 
 ---
 
@@ -241,10 +243,10 @@
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
 | Phase 6: Polish & Testing | █████████░ 90% |
-| Phase 7: Enhancements | █████████░ 90% |
+| Phase 7: Enhancements | ██████████ 100% |
 
 **Core Implementation: ~98%**
-**With Enhancements: ~97%**
+**With Enhancements: ~99%**
 
 ---
 
@@ -262,12 +264,12 @@
    }
    ```
 
-2. **Low Priority Enhancements:**
-   - 7.3: Add version field to LayoutPreset
-   - 7.6: Add `kill_process` tool
+2. **Optional Tasks:**
+   - 6.4: Create appsettings.json for configuration
+   - T8.4: Add coverage badge to README (when README exists)
 
 3. **Testing:**
    - ✅ CI/CD pipeline with GitHub Actions (complete)
-   - ✅ 309 tests (272 unit + 37 integration)
+   - ✅ 325 tests (288 unit + 37 integration)
    - ✅ Integration tests complete (T7)
    - Target: Increase coverage to 75%+ (currently ~65%)

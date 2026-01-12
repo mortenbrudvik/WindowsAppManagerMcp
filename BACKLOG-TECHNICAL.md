@@ -399,8 +399,8 @@ This document contains granular, actionable testing tasks following TDD principl
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 309 |
-| **Passing** | 309 (100%) |
+| **Total Tests** | 325 |
+| **Passing** | 325 (100%) |
 | **Line Coverage** | ~65% |
 | **Branch Coverage** | ~57% |
 | **Method Coverage** | ~85% |
@@ -412,7 +412,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | T1: Infrastructure | ✅ Complete | - | - |
 | T2: WindowService | 🔶 Partial | 39 | 59.3% |
 | T3: MonitorService | 🔶 Partial | 20 | 0%* |
-| T4: ProcessService | ✅ Complete | 9 | 46.3% |
+| T4: ProcessService | ✅ Complete | 15 | 46.3% |
 | T5: LayoutService | ✅ Complete | 23 | 89.2% |
 | T6: Models | ✅ Complete | 31 | 100% |
 | T7: Integration | ✅ Complete | 37 | - |
@@ -427,7 +427,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | WindowFinderTools | 14 | 100% |
 | WindowManagerTools | 26 | 99.1% |
 | MonitorInfoTools | 10 | 100% |
-| AppLauncherTools | 14 | 100% |
+| AppLauncherTools | 20 | 100% |
 | LayoutPresetTools | 23 | 100% |
 
 ### Integration Tests (T7)
