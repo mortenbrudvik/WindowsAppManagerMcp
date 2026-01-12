@@ -8,10 +8,12 @@ namespace WindowsAppManagerMcp.Services;
 public class ProcessService : IProcessService
 {
     private readonly IWindowService _windowService;
+    private readonly IInputValidationService _validationService;
 
-    public ProcessService(IWindowService windowService)
+    public ProcessService(IWindowService windowService, IInputValidationService validationService)
     {
         _windowService = windowService;
+        _validationService = validationService;
     }
 
     public LaunchResult LaunchApplication(
@@ -21,13 +23,30 @@ public class ProcessService : IProcessService
         bool waitForWindow = false,
         int waitTimeoutMs = 5000)
     {
+        // Validate executable path
+        var executableValidation = _validationService.ValidateExecutable(executable);
+        if (!executableValidation.IsValid)
+        {
+            return new LaunchResult(false, ErrorMessage: executableValidation.Error);
+        }
+
+        // Validate working directory
+        var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
+        if (!workingDirValidation.IsValid)
+        {
+            return new LaunchResult(false, ErrorMessage: workingDirValidation.Error);
+        }
+
+        // Combine warnings
+        var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
+
         try
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = executable,
+                FileName = executableValidation.SanitizedExecutable ?? executable,
                 UseShellExecute = true,
-                WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory
+                WorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory
             };
 
             if (arguments?.Length > 0)
@@ -39,7 +58,7 @@ public class ProcessService : IProcessService
             var process = Process.Start(startInfo);
             if (process == null)
             {
-                return new LaunchResult(false, ErrorMessage: "Failed to start process");
+                return new LaunchResult(false, ErrorMessage: "Failed to start process", Warning: warning);
             }
 
             nint? windowHandle = null;
@@ -52,13 +71,21 @@ public class ProcessService : IProcessService
             return new LaunchResult(
                 Success: true,
                 ProcessId: process.Id,
-                WindowHandle: windowHandle
+                WindowHandle: windowHandle,
+                Warning: warning
             );
         }
         catch (Exception ex)
         {
-            return new LaunchResult(false, ErrorMessage: ex.Message);
+            return new LaunchResult(false, ErrorMessage: ex.Message, Warning: warning);
         }
+    }
+
+    private static string? CombineWarnings(string? warning1, string? warning2)
+    {
+        if (string.IsNullOrEmpty(warning1)) return warning2;
+        if (string.IsNullOrEmpty(warning2)) return warning1;
+        return $"{warning1}; {warning2}";
     }
 
     public IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false)

@@ -30,6 +30,7 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 // Register services
 builder.Services.AddSingleton<IMonitorService, MonitorService>();
 builder.Services.AddSingleton<IWindowService, WindowService>();
+builder.Services.AddSingleton<IInputValidationService, InputValidationService>();
 builder.Services.AddSingleton<IProcessService, ProcessService>();
 builder.Services.AddSingleton<ILayoutService>(sp =>
 {

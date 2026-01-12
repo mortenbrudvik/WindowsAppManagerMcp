@@ -118,10 +118,12 @@
 - `src/WindowsAppManagerMcp/Services/Interfaces/IMonitorService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/IProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/ILayoutService.cs`
+- `src/WindowsAppManagerMcp/Services/Interfaces/IInputValidationService.cs`
 - `src/WindowsAppManagerMcp/Services/WindowService.cs`
 - `src/WindowsAppManagerMcp/Services/MonitorService.cs`
 - `src/WindowsAppManagerMcp/Services/ProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/LayoutService.cs`
+- `src/WindowsAppManagerMcp/Services/InputValidationService.cs`
 
 ### ✅ Complete - MCP Tools
 - `src/WindowsAppManagerMcp/Tools/WindowFinderTools.cs`
@@ -189,11 +191,11 @@
 
 | # | Task | Status | Priority | Notes |
 |---|------|--------|----------|-------|
-| 7.1 | Add input validation for `launch_application` | ⏳ Pending | High | Path sanitization, block `..` traversal, warn on suspicious executables |
+| 7.1 | Add input validation for `launch_application` | ✅ Complete | High | InputValidationService: path traversal, shell metacharacters, protocol validation |
 | 7.2 | Add `close_window` tool | ⏳ Pending | Medium | Send WM_CLOSE to gracefully close windows |
 | 7.3 | Add version field to `LayoutPreset` | ⏳ Pending | Low | Add `"version": 1` for future schema evolution |
 | 7.4 | Standardize error codes as enum | ⏳ Pending | Medium | Replace string errors with typed codes (WindowNotFound, InvalidHandle, etc.) |
-| 7.5 | Write unit tests for services | ✅ Complete | High | 207 tests, 64.4% coverage. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
+| 7.5 | Write unit tests for services | ✅ Complete | High | 264 tests, 68.4% coverage. See [BACKLOG-TECHNICAL.md](BACKLOG-TECHNICAL.md) |
 | 7.6 | Add `kill_process` tool | ⏳ Pending | Low | Terminate process by PID with safeguards (confirmation required) |
 
 ---
@@ -210,6 +212,7 @@
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/WindowServiceTests.cs` (39 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/MonitorServiceTests.cs` (20 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Services/ProcessServiceTests.cs` (9 tests)
+- `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputValidationServiceTests.cs` (57 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Models/ModelTests.cs` (29 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/WindowFinderToolsTests.cs` (14 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/WindowManagerToolsTests.cs` (26 tests)
@@ -229,10 +232,10 @@
 | Phase 4: Application Launch | ██████████ 100% |
 | Phase 5: Layout Presets | ██████████ 100% |
 | Phase 6: Polish & Testing | ████████░░ 80% |
-| Phase 7: Enhancements | ██░░░░░░░░ 17% |
+| Phase 7: Enhancements | ███░░░░░░░ 33% |
 
 **Core Implementation: ~97%**
-**With Enhancements: ~87%**
+**With Enhancements: ~89%**
 
 ---
 
@@ -250,13 +253,15 @@
    }
    ```
 
-2. **High Priority Enhancements:**
-   - 7.1: Input validation for `launch_application` (security)
-
-3. **Medium Priority Enhancements:**
+2. **Medium Priority Enhancements:**
    - 7.2: Add `close_window` tool
    - 7.4: Standardize error codes
 
-4. **Testing Improvements:**
-   - Add CI/CD pipeline with GitHub Actions
-   - Increase coverage to 70%+ (currently 64.4%)
+3. **Low Priority Enhancements:**
+   - 7.3: Add version field to LayoutPreset
+   - 7.6: Add `kill_process` tool
+
+4. **Testing:**
+   - ✅ CI/CD pipeline with GitHub Actions (complete)
+   - ✅ Coverage at 68.4% (above 60% threshold)
+   - Target: Increase coverage to 75%+

@@ -12,13 +12,21 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class ProcessServiceTests
 {
     private readonly Mock<IWindowService> _mockWindowService;
+    private readonly Mock<IInputValidationService> _mockValidationService;
 
     public ProcessServiceTests()
     {
         _mockWindowService = TestDataFactory.CreateMockWindowService();
+        _mockValidationService = new Mock<IInputValidationService>();
+
+        // Set up default validation to pass through
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns<string>(exe => new ExecutableValidationResult(true, SanitizedExecutable: exe));
+        _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
+            .Returns<string?>(dir => new PathValidationResult(true, SanitizedPath: dir));
     }
 
-    private ProcessService CreateSut() => new ProcessService(_mockWindowService.Object);
+    private ProcessService CreateSut() => new ProcessService(_mockWindowService.Object, _mockValidationService.Object);
 
     #region T4.2: GetRunningProcesses Tests
 
