@@ -29,6 +29,7 @@ public class DependencyInjectionTests : IDisposable
         services.AddSingleton<IMonitorService, MonitorService>();
         services.AddSingleton<IWindowService, WindowService>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
+        services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
         services.AddSingleton<IProcessService, ProcessService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

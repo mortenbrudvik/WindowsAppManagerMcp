@@ -13,11 +13,13 @@ public class ProcessServiceTests
 {
     private readonly Mock<IWindowService> _mockWindowService;
     private readonly Mock<IInputValidationService> _mockValidationService;
+    private readonly Mock<IBrowserDetectionService> _mockBrowserDetection;
 
     public ProcessServiceTests()
     {
         _mockWindowService = TestDataFactory.CreateMockWindowService();
         _mockValidationService = new Mock<IInputValidationService>();
+        _mockBrowserDetection = TestDataFactory.CreateMockBrowserDetectionService();
 
         // Set up default validation to pass through
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -26,7 +28,10 @@ public class ProcessServiceTests
             .Returns<string?>(dir => new PathValidationResult(true, SanitizedPath: dir));
     }
 
-    private ProcessService CreateSut() => new ProcessService(_mockWindowService.Object, _mockValidationService.Object);
+    private ProcessService CreateSut() => new ProcessService(
+        _mockWindowService.Object,
+        _mockValidationService.Object,
+        _mockBrowserDetection.Object);
 
     #region LaunchApplication Error Code Tests
 
@@ -317,6 +322,75 @@ public class ProcessServiceTests
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be("ProtectedProcess");
         result.ProcessName.Should().Be(processName);
+    }
+
+    #endregion
+
+    #region Browser --new-window Injection Tests
+
+    [Fact]
+    public void LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
+    {
+        // Arrange
+        var mockBrowserDetection = new Mock<IBrowserDetectionService>();
+        mockBrowserDetection.Setup(b => b.IsBrowser("chrome.exe")).Returns(true);
+        mockBrowserDetection.Setup(b => b.ContainsUrl(It.IsAny<string[]>())).Returns(true);
+        mockBrowserDetection.Setup(b => b.GetNewWindowFlag("chrome.exe")).Returns("--new-window");
+
+        var sut = new ProcessService(
+            _mockWindowService.Object,
+            _mockValidationService.Object,
+            mockBrowserDetection.Object);
+
+        // Act - will fail to launch since we're not in a browser, but we can verify detection was called
+        sut.LaunchApplication("chrome.exe", ["https://example.com"]);
+
+        // Assert - verify browser detection service was called
+        mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
+        mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]>()), Times.Once);
+        mockBrowserDetection.Verify(b => b.GetNewWindowFlag("chrome.exe"), Times.Once);
+    }
+
+    [Fact]
+    public void LaunchApplication_NonBrowserWithUrl_DoesNotGetNewWindowFlag()
+    {
+        // Arrange
+        var mockBrowserDetection = new Mock<IBrowserDetectionService>();
+        mockBrowserDetection.Setup(b => b.IsBrowser("notepad.exe")).Returns(false);
+
+        var sut = new ProcessService(
+            _mockWindowService.Object,
+            _mockValidationService.Object,
+            mockBrowserDetection.Object);
+
+        // Act
+        sut.LaunchApplication("notepad.exe", ["https://example.com"]);
+
+        // Assert - should check if it's a browser, but not get the new window flag
+        mockBrowserDetection.Verify(b => b.IsBrowser("notepad.exe"), Times.Once);
+        mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void LaunchApplication_BrowserWithoutUrl_DoesNotGetNewWindowFlag()
+    {
+        // Arrange
+        var mockBrowserDetection = new Mock<IBrowserDetectionService>();
+        mockBrowserDetection.Setup(b => b.IsBrowser("chrome.exe")).Returns(true);
+        mockBrowserDetection.Setup(b => b.ContainsUrl(It.IsAny<string[]?>())).Returns(false);
+
+        var sut = new ProcessService(
+            _mockWindowService.Object,
+            _mockValidationService.Object,
+            mockBrowserDetection.Object);
+
+        // Act
+        sut.LaunchApplication("chrome.exe", ["--incognito"]);
+
+        // Assert - should check browser and URL, but not get flag since no URL
+        mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
+        mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]?>()), Times.Once);
+        mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
     }
 
     #endregion

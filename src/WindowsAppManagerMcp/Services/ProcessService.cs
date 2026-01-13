@@ -10,35 +10,16 @@ public class ProcessService : IProcessService
 {
     private readonly IWindowService _windowService;
     private readonly IInputValidationService _validationService;
+    private readonly IBrowserDetectionService _browserDetection;
 
-    // Known browser executables that support --new-window flag
-    private static readonly HashSet<string> BrowserExecutables = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "chrome", "chrome.exe",
-        "msedge", "msedge.exe",
-        "firefox", "firefox.exe",
-        "brave", "brave.exe",
-        "opera", "opera.exe"
-    };
-
-    public ProcessService(IWindowService windowService, IInputValidationService validationService)
+    public ProcessService(
+        IWindowService windowService,
+        IInputValidationService validationService,
+        IBrowserDetectionService browserDetection)
     {
         _windowService = windowService;
         _validationService = validationService;
-    }
-
-    private static bool IsBrowserExecutable(string executable)
-    {
-        var name = Path.GetFileName(executable);
-        return BrowserExecutables.Contains(name) ||
-               BrowserExecutables.Contains(Path.GetFileNameWithoutExtension(name));
-    }
-
-    private static bool ContainsUrl(string[]? arguments)
-    {
-        return arguments?.Any(a =>
-            a.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-            a.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) ?? false;
+        _browserDetection = browserDetection;
     }
 
     public LaunchResult LaunchApplication(
@@ -66,11 +47,12 @@ public class ProcessService : IProcessService
         var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
 
         // Auto-inject --new-window for browsers opening URLs
-        if (IsBrowserExecutable(executable) && ContainsUrl(arguments))
+        if (_browserDetection.IsBrowser(executable) && _browserDetection.ContainsUrl(arguments))
         {
-            if (arguments?.All(a => a != "--new-window") ?? true)
+            var newWindowFlag = _browserDetection.GetNewWindowFlag(executable);
+            if (newWindowFlag != null && (arguments?.All(a => a != newWindowFlag) ?? true))
             {
-                arguments = new[] { "--new-window" }.Concat(arguments ?? []).ToArray();
+                arguments = new[] { newWindowFlag }.Concat(arguments ?? []).ToArray();
             }
         }
 

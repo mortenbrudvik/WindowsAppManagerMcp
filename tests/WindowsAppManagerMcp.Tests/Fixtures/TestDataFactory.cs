@@ -175,6 +175,25 @@ public static class TestDataFactory
         return mock;
     }
 
+    public static Mock<IBrowserDetectionService> CreateMockBrowserDetectionService(
+        bool isBrowser = false,
+        bool containsUrl = false,
+        string? newWindowFlag = "--new-window")
+    {
+        var mock = new Mock<IBrowserDetectionService>();
+
+        mock.Setup(b => b.IsBrowser(It.IsAny<string>()))
+            .Returns(isBrowser);
+
+        mock.Setup(b => b.ContainsUrl(It.IsAny<string[]?>()))
+            .Returns(containsUrl);
+
+        mock.Setup(b => b.GetNewWindowFlag(It.IsAny<string>()))
+            .Returns(isBrowser ? newWindowFlag : null);
+
+        return mock;
+    }
+
     public static Mock<INativeWindowWrapper> CreateMockNativeWindowWrapper(
         IReadOnlyList<WindowInfo>? windows = null)
     {
