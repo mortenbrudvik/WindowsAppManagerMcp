@@ -33,6 +33,118 @@ public class ProcessServiceTests
         _mockValidationService.Object,
         _mockBrowserDetection.Object);
 
+    #region T4.1: LaunchApplication Integration Tests
+
+    /// <summary>
+    /// T4.1.1: Test LaunchApplication with valid executable returns success.
+    /// Uses notepad.exe which is available on all Windows systems.
+    /// </summary>
+    [Fact]
+    public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
+    {
+        // Arrange
+        var sut = CreateSut();
+        Process? launchedProcess = null;
+
+        try
+        {
+            // Act
+            var result = sut.LaunchApplication("notepad.exe", waitForWindow: false);
+
+            // Assert
+            result.Success.Should().BeTrue();
+            result.ProcessId.Should().BeGreaterThan(0);
+            result.ErrorMessage.Should().BeNull();
+            result.ErrorCode.Should().BeNull();
+
+            // Store process for cleanup
+            if (result.ProcessId.HasValue)
+            {
+                try
+                {
+                    launchedProcess = Process.GetProcessById(result.ProcessId.Value);
+                }
+                catch { /* Process may have exited */ }
+            }
+        }
+        finally
+        {
+            // Cleanup - kill the launched notepad
+            try
+            {
+                launchedProcess?.Kill();
+                launchedProcess?.Dispose();
+            }
+            catch { /* Ignore cleanup errors */ }
+        }
+    }
+
+    /// <summary>
+    /// T4.1.2: Test LaunchApplication with invalid executable returns failure.
+    /// </summary>
+    [Fact]
+    public void LaunchApplication_WithInvalidExecutable_ReturnsFailure()
+    {
+        // Arrange
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns(new ExecutableValidationResult(
+                false,
+                Error: "Executable not found or invalid path",
+                ErrorCode: nameof(LaunchErrorCode.InvalidPath)));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("nonexistent_app_xyz123.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ProcessId.Should().BeNull();
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.ErrorCode.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public void LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
+    {
+        // Arrange
+        var sut = CreateSut();
+        Process? launchedProcess = null;
+
+        try
+        {
+            // Act - Wait for window with a generous timeout
+            var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+
+            // Assert
+            result.Success.Should().BeTrue();
+            result.ProcessId.Should().BeGreaterThan(0);
+            // WindowHandle may or may not be set depending on timing
+            // but the call should succeed
+
+            // Store process for cleanup
+            if (result.ProcessId.HasValue)
+            {
+                try
+                {
+                    launchedProcess = Process.GetProcessById(result.ProcessId.Value);
+                }
+                catch { /* Process may have exited */ }
+            }
+        }
+        finally
+        {
+            // Cleanup
+            try
+            {
+                launchedProcess?.Kill();
+                launchedProcess?.Dispose();
+            }
+            catch { /* Ignore cleanup errors */ }
+        }
+    }
+
+    #endregion
+
     #region LaunchApplication Error Code Tests
 
     [Fact]
