@@ -1,5 +1,9 @@
 # Windows App Manager MCP Server
 
+[![Build](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml)
+[![Test](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml)
+![Coverage](https://img.shields.io/badge/coverage-70%25-green)
+
 An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts.
 
 ## Features
@@ -149,8 +153,8 @@ dotnet test
 dotnet test --collect:"XPlat Code Coverage"
 ```
 
-- **325 tests** (288 unit + 37 integration)
-- ~65% code coverage
+- **482 tests** covering unit and integration scenarios
+- ~70% code coverage
 
 ## Project Structure
 

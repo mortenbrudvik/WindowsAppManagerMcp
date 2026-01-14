@@ -40,7 +40,8 @@
       "mcp__plugin_windows-app-manager_windows-app-manager__focus_window",
       "mcp__plugin_windows-app-manager_windows-app-manager__get_all_windows",
       "mcp__plugin_grok-mcp_grok__grok_query",
-      "mcp__plugin_grok-mcp_grok__grok_generate_image"
+      "mcp__plugin_grok-mcp_grok__grok_generate_image",
+      "Bash(test:*)"
     ]
   }
 }
