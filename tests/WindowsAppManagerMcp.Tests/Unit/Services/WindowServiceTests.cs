@@ -39,6 +39,33 @@ public class WindowServiceTests
         result.Should().NotBeEmpty("There should be at least some visible windows on the system");
     }
 
+    /// <summary>
+    /// T2.2.3: Test GetAllWindows with includeMinimized: false excludes minimized windows.
+    /// Uses mock to ensure predictable test data with minimized windows.
+    /// </summary>
+    [Fact]
+    public void GetAllWindows_WithIncludeMinimizedFalse_ExcludesMinimizedWindows()
+    {
+        // Arrange - Create test windows with one minimized
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Normal Window", "app1", 1001, state: WindowState.Normal),
+            TestDataFactory.CreateWindowInfo(1002, "Minimized Window", "app2", 1002, state: WindowState.Minimized),
+            TestDataFactory.CreateWindowInfo(1003, "Maximized Window", "app3", 1003, state: WindowState.Maximized)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act
+        var result = sut.GetAllWindows(includeMinimized: false);
+
+        // Assert - Should exclude the minimized window
+        result.Should().HaveCount(2);
+        result.Should().NotContain(w => w.State == WindowState.Minimized);
+        result.Should().Contain(w => w.Title == "Normal Window");
+        result.Should().Contain(w => w.Title == "Maximized Window");
+    }
+
     [Fact]
     public void GetAllWindows_ReturnsWindowsWithValidHandles()
     {
