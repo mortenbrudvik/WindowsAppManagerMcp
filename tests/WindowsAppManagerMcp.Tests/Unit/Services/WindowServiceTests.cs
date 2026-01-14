@@ -123,6 +123,34 @@ public class WindowServiceTests
         result.Should().NotBeEmpty();
     }
 
+    /// <summary>
+    /// T2.3.1: Test FindWindows with titleContains filter.
+    /// Uses mock to ensure predictable test data with specific titles.
+    /// </summary>
+    [Fact]
+    public void FindWindows_WithTitleContains_FiltersCorrectly()
+    {
+        // Arrange - Create test windows with distinctive titles
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Document.txt - Notepad", "notepad", 1001),
+            TestDataFactory.CreateWindowInfo(1002, "Google Chrome - Search", "chrome", 1002),
+            TestDataFactory.CreateWindowInfo(1003, "Document.docx - Word", "WINWORD", 1003),
+            TestDataFactory.CreateWindowInfo(1004, "Terminal", "WindowsTerminal", 1004)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act - Search for windows with "Document" in title
+        var result = sut.FindWindows(titleContains: "Document");
+
+        // Assert - Should find windows with "Document" in title
+        result.Should().HaveCount(2);
+        result.Should().OnlyContain(w => w.Title.Contains("Document", StringComparison.OrdinalIgnoreCase));
+        result.Should().Contain(w => w.Title.Contains("Notepad"));
+        result.Should().Contain(w => w.Title.Contains("Word"));
+    }
+
     [Fact]
     public void FindWindows_WithProcessName_FiltersCorrectly()
     {
