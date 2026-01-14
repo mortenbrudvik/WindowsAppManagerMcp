@@ -188,6 +188,24 @@ public class LayoutServiceTests : IDisposable
         files.Should().HaveCount(1);
     }
 
+    /// <summary>
+    /// T5.3.6: Test SavePresetAsync respects CancellationToken.
+    /// A pre-cancelled token should cause the operation to throw OperationCanceledException.
+    /// </summary>
+    [Fact]
+    public async Task SavePresetAsync_WithCancelledToken_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var preset = TestDataFactory.CreateLayoutPreset("cancellation-test");
+        var cts = new CancellationTokenSource();
+        cts.Cancel(); // Pre-cancel the token
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await sut.SavePresetAsync(preset, cts.Token));
+    }
+
     #endregion
 
     #region T5.4: DeletePresetAsync Tests

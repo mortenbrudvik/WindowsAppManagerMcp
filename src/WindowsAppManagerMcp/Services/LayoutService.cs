@@ -81,6 +81,10 @@ public class LayoutService : ILayoutService
             _presetCache[preset.Name] = preset;
             return true;
         }
+        catch (OperationCanceledException)
+        {
+            throw; // Propagate cancellation exceptions
+        }
         catch
         {
             return false;
