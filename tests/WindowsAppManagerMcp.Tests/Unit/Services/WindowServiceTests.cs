@@ -255,6 +255,55 @@ public class WindowServiceTests
         result[0].Handle.Should().Be(targetHandle);
     }
 
+    /// <summary>
+    /// T2.3.6: Test FindWindows with visibleOnly: false includes invisible windows.
+    /// When visibleOnly is false, windows with IsVisible=false should be included.
+    /// </summary>
+    [Fact]
+    public void FindWindows_WithVisibleOnlyFalse_IncludesInvisibleWindows()
+    {
+        // Arrange - Create windows with mixed visibility
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Visible Window 1", "app1", 5001, isVisible: true),
+            TestDataFactory.CreateWindowInfo(1002, "Hidden Window", "app2", 5002, isVisible: false),
+            TestDataFactory.CreateWindowInfo(1003, "Visible Window 2", "app3", 5003, isVisible: true)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act - Search with visibleOnly: false
+        var result = sut.FindWindows(visibleOnly: false);
+
+        // Assert - Should include the invisible window
+        result.Should().HaveCount(3);
+        result.Should().Contain(w => w.Title == "Hidden Window");
+    }
+
+    /// <summary>
+    /// Complementary test: visibleOnly: true should exclude invisible windows.
+    /// </summary>
+    [Fact]
+    public void FindWindows_WithVisibleOnlyTrue_ExcludesInvisibleWindows()
+    {
+        // Arrange - Create windows with mixed visibility
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Visible Window 1", "app1", 5001, isVisible: true),
+            TestDataFactory.CreateWindowInfo(1002, "Hidden Window", "app2", 5002, isVisible: false),
+            TestDataFactory.CreateWindowInfo(1003, "Visible Window 2", "app3", 5003, isVisible: true)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act - Search with visibleOnly: true (default)
+        var result = sut.FindWindows(visibleOnly: true);
+
+        // Assert - Should NOT include the invisible window
+        result.Should().HaveCount(2);
+        result.Should().NotContain(w => w.Title == "Hidden Window");
+    }
+
     #endregion
 
     #region T2.3: GetForegroundWindow Tests
