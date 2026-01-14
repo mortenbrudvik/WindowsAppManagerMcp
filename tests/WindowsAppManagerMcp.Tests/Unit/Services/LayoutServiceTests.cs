@@ -657,5 +657,77 @@ public class LayoutServiceTests : IDisposable
             Times.Never);
     }
 
+    /// <summary>
+    /// T5.6.10: Test ApplyPresetAsync handles multiple windows per process.
+    /// When a preset has multiple placements for the same process (with different title matchers),
+    /// each placement should find and arrange its specific window.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPresetAsync_WithMultipleWindowsPerProcess_ArrangesEachCorrectly()
+    {
+        // Arrange - Two windows from the same process with different titles
+        var codeWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1001,
+            title: "main.cs - MyProject",
+            processName: "Code",
+            processId: 5001);
+        var settingsWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1002,
+            title: "Settings - MyProject",
+            processName: "Code",  // Same process
+            processId: 5001);     // Same PID
+        var terminalWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1003,
+            title: "Terminal",
+            processName: "WindowsTerminal",
+            processId: 5002);
+
+        _mockWindowService.Setup(w => w.GetAllWindows(true))
+            .Returns(new List<WindowInfo> { codeWindow, settingsWindow, terminalWindow });
+
+        var sut = CreateSut();
+        // Create preset with multiple placements targeting different windows from same process
+        var preset = TestDataFactory.CreateLayoutPreset(
+            "multi-window-test",
+            placements: new List<WindowPlacement>
+            {
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(TitleContains: "main.cs", ProcessName: "Code"),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0, 0, 0.5, 1.0),  // Left half
+                    LaunchCommand: null, Focus: false, Order: 0),
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(TitleContains: "Settings", ProcessName: "Code"),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0.5, 0, 0.5, 0.5),  // Top-right quarter
+                    LaunchCommand: null, Focus: false, Order: 1),
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(TitleContains: null, ProcessName: "WindowsTerminal"),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0.5, 0.5, 0.5, 0.5),  // Bottom-right quarter
+                    LaunchCommand: null, Focus: false, Order: 2)
+            });
+        await sut.SavePresetAsync(preset);
+
+        // Act
+        var result = await sut.ApplyPresetAsync("multi-window-test", matchBy: "process_and_title");
+
+        // Assert - All three windows should be arranged
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(3);
+        result.WindowsNotFound.Should().Be(0);
+
+        // Verify each window was arranged exactly once
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(codeWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(settingsWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(terminalWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+    }
+
     #endregion
 }
