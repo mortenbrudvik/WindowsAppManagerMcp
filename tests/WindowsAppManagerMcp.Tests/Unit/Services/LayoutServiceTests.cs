@@ -594,5 +594,68 @@ public class LayoutServiceTests : IDisposable
             Times.Once);
     }
 
+    /// <summary>
+    /// T5.6.6: Test ApplyPresetAsync with matchBy: process_and_title (default).
+    /// Should require BOTH process name AND title to match.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPresetAsync_WithMatchByProcessAndTitle_RequiresBothToMatch()
+    {
+        // Arrange - Multiple windows: only one matches both process AND title
+        var matchingWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1001,
+            title: "Project - Editor",
+            processName: "editor",
+            processId: 5001);
+        var processOnlyMatch = TestDataFactory.CreateWindowInfo(
+            handleValue: 1002,
+            title: "Different Title",
+            processName: "editor",  // Same process, different title
+            processId: 5002);
+        var titleOnlyMatch = TestDataFactory.CreateWindowInfo(
+            handleValue: 1003,
+            title: "Project - Other",
+            processName: "otherapp",  // Different process, similar title
+            processId: 5003);
+
+        _mockWindowService.Setup(w => w.GetAllWindows(true))
+            .Returns(new List<WindowInfo> { matchingWindow, processOnlyMatch, titleOnlyMatch });
+
+        var sut = CreateSut();
+        var preset = TestDataFactory.CreateLayoutPreset(
+            "both-test",
+            placements: new List<WindowPlacement>
+            {
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(
+                        TitleContains: "Project",  // Must contain "Project"
+                        ProcessName: "editor"      // Must be from "editor" process
+                    ),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0, 0, 0.5, 1.0),
+                    LaunchCommand: null,
+                    Focus: false,
+                    Order: 0)
+            });
+        await sut.SavePresetAsync(preset);
+
+        // Act - Use process_and_title matching (default)
+        var result = await sut.ApplyPresetAsync("both-test", matchBy: "process_and_title");
+
+        // Assert - Should only match the window that has BOTH conditions met
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(1);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(matchingWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+        // Verify other windows were NOT arranged
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(processOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Never);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(titleOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Never);
+    }
+
     #endregion
 }
