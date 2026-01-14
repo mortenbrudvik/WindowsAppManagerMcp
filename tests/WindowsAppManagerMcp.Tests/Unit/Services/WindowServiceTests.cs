@@ -170,6 +170,34 @@ public class WindowServiceTests
             w.ProcessName.Contains(targetProcessName, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// T2.3.3: Test FindWindows with processId filter.
+    /// Uses mock to ensure predictable test data with specific process IDs.
+    /// </summary>
+    [Fact]
+    public void FindWindows_WithProcessId_FiltersCorrectly()
+    {
+        // Arrange - Create test windows with different process IDs
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Window 1", "app1", 5001),
+            TestDataFactory.CreateWindowInfo(1002, "Window 2", "app2", 5002),
+            TestDataFactory.CreateWindowInfo(1003, "Window 3", "app1", 5001), // Same process as Window 1
+            TestDataFactory.CreateWindowInfo(1004, "Window 4", "app3", 5003)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act - Search for windows with specific process ID
+        var result = sut.FindWindows(processId: 5001);
+
+        // Assert - Should find windows belonging to process 5001
+        result.Should().HaveCount(2);
+        result.Should().OnlyContain(w => w.ProcessId == 5001);
+        result.Should().Contain(w => w.Title == "Window 1");
+        result.Should().Contain(w => w.Title == "Window 3");
+    }
+
     [Fact]
     public void FindWindows_WithNonMatchingFilter_ReturnsEmpty()
     {
