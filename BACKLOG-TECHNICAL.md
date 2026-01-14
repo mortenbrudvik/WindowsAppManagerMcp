@@ -153,14 +153,14 @@ This document contains granular, actionable testing tasks following TDD principl
 
 > **Note**: MonitorService tests are in `MonitorServiceTests.cs`. Uses helper method to test CalculateSnapBounds algorithm without P/Invoke.
 
-### T3.1-T3.5: Monitor Query Tests
+### T3.1-T3.5: Monitor Query Tests ✅
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T3.1.1 | Test `GetAllMonitors` returns non-empty list | P0 | [ ] | Requires P/Invoke mock |
-| T3.2.1 | Test `GetPrimaryMonitor` returns monitor with `IsPrimary: true` | P0 | [ ] | Requires P/Invoke mock |
+| T3.1.1 | Test `GetAllMonitors` returns non-empty list | P0 | [x] | Integration test |
+| T3.2.1 | Test `GetPrimaryMonitor` returns monitor with `IsPrimary: true` | P0 | [x] | Integration test |
 
-> **Note**: Direct MonitorService method tests require native wrapper interface (T1.A tasks).
+> **Note**: These are integration tests that run against the actual system (every Windows has monitors).
 
 ### T3.6: CalculateSnapBounds Tests (Parameterized) ✅
 
@@ -181,14 +181,14 @@ This document contains granular, actionable testing tasks following TDD principl
 
 > **Note**: ProcessService tests are in `ProcessServiceTests.cs`. Uses real process enumeration for testing.
 
-### T4.1: LaunchApplication Tests
+### T4.1: LaunchApplication Tests ✅
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T4.1.1 | Test `LaunchApplication` with valid executable returns success | P0 | [ ] | Side effects - integration test |
-| T4.1.2 | Test `LaunchApplication` with invalid executable returns failure | P0 | [ ] | Side effects - integration test |
+| T4.1.1 | Test `LaunchApplication` with valid executable returns success | P0 | [x] | Integration test with notepad.exe |
+| T4.1.2 | Test `LaunchApplication` with invalid executable returns failure | P0 | [x] | Mock validation service |
 
-> **Note**: LaunchApplication tests have side effects (actually launching processes). Better suited for integration tests.
+> **Note**: T4.1.1 launches notepad.exe and cleans up after. Tests include proper process cleanup.
 
 ### T4.2: GetRunningProcesses Tests ✅
 
@@ -387,7 +387,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | T8.1 | Create GitHub Actions workflow for tests | P1 | [x] | `.github/workflows/test.yml` |
 | T8.2 | Add test step to build workflow | P1 | [x] | `.github/workflows/build.yml` |
 | T8.3 | Configure coverage reporting | P2 | [x] | ReportGenerator with HTML + Markdown |
-| T8.4 | Add coverage badge to README | P3 | [ ] | Status badge (no README yet) |
+| T8.4 | Add coverage badge to README | P3 | [x] | Added Build, Test, Coverage badges |
 | T8.5 | Configure test result publishing | P2 | [x] | Artifacts upload |
 | T8.6 | Set up coverage threshold check (60%) | P2 | [x] | Quality gate in test.yml |
 
@@ -399,8 +399,8 @@ This document contains granular, actionable testing tasks following TDD principl
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 472 |
-| **Passing** | 472 (100%) |
+| **Total Tests** | 482 |
+| **Passing** | 482 (100%) |
 | **Line Coverage** | ~70% |
 | **Branch Coverage** | ~60% |
 | **Method Coverage** | ~90% |
