@@ -547,5 +547,52 @@ public class LayoutServiceTests : IDisposable
             Times.Once);
     }
 
+    /// <summary>
+    /// T5.6.5: Test ApplyPresetAsync with matchBy: title_only.
+    /// Should match windows by title only, ignoring process name.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPresetAsync_WithMatchByTitleOnly_MatchesByTitleOnly()
+    {
+        // Arrange - Window with matching title but different process name
+        var testWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1001,
+            title: "My Document - Editor",
+            processName: "differentapp",  // Different process
+            processId: 5001);
+        _mockWindowService.Setup(w => w.GetAllWindows(true))
+            .Returns(new List<WindowInfo> { testWindow });
+
+        var sut = CreateSut();
+        // Create preset looking for specific process that doesn't match, but title does
+        var preset = TestDataFactory.CreateLayoutPreset(
+            "title-only-test",
+            placements: new List<WindowPlacement>
+            {
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(
+                        TitleContains: "My Document",  // Title matches
+                        ProcessName: "nonexistent"    // Process doesn't match
+                    ),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0, 0, 0.5, 1.0),
+                    LaunchCommand: null,
+                    Focus: false,
+                    Order: 0)
+            });
+        await sut.SavePresetAsync(preset);
+
+        // Act - Use title_only matching
+        var result = await sut.ApplyPresetAsync("title-only-test", matchBy: "title_only");
+
+        // Assert - Should find and arrange the window despite process mismatch
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(1);
+        result.WindowsNotFound.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+    }
+
     #endregion
 }
