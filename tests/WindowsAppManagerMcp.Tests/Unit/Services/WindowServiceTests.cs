@@ -211,6 +211,33 @@ public class WindowServiceTests
         result.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// T2.3.5: Test FindWindows with multiple filters uses AND logic.
+    /// All filters must match for a window to be included in results.
+    /// </summary>
+    [Fact]
+    public void FindWindows_WithMultipleFilters_UsesAndLogic()
+    {
+        // Arrange - Create windows where some match partial filters
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Project - Notepad", "notepad", 5001),     // Matches title AND processId
+            TestDataFactory.CreateWindowInfo(1002, "Project - Code", "code", 5002),           // Matches title only
+            TestDataFactory.CreateWindowInfo(1003, "Document - Notepad", "notepad", 5001),   // Matches processId only
+            TestDataFactory.CreateWindowInfo(1004, "Other Window", "other", 5003)             // Matches nothing
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act - Search with both title and processId filters
+        var result = sut.FindWindows(titleContains: "Project", processId: 5001);
+
+        // Assert - Should only find windows matching BOTH filters
+        result.Should().HaveCount(1);
+        result[0].Title.Should().Be("Project - Notepad");
+        result[0].ProcessId.Should().Be(5001);
+    }
+
     [Fact]
     public void FindWindows_WithHandle_ReturnsMatchingWindow()
     {
