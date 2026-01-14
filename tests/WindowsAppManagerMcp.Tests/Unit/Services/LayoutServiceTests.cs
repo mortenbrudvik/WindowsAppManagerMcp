@@ -500,5 +500,52 @@ public class LayoutServiceTests : IDisposable
             Times.Never);
     }
 
+    /// <summary>
+    /// T5.6.4: Test ApplyPresetAsync with matchBy: process_only.
+    /// Should match windows by process name only, ignoring title.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPresetAsync_WithMatchByProcessOnly_MatchesByProcessNameOnly()
+    {
+        // Arrange - Window with different title but matching process name
+        var testWindow = TestDataFactory.CreateWindowInfo(
+            handleValue: 1001,
+            title: "Different Title - Something Else",
+            processName: "targetapp",
+            processId: 5001);
+        _mockWindowService.Setup(w => w.GetAllWindows(true))
+            .Returns(new List<WindowInfo> { testWindow });
+
+        var sut = CreateSut();
+        // Create preset looking for specific title that doesn't match, but process name does
+        var preset = TestDataFactory.CreateLayoutPreset(
+            "process-only-test",
+            placements: new List<WindowPlacement>
+            {
+                new WindowPlacement(
+                    Matcher: new WindowMatcher(
+                        TitleContains: "Nonexistent Title", // Title doesn't match
+                        ProcessName: "targetapp"            // Process does match
+                    ),
+                    MonitorIndex: 0,
+                    Position: new RelativePosition(0, 0, 0.5, 1.0),
+                    LaunchCommand: null,
+                    Focus: false,
+                    Order: 0)
+            });
+        await sut.SavePresetAsync(preset);
+
+        // Act - Use process_only matching
+        var result = await sut.ApplyPresetAsync("process-only-test", matchBy: "process_only");
+
+        // Assert - Should find and arrange the window despite title mismatch
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(1);
+        result.WindowsNotFound.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            Times.Once);
+    }
+
     #endregion
 }
