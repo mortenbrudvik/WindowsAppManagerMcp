@@ -7,6 +7,7 @@ description: |
   - Move, resize, snap, minimize, maximize, focus, or close windows
   - Show monitors or move windows between monitors
   - Take screenshots of screens, windows, or regions
+  - Get UI elements or element coordinates from windows
   - Launch applications or open programs
   - List or kill processes
   - Save, apply, restore, or manage window layouts
@@ -14,7 +15,7 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 25 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 32 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## When to Use
 
@@ -41,11 +42,14 @@ Use this skill when the user asks to:
 - "List running processes"
 - "Kill process [name/PID]"
 
-### Screenshots
+### Screenshots & UI Automation
 - "Take a screenshot" / "Capture the screen"
 - "Take a screenshot of monitor 0"
 - "Capture the [app] window"
 - "Capture a region at [x, y] with size [width x height]"
+- "Capture [app] with UI element overlays"
+- "Get all UI elements from the [app] window"
+- "Get all buttons and text inputs from [app]"
 
 ### Layout Management
 - "Save my current window arrangement as [name]"
@@ -53,7 +57,7 @@ Use this skill when the user asks to:
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
-## Available Tools (25)
+## Available Tools (32)
 
 ### Window Discovery (3 tools)
 
@@ -76,6 +80,16 @@ Use this skill when the user asks to:
 | `snap_window` | Snap to preset position | handle, position, monitorIndex |
 | `move_window_to_monitor` | Move to monitor | handle, monitorIndex, maximize |
 
+### Batch Operations (5 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `set_windows_bounds_batch` | Move/resize multiple windows | placements |
+| `snap_windows_batch` | Snap multiple windows | placements |
+| `set_windows_state_batch` | Set state of multiple windows | changes |
+| `close_windows_batch` | Close multiple windows | windows |
+| `launch_applications_batch` | Launch multiple applications | applications |
+
 ### Monitor Info (2 tools)
 
 | Tool | Description | Key Parameters |
@@ -83,7 +97,7 @@ Use this skill when the user asks to:
 | `get_monitors` | List all displays | (none) |
 | `get_primary_monitor` | Get primary display | (none) |
 
-### Screenshot (4 tools)
+### Screenshot (5 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -91,6 +105,13 @@ Use this skill when the user asks to:
 | `take_screenshot` | Capture a monitor | monitorIndex, format, quality |
 | `capture_region` | Capture screen region | x, y, width, height, format |
 | `capture_window` | Capture a window | handle, includeFrame, format |
+| `capture_with_elements` | Capture with UI overlays | handle, controlTypes, maxDepth |
+
+### UI Automation (1 tool)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, interactableOnly |
 
 ### App Launch (3 tools)
 
@@ -155,6 +176,18 @@ The `snap_window` tool supports 14 positions:
 3. Analyze the base64-encoded image data
 4. Take actions based on visual content
 
+### Get UI Elements for Programmatic Interaction
+1. Use `find_windows` to locate the target window
+2. Use `get_ui_elements` to get element tree with bounding boxes
+3. Filter by controlTypes (Button, Edit, etc.) if needed
+4. Use element coordinates to plan click automation
+
+### Visual Element Discovery
+1. Use `find_windows` to locate the target window
+2. Use `capture_with_elements` to get annotated screenshot
+3. Elements are color-coded (green=buttons, blue=inputs, etc.)
+4. Use `imageBounds` for visual reference, `screenBounds` for clicks
+
 ## Tips
 
 - Always use `find_windows` first to get window handles before manipulating windows
@@ -164,6 +197,9 @@ The `snap_window` tool supports 14 positions:
 - Monitor indices are 0-based (primary is typically 0)
 - Screenshots return base64-encoded images - use PNG for UI clarity, JPEG for smaller size
 - `capture_window` works on occluded windows but not minimized ones
+- `capture_with_elements` provides visual overlays - great for debugging UI automation
+- `get_ui_elements` is lightweight when only coordinates are needed (no image data)
+- Filter elements by controlTypes: Button, Edit, CheckBox, ComboBox, etc.
 
 ## Full Documentation
 

@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 30 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 32 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -10,7 +10,8 @@ A comprehensive guide to all 30 MCP tools for managing Windows applications, win
 | [Window Control](#window-control) | move_window, resize_window, set_window_bounds, set_window_state, focus_window, close_window, snap_window, move_window_to_monitor | 8 |
 | [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, close_windows_batch, launch_applications_batch | 5 |
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
-| [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window | 4 |
+| [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
+| [UI Automation](#ui-automation) | get_ui_elements | 1 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
 
@@ -1009,6 +1010,209 @@ Capture a screenshot of a specific window. Works even if the window is partially
 ```
 
 > **Note:** Minimized windows cannot be captured. The window must be visible (though it can be behind other windows).
+
+---
+
+### capture_with_elements
+
+Capture a window screenshot with UI element bounding box overlays. Returns an annotated image with element coordinates for click targeting.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
+| includeFrame | bool | No | true | Include window frame/decoration |
+| format | string | No | "png" | Image format: "png" or "jpeg" |
+| quality | int | No | 85 | JPEG quality (1-100) |
+| maxDepth | int | No | 5 | Max depth to traverse UI tree (1-10) |
+| controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit") |
+| interactableOnly | bool | No | false | Only include enabled/interactable elements |
+| visibleOnly | bool | No | true | Only include visible elements |
+| highlightInteractable | bool | No | true | Use brighter colors for enabled elements |
+| timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms |
+
+**Color Coding:**
+| Control Type | Color |
+|--------------|-------|
+| Button, SplitButton | Green |
+| Edit, Document | Blue |
+| CheckBox, RadioButton | Orange |
+| ComboBox, List, ListItem | Purple |
+| Hyperlink | Cyan |
+| MenuItem, Menu, MenuBar | Red |
+| Tab, TabItem | Yellow |
+| Image | Gray |
+| Text | Light Gray |
+| Other | Light Blue |
+
+**Example:**
+> "Capture Notepad with UI element overlays"
+
+```json
+{
+  "name": "capture_with_elements",
+  "arguments": {
+    "handle": 12345
+  }
+}
+```
+
+**Example with filters:**
+> "Capture only buttons and text inputs in VS Code"
+
+```json
+{
+  "name": "capture_with_elements",
+  "arguments": {
+    "handle": 330390,
+    "controlTypes": "Button,Edit",
+    "interactableOnly": true,
+    "maxDepth": 3
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageData": "iVBORw0KGgoAAAANSUhEUgAAA...",
+  "imageFormat": "png",
+  "width": 1200,
+  "height": 800,
+  "windowHandle": 12345,
+  "windowTitle": "Untitled - Notepad",
+  "elements": [
+    {
+      "name": "File",
+      "controlType": "MenuItem",
+      "automationId": null,
+      "imageBounds": { "x": 10, "y": 30, "width": 50, "height": 22 },
+      "screenBounds": { "x": 110, "y": 130, "width": 50, "height": 22 },
+      "isEnabled": true,
+      "overlayColor": "red"
+    },
+    {
+      "name": "Text Editor",
+      "controlType": "Edit",
+      "automationId": "15",
+      "imageBounds": { "x": 0, "y": 52, "width": 1200, "height": 748 },
+      "screenBounds": { "x": 100, "y": 152, "width": 1200, "height": 748 },
+      "isEnabled": true,
+      "overlayColor": "blue"
+    }
+  ],
+  "elementCount": 24,
+  "captureElapsedMs": 45.2,
+  "annotationElapsedMs": 127.8,
+  "monitorScaleFactor": 1.5
+}
+```
+
+> **Note:** The `imageBounds` coordinates are relative to the captured image, while `screenBounds` are absolute screen coordinates. Use `imageBounds` for visual reference and `screenBounds` for click automation.
+
+---
+
+## UI Automation
+
+Tools for retrieving UI element information from windows using Windows UI Automation.
+
+### get_ui_elements
+
+Get the UI element tree with bounding boxes for a window. Provides a lightweight alternative to screenshots when only element coordinates are needed for programmatic interaction planning.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
+| maxDepth | int | No | 5 | Max depth to traverse UI tree (1-10) |
+| controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit,ComboBox") |
+| interactableOnly | bool | No | false | Only include enabled elements |
+| visibleOnly | bool | No | true | Only include visible (on-screen) elements |
+| minWidth | int | No | - | Minimum element width to include |
+| minHeight | int | No | - | Minimum element height to include |
+| timeoutMs | int | No | 10000 | Timeout for UI traversal in ms (max 30000) |
+
+**Supported Control Types:**
+Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
+
+**Example:**
+> "Get all UI elements from the Notepad window"
+
+```json
+{
+  "name": "get_ui_elements",
+  "arguments": {
+    "handle": 12345
+  }
+}
+```
+
+**Example with filters:**
+> "Get only buttons and text inputs larger than 20x20 pixels"
+
+```json
+{
+  "name": "get_ui_elements",
+  "arguments": {
+    "handle": 12345,
+    "controlTypes": "Button,Edit",
+    "interactableOnly": true,
+    "minWidth": 20,
+    "minHeight": 20
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "windowHandle": 12345,
+  "windowTitle": "Untitled - Notepad",
+  "elements": [
+    {
+      "name": "File",
+      "controlType": "MenuItem",
+      "automationId": null,
+      "bounds": { "x": 110, "y": 130, "width": 50, "height": 22 },
+      "isEnabled": true,
+      "isOffscreen": false,
+      "children": null
+    },
+    {
+      "name": "Edit",
+      "controlType": "MenuItem",
+      "automationId": null,
+      "bounds": { "x": 160, "y": 130, "width": 45, "height": 22 },
+      "isEnabled": true,
+      "isOffscreen": false,
+      "children": null
+    },
+    {
+      "name": "Text Editor",
+      "controlType": "Edit",
+      "automationId": "15",
+      "bounds": { "x": 100, "y": 152, "width": 1200, "height": 748 },
+      "isEnabled": true,
+      "isOffscreen": false,
+      "children": null
+    }
+  ],
+  "totalElementCount": 45,
+  "depth": 5,
+  "elapsedMilliseconds": 127.5
+}
+```
+
+**Error Codes:**
+| Code | Description |
+|------|-------------|
+| `InvalidHandle` | Window handle is invalid |
+| `WindowNotFound` | Window no longer exists |
+| `AutomationUnavailable` | UI Automation not available |
+| `ElementAccessFailed` | Could not access window elements |
+| `OperationTimedOut` | Traversal exceeded timeout |
 
 ---
 

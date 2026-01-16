@@ -173,7 +173,7 @@
 
 ---
 
-## MCP Tools Summary (30 Tools)
+## MCP Tools Summary (32 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -199,6 +199,8 @@
 | `take_screenshot` | Screenshot | Capture a monitor (PNG/JPEG) |
 | `capture_region` | Screenshot | Capture screen region |
 | `capture_window` | Screenshot | Capture a window |
+| `capture_with_elements` | Screenshot | Capture window with UI element overlays |
+| `get_ui_elements` | UI Automation | Get UI element tree with bounding boxes |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |
@@ -397,32 +399,32 @@ The `/commit` skill automates the release process:
 
 ---
 
-## Phase 11: Enhanced Visual Tools (Future)
+## Phase 11: Enhanced Visual Tools ✅
 
 *Advanced screenshot and UI analysis capabilities*
 
 | # | Task | Status | Priority | Notes |
 |---|------|--------|----------|-------|
-| 11.1 | Add `capture_with_elements` tool | ⏳ Pending | P2 | Screenshot with UI element bounding box overlays |
-| 11.2 | Add `get_ui_elements` tool | ⏳ Pending | P2 | Get UI elements with coordinates (no image) |
+| 11.1 | Add `capture_with_elements` tool | ✅ Complete | P2 | Screenshot with UI element bounding box overlays |
+| 11.2 | Add `get_ui_elements` tool | ✅ Complete | P2 | Get UI elements with coordinates (no image) |
 | 11.3 | OCR integration | ⏳ Pending | P3 | Extract text from screenshots using Windows.Media.Ocr |
 | 11.4 | Screenshot diff detection | ⏳ Pending | P3 | Compare screenshots to detect changes |
 | 11.5 | Windows.Graphics.Capture support | ⏳ Pending | P3 | Modern capture API (requires Win10 1903+) |
 | 11.6 | Video/GIF recording | ⏳ Pending | P3 | Capture sequences for animated workflows |
 
-### Future Tool Designs
+### Implemented Tools
 
 #### capture_with_elements
 Capture a screenshot with UI Automation element overlays drawn on top.
-- Uses existing `IUIAutomationWrapper` to get element bounds
-- Draws colored rectangles around interactable elements
+- Color-coded rectangles by control type (green=buttons, blue=inputs, etc.)
 - Returns image with element coordinates for click targeting
+- Supports filtering by control types, interactability, visibility
 
 #### get_ui_elements
 Get UI element tree with bounding boxes without image capture.
 - Lightweight alternative when only coordinates are needed
 - Returns element name, type, bounds, and automation ID
-- Useful for programmatic interaction planning
+- Supports depth limiting and various filters
 
 ---
 

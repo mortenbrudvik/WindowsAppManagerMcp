@@ -9,13 +9,20 @@ using WindowsAppManagerMcp.Tools;
 public class ScreenshotToolsTests
 {
     private readonly Mock<IScreenshotService> _mockScreenshotService;
+    private readonly Mock<IUIElementService> _mockUIElementService;
+    private readonly Mock<IWindowService> _mockWindowService;
 
     public ScreenshotToolsTests()
     {
         _mockScreenshotService = TestDataFactory.CreateMockScreenshotService();
+        _mockUIElementService = TestDataFactory.CreateMockUIElementService();
+        _mockWindowService = TestDataFactory.CreateMockWindowService();
     }
 
-    private ScreenshotTools CreateSut() => new ScreenshotTools(_mockScreenshotService.Object);
+    private ScreenshotTools CreateSut() => new ScreenshotTools(
+        _mockScreenshotService.Object,
+        _mockUIElementService.Object,
+        _mockWindowService.Object);
 
     #region T9.3.1: ListScreens Tests
 
@@ -351,6 +358,216 @@ public class ScreenshotToolsTests
         // Assert
         result.Success.Should().BeFalse();
         result.Error.Should().Be("Invalid window handle");
+    }
+
+    #endregion
+
+    #region CaptureWithElements Tests
+
+    [Fact]
+    public void CaptureWithElements_WithValidHandle_CallsServices()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345);
+
+        // Assert
+        _mockWindowService.Verify(w => w.GetWindowInfo(new nint(12345)), Times.Once);
+        _mockUIElementService.Verify(u => u.GetUIElements(
+            new nint(12345),
+            It.IsAny<int>(),
+            It.IsAny<UIElementFilter?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithInvalidWindow_ReturnsError()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 99999);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("Window not found");
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithUIElementFailure_ReturnsError()
+    {
+        // Arrange
+        _mockUIElementService.Setup(u => u.GetUIElements(
+                It.IsAny<nint>(),
+                It.IsAny<int>(),
+                It.IsAny<UIElementFilter?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(TestDataFactory.CreateUIElementResult(
+                success: false,
+                error: "Timeout",
+                errorCode: UIElementErrorCode.OperationTimedOut));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 12345);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("UI elements");
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithDefaultParameters_UsesDefaults()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345);
+
+        // Assert
+        _mockUIElementService.Verify(u => u.GetUIElements(
+            It.IsAny<nint>(),
+            5, // Default maxDepth
+            It.Is<UIElementFilter?>(f => f != null && f.VisibleOnly == true && f.InteractableOnly == false),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithControlTypesFilter_ParsesCorrectly()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, controlTypes: "Button,Edit");
+
+        // Assert
+        _mockUIElementService.Verify(u => u.GetUIElements(
+            It.IsAny<nint>(),
+            It.IsAny<int>(),
+            It.Is<UIElementFilter?>(f =>
+                f != null &&
+                f.ControlTypes != null &&
+                f.ControlTypes.Contains("Button") &&
+                f.ControlTypes.Contains("Edit")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithMaxDepth_PassesValue()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, maxDepth: 8);
+
+        // Assert
+        _mockUIElementService.Verify(u => u.GetUIElements(
+            It.IsAny<nint>(),
+            8,
+            It.IsAny<UIElementFilter?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithInteractableOnly_PassesFilter()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, interactableOnly: true);
+
+        // Assert
+        _mockUIElementService.Verify(u => u.GetUIElements(
+            It.IsAny<nint>(),
+            It.IsAny<int>(),
+            It.Is<UIElementFilter?>(f => f != null && f.InteractableOnly == true),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_CallsScreenshotServiceWithElements()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345);
+
+        // Assert
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            new nint(12345),
+            It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<(int, int, int, int)>(),
+            true, // default includeFrame
+            "png", // default format
+            85, // default quality
+            true // default highlightInteractable
+        ), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_ReturnsResultWithWindowTitle()
+    {
+        // Arrange
+        var windowInfo = TestDataFactory.CreateWindowInfo(title: "My Test Window");
+        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(windowInfo);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 12345);
+
+        // Assert
+        result.WindowTitle.Should().Be("My Test Window");
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithFormatJpeg_PassesFormat()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, format: "jpeg", quality: 70);
+
+        // Assert
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(),
+            It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<(int, int, int, int)>(),
+            It.IsAny<bool>(),
+            "jpeg",
+            70,
+            It.IsAny<bool>()
+        ), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_WithHighlightInteractableFalse_PassesFlag()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, highlightInteractable: false);
+
+        // Assert
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(),
+            It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<(int, int, int, int)>(),
+            It.IsAny<bool>(),
+            It.IsAny<string>(),
+            It.IsAny<int>(),
+            false
+        ), Times.Once);
     }
 
     #endregion

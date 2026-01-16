@@ -11,7 +11,8 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Window Discovery** - Find and list windows by title, process name, or handle
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows
 - **Multi-Monitor Support** - Move windows between monitors, get display information
-- **Screenshot Capture** - Capture screens, regions, or windows for AI visual orientation
+- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
+- **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
 - **Application Launch** - Start applications with arguments, open URLs
 - **Process Management** - List running processes, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
@@ -65,7 +66,7 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 
 Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
-## Available Tools (30)
+## Available Tools (32)
 
 | Category | Tools |
 |----------|-------|
@@ -73,7 +74,8 @@ Download the latest release from the [Releases](https://github.com/mortenbrudvik
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
-| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window` |
+| Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
+| UI Automation | `get_ui_elements` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 
@@ -107,11 +109,13 @@ Once configured, you can ask Claude to:
 - "Move Chrome to monitor 2 and maximize it"
 - "Snap Terminal to the right third of the primary monitor"
 
-### Screenshots
+### Screenshots & UI Automation
 - "Take a screenshot of the primary monitor"
 - "Capture the VS Code window"
 - "Take a screenshot of monitor 0"
 - "Capture a 800x600 region at position 100, 200"
+- "Capture the Notepad window with UI element overlays"
+- "Get all buttons and text inputs from the Settings window"
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"

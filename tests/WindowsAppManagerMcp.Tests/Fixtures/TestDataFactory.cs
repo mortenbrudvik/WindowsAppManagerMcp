@@ -134,6 +134,16 @@ public static class TestDataFactory
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns(true);
 
+        // GetWindowInfo returns the first matching window, or a default for any valid handle
+        foreach (var window in testWindows)
+        {
+            mock.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        }
+        // For any other non-zero handle, return a default window info
+        mock.Setup(w => w.GetWindowInfo(It.Is<nint>(h => h != nint.Zero && !testWindows.Any(tw => tw.Handle == h))))
+            .Returns(CreateWindowInfo());
+        mock.Setup(w => w.GetWindowInfo(nint.Zero)).Returns((WindowInfo?)null);
+
         return mock;
     }
 
@@ -466,7 +476,63 @@ public static class TestDataFactory
                 It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>()))
             .Returns(screenshotResult);
 
+        var annotatedResult = CreateAnnotatedScreenshotResult(success: success, error: error);
+        mock.Setup(s => s.CaptureWindowWithElements(
+                It.IsAny<nint>(),
+                It.IsAny<IReadOnlyList<UIElementInfo>>(),
+                It.IsAny<(int, int, int, int)>(),
+                It.IsAny<bool>(),
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<bool>()))
+            .Returns(annotatedResult);
+
         return mock;
+    }
+
+    public static AnnotatedScreenshotResult CreateAnnotatedScreenshotResult(
+        bool success = true,
+        string? imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        string imageFormat = "png",
+        int width = 800,
+        int height = 600,
+        long windowHandle = 12345,
+        string? windowTitle = "Test Window",
+        IReadOnlyList<AnnotatedElement>? elements = null,
+        int elementCount = 3,
+        double captureMs = 25.0,
+        double annotationMs = 15.0,
+        double? scaleFactor = 1.0,
+        string? error = null)
+    {
+        if (success && elements == null)
+        {
+            elements = new List<AnnotatedElement>
+            {
+                new AnnotatedElement("Submit", "Button", "btnSubmit",
+                    new BoundsDto(100, 100, 80, 30), new BoundsDto(200, 200, 80, 30), true, "green"),
+                new AnnotatedElement("Name", "Edit", "txtName",
+                    new BoundsDto(100, 150, 200, 25), new BoundsDto(200, 250, 200, 25), true, "blue"),
+                new AnnotatedElement("Accept", "CheckBox", "chkAccept",
+                    new BoundsDto(100, 200, 150, 20), new BoundsDto(200, 300, 150, 20), true, "orange")
+            };
+            elementCount = elements.Count;
+        }
+
+        return new AnnotatedScreenshotResult(
+            Success: success,
+            ImageData: success ? imageData : null,
+            ImageFormat: imageFormat,
+            Width: width,
+            Height: height,
+            WindowHandle: windowHandle,
+            WindowTitle: success ? windowTitle : null,
+            Elements: success ? elements : null,
+            ElementCount: success ? elementCount : 0,
+            CaptureElapsedMs: captureMs,
+            AnnotationElapsedMs: annotationMs,
+            MonitorScaleFactor: scaleFactor,
+            Error: error);
     }
 
     #endregion
