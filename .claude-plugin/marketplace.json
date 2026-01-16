@@ -1,18 +1,43 @@
 {
   "name": "windows-app-manager-marketplace",
-  "description": "Windows App Manager plugin marketplace",
+  "description": "Windows App Manager MCP - Control Windows applications and desktop layouts from Claude",
   "owner": {
     "name": "Morten Brudvik"
+  },
+  "metadata": {
+    "description": "Complete Windows application control, window management, and desktop layout automation",
+    "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "windows-app-manager",
-      "description": "Manage Windows applications, windows, and desktop layouts from Claude",
-      "version": "1.6.0",
+      "description": "Comprehensive Windows application and window management. Launch apps, control windows, snap layouts, and automate desktop workflows.",
+      "version": "1.6.1",
       "source": "./",
       "author": {
         "name": "Morten Brudvik"
-      }
+      },
+      "homepage": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
+      "repository": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
+      "license": "MIT",
+      "keywords": [
+        "windows",
+        "window-manager",
+        "layout",
+        "desktop",
+        "mcp",
+        "automation",
+        "app-control",
+        "productivity"
+      ],
+      "category": "productivity",
+      "tags": [
+        "windows",
+        "desktop-management",
+        "automation",
+        "window-control"
+      ],
+      "strict": true
     }
   ]
 }

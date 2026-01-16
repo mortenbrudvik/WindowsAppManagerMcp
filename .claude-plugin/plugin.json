@@ -1,14 +1,23 @@
 {
   "name": "windows-app-manager",
-  "version": "1.6.0",
-  "description": "Manage Windows applications, windows, and desktop layouts from Claude",
+  "version": "1.6.1",
+  "description": "Comprehensive Windows application and window management from Claude. Launch apps, control windows, snap layouts, and automate desktop workflows.",
   "author": {
     "name": "Morten Brudvik"
   },
   "homepage": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
   "repository": "https://github.com/mortenbrudvik/WindowsAppManagerMcp",
   "license": "MIT",
-  "keywords": ["windows", "window-manager", "layout", "desktop", "mcp", "automation"],
+  "keywords": [
+    "windows",
+    "window-manager",
+    "layout",
+    "desktop",
+    "mcp",
+    "automation",
+    "app-control",
+    "productivity"
+  ],
   "skills": "./skills/",
   "mcpServers": {
     "windows-app-manager": {
