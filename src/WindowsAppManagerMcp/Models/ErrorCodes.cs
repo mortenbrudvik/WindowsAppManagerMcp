@@ -128,3 +128,51 @@ public enum LayoutErrorCode
     /// <summary>Invalid layout name.</summary>
     InvalidName = 6
 }
+
+/// <summary>
+/// Error codes for browser reading operations.
+/// </summary>
+public enum BrowserErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>The window handle is invalid or the window no longer exists.</summary>
+    InvalidHandle = 1,
+
+    /// <summary>The window is not a recognized browser.</summary>
+    NotABrowser = 2,
+
+    /// <summary>Failed to find the URL bar element in the browser.</summary>
+    UrlBarNotFound = 3,
+
+    /// <summary>Failed to get the URL value from the browser.</summary>
+    UrlExtractionFailed = 4,
+
+    /// <summary>Failed to find the content area in the browser.</summary>
+    ContentAreaNotFound = 5,
+
+    /// <summary>Failed to extract content from the browser.</summary>
+    ContentExtractionFailed = 6,
+
+    /// <summary>UI Automation is not available or failed to initialize.</summary>
+    AutomationUnavailable = 7,
+
+    /// <summary>No foreground browser window was found.</summary>
+    NoBrowserInForeground = 8,
+
+    /// <summary>An exception occurred during the operation.</summary>
+    OperationException = 9,
+
+    /// <summary>The browser executable was not found.</summary>
+    BrowserNotFound = 10,
+
+    /// <summary>The specified browser type is not supported.</summary>
+    UnsupportedBrowser = 11,
+
+    /// <summary>The CDP port is already in use.</summary>
+    PortInUse = 12,
+
+    /// <summary>Failed to launch browser with debug mode.</summary>
+    DebugLaunchFailed = 13
+}

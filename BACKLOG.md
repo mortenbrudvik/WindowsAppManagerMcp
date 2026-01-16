@@ -146,6 +146,9 @@
 - `config/layouts/dual-monitor.json`
 - `config/layouts/focus-mode.json`
 
+### ✅ Complete - Claude Code Skills
+- `.claude/commands/commit.md` - Versioned release workflow with auto-build
+
 ---
 
 ## Progress Summary
@@ -245,10 +248,12 @@
 | Phase 6: Polish & Testing | █████████░ 90% |
 | Phase 7: Enhancements | ██████████ 100% |
 | Phase 8: Claude Code Plugin | ███████░░░ 70% |
+| Phase 9: Development Tooling | ██████████ 100% |
 
 **Core Implementation: ~98%**
 **With Enhancements: ~99%**
 **With Plugin: ~70% (testing pending)**
+**With Dev Tooling: 100%**
 
 ---
 
@@ -310,3 +315,26 @@ WindowsAppManagerMcp/
 
 - **Claude Desktop**: Still works via manual `claude_desktop_config.json` configuration
 - **Claude Code**: Installable via `/plugin install` command
+
+---
+
+## Phase 9: Development Tooling
+
+*Workflow improvements for maintaining the plugin*
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 9.1 | Add `/commit` skill for versioned releases | ✅ Complete | Creates tagged commits with version updates |
+| 9.2 | Auto-build dist binaries on `/commit` | ✅ Complete | Ensures `dist/` binary always matches source |
+
+### /commit Workflow
+
+The `/commit` skill automates the release process:
+
+1. **Gather Information** - Version number and description
+2. **Update Version Numbers** - plugin.json, marketplace.json
+3. **Build Release Binary** - `dotnet publish` to dist/
+4. **Review Changes** - git status/diff
+5. **Commit and Tag** - Conventional commit with annotated tag
+6. **Push** - Push commit and tags to origin
+7. **Confirm** - Display commit hash, tag, and release URL

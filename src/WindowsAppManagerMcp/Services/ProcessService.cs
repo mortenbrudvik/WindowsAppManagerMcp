@@ -389,4 +389,202 @@ public class ProcessService : IProcessService
 
         return null;
     }
+
+    // Browser executable paths for common browsers
+    private static readonly Dictionary<string, string[]> BrowserPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["chrome"] = new[]
+        {
+            @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+        },
+        ["edge"] = new[]
+        {
+            @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            @"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+        },
+        ["brave"] = new[]
+        {
+            @"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+            @"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
+        }
+    };
+
+    private static readonly HashSet<string> SupportedBrowsers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "edge", "brave"
+    };
+
+    public DebugBrowserLaunchResult LaunchBrowserWithDebug(
+        string browser = "chrome",
+        string? url = null,
+        int port = 9222,
+        string? userDataDir = null,
+        bool waitForWindow = true,
+        int waitTimeoutMs = 10000)
+    {
+        // Validate browser type
+        if (!SupportedBrowsers.Contains(browser))
+        {
+            return new DebugBrowserLaunchResult(
+                Success: false,
+                ProcessId: null,
+                WindowHandle: null,
+                CdpPort: null,
+                UserDataDir: null,
+                Error: $"Unsupported browser '{browser}'. Supported browsers: chrome, edge, brave.",
+                ErrorCode: nameof(BrowserErrorCode.UnsupportedBrowser));
+        }
+
+        // Find browser executable
+        var browserPath = ResolveBrowserPath(browser);
+        if (browserPath == null)
+        {
+            return new DebugBrowserLaunchResult(
+                Success: false,
+                ProcessId: null,
+                WindowHandle: null,
+                CdpPort: null,
+                UserDataDir: null,
+                Error: $"Browser '{browser}' not found. Please ensure it is installed.",
+                ErrorCode: nameof(BrowserErrorCode.BrowserNotFound));
+        }
+
+        // Check if port is already in use
+        if (IsPortInUse(port))
+        {
+            return new DebugBrowserLaunchResult(
+                Success: false,
+                ProcessId: null,
+                WindowHandle: null,
+                CdpPort: null,
+                UserDataDir: null,
+                Error: $"Port {port} is already in use. Choose a different port or close the application using it.",
+                ErrorCode: nameof(BrowserErrorCode.PortInUse));
+        }
+
+        // Generate user data directory if not specified
+        var effectiveUserDataDir = userDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
+
+        // Build arguments
+        var arguments = new List<string>
+        {
+            $"--remote-debugging-port={port}",
+            $"--user-data-dir=\"{effectiveUserDataDir}\""
+        };
+
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            arguments.Add(url);
+        }
+
+        try
+        {
+            // Launch browser
+            var launchResult = LaunchApplication(
+                browserPath,
+                arguments.ToArray(),
+                workingDirectory: null,
+                waitForWindow: waitForWindow,
+                waitTimeoutMs: waitTimeoutMs);
+
+            if (!launchResult.Success)
+            {
+                return new DebugBrowserLaunchResult(
+                    Success: false,
+                    ProcessId: null,
+                    WindowHandle: null,
+                    CdpPort: null,
+                    UserDataDir: null,
+                    Error: launchResult.ErrorMessage ?? "Failed to launch browser",
+                    ErrorCode: launchResult.ErrorCode ?? nameof(BrowserErrorCode.DebugLaunchFailed));
+            }
+
+            return new DebugBrowserLaunchResult(
+                Success: true,
+                ProcessId: launchResult.ProcessId,
+                WindowHandle: launchResult.WindowHandle,
+                CdpPort: port,
+                UserDataDir: effectiveUserDataDir,
+                Error: null,
+                ErrorCode: null);
+        }
+        catch (Exception ex)
+        {
+            return new DebugBrowserLaunchResult(
+                Success: false,
+                ProcessId: null,
+                WindowHandle: null,
+                CdpPort: null,
+                UserDataDir: null,
+                Error: ex.Message,
+                ErrorCode: nameof(BrowserErrorCode.DebugLaunchFailed));
+        }
+    }
+
+    private static string? ResolveBrowserPath(string browser)
+    {
+        // Check common paths
+        if (BrowserPaths.TryGetValue(browser, out var paths))
+        {
+            foreach (var path in paths)
+            {
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+        }
+
+        // Fall back to PATH lookup
+        try
+        {
+            var processInfo = new ProcessStartInfo
+            {
+                FileName = "where.exe",
+                Arguments = browser switch
+                {
+                    "chrome" => "chrome.exe",
+                    "edge" => "msedge.exe",
+                    "brave" => "brave.exe",
+                    _ => $"{browser}.exe"
+                },
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(processInfo);
+            if (process != null)
+            {
+                var output = process.StandardOutput.ReadLine();
+                process.WaitForExit(5000);
+                if (!string.IsNullOrWhiteSpace(output) && File.Exists(output))
+                {
+                    return output;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore errors from where.exe
+        }
+
+        return null;
+    }
+
+    private static bool IsPortInUse(int port)
+    {
+        try
+        {
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+            listener.Start();
+            listener.Stop();
+            return false;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return true;
+        }
+    }
 }

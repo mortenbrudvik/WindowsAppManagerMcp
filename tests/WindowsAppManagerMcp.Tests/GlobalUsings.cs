@@ -4,6 +4,7 @@ global using FluentAssertions;
 
 global using WindowsAppManagerMcp.Models;
 global using WindowsAppManagerMcp.Models.Results;
+global using WindowsAppManagerMcp.Native;
 global using WindowsAppManagerMcp.Services;
 global using WindowsAppManagerMcp.Services.Interfaces;
 global using WindowsAppManagerMcp.Tests.Fixtures;

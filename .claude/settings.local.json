@@ -47,7 +47,15 @@
       "mcp__plugin_windows-app-manager_windows-app-manager__set_windows_bounds_batch",
       "mcp__plugin_windows-app-manager_windows-app-manager__snap_windows_batch",
       "mcp__plugin_windows-app-manager_windows-app-manager__set_windows_state_batch",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(claude plugin update:*)",
+      "Bash(claude plugin list:*)",
+      "Bash(claude plugin uninstall:*)",
+      "Bash(claude plugin install:*)",
+      "Bash(claude marketplace:*)",
+      "Bash(curl:*)",
+      "Bash(start msedge:*)",
+      "Bash(start:*)"
     ]
   }
 }

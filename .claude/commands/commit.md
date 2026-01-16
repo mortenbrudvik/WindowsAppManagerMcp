@@ -27,11 +27,21 @@ Update version in these files:
 - `.claude-plugin/plugin.json` (line 3, `"version": "X.X.X"`)
 - `.claude-plugin/marketplace.json` (line 11, `"version": "X.X.X"`)
 
-### 3. Review Changes
+### 3. Build Release Binary
+
+Build and publish the release binary to the dist/ folder:
+
+```bash
+dotnet publish src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj -c Release -o dist/
+```
+
+Verify the build succeeded before proceeding.
+
+### 4. Review Changes
 
 Run `git status` and `git diff --stat` to show the user what will be committed.
 
-### 4. Commit and Tag
+### 5. Commit and Tag
 
 ```bash
 # Stage all changes
@@ -49,13 +59,13 @@ git commit -m "feat: <message>
 git tag -a v<version> -m "Release v<version> - <message>"
 ```
 
-### 5. Push
+### 6. Push
 
 ```bash
 git push && git push --tags
 ```
 
-### 6. Confirm
+### 7. Confirm
 
 Display:
 - Commit hash

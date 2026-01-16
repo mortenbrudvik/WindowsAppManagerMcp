@@ -29,10 +29,13 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
 // Register services
 builder.Services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
+builder.Services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
+builder.Services.AddSingleton<ICdpService, CdpService>();
 builder.Services.AddSingleton<IMonitorService, MonitorService>();
 builder.Services.AddSingleton<IWindowService, WindowService>();
 builder.Services.AddSingleton<IInputValidationService, InputValidationService>();
 builder.Services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
+builder.Services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
 builder.Services.AddSingleton<IProcessService, ProcessService>();
 builder.Services.AddSingleton<ILayoutService>(sp =>
 {
@@ -49,6 +52,7 @@ builder.Services.AddSingleton<WindowManagerTools>();
 builder.Services.AddSingleton<MonitorInfoTools>();
 builder.Services.AddSingleton<AppLauncherTools>();
 builder.Services.AddSingleton<LayoutPresetTools>();
+builder.Services.AddSingleton<BrowserReadingTools>();
 
 // Configure MCP Server
 builder.Services.AddMcpServer(options =>
@@ -64,7 +68,8 @@ builder.Services.AddMcpServer(options =>
 .WithTools<WindowManagerTools>()
 .WithTools<MonitorInfoTools>()
 .WithTools<AppLauncherTools>()
-.WithTools<LayoutPresetTools>();
+.WithTools<LayoutPresetTools>()
+.WithTools<BrowserReadingTools>();
 
 var app = builder.Build();
 

@@ -1,6 +1,6 @@
 {
   "name": "windows-app-manager",
-  "version": "1.2.0",
+  "version": "1.6.0",
   "description": "Manage Windows applications, windows, and desktop layouts from Claude",
   "author": {
     "name": "Morten Brudvik"

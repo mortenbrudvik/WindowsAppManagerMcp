@@ -26,10 +26,13 @@ public class DependencyInjectionTests : IDisposable
 
         // Register services exactly as in Program.cs
         services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
+        services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
+        services.AddSingleton<ICdpService, CdpService>();
         services.AddSingleton<IMonitorService, MonitorService>();
         services.AddSingleton<IWindowService, WindowService>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
+        services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
         services.AddSingleton<IProcessService, ProcessService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -45,6 +48,7 @@ public class DependencyInjectionTests : IDisposable
         services.AddSingleton<MonitorInfoTools>();
         services.AddSingleton<AppLauncherTools>();
         services.AddSingleton<LayoutPresetTools>();
+        services.AddSingleton<BrowserReadingTools>();
 
         _serviceProvider = services.BuildServiceProvider();
     }
@@ -65,18 +69,22 @@ public class DependencyInjectionTests : IDisposable
     {
         // Act & Assert - All services should resolve without exception
         var nativeWrapper = _serviceProvider.GetService<INativeWindowWrapper>();
+        var uiAutomationWrapper = _serviceProvider.GetService<IUIAutomationWrapper>();
         var windowService = _serviceProvider.GetService<IWindowService>();
         var monitorService = _serviceProvider.GetService<IMonitorService>();
         var processService = _serviceProvider.GetService<IProcessService>();
         var layoutService = _serviceProvider.GetService<ILayoutService>();
         var inputValidationService = _serviceProvider.GetService<IInputValidationService>();
+        var browserReadingService = _serviceProvider.GetService<IBrowserReadingService>();
 
         nativeWrapper.Should().NotBeNull();
+        uiAutomationWrapper.Should().NotBeNull();
         windowService.Should().NotBeNull();
         monitorService.Should().NotBeNull();
         processService.Should().NotBeNull();
         layoutService.Should().NotBeNull();
         inputValidationService.Should().NotBeNull();
+        browserReadingService.Should().NotBeNull();
     }
 
     #endregion
@@ -204,6 +212,8 @@ public class DependencyInjectionTests : IDisposable
             _serviceProvider.GetRequiredService<IProcessService>();
             _serviceProvider.GetRequiredService<ILayoutService>();
             _serviceProvider.GetRequiredService<IInputValidationService>();
+            _serviceProvider.GetRequiredService<IUIAutomationWrapper>();
+            _serviceProvider.GetRequiredService<IBrowserReadingService>();
 
             // Also resolve tools (which depend on services)
             _serviceProvider.GetRequiredService<WindowFinderTools>();
@@ -211,6 +221,7 @@ public class DependencyInjectionTests : IDisposable
             _serviceProvider.GetRequiredService<MonitorInfoTools>();
             _serviceProvider.GetRequiredService<AppLauncherTools>();
             _serviceProvider.GetRequiredService<LayoutPresetTools>();
+            _serviceProvider.GetRequiredService<BrowserReadingTools>();
         };
 
         act.Should().NotThrow();
@@ -268,6 +279,42 @@ public class DependencyInjectionTests : IDisposable
 
         // Assert
         tools.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void BrowserReadingTools_Resolves_WithDependencies()
+    {
+        // Act
+        var tools = _serviceProvider.GetRequiredService<BrowserReadingTools>();
+
+        // Assert
+        tools.Should().NotBeNull();
+    }
+
+    #endregion
+
+    #region Browser Reading Services Singleton Tests
+
+    [Fact]
+    public void IUIAutomationWrapper_Singleton_SameInstance()
+    {
+        // Act
+        var instance1 = _serviceProvider.GetRequiredService<IUIAutomationWrapper>();
+        var instance2 = _serviceProvider.GetRequiredService<IUIAutomationWrapper>();
+
+        // Assert
+        instance1.Should().BeSameAs(instance2);
+    }
+
+    [Fact]
+    public void IBrowserReadingService_Singleton_SameInstance()
+    {
+        // Act
+        var instance1 = _serviceProvider.GetRequiredService<IBrowserReadingService>();
+        var instance2 = _serviceProvider.GetRequiredService<IBrowserReadingService>();
+
+        // Assert
+        instance1.Should().BeSameAs(instance2);
     }
 
     #endregion

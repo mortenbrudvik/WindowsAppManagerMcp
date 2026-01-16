@@ -262,4 +262,77 @@ public static class TestDataFactory
     }
 
     #endregion
+
+    #region Browser Reading Factories
+
+    public static Mock<IUIAutomationWrapper> CreateMockUIAutomationWrapper(
+        bool isAvailable = true,
+        string? defaultUrl = "https://example.com",
+        string? defaultContent = "Page content")
+    {
+        var mock = new Mock<IUIAutomationWrapper>();
+
+        mock.Setup(u => u.IsAvailable()).Returns(isAvailable);
+
+        // Default GetBrowserUrl returns the specified URL for any valid call
+        if (defaultUrl != null)
+        {
+            mock.Setup(u => u.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<string>()))
+                .Returns(defaultUrl);
+        }
+
+        // Default GetBrowserContent returns the specified content
+        if (defaultContent != null)
+        {
+            mock.Setup(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()))
+                .Returns(defaultContent);
+        }
+
+        // TryGetElementFromHandle returns false for zero handle, true otherwise
+        mock.Setup(u => u.TryGetElementFromHandle(nint.Zero, out It.Ref<object?>.IsAny))
+            .Returns(false);
+        mock.Setup(u => u.TryGetElementFromHandle(It.Is<nint>(h => h != nint.Zero), out It.Ref<object?>.IsAny))
+            .Returns(true);
+
+        return mock;
+    }
+
+    public static Mock<IBrowserReadingService> CreateMockBrowserReadingService(
+        bool success = true,
+        string? url = "https://example.com",
+        string? content = "Page content",
+        string? browserType = "chrome",
+        string? pageTitle = "Test Page")
+    {
+        var mock = new Mock<IBrowserReadingService>();
+
+        var urlResult = new BrowserUrlResult(
+            Success: success,
+            Url: success ? url : null,
+            BrowserType: success ? browserType : null,
+            PageTitle: success ? pageTitle : null,
+            Error: success ? null : "Test error",
+            ErrorCode: success ? BrowserErrorCode.None : BrowserErrorCode.UrlBarNotFound);
+
+        var contentResult = new BrowserContentResult(
+            Success: success,
+            Content: success ? content : null,
+            Url: success ? url : null,
+            BrowserType: success ? browserType : null,
+            PageTitle: success ? pageTitle : null,
+            ContentLength: success ? content?.Length : null,
+            Error: success ? null : "Test error",
+            ErrorCode: success ? BrowserErrorCode.None : BrowserErrorCode.ContentExtractionFailed);
+
+        mock.Setup(s => s.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<int?>())).Returns(urlResult);
+        mock.Setup(s => s.GetBrowserContent(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<int?>())).Returns(contentResult);
+        mock.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>())).Returns(urlResult);
+        mock.Setup(s => s.IsBrowserWindow(It.Is<nint>(h => h != nint.Zero))).Returns(true);
+        mock.Setup(s => s.IsBrowserWindow(nint.Zero)).Returns(false);
+        mock.Setup(s => s.GetBrowserType(It.IsAny<nint>(), It.IsAny<string>())).Returns(browserType);
+
+        return mock;
+    }
+
+    #endregion
 }
