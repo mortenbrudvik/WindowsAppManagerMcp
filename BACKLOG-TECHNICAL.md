@@ -457,39 +457,43 @@ Optional enhancements in BACKLOG.md:
 
 ---
 
-## T9: Screenshot Service Tests (Pending)
+## T9: Screenshot Service Tests (In Progress)
 
 *Screenshot capture functionality. Target: 80%+ coverage*
 
-### T9.1: ScreenCaptureWrapper Tests
+### T9.1: ScreenCaptureWrapper Tests ✓
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T9.1.1 | Test `CaptureScreenRegion` returns valid pixel data | P1 | [ ] | Integration test |
-| T9.1.2 | Test `CaptureScreenRegion` with invalid dimensions throws | P1 | [ ] | Error handling |
-| T9.1.3 | Test `CaptureScreenRegion` with oversized region throws | P1 | [ ] | Max size limit |
-| T9.1.4 | Test `CaptureWindow` with valid handle returns data | P1 | [ ] | Happy path |
-| T9.1.5 | Test `CaptureWindow` with invalid handle throws | P1 | [ ] | Error handling |
-| T9.1.6 | Test `CaptureWindow` with includeFrame option | P2 | [ ] | Frame vs client |
-| T9.1.7 | Test `GetVirtualScreenBounds` returns valid bounds | P1 | [ ] | Multi-monitor |
-| T9.1.8 | Test `IsValidWindow` behavior | P1 | [ ] | Validation |
+| T9.1.1 | Test `CaptureScreenRegion` returns valid pixel data | P1 | [x] | Integration test |
+| T9.1.2 | Test `CaptureScreenRegion` with invalid dimensions throws | P1 | [x] | Error handling |
+| T9.1.3 | Test `CaptureScreenRegion` with oversized region throws | P1 | [x] | Max size limit |
+| T9.1.4 | Test `CaptureWindow` with valid handle returns data | P1 | [ ] | Needs actual window |
+| T9.1.5 | Test `CaptureWindow` with invalid handle throws | P1 | [x] | Error handling |
+| T9.1.6 | Test `CaptureWindow` with includeFrame option | P2 | [ ] | Needs actual window |
+| T9.1.7 | Test `GetVirtualScreenBounds` returns valid bounds | P1 | [x] | Multi-monitor |
+| T9.1.8 | Test `IsValidWindow` behavior | P1 | [x] | Validation |
 
-### T9.2: ScreenshotService Tests
+**Test file:** `tests/WindowsAppManagerMcp.Tests/Integration/ScreenCaptureWrapperIntegrationTests.cs`
+
+### T9.2: ScreenshotService Tests ✓
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T9.2.1 | Test `ListScreens` returns all monitors | P0 | [ ] | Basic contract |
-| T9.2.2 | Test `ListScreens` includes virtual screen bounds | P1 | [ ] | Combined bounds |
-| T9.2.3 | Test `CaptureMonitor` with valid index | P0 | [ ] | Happy path |
-| T9.2.4 | Test `CaptureMonitor` with invalid index returns error | P0 | [ ] | Error handling |
-| T9.2.5 | Test `CaptureMonitor` with PNG format | P1 | [ ] | Format option |
-| T9.2.6 | Test `CaptureMonitor` with JPEG format | P1 | [ ] | Format option |
-| T9.2.7 | Test `CaptureRegion` returns valid image | P0 | [ ] | Happy path |
-| T9.2.8 | Test `CaptureRegion` with invalid dimensions | P1 | [ ] | Error handling |
-| T9.2.9 | Test `CaptureWindow` with valid handle | P0 | [ ] | Happy path |
-| T9.2.10 | Test `CaptureWindow` with invalid handle | P0 | [ ] | Error handling |
-| T9.2.11 | Test image encoding produces valid base64 | P1 | [ ] | Output format |
-| T9.2.12 | Test JPEG quality setting | P2 | [ ] | Quality parameter |
+| T9.2.1 | Test `ListScreens` returns all monitors | P0 | [x] | Basic contract |
+| T9.2.2 | Test `ListScreens` includes virtual screen bounds | P1 | [x] | Combined bounds |
+| T9.2.3 | Test `CaptureMonitor` with valid index | P0 | [x] | Happy path |
+| T9.2.4 | Test `CaptureMonitor` with invalid index returns error | P0 | [x] | Error handling |
+| T9.2.5 | Test `CaptureMonitor` with PNG format | P1 | [x] | Format option |
+| T9.2.6 | Test `CaptureMonitor` with JPEG format | P1 | [x] | Format option |
+| T9.2.7 | Test `CaptureRegion` returns valid image | P0 | [x] | Happy path |
+| T9.2.8 | Test `CaptureRegion` with invalid dimensions | P1 | [x] | Error handling |
+| T9.2.9 | Test `CaptureWindow` with valid handle | P0 | [x] | Happy path |
+| T9.2.10 | Test `CaptureWindow` with invalid handle | P0 | [x] | Error handling |
+| T9.2.11 | Test image encoding produces valid base64 | P1 | [x] | Output format |
+| T9.2.12 | Test JPEG quality setting | P2 | [x] | Quality parameter |
+
+**Test file:** `tests/WindowsAppManagerMcp.Tests/Unit/Services/ScreenshotServiceTests.cs` (29 tests)
 
 ### T9.3: ScreenshotTools Tests
 
