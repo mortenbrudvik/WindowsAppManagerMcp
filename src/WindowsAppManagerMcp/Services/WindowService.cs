@@ -423,6 +423,40 @@ public class WindowService : IWindowService
         return results;
     }
 
+    public IReadOnlyList<(nint Handle, bool Success, string? Error)> CloseWindowsBatch(
+        IReadOnlyList<nint> handles,
+        int delayBetweenMs = 50)
+    {
+        var results = new List<(nint Handle, bool Success, string? Error)>();
+
+        for (var i = 0; i < handles.Count; i++)
+        {
+            var handle = handles[i];
+            try
+            {
+                if (!IsValidWindow(handle))
+                {
+                    results.Add((handle, false, "Invalid window handle"));
+                    continue;
+                }
+
+                var success = CloseWindow(handle);
+                results.Add((handle, success, success ? null : "CloseWindow failed"));
+
+                if (delayBetweenMs > 0 && i < handles.Count - 1)
+                {
+                    Thread.Sleep(delayBetweenMs);
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add((handle, false, ex.Message));
+            }
+        }
+
+        return results;
+    }
+
     private WindowInfo? GetWindowInfoInternal(nint hWnd)
     {
         // Get window title

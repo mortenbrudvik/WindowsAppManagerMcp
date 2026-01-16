@@ -28,6 +28,8 @@ public record ApplicationLaunchRequest(
     string? WorkingDirectory = null
 );
 
+public record WindowCloseRequest(long Handle);
+
 // Output models for batch operations
 public record BatchWindowResult(
     int TotalRequested,

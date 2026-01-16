@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 25 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 26 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -8,7 +8,7 @@ A comprehensive guide to all 25 MCP tools for managing Windows applications, win
 |----------|-------|-------|
 | [Window Discovery](#window-discovery) | find_windows, get_all_windows, get_foreground_window | 3 |
 | [Window Control](#window-control) | move_window, resize_window, set_window_bounds, set_window_state, focus_window, close_window, snap_window, move_window_to_monitor | 8 |
-| [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, launch_applications_batch | 4 |
+| [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, close_windows_batch, launch_applications_batch | 5 |
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
@@ -619,6 +619,53 @@ Each change object contains:
   ]
 }
 ```
+
+---
+
+### close_windows_batch
+
+Close multiple windows gracefully in a single batch operation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| windows | array | Yes | - | Array of window handles to close |
+| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+
+Each window object contains:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| handle | long | Yes | Window handle |
+
+**Example:**
+> "Close all Notepad windows"
+
+```json
+{
+  "name": "close_windows_batch",
+  "arguments": {
+    "windows": [
+      { "handle": 12345 },
+      { "handle": 67890 }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "handle": 12345, "success": true },
+    { "handle": 67890, "success": true }
+  ]
+}
+```
+
+> **Note:** Applications may prompt to save unsaved work before closing.
 
 ---
 

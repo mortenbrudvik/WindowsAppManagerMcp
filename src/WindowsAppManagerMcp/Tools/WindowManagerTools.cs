@@ -162,6 +162,32 @@ public class WindowManagerTools
         return new WindowOperationResult(Success: success);
     }
 
+    [McpServerTool(Name = "close_windows_batch")]
+    [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work.")]
+    public BatchWindowResult CloseWindowsBatch(
+        [Description("Array of window handles to close")]
+        WindowCloseRequest[] windows,
+        [Description("Delay between operations in milliseconds (default: 50)")]
+        int delayBetweenMs = 50)
+    {
+        var handles = windows.Select(w => (nint)w.Handle).ToList();
+
+        var results = _windowService.CloseWindowsBatch(handles, delayBetweenMs);
+
+        var items = results.Select(r => new WindowResultItem(
+            Handle: r.Handle.ToInt64(),
+            Success: r.Success,
+            Error: r.Error
+        )).ToList();
+
+        return new BatchWindowResult(
+            TotalRequested: windows.Length,
+            Succeeded: items.Count(i => i.Success),
+            Failed: items.Count(i => !i.Success),
+            Results: items
+        );
+    }
+
     [McpServerTool(Name = "snap_window")]
     [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen.")]
     public WindowOperationResult SnapWindow(

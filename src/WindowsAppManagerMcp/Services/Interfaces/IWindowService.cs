@@ -47,4 +47,8 @@ public interface IWindowService
     IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowStateBatch(
         IReadOnlyList<(nint Handle, WindowState State)> changes,
         int delayBetweenMs = 30);
+
+    IReadOnlyList<(nint Handle, bool Success, string? Error)> CloseWindowsBatch(
+        IReadOnlyList<nint> handles,
+        int delayBetweenMs = 50);
 }
