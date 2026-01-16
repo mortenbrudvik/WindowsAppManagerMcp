@@ -41,7 +41,12 @@
       "mcp__plugin_windows-app-manager_windows-app-manager__get_all_windows",
       "mcp__plugin_grok-mcp_grok__grok_query",
       "mcp__plugin_grok-mcp_grok__grok_generate_image",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(copy /Y \"publish-new\\\\WindowsAppManagerMcp.exe\" \"publish\\\\WindowsAppManagerMcp.exe\")",
+      "mcp__plugin_windows-app-manager_windows-app-manager__launch_applications_batch",
+      "mcp__plugin_windows-app-manager_windows-app-manager__set_windows_bounds_batch",
+      "mcp__plugin_windows-app-manager_windows-app-manager__snap_windows_batch",
+      "mcp__plugin_windows-app-manager_windows-app-manager__set_windows_state_batch"
     ]
   }
 }

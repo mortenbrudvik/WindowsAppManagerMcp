@@ -42,7 +42,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(handleValue: 12345, x: 100, y: 200));
         var sut = CreateSut();
@@ -52,7 +52,7 @@ public class WindowManagerToolsTests
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockWindowService.Verify(w => w.MoveWindow(handle, 100, 200), Times.Once);
+        _mockWindowService.Verify(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(handleValue: 12345, x: 100, y: 200, width: 800, height: 600));
         var sut = CreateSut();
@@ -140,7 +140,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SetWindowBounds(handle, 50, 50, 1000, 800)).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowBounds(handle, 50, 50, 1000, 800, It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(x: 50, y: 50, width: 1000, height: 800));
         var sut = CreateSut();
@@ -366,7 +366,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SnapWindow(handle, expectedPosition, null)).Returns(true);
+        _mockWindowService.Setup(w => w.SnapWindow(handle, expectedPosition, null, It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
@@ -375,7 +375,7 @@ public class WindowManagerToolsTests
         sut.SnapWindow(12345, positionString);
 
         // Assert
-        _mockWindowService.Verify(w => w.SnapWindow(handle, expectedPosition, null), Times.Once);
+        _mockWindowService.Verify(w => w.SnapWindow(handle, expectedPosition, null, It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]
@@ -384,7 +384,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1)).Returns(true);
+        _mockWindowService.Setup(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
@@ -393,7 +393,7 @@ public class WindowManagerToolsTests
         sut.SnapWindow(12345, "left_half", monitorIndex: 1);
 
         // Assert
-        _mockWindowService.Verify(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1), Times.Once);
+        _mockWindowService.Verify(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>()), Times.Once);
     }
 
     #endregion
@@ -422,7 +422,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 1, "center")).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 1, "center", It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
@@ -432,7 +432,7 @@ public class WindowManagerToolsTests
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 1, "center"), Times.Once);
+        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 1, "center", It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]
@@ -441,7 +441,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 0, "maximize")).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 0, "maximize", It.IsAny<bool>())).Returns(true);
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
@@ -450,7 +450,7 @@ public class WindowManagerToolsTests
         sut.MoveWindowToMonitor(12345, 0, "maximize");
 
         // Assert
-        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 0, "maximize"), Times.Once);
+        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 0, "maximize", It.IsAny<bool>()), Times.Once);
     }
 
     #endregion

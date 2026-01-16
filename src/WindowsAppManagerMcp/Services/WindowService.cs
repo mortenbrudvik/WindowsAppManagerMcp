@@ -103,7 +103,7 @@ public class WindowService : IWindowService
         return GetWindowInfoInternal(handle);
     }
 
-    public bool MoveWindow(nint handle, int x, int y)
+    public bool MoveWindow(nint handle, int x, int y, bool bringToFront = true)
     {
         if (!IsValidWindow(handle))
             return false;
@@ -115,10 +115,16 @@ public class WindowService : IWindowService
         var width = rect.Value.Right - rect.Value.Left;
         var height = rect.Value.Bottom - rect.Value.Top;
 
-        return _nativeWrapper.SetWindowPos(
-            handle,
-            x, y, width, height,
-            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
+        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
+
+        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
+
+        if (success && bringToFront)
+        {
+            _nativeWrapper.BringWindowToTop(handle);
+        }
+
+        return success;
     }
 
     public bool ResizeWindow(nint handle, int width, int height)
@@ -136,7 +142,7 @@ public class WindowService : IWindowService
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
 
-    public bool SetWindowBounds(nint handle, int x, int y, int width, int height)
+    public bool SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true)
     {
         if (!IsValidWindow(handle))
             return false;
@@ -147,10 +153,16 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return _nativeWrapper.SetWindowPos(
-            handle,
-            x, y, width, height,
-            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
+        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
+
+        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
+
+        if (success && bringToFront)
+        {
+            _nativeWrapper.BringWindowToTop(handle);
+        }
+
+        return success;
     }
 
     public bool SetWindowState(nint handle, WindowState state)
@@ -189,7 +201,7 @@ public class WindowService : IWindowService
         return _nativeWrapper.SetForegroundWindow(handle);
     }
 
-    public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null)
+    public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
     {
         if (!IsValidWindow(handle))
             return false;
@@ -197,10 +209,10 @@ public class WindowService : IWindowService
         var targetMonitor = monitorIndex ?? _monitorService.GetMonitorIndex(handle);
         var bounds = _monitorService.CalculateSnapBounds(targetMonitor, position);
 
-        return SetWindowBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        return SetWindowBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height, bringToFront);
     }
 
-    public bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center")
+    public bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center", bool bringToFront = true)
     {
         if (!IsValidWindow(handle))
             return false;
@@ -257,7 +269,7 @@ public class WindowService : IWindowService
                 return SetWindowState(handle, WindowState.Maximized);
 
             case "restore":
-                return SetWindowBounds(handle, workArea.X, workArea.Y, width, height);
+                return SetWindowBounds(handle, workArea.X, workArea.Y, width, height, bringToFront);
 
             default:
                 x = workArea.X + (workArea.Width - width) / 2;
@@ -271,10 +283,16 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return _nativeWrapper.SetWindowPos(
-            handle,
-            x, y, width, height,
-            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
+        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
+
+        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
+
+        if (success && bringToFront)
+        {
+            _nativeWrapper.BringWindowToTop(handle);
+        }
+
+        return success;
     }
 
     public bool IsValidWindow(nint handle)
@@ -289,6 +307,120 @@ public class WindowService : IWindowService
 
         // Send WM_CLOSE for graceful close - the application can cancel this
         return _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+    }
+
+    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(
+        IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
+        int delayBetweenMs = 50)
+    {
+        var results = new List<(nint Handle, bool Success, string? Error)>();
+
+        for (var i = 0; i < placements.Count; i++)
+        {
+            var placement = placements[i];
+            try
+            {
+                if (!IsValidWindow(placement.Handle))
+                {
+                    results.Add((placement.Handle, false, "Invalid window handle"));
+                    continue;
+                }
+
+                var success = SetWindowBounds(
+                    placement.Handle,
+                    placement.X,
+                    placement.Y,
+                    placement.Width,
+                    placement.Height,
+                    placement.BringToFront);
+
+                results.Add((placement.Handle, success, success ? null : "SetWindowBounds failed"));
+
+                if (delayBetweenMs > 0 && i < placements.Count - 1)
+                {
+                    Thread.Sleep(delayBetweenMs);
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add((placement.Handle, false, ex.Message));
+            }
+        }
+
+        return results;
+    }
+
+    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SnapWindowsBatch(
+        IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)> placements,
+        int delayBetweenMs = 50)
+    {
+        var results = new List<(nint Handle, bool Success, string? Error)>();
+
+        for (var i = 0; i < placements.Count; i++)
+        {
+            var placement = placements[i];
+            try
+            {
+                if (!IsValidWindow(placement.Handle))
+                {
+                    results.Add((placement.Handle, false, "Invalid window handle"));
+                    continue;
+                }
+
+                var success = SnapWindow(
+                    placement.Handle,
+                    placement.Position,
+                    placement.MonitorIndex,
+                    placement.BringToFront);
+
+                results.Add((placement.Handle, success, success ? null : "SnapWindow failed"));
+
+                if (delayBetweenMs > 0 && i < placements.Count - 1)
+                {
+                    Thread.Sleep(delayBetweenMs);
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add((placement.Handle, false, ex.Message));
+            }
+        }
+
+        return results;
+    }
+
+    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowStateBatch(
+        IReadOnlyList<(nint Handle, WindowState State)> changes,
+        int delayBetweenMs = 30)
+    {
+        var results = new List<(nint Handle, bool Success, string? Error)>();
+
+        for (var i = 0; i < changes.Count; i++)
+        {
+            var change = changes[i];
+            try
+            {
+                if (!IsValidWindow(change.Handle))
+                {
+                    results.Add((change.Handle, false, "Invalid window handle"));
+                    continue;
+                }
+
+                var success = SetWindowState(change.Handle, change.State);
+                results.Add((change.Handle, success, success ? null : "SetWindowState failed"));
+
+                if (delayBetweenMs > 0 && i < changes.Count - 1)
+                {
+                    Thread.Sleep(delayBetweenMs);
+                }
+            }
+            catch (Exception ex)
+            {
+                results.Add((change.Handle, false, ex.Message));
+            }
+        }
+
+        return results;
     }
 
     private WindowInfo? GetWindowInfoInternal(nint hWnd)

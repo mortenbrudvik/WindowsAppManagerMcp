@@ -80,4 +80,3 @@ public record WindowInfoDto(
     int MonitorIndex
 );
 
-public record BoundsDto(int X, int Y, int Width, int Height);

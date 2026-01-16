@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -82,6 +83,38 @@ public class AppLauncherTools
             ProcessName: result.ProcessName,
             Error: result.ErrorMessage,
             ErrorCode: result.ErrorCode
+        );
+    }
+
+    [McpServerTool(Name = "launch_applications_batch")]
+    [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls.")]
+    public BatchLaunchResult LaunchApplicationsBatch(
+        [Description("Array of applications to launch with executable, optional arguments, and optional workingDirectory")]
+        ApplicationLaunchRequest[] applications,
+        [Description("Whether to wait for each application window to appear (default: false)")]
+        bool waitForWindows = false,
+        [Description("Maximum time in milliseconds to wait for each window (default: 5000)")]
+        int waitTimeoutMs = 5000)
+    {
+        var serviceApplications = applications.Select(a =>
+            (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
+
+        var results = _processService.LaunchApplicationsBatch(serviceApplications, waitForWindows, waitTimeoutMs);
+
+        var items = results.Select((r, i) => new LaunchResultItem(
+            Executable: applications[i].Executable,
+            Success: r.Success,
+            ProcessId: r.ProcessId,
+            WindowHandle: r.WindowHandle?.ToInt64(),
+            Error: r.ErrorMessage,
+            Warning: r.Warning
+        )).ToList();
+
+        return new BatchLaunchResult(
+            TotalRequested: applications.Length,
+            Succeeded: items.Count(i => i.Success),
+            Failed: items.Count(i => !i.Success),
+            Results: items
         );
     }
 }

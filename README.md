@@ -64,12 +64,13 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 
 Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
-## Available Tools (21)
+## Available Tools (25)
 
 | Category | Tools |
 |----------|-------|
 | Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window` |
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
+| Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
@@ -103,6 +104,11 @@ Once configured, you can ask Claude to:
 - "Show all connected monitors"
 - "Move Chrome to monitor 2 and maximize it"
 - "Snap Terminal to the right third of the primary monitor"
+
+### Batch Operations
+- "Launch Notepad and Calculator, then snap them side by side"
+- "Minimize all browser windows"
+- "Position these three windows in a row"
 
 ## Snap Positions
 

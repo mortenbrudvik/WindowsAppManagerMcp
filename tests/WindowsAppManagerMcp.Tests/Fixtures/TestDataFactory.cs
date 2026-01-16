@@ -131,7 +131,7 @@ public static class TestDataFactory
 
         mock.Setup(w => w.SetWindowBounds(
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<int>(), It.IsAny<int>()))
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns(true);
 
         return mock;

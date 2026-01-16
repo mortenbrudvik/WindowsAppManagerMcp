@@ -406,7 +406,7 @@ public class LayoutServiceTests : IDisposable
             w => w.SetWindowBounds(
                 testWindow.Handle,
                 It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<int>(), It.IsAny<int>()),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -543,7 +543,7 @@ public class LayoutServiceTests : IDisposable
         result.WindowsArranged.Should().Be(1);
         result.WindowsNotFound.Should().Be(0);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -590,7 +590,7 @@ public class LayoutServiceTests : IDisposable
         result.WindowsArranged.Should().Be(1);
         result.WindowsNotFound.Should().Be(0);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(testWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -646,14 +646,14 @@ public class LayoutServiceTests : IDisposable
         result.Success.Should().BeTrue();
         result.WindowsArranged.Should().Be(1);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(matchingWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(matchingWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
         // Verify other windows were NOT arranged
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(processOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(processOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(titleOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(titleOnlyMatch.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never);
     }
 
@@ -719,13 +719,13 @@ public class LayoutServiceTests : IDisposable
 
         // Verify each window was arranged exactly once
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(codeWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(codeWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(settingsWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(settingsWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(terminalWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(terminalWindow.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 

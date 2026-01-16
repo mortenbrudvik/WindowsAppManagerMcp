@@ -229,6 +229,28 @@ public class ProcessService : IProcessService
         "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression"
     };
 
+    public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
+        IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
+        bool waitForWindows = false,
+        int waitTimeoutMs = 5000)
+    {
+        var results = new List<LaunchResult>();
+
+        foreach (var app in applications)
+        {
+            var result = LaunchApplication(
+                app.Executable,
+                app.Arguments,
+                app.WorkingDirectory,
+                waitForWindows,
+                waitTimeoutMs);
+
+            results.Add(result);
+        }
+
+        return results;
+    }
+
     public KillResult KillProcess(int processId, bool confirm, bool forceKill = false)
     {
         // Safety check: require explicit confirmation

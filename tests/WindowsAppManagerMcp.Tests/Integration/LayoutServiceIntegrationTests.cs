@@ -144,10 +144,10 @@ public class LayoutServiceIntegrationTests : IDisposable
 
         // Verify SetWindowBounds was called for each window
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1002), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1002), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -225,7 +225,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         // Assert
         result.WindowsArranged.Should().Be(1);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -262,7 +262,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         // Assert
         result.WindowsArranged.Should().Be(1);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -300,13 +300,13 @@ public class LayoutServiceIntegrationTests : IDisposable
         // Assert - Only window 1001 should match (both criteria)
         result.WindowsArranged.Should().Be(1);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1001), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1002), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1002), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never);
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1003), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()),
+            w => w.SetWindowBounds(new nint(1003), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Never);
     }
 
@@ -439,7 +439,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         // Second monitor starts at x=1920, width=2560, work area height=1400
         // Left half: x=1920, y=0, width=1280, height=1400
         _mockWindowService.Verify(
-            w => w.SetWindowBounds(new nint(1001), 1920, 0, 1280, 1400),
+            w => w.SetWindowBounds(new nint(1001), 1920, 0, 1280, 1400, It.IsAny<bool>()),
             Times.Once);
     }
 

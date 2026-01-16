@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 21 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 25 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -8,6 +8,7 @@ A comprehensive guide to all 21 MCP tools for managing Windows applications, win
 |----------|-------|-------|
 | [Window Discovery](#window-discovery) | find_windows, get_all_windows, get_foreground_window | 3 |
 | [Window Control](#window-control) | move_window, resize_window, set_window_bounds, set_window_state, focus_window, close_window, snap_window, move_window_to_monitor | 8 |
+| [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, launch_applications_batch | 4 |
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
@@ -164,6 +165,7 @@ Move a window to a specific screen position.
 | handle | long | Yes | - | Window handle from find_windows |
 | x | int | Yes | - | X coordinate (left edge) |
 | y | int | Yes | - | Y coordinate (top edge) |
+| bringToFront | bool | No | true | Bring window to front of z-order |
 
 **Example:**
 > "Move Notepad to position 100, 200"
@@ -236,6 +238,7 @@ Move and resize a window in a single operation.
 | y | int | Yes | - | Y coordinate (top edge) |
 | width | int | Yes | - | New width in pixels |
 | height | int | Yes | - | New height in pixels |
+| bringToFront | bool | No | true | Bring window to front of z-order |
 
 **Example:**
 > "Position the window at 50,50 with size 1000x700"
@@ -368,6 +371,7 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see table below) |
 | monitorIndex | int | No | current | Target monitor (0-based index) |
+| bringToFront | bool | No | true | Bring window to front of z-order |
 
 **Snap Positions:**
 
@@ -435,6 +439,7 @@ Move a window to a specific monitor.
 | handle | long | Yes | - | Window handle |
 | monitorIndex | int | Yes | - | Target monitor (0-based index) |
 | positioning | string | No | "center" | Position on monitor (see below) |
+| bringToFront | bool | No | true | Bring window to front of z-order |
 
 **Positioning Options:**
 - `center` - Center of monitor
@@ -464,6 +469,203 @@ Move a window to a specific monitor.
 {
   "success": true,
   "newBounds": { "x": 2240, "y": 320, "width": 1200, "height": 800 }
+}
+```
+
+---
+
+## Batch Operations
+
+Tools for performing multiple window operations efficiently in a single call.
+
+### set_windows_bounds_batch
+
+Move and resize multiple windows in a single batch operation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| placements | array | Yes | - | Array of window placements |
+| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+
+Each placement object contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle |
+| x | int | Yes | - | X coordinate |
+| y | int | Yes | - | Y coordinate |
+| width | int | Yes | - | Width in pixels |
+| height | int | Yes | - | Height in pixels |
+| bringToFront | bool | No | true | Bring window to front |
+
+**Example:**
+> "Position Notepad and Calculator side by side"
+
+```json
+{
+  "name": "set_windows_bounds_batch",
+  "arguments": {
+    "placements": [
+      { "handle": 12345, "x": 0, "y": 0, "width": 960, "height": 1040 },
+      { "handle": 67890, "x": 960, "y": 0, "width": 960, "height": 1040 }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "handle": 12345, "success": true, "newBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 } },
+    { "handle": 67890, "success": true, "newBounds": { "x": 960, "y": 0, "width": 960, "height": 1040 } }
+  ]
+}
+```
+
+---
+
+### snap_windows_batch
+
+Snap multiple windows to predefined positions in a single batch operation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| placements | array | Yes | - | Array of snap placements |
+| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+
+Each placement object contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle |
+| position | string | Yes | - | Snap position (see snap_window) |
+| monitorIndex | int | No | current | Target monitor |
+| bringToFront | bool | No | true | Bring window to front |
+
+**Example:**
+> "Snap VS Code to left half and Terminal to right half"
+
+```json
+{
+  "name": "snap_windows_batch",
+  "arguments": {
+    "placements": [
+      { "handle": 12345, "position": "left_half" },
+      { "handle": 67890, "position": "right_half" }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "handle": 12345, "success": true, "newBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 } },
+    { "handle": 67890, "success": true, "newBounds": { "x": 960, "y": 0, "width": 960, "height": 1040 } }
+  ]
+}
+```
+
+---
+
+### set_windows_state_batch
+
+Set the state (minimize, maximize, restore) of multiple windows in a single batch operation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| changes | array | Yes | - | Array of state changes |
+| delayBetweenMs | int | No | 30 | Delay between operations in milliseconds |
+
+Each change object contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle |
+| state | string | Yes | - | State: 'minimize', 'maximize', or 'restore' |
+
+**Example:**
+> "Minimize all browser windows"
+
+```json
+{
+  "name": "set_windows_state_batch",
+  "arguments": {
+    "changes": [
+      { "handle": 12345, "state": "minimize" },
+      { "handle": 67890, "state": "minimize" }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "handle": 12345, "success": true, "newState": "minimized" },
+    { "handle": 67890, "success": true, "newState": "minimized" }
+  ]
+}
+```
+
+---
+
+### launch_applications_batch
+
+Launch multiple applications in a single batch operation.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| applications | array | Yes | - | Array of applications to launch |
+| waitForWindows | bool | No | false | Wait for windows to appear |
+| waitTimeoutMs | int | No | 5000 | Timeout for waiting (ms) |
+
+Each application object contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| executable | string | Yes | - | Path, app name, or protocol URI |
+| arguments | string[] | No | - | Command line arguments |
+| workingDirectory | string | No | - | Working directory |
+
+**Example:**
+> "Launch Notepad and Calculator"
+
+```json
+{
+  "name": "launch_applications_batch",
+  "arguments": {
+    "applications": [
+      { "executable": "notepad" },
+      { "executable": "calc" }
+    ],
+    "waitForWindows": true
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "executable": "notepad", "success": true, "processId": 15432, "windowHandle": 12345 },
+    { "executable": "calc", "success": true, "processId": 15433, "windowHandle": 67890 }
+  ]
 }
 ```
 
