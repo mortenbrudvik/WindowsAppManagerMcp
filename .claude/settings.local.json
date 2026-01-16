@@ -56,7 +56,8 @@
       "Bash(curl:*)",
       "Bash(start msedge:*)",
       "Bash(start:*)",
-      "WebFetch(domain:playbooks.com)"
+      "WebFetch(domain:playbooks.com)",
+      "mcp__plugin_windows-app-manager_windows-app-manager__list_layouts"
     ]
   }
 }

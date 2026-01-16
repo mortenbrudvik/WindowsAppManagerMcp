@@ -39,6 +39,7 @@ builder.Services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
 builder.Services.AddSingleton<IProcessService, ProcessService>();
 builder.Services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
 builder.Services.AddSingleton<IScreenshotService, ScreenshotService>();
+builder.Services.AddSingleton<IUIElementService, UIElementService>();
 builder.Services.AddSingleton<ILayoutService>(sp =>
 {
     var windowService = sp.GetRequiredService<IWindowService>();
@@ -56,6 +57,7 @@ builder.Services.AddSingleton<AppLauncherTools>();
 builder.Services.AddSingleton<LayoutPresetTools>();
 builder.Services.AddSingleton<BrowserReadingTools>();
 builder.Services.AddSingleton<ScreenshotTools>();
+builder.Services.AddSingleton<UIElementTools>();
 
 // Configure MCP Server
 builder.Services.AddMcpServer(options =>
@@ -73,7 +75,8 @@ builder.Services.AddMcpServer(options =>
 .WithTools<AppLauncherTools>()
 .WithTools<LayoutPresetTools>()
 .WithTools<BrowserReadingTools>()
-.WithTools<ScreenshotTools>();
+.WithTools<ScreenshotTools>()
+.WithTools<UIElementTools>();
 
 var app = builder.Build();
 

@@ -470,4 +470,87 @@ public static class TestDataFactory
     }
 
     #endregion
+
+    #region UIElement Factories
+
+    public static UIElementInfo CreateUIElementInfo(
+        string? name = "Test Element",
+        string controlType = "Button",
+        string? automationId = "btnTest",
+        int x = 100,
+        int y = 100,
+        int width = 80,
+        int height = 30,
+        bool isEnabled = true,
+        bool isOffscreen = false,
+        IReadOnlyList<UIElementInfo>? children = null)
+    {
+        return new UIElementInfo(
+            Name: name,
+            ControlType: controlType,
+            AutomationId: automationId,
+            Bounds: new BoundsDto(x, y, width, height),
+            IsEnabled: isEnabled,
+            IsOffscreen: isOffscreen,
+            Children: children);
+    }
+
+    public static UIElementResult CreateUIElementResult(
+        bool success = true,
+        long windowHandle = 12345,
+        string? windowTitle = "Test Window",
+        IReadOnlyList<UIElementInfo>? elements = null,
+        int totalElementCount = 5,
+        int depth = 5,
+        double elapsedMs = 50.0,
+        string? error = null,
+        UIElementErrorCode errorCode = UIElementErrorCode.None)
+    {
+        if (success && elements == null)
+        {
+            elements = new List<UIElementInfo>
+            {
+                CreateUIElementInfo("Submit", "Button", "btnSubmit"),
+                CreateUIElementInfo("Name", "Edit", "txtName", x: 100, y: 150, width: 200, height: 25),
+                CreateUIElementInfo("Accept Terms", "CheckBox", "chkTerms", x: 100, y: 200, width: 150, height: 20)
+            };
+        }
+
+        return new UIElementResult(
+            Success: success,
+            WindowHandle: windowHandle,
+            WindowTitle: success ? windowTitle : null,
+            Elements: success ? elements : null,
+            TotalElementCount: success ? (elements?.Count ?? totalElementCount) : 0,
+            Depth: success ? depth : 0,
+            ElapsedMilliseconds: elapsedMs,
+            Error: error,
+            ErrorCode: errorCode);
+    }
+
+    public static Mock<IUIElementService> CreateMockUIElementService(
+        bool success = true,
+        string? error = null,
+        UIElementErrorCode errorCode = UIElementErrorCode.None)
+    {
+        var mock = new Mock<IUIElementService>();
+
+        mock.Setup(s => s.IsAvailable()).Returns(true);
+
+        var result = CreateUIElementResult(
+            success: success,
+            error: error,
+            errorCode: errorCode);
+
+        mock.Setup(s => s.GetUIElements(
+                It.IsAny<nint>(),
+                It.IsAny<int>(),
+                It.IsAny<UIElementFilter?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(result);
+
+        return mock;
+    }
+
+    #endregion
 }
