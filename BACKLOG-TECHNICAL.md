@@ -29,7 +29,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | Services | 80%+ | 46-89% | 🔶 Partial |
 | Models | 70%+ | 100% | ✅ Complete |
 | Tools | 60%+ | 99-100% | ✅ Complete |
-| Screenshot | 80%+ | 0% | ⏳ Pending |
+| Screenshot | 80%+ | 90%+ | ✅ Complete |
 | **Overall** | **70-80%** | **64.4%** | 🔶 In Progress |
 
 > **Note**: Service coverage is limited by P/Invoke dependencies. Native Windows API calls cannot be easily mocked without wrapper interfaces. Screenshot service uses `IScreenCaptureWrapper` for testability.
@@ -418,7 +418,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | T6: Models | ✅ Complete | 31 | 100% |
 | T7: Integration | ✅ Complete | 37 | - |
 | T8: CI/CD | ✅ Complete | - | - |
-| T9: Screenshot | ⏳ Pending | 0 | 0% |
+| T9: Screenshot | ✅ Complete | 63 | 90%+ |
 
 *\* MonitorService coverage limited because tests use a helper method to test the algorithm logic without P/Invoke.*
 
@@ -431,7 +431,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | MonitorInfoTools | 10 | 100% |
 | AppLauncherTools | 20 | 100% |
 | LayoutPresetTools | 23 | 100% |
-| ScreenshotTools | 0 | 0% (pending) |
+| ScreenshotTools | 21 | 100% |
 
 ### Integration Tests (T7)
 
@@ -440,12 +440,14 @@ This document contains granular, actionable testing tasks following TDD principl
 | LayoutServiceIntegrationTests | 14 | End-to-end workflows |
 | FilePersistenceTests | 10 | File I/O and JSON handling |
 | DependencyInjectionTests | 13 | DI container validation |
+| ScreenCaptureWrapperIntegrationTests | 13 | Native GDI capture layer |
 
 ### Remaining Work
 
 All critical testing tasks are complete. All pending tests from the backlog have been implemented:
 - T2.2.3, T2.3.1, T2.3.3, T2.3.5, T2.3.6 (WindowService)
 - T5.3.6, T5.6.4, T5.6.5, T5.6.6, T5.6.10 (LayoutService)
+- T9.1, T9.2, T9.3 (Screenshot - 63 tests total)
 
 Optional enhancements in BACKLOG.md:
 
@@ -457,7 +459,7 @@ Optional enhancements in BACKLOG.md:
 
 ---
 
-## T9: Screenshot Service Tests (In Progress)
+## T9: Screenshot Service Tests ✓
 
 *Screenshot capture functionality. Target: 80%+ coverage*
 
@@ -495,17 +497,19 @@ Optional enhancements in BACKLOG.md:
 
 **Test file:** `tests/WindowsAppManagerMcp.Tests/Unit/Services/ScreenshotServiceTests.cs` (29 tests)
 
-### T9.3: ScreenshotTools Tests
+### T9.3: ScreenshotTools Tests ✓
 
 | ID | Task | Priority | Status | Notes |
 |----|------|----------|--------|-------|
-| T9.3.1 | Test `list_screens` tool returns screen list | P0 | [ ] | Tool wrapper |
-| T9.3.2 | Test `take_screenshot` tool with defaults | P0 | [ ] | Default monitor |
-| T9.3.3 | Test `take_screenshot` tool with monitor index | P1 | [ ] | Explicit monitor |
-| T9.3.4 | Test `take_screenshot` tool with format option | P1 | [ ] | PNG/JPEG |
-| T9.3.5 | Test `capture_region` tool | P0 | [ ] | Region capture |
-| T9.3.6 | Test `capture_window` tool | P0 | [ ] | Window capture |
-| T9.3.7 | Test `capture_window` tool includeFrame option | P2 | [ ] | Frame toggle |
+| T9.3.1 | Test `list_screens` tool returns screen list | P0 | [x] | Tool wrapper |
+| T9.3.2 | Test `take_screenshot` tool with defaults | P0 | [x] | Default monitor |
+| T9.3.3 | Test `take_screenshot` tool with monitor index | P1 | [x] | Explicit monitor |
+| T9.3.4 | Test `take_screenshot` tool with format option | P1 | [x] | PNG/JPEG |
+| T9.3.5 | Test `capture_region` tool | P0 | [x] | Region capture |
+| T9.3.6 | Test `capture_window` tool | P0 | [x] | Window capture |
+| T9.3.7 | Test `capture_window` tool includeFrame option | P2 | [x] | Frame toggle |
+
+**Test file:** `tests/WindowsAppManagerMcp.Tests/Unit/Tools/ScreenshotToolsTests.cs` (21 tests)
 
 ---
 

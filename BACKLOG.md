@@ -313,7 +313,7 @@
 | 8.3 | Build exe to `bin/` directory | ✅ Complete | `dotnet publish -o ./bin` |
 | 8.4 | Create `skills/using-windows-app-manager/SKILL.md` | ✅ Complete | Skill file with trigger patterns |
 | 8.5 | Update README.md with plugin installation | ✅ Complete | Add Claude Code install instructions |
-| 8.6 | Test local plugin installation | ⏳ Pending | `/plugin marketplace add`, `/plugin install` |
+| 8.6 | Test local plugin installation | ✅ Complete | `/plugin marketplace add`, `/plugin install` |
 | 8.7 | Test GitHub-based installation | ⏳ Pending | `mortenbrudvik/WindowsAppManagerMcp` |
 
 ### Plugin Structure
