@@ -104,6 +104,7 @@
 - `src/WindowsAppManagerMcp/Models/WindowPlacement.cs`
 - `src/WindowsAppManagerMcp/Models/LayoutPreset.cs`
 - `src/WindowsAppManagerMcp/Models/ErrorCodes.cs`
+- `src/WindowsAppManagerMcp/Models/ScreenshotModels.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LaunchResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LayoutApplyResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/KillResult.cs`
@@ -112,8 +113,10 @@
 - `src/WindowsAppManagerMcp/Native/NativeMethods.User32.cs`
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Kernel32.cs`
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Shcore.cs`
+- `src/WindowsAppManagerMcp/Native/NativeMethods.Gdi32.cs`
 - `src/WindowsAppManagerMcp/Native/NativeStructs.cs`
 - `src/WindowsAppManagerMcp/Native/NativeEnums.cs`
+- `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs`
 
 ### ✅ Complete - Services
 - `src/WindowsAppManagerMcp/Services/Interfaces/IWindowService.cs`
@@ -121,11 +124,14 @@
 - `src/WindowsAppManagerMcp/Services/Interfaces/IProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/ILayoutService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/IInputValidationService.cs`
+- `src/WindowsAppManagerMcp/Services/Interfaces/IScreenCaptureWrapper.cs`
+- `src/WindowsAppManagerMcp/Services/Interfaces/IScreenshotService.cs`
 - `src/WindowsAppManagerMcp/Services/WindowService.cs`
 - `src/WindowsAppManagerMcp/Services/MonitorService.cs`
 - `src/WindowsAppManagerMcp/Services/ProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/LayoutService.cs`
 - `src/WindowsAppManagerMcp/Services/InputValidationService.cs`
+- `src/WindowsAppManagerMcp/Services/ScreenshotService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/INativeWindowWrapper.cs`
 - `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs`
 
@@ -135,6 +141,7 @@
 - `src/WindowsAppManagerMcp/Tools/MonitorInfoTools.cs`
 - `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs`
 - `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs`
+- `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs`
 
 ### ✅ Complete - Configuration & Docs
 - `WindowsAppManagerMcp.sln`
@@ -166,7 +173,7 @@
 
 ---
 
-## MCP Tools Summary (20 Tools)
+## MCP Tools Summary (30 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -181,8 +188,17 @@
 | `close_window` | Window Control | Close window gracefully (WM_CLOSE) |
 | `snap_window` | Window Control | Snap to halves/quarters/thirds |
 | `move_window_to_monitor` | Window Control | Move to specific monitor |
+| `set_windows_bounds_batch` | Batch Operations | Move/resize multiple windows |
+| `snap_windows_batch` | Batch Operations | Snap multiple windows |
+| `set_windows_state_batch` | Batch Operations | Set state of multiple windows |
+| `close_windows_batch` | Batch Operations | Close multiple windows |
+| `launch_applications_batch` | Batch Operations | Launch multiple applications |
 | `get_monitors` | Monitor Info | List all displays with bounds |
 | `get_primary_monitor` | Monitor Info | Get primary display details |
+| `list_screens` | Screenshot | List monitors for capture |
+| `take_screenshot` | Screenshot | Capture a monitor (PNG/JPEG) |
+| `capture_region` | Screenshot | Capture screen region |
+| `capture_window` | Screenshot | Capture a window |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |
@@ -249,11 +265,14 @@
 | Phase 7: Enhancements | ██████████ 100% |
 | Phase 8: Claude Code Plugin | ███████░░░ 70% |
 | Phase 9: Development Tooling | ██████████ 100% |
+| Phase 10: Screenshot Capture | ██████████ 100% |
+| Phase 11: Enhanced Visual Tools | ░░░░░░░░░░ 0% |
+| Phase 12: Advanced Automation | ░░░░░░░░░░ 0% |
 
 **Core Implementation: ~98%**
-**With Enhancements: ~99%**
+**With Screenshot: 100%**
 **With Plugin: ~70% (testing pending)**
-**With Dev Tooling: 100%**
+**Future Enhancements: Planned**
 
 ---
 
@@ -338,3 +357,91 @@ The `/commit` skill automates the release process:
 5. **Commit and Tag** - Conventional commit with annotated tag
 6. **Push** - Push commit and tags to origin
 7. **Confirm** - Display commit hash, tag, and release URL
+
+---
+
+## Phase 10: Screenshot Capture ✅
+
+*Screenshot tools for AI visual orientation*
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| 10.1 | Add GDI P/Invoke declarations | ✅ Complete | `NativeMethods.Gdi32.cs` - BitBlt, CreateCompatibleDC, etc. |
+| 10.2 | Add User32 screenshot methods | ✅ Complete | GetDC, ReleaseDC, PrintWindow, GetClientRect |
+| 10.3 | Add bitmap structs | ✅ Complete | BITMAPINFO, BITMAPINFOHEADER in NativeStructs.cs |
+| 10.4 | Create `IScreenCaptureWrapper` interface | ✅ Complete | Native capture abstraction for testability |
+| 10.5 | Implement `ScreenCaptureWrapper` | ✅ Complete | GDI-based screen/window capture |
+| 10.6 | Create `IScreenshotService` interface | ✅ Complete | Service interface |
+| 10.7 | Implement `ScreenshotService` | ✅ Complete | PNG/JPEG encoding with System.Drawing.Common |
+| 10.8 | Create `list_screens` tool | ✅ Complete | List monitors with virtual screen bounds |
+| 10.9 | Create `take_screenshot` tool | ✅ Complete | Capture specific monitor |
+| 10.10 | Create `capture_region` tool | ✅ Complete | Capture arbitrary screen coordinates |
+| 10.11 | Create `capture_window` tool | ✅ Complete | Capture window (works when occluded) |
+| 10.12 | Update documentation | ✅ Complete | TOOLS.md, README.md, SKILL.md |
+
+### Screenshot Tools Summary
+
+| Tool | Description |
+|------|-------------|
+| `list_screens` | List available monitors for capture with bounds and scale factors |
+| `take_screenshot` | Capture a specific monitor (PNG or JPEG) |
+| `capture_region` | Capture arbitrary screen region by coordinates |
+| `capture_window` | Capture a specific window (works even when occluded) |
+
+### Use Cases
+
+- **Visual Orientation**: AI can see current screen state before taking actions
+- **Layout Verification**: Verify windows are positioned correctly after apply_layout
+- **Debugging Assistance**: Capture what the user sees to help troubleshoot
+- **Application State Understanding**: See if apps are loading, showing errors, or ready
+
+---
+
+## Phase 11: Enhanced Visual Tools (Future)
+
+*Advanced screenshot and UI analysis capabilities*
+
+| # | Task | Status | Priority | Notes |
+|---|------|--------|----------|-------|
+| 11.1 | Add `capture_with_elements` tool | ⏳ Pending | P2 | Screenshot with UI element bounding box overlays |
+| 11.2 | Add `get_ui_elements` tool | ⏳ Pending | P2 | Get UI elements with coordinates (no image) |
+| 11.3 | OCR integration | ⏳ Pending | P3 | Extract text from screenshots using Windows.Media.Ocr |
+| 11.4 | Screenshot diff detection | ⏳ Pending | P3 | Compare screenshots to detect changes |
+| 11.5 | Windows.Graphics.Capture support | ⏳ Pending | P3 | Modern capture API (requires Win10 1903+) |
+| 11.6 | Video/GIF recording | ⏳ Pending | P3 | Capture sequences for animated workflows |
+
+### Future Tool Designs
+
+#### capture_with_elements
+Capture a screenshot with UI Automation element overlays drawn on top.
+- Uses existing `IUIAutomationWrapper` to get element bounds
+- Draws colored rectangles around interactable elements
+- Returns image with element coordinates for click targeting
+
+#### get_ui_elements
+Get UI element tree with bounding boxes without image capture.
+- Lightweight alternative when only coordinates are needed
+- Returns element name, type, bounds, and automation ID
+- Useful for programmatic interaction planning
+
+---
+
+## Phase 12: Advanced Automation (Future)
+
+*AI-driven automation capabilities*
+
+| # | Task | Status | Priority | Notes |
+|---|------|--------|----------|-------|
+| 12.1 | Click simulation | ⏳ Pending | P2 | Send click events to specific coordinates |
+| 12.2 | Keyboard input | ⏳ Pending | P2 | Send keystrokes to focused window |
+| 12.3 | Element interaction | ⏳ Pending | P2 | Click/type on specific UI elements |
+| 12.4 | Accessibility tree navigation | ⏳ Pending | P3 | Navigate and interact via UI Automation |
+| 12.5 | Wait for element | ⏳ Pending | P2 | Wait until UI element appears/changes |
+| 12.6 | Scroll support | ⏳ Pending | P3 | Scroll windows/elements programmatically |
+
+### Security Considerations
+
+- All automation requires explicit tool invocation (no autonomous action)
+- Handle validation before any interaction
+- Size limits prevent memory exhaustion
+- Protected content (DRM) captures as black automatically

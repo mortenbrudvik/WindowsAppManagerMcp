@@ -9,6 +9,58 @@ internal struct RECT
     public int Top;
     public int Right;
     public int Bottom;
+
+    public int Width => Right - Left;
+    public int Height => Bottom - Top;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct BITMAPINFOHEADER
+{
+    public int biSize;
+    public int biWidth;
+    public int biHeight;
+    public short biPlanes;
+    public short biBitCount;
+    public int biCompression;
+    public int biSizeImage;
+    public int biXPelsPerMeter;
+    public int biYPelsPerMeter;
+    public int biClrUsed;
+    public int biClrImportant;
+
+    public static BITMAPINFOHEADER Create(int width, int height)
+    {
+        return new BITMAPINFOHEADER
+        {
+            biSize = Marshal.SizeOf<BITMAPINFOHEADER>(),
+            biWidth = width,
+            biHeight = -height, // Negative for top-down bitmap
+            biPlanes = 1,
+            biBitCount = 32,
+            biCompression = 0, // BI_RGB
+            biSizeImage = 0,
+            biXPelsPerMeter = 0,
+            biYPelsPerMeter = 0,
+            biClrUsed = 0,
+            biClrImportant = 0
+        };
+    }
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct BITMAPINFO
+{
+    public BITMAPINFOHEADER bmiHeader;
+    // bmiColors is not needed for 32-bit bitmaps
+
+    public static BITMAPINFO Create(int width, int height)
+    {
+        return new BITMAPINFO
+        {
+            bmiHeader = BITMAPINFOHEADER.Create(width, height)
+        };
+    }
 }
 
 [StructLayout(LayoutKind.Sequential)]

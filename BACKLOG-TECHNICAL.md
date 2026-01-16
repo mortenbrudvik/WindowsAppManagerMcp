@@ -29,9 +29,10 @@ This document contains granular, actionable testing tasks following TDD principl
 | Services | 80%+ | 46-89% | 🔶 Partial |
 | Models | 70%+ | 100% | ✅ Complete |
 | Tools | 60%+ | 99-100% | ✅ Complete |
+| Screenshot | 80%+ | 0% | ⏳ Pending |
 | **Overall** | **70-80%** | **64.4%** | 🔶 In Progress |
 
-> **Note**: Service coverage is limited by P/Invoke dependencies. Native Windows API calls cannot be easily mocked without wrapper interfaces.
+> **Note**: Service coverage is limited by P/Invoke dependencies. Native Windows API calls cannot be easily mocked without wrapper interfaces. Screenshot service uses `IScreenCaptureWrapper` for testability.
 
 ---
 
@@ -417,6 +418,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | T6: Models | ✅ Complete | 31 | 100% |
 | T7: Integration | ✅ Complete | 37 | - |
 | T8: CI/CD | ✅ Complete | - | - |
+| T9: Screenshot | ⏳ Pending | 0 | 0% |
 
 *\* MonitorService coverage limited because tests use a helper method to test the algorithm logic without P/Invoke.*
 
@@ -429,6 +431,7 @@ This document contains granular, actionable testing tasks following TDD principl
 | MonitorInfoTools | 10 | 100% |
 | AppLauncherTools | 20 | 100% |
 | LayoutPresetTools | 23 | 100% |
+| ScreenshotTools | 0 | 0% (pending) |
 
 ### Integration Tests (T7)
 
@@ -454,6 +457,54 @@ Optional enhancements in BACKLOG.md:
 
 ---
 
+## T9: Screenshot Service Tests (Pending)
+
+*Screenshot capture functionality. Target: 80%+ coverage*
+
+### T9.1: ScreenCaptureWrapper Tests
+
+| ID | Task | Priority | Status | Notes |
+|----|------|----------|--------|-------|
+| T9.1.1 | Test `CaptureScreenRegion` returns valid pixel data | P1 | [ ] | Integration test |
+| T9.1.2 | Test `CaptureScreenRegion` with invalid dimensions throws | P1 | [ ] | Error handling |
+| T9.1.3 | Test `CaptureScreenRegion` with oversized region throws | P1 | [ ] | Max size limit |
+| T9.1.4 | Test `CaptureWindow` with valid handle returns data | P1 | [ ] | Happy path |
+| T9.1.5 | Test `CaptureWindow` with invalid handle throws | P1 | [ ] | Error handling |
+| T9.1.6 | Test `CaptureWindow` with includeFrame option | P2 | [ ] | Frame vs client |
+| T9.1.7 | Test `GetVirtualScreenBounds` returns valid bounds | P1 | [ ] | Multi-monitor |
+| T9.1.8 | Test `IsValidWindow` behavior | P1 | [ ] | Validation |
+
+### T9.2: ScreenshotService Tests
+
+| ID | Task | Priority | Status | Notes |
+|----|------|----------|--------|-------|
+| T9.2.1 | Test `ListScreens` returns all monitors | P0 | [ ] | Basic contract |
+| T9.2.2 | Test `ListScreens` includes virtual screen bounds | P1 | [ ] | Combined bounds |
+| T9.2.3 | Test `CaptureMonitor` with valid index | P0 | [ ] | Happy path |
+| T9.2.4 | Test `CaptureMonitor` with invalid index returns error | P0 | [ ] | Error handling |
+| T9.2.5 | Test `CaptureMonitor` with PNG format | P1 | [ ] | Format option |
+| T9.2.6 | Test `CaptureMonitor` with JPEG format | P1 | [ ] | Format option |
+| T9.2.7 | Test `CaptureRegion` returns valid image | P0 | [ ] | Happy path |
+| T9.2.8 | Test `CaptureRegion` with invalid dimensions | P1 | [ ] | Error handling |
+| T9.2.9 | Test `CaptureWindow` with valid handle | P0 | [ ] | Happy path |
+| T9.2.10 | Test `CaptureWindow` with invalid handle | P0 | [ ] | Error handling |
+| T9.2.11 | Test image encoding produces valid base64 | P1 | [ ] | Output format |
+| T9.2.12 | Test JPEG quality setting | P2 | [ ] | Quality parameter |
+
+### T9.3: ScreenshotTools Tests
+
+| ID | Task | Priority | Status | Notes |
+|----|------|----------|--------|-------|
+| T9.3.1 | Test `list_screens` tool returns screen list | P0 | [ ] | Tool wrapper |
+| T9.3.2 | Test `take_screenshot` tool with defaults | P0 | [ ] | Default monitor |
+| T9.3.3 | Test `take_screenshot` tool with monitor index | P1 | [ ] | Explicit monitor |
+| T9.3.4 | Test `take_screenshot` tool with format option | P1 | [ ] | PNG/JPEG |
+| T9.3.5 | Test `capture_region` tool | P0 | [ ] | Region capture |
+| T9.3.6 | Test `capture_window` tool | P0 | [ ] | Window capture |
+| T9.3.7 | Test `capture_window` tool includeFrame option | P2 | [ ] | Frame toggle |
+
+---
+
 ## Related Documents
 
 - [TESTING.md](TESTING.md) - TDD best practices and patterns
@@ -462,4 +513,4 @@ Optional enhancements in BACKLOG.md:
 
 ---
 
-*Last updated: January 14, 2026*
+*Last updated: January 16, 2026*

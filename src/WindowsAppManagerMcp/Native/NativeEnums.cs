@@ -67,4 +67,22 @@ internal static class NativeEnums
 
     // Window messages
     public const uint WM_CLOSE = 0x0010;
+
+    // Raster operation codes for BitBlt
+    public const uint SRCCOPY = 0x00CC0020;
+    public const uint CAPTUREBLT = 0x40000000;
+
+    // DIB color table identifiers
+    public const uint DIB_RGB_COLORS = 0;
+    public const uint DIB_PAL_COLORS = 1;
+
+    // PrintWindow flags
+    public const uint PW_CLIENTONLY = 0x00000001;
+    public const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    // GetSystemMetrics constants
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
 }

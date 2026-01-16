@@ -142,5 +142,25 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool PostMessageW(nint hWnd, uint Msg, nint wParam, nint lParam);
+
+        [LibraryImport("user32.dll")]
+        public static partial nint GetDC(nint hWnd);
+
+        [LibraryImport("user32.dll")]
+        public static partial nint GetWindowDC(nint hWnd);
+
+        [LibraryImport("user32.dll")]
+        public static partial int ReleaseDC(nint hWnd, nint hDC);
+
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool GetClientRect(nint hWnd, out RECT lpRect);
+
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool PrintWindow(nint hWnd, nint hdcBlt, uint nFlags);
+
+        [LibraryImport("user32.dll")]
+        public static partial int GetSystemMetrics(int nIndex);
     }
 }

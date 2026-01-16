@@ -6,6 +6,7 @@ description: |
   - List, find, or show windows
   - Move, resize, snap, minimize, maximize, focus, or close windows
   - Show monitors or move windows between monitors
+  - Take screenshots of screens, windows, or regions
   - Launch applications or open programs
   - List or kill processes
   - Save, apply, restore, or manage window layouts
@@ -13,7 +14,7 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 21 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 25 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## When to Use
 
@@ -40,13 +41,19 @@ Use this skill when the user asks to:
 - "List running processes"
 - "Kill process [name/PID]"
 
+### Screenshots
+- "Take a screenshot" / "Capture the screen"
+- "Take a screenshot of monitor 0"
+- "Capture the [app] window"
+- "Capture a region at [x, y] with size [width x height]"
+
 ### Layout Management
 - "Save my current window arrangement as [name]"
 - "Apply my [name] layout"
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
-## Available Tools (21)
+## Available Tools (25)
 
 ### Window Discovery (3 tools)
 
@@ -75,6 +82,15 @@ Use this skill when the user asks to:
 |------|-------------|----------------|
 | `get_monitors` | List all displays | (none) |
 | `get_primary_monitor` | Get primary display | (none) |
+
+### Screenshot (4 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `list_screens` | List screens for capture | (none) |
+| `take_screenshot` | Capture a monitor | monitorIndex, format, quality |
+| `capture_region` | Capture screen region | x, y, width, height, format |
+| `capture_window` | Capture a window | handle, includeFrame, format |
 
 ### App Launch (3 tools)
 
@@ -133,6 +149,12 @@ The `snap_window` tool supports 14 positions:
 3. Use `find_windows` to get the handle
 4. Use `snap_window` or `move_window` to position
 
+### Capture and Analyze Window Content
+1. Use `find_windows` to locate the target window
+2. Use `capture_window` to get a screenshot
+3. Analyze the base64-encoded image data
+4. Take actions based on visual content
+
 ## Tips
 
 - Always use `find_windows` first to get window handles before manipulating windows
@@ -140,6 +162,8 @@ The `snap_window` tool supports 14 positions:
 - Layout presets can auto-launch missing applications with `launchMissing: true`
 - The `close_window` tool sends WM_CLOSE for graceful shutdown (apps can prompt to save)
 - Monitor indices are 0-based (primary is typically 0)
+- Screenshots return base64-encoded images - use PNG for UI clarity, JPEG for smaller size
+- `capture_window` works on occluded windows but not minimized ones
 
 ## Full Documentation
 

@@ -335,4 +335,139 @@ public static class TestDataFactory
     }
 
     #endregion
+
+    #region Screenshot Factories
+
+    public static ScreenshotResult CreateScreenshotResult(
+        bool success = true,
+        string? imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        string imageFormat = "png",
+        int width = 1920,
+        int height = 1080,
+        int regionX = 0,
+        int regionY = 0,
+        int? monitorIndex = 0,
+        double scaleFactor = 1.0,
+        string? error = null)
+    {
+        return new ScreenshotResult(
+            Success: success,
+            ImageData: success ? imageData : null,
+            ImageFormat: imageFormat,
+            Width: width,
+            Height: height,
+            CapturedRegion: new CapturedRegion(regionX, regionY, width, height),
+            MonitorIndex: monitorIndex,
+            ScaleFactor: scaleFactor,
+            Error: error);
+    }
+
+    public static ScreenListResult CreateScreenListResult(
+        IReadOnlyList<ScreenInfo>? screens = null,
+        int primaryIndex = 0)
+    {
+        screens ??= new List<ScreenInfo>
+        {
+            CreateScreenInfo(0, true),
+            CreateScreenInfo(1, false, x: 1920)
+        };
+
+        return new ScreenListResult(
+            Screens: screens,
+            PrimaryIndex: primaryIndex,
+            VirtualScreen: new VirtualScreenBounds(
+                screens.Min(s => s.X),
+                screens.Min(s => s.Y),
+                screens.Max(s => s.X + s.Width) - screens.Min(s => s.X),
+                screens.Max(s => s.Y + s.Height) - screens.Min(s => s.Y)));
+    }
+
+    public static ScreenInfo CreateScreenInfo(
+        int index = 0,
+        bool isPrimary = true,
+        string name = @"\\.\DISPLAY1",
+        int x = 0,
+        int y = 0,
+        int width = 1920,
+        int height = 1080,
+        int workAreaX = 0,
+        int workAreaY = 0,
+        int workAreaWidth = 1920,
+        int workAreaHeight = 1040,
+        double scaleFactor = 1.0)
+    {
+        return new ScreenInfo(
+            Index: index,
+            Name: name,
+            IsPrimary: isPrimary,
+            X: x,
+            Y: y,
+            Width: width,
+            Height: height,
+            WorkAreaX: workAreaX,
+            WorkAreaY: workAreaY,
+            WorkAreaWidth: workAreaWidth,
+            WorkAreaHeight: workAreaHeight,
+            ScaleFactor: scaleFactor);
+    }
+
+    public static Mock<IScreenCaptureWrapper> CreateMockScreenCaptureWrapper(
+        byte[]? pixelData = null,
+        int captureWidth = 1920,
+        int captureHeight = 1080)
+    {
+        var mock = new Mock<IScreenCaptureWrapper>();
+
+        // CaptureScreenRegion - return pixel data sized for the requested dimensions
+        mock.Setup(s => s.CaptureScreenRegion(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
+            .Returns((int x, int y, int w, int h) =>
+            {
+                // Return pixel data sized for the actual requested dimensions (4 bytes per pixel BGRA)
+                return pixelData ?? new byte[w * h * 4];
+            });
+
+        // CaptureWindow - return pixel data with specified default dimensions
+        var windowPixelData = pixelData ?? new byte[captureWidth * captureHeight * 4];
+        mock.Setup(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()))
+            .Returns((windowPixelData, captureWidth, captureHeight));
+
+        mock.Setup(s => s.GetVirtualScreenBounds())
+            .Returns((0, 0, 1920, 1080));
+
+        mock.Setup(s => s.IsValidWindow(It.Is<nint>(h => h != nint.Zero)))
+            .Returns(true);
+        mock.Setup(s => s.IsValidWindow(nint.Zero))
+            .Returns(false);
+
+        return mock;
+    }
+
+    public static Mock<IScreenshotService> CreateMockScreenshotService(
+        bool success = true,
+        string? error = null)
+    {
+        var mock = new Mock<IScreenshotService>();
+
+        var screenListResult = CreateScreenListResult();
+        mock.Setup(s => s.ListScreens()).Returns(screenListResult);
+
+        var screenshotResult = CreateScreenshotResult(success: success, error: error);
+
+        mock.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>()))
+            .Returns(screenshotResult);
+
+        mock.Setup(s => s.CaptureRegion(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<string>(), It.IsAny<int>()))
+            .Returns(screenshotResult);
+
+        mock.Setup(s => s.CaptureWindow(
+                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>()))
+            .Returns(screenshotResult);
+
+        return mock;
+    }
+
+    #endregion
 }

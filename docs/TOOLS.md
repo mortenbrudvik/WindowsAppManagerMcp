@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 26 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 30 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -10,6 +10,7 @@ A comprehensive guide to all 26 MCP tools for managing Windows applications, win
 | [Window Control](#window-control) | move_window, resize_window, set_window_bounds, set_window_state, focus_window, close_window, snap_window, move_window_to_monitor | 8 |
 | [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, close_windows_batch, launch_applications_batch | 5 |
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
+| [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window | 4 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
 
@@ -792,6 +793,222 @@ Get information about the primary display.
   "scaleFactor": 1.5
 }
 ```
+
+---
+
+## Screenshot
+
+Tools for capturing screenshots of screens, regions, and windows. Screenshots are returned as base64-encoded image data, enabling AI to visually orient and understand what's on screen.
+
+### list_screens
+
+List all available screens/monitors for capture, including virtual screen bounds.
+
+**Parameters:** None
+
+**Example:**
+> "What screens are available for capture?"
+
+```json
+{
+  "name": "list_screens",
+  "arguments": {}
+}
+```
+
+**Response:**
+```json
+{
+  "screens": [
+    {
+      "index": 0,
+      "name": "\\\\.\\DISPLAY1",
+      "isPrimary": false,
+      "x": -2560,
+      "y": 365,
+      "width": 2560,
+      "height": 1440,
+      "workAreaX": -2560,
+      "workAreaY": 365,
+      "workAreaWidth": 2560,
+      "workAreaHeight": 1392,
+      "scaleFactor": 1.0
+    },
+    {
+      "index": 1,
+      "name": "\\\\.\\DISPLAY2",
+      "isPrimary": true,
+      "x": 0,
+      "y": 0,
+      "width": 3840,
+      "height": 2160,
+      "workAreaX": 0,
+      "workAreaY": 0,
+      "workAreaWidth": 3840,
+      "workAreaHeight": 2088,
+      "scaleFactor": 1.5
+    }
+  ],
+  "primaryIndex": 1,
+  "virtualScreen": {
+    "x": -2560,
+    "y": 0,
+    "width": 6400,
+    "height": 2160
+  }
+}
+```
+
+---
+
+### take_screenshot
+
+Capture a screenshot of a specific monitor.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| monitorIndex | int | No | primary | Monitor index (0-based). Defaults to primary monitor. |
+| format | string | No | "png" | Image format: "png" (lossless) or "jpeg" (smaller) |
+| quality | int | No | 85 | JPEG quality (1-100). Only used when format is "jpeg". |
+
+**Example:**
+> "Take a screenshot of the primary monitor"
+
+```json
+{
+  "name": "take_screenshot",
+  "arguments": {}
+}
+```
+
+**Example with options:**
+> "Take a screenshot of monitor 0 as JPEG"
+
+```json
+{
+  "name": "take_screenshot",
+  "arguments": {
+    "monitorIndex": 0,
+    "format": "jpeg",
+    "quality": 90
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageData": "iVBORw0KGgoAAAANSUhEUgAAA...",
+  "imageFormat": "png",
+  "width": 3840,
+  "height": 2160,
+  "capturedRegion": { "x": 0, "y": 0, "width": 3840, "height": 2160 },
+  "monitorIndex": 1,
+  "scaleFactor": 1.5
+}
+```
+
+---
+
+### capture_region
+
+Capture a screenshot of an arbitrary screen region.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | int | Yes | - | X coordinate of the region's left edge |
+| y | int | Yes | - | Y coordinate of the region's top edge |
+| width | int | Yes | - | Width of the region in pixels |
+| height | int | Yes | - | Height of the region in pixels |
+| format | string | No | "png" | Image format: "png" or "jpeg" |
+| quality | int | No | 85 | JPEG quality (1-100) |
+
+**Example:**
+> "Capture a 800x600 region starting at position 100, 200"
+
+```json
+{
+  "name": "capture_region",
+  "arguments": {
+    "x": 100,
+    "y": 200,
+    "width": 800,
+    "height": 600
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageData": "iVBORw0KGgoAAAANSUhEUgAAA...",
+  "imageFormat": "png",
+  "width": 800,
+  "height": 600,
+  "capturedRegion": { "x": 100, "y": 200, "width": 800, "height": 600 },
+  "monitorIndex": 1,
+  "scaleFactor": 1.5
+}
+```
+
+---
+
+### capture_window
+
+Capture a screenshot of a specific window. Works even if the window is partially occluded by other windows.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
+| includeFrame | bool | No | true | Include window frame/decoration (title bar, borders) |
+| format | string | No | "png" | Image format: "png" or "jpeg" |
+| quality | int | No | 85 | JPEG quality (1-100) |
+
+**Example:**
+> "Capture the VS Code window"
+
+```json
+{
+  "name": "capture_window",
+  "arguments": {
+    "handle": 330390
+  }
+}
+```
+
+**Example without frame:**
+> "Capture just the content area of Chrome"
+
+```json
+{
+  "name": "capture_window",
+  "arguments": {
+    "handle": 2884384,
+    "includeFrame": false
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageData": "iVBORw0KGgoAAAANSUhEUgAAA...",
+  "imageFormat": "png",
+  "width": 1920,
+  "height": 1040,
+  "capturedRegion": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+  "monitorIndex": 0,
+  "scaleFactor": 1.0
+}
+```
+
+> **Note:** Minimized windows cannot be captured. The window must be visible (though it can be behind other windows).
 
 ---
 

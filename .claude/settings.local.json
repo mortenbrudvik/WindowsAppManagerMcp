@@ -55,7 +55,8 @@
       "Bash(claude marketplace:*)",
       "Bash(curl:*)",
       "Bash(start msedge:*)",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "WebFetch(domain:playbooks.com)"
     ]
   }
 }
