@@ -8,6 +8,7 @@ description: |
   - Show monitors or move windows between monitors
   - Take screenshots of screens, windows, or regions
   - Get UI elements or element coordinates from windows
+  - Click, right-click, double-click, or move the mouse cursor
   - Launch applications or open programs
   - List or kill processes
   - Save, apply, restore, or manage window layouts
@@ -15,7 +16,7 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 32 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 36 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## When to Use
 
@@ -51,13 +52,20 @@ Use this skill when the user asks to:
 - "Get all UI elements from the [app] window"
 - "Get all buttons and text inputs from [app]"
 
+### Input Simulation / Click Automation
+- "Click at position [x, y]"
+- "Right-click at [x, y]"
+- "Double-click at [x, y]"
+- "Move the mouse to [x, y]"
+- "Click the [button/menu item]" (requires get_ui_elements first)
+
 ### Layout Management
 - "Save my current window arrangement as [name]"
 - "Apply my [name] layout"
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
-## Available Tools (32)
+## Available Tools (36)
 
 ### Window Discovery (3 tools)
 
@@ -112,6 +120,15 @@ Use this skill when the user asks to:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, interactableOnly |
+
+### Input Simulation (4 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `click` | Left click at coordinates | x, y |
+| `right_click` | Right click at coordinates | x, y |
+| `double_click` | Double left click | x, y, delayMs |
+| `mouse_move` | Move cursor (no click) | x, y |
 
 ### App Launch (3 tools)
 
@@ -188,6 +205,12 @@ The `snap_window` tool supports 14 positions:
 3. Elements are color-coded (green=buttons, blue=inputs, etc.)
 4. Use `imageBounds` for visual reference, `screenBounds` for clicks
 
+### Click Automation
+1. Use `find_windows` to locate the target window
+2. Use `get_ui_elements` to get element bounding boxes
+3. Find target element and calculate center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
+4. Use `click`, `right_click`, or `double_click` with the calculated coordinates
+
 ## Tips
 
 - Always use `find_windows` first to get window handles before manipulating windows
@@ -200,6 +223,10 @@ The `snap_window` tool supports 14 positions:
 - `capture_with_elements` provides visual overlays - great for debugging UI automation
 - `get_ui_elements` is lightweight when only coordinates are needed (no image data)
 - Filter elements by controlTypes: Button, Edit, CheckBox, ComboBox, etc.
+- For click automation, always use `get_ui_elements` first to get accurate screen coordinates
+- Calculate click center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
+- Coordinates are validated against monitor bounds before clicking
+- Use `mouse_move` to hover before clicking if needed for hover effects
 
 ## Full Documentation
 

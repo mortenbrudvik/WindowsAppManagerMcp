@@ -13,6 +13,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
 - **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
+- **Input Simulation** - Click, right-click, double-click, and move mouse cursor
 - **Application Launch** - Start applications with arguments, open URLs
 - **Process Management** - List running processes, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
@@ -66,7 +67,7 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 
 Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
-## Available Tools (32)
+## Available Tools (36)
 
 | Category | Tools |
 |----------|-------|
@@ -76,6 +77,7 @@ Download the latest release from the [Releases](https://github.com/mortenbrudvik
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements` |
+| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 
@@ -116,6 +118,12 @@ Once configured, you can ask Claude to:
 - "Capture a 800x600 region at position 100, 200"
 - "Capture the Notepad window with UI element overlays"
 - "Get all buttons and text inputs from the Settings window"
+
+### Click Automation
+- "Click at position 500, 300"
+- "Right-click at 600, 400"
+- "Double-click the file at position 200, 150"
+- "Move the mouse to 800, 600"
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"
@@ -171,7 +179,7 @@ dotnet test
 dotnet test --collect:"XPlat Code Coverage"
 ```
 
-- **482 tests** covering unit and integration scenarios
+- **726 tests** covering unit and integration scenarios
 - ~70% code coverage
 
 ## Project Structure

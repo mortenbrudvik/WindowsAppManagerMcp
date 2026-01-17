@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 32 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 36 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,6 +12,7 @@ A comprehensive guide to all 32 MCP tools for managing Windows applications, win
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
 | [UI Automation](#ui-automation) | get_ui_elements | 1 |
+| [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move | 4 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
 
@@ -1216,6 +1217,176 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
 
 ---
 
+## Input Simulation
+
+Tools for simulating mouse input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking.
+
+### click
+
+Perform a left mouse click at the specified screen coordinates.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | int | Yes | - | X coordinate (screen position) |
+| y | int | Yes | - | Y coordinate (screen position) |
+
+**Example:**
+> "Click at position 500, 300"
+
+```json
+{
+  "name": "click",
+  "arguments": {
+    "x": 500,
+    "y": 300
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "x": 500,
+  "y": 300,
+  "clickType": "left"
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "x": 5000,
+  "y": 5000,
+  "clickType": "left",
+  "error": "Coordinates are outside screen bounds",
+  "errorCode": "CoordinatesOutOfBounds"
+}
+```
+
+---
+
+### right_click
+
+Perform a right mouse click at the specified screen coordinates.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | int | Yes | - | X coordinate (screen position) |
+| y | int | Yes | - | Y coordinate (screen position) |
+
+**Example:**
+> "Right-click at position 600, 400"
+
+```json
+{
+  "name": "right_click",
+  "arguments": {
+    "x": 600,
+    "y": 400
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "x": 600,
+  "y": 400,
+  "clickType": "right"
+}
+```
+
+---
+
+### double_click
+
+Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | int | Yes | - | X coordinate (screen position) |
+| y | int | Yes | - | Y coordinate (screen position) |
+| delayMs | int | No | 50 | Delay between clicks in milliseconds (range: 10-500) |
+
+**Example:**
+> "Double-click at position 200, 150"
+
+```json
+{
+  "name": "double_click",
+  "arguments": {
+    "x": 200,
+    "y": 150
+  }
+}
+```
+
+**Example with custom delay:**
+> "Double-click with 100ms between clicks"
+
+```json
+{
+  "name": "double_click",
+  "arguments": {
+    "x": 200,
+    "y": 150,
+    "delayMs": 100
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "x": 200,
+  "y": 150,
+  "clickType": "double"
+}
+```
+
+---
+
+### mouse_move
+
+Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| x | int | Yes | - | X coordinate (screen position) |
+| y | int | Yes | - | Y coordinate (screen position) |
+
+**Example:**
+> "Move the mouse to position 800, 600"
+
+```json
+{
+  "name": "mouse_move",
+  "arguments": {
+    "x": 800,
+    "y": 600
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "x": 800,
+  "y": 600
+}
+```
+
+---
+
 ## App Launch
 
 Tools for launching applications and managing processes.
@@ -1662,6 +1833,27 @@ Delete a layout preset.
 - Quick resize: `"Snap Chrome to the right third"`
 - Close gracefully: `"Close Notepad"`
 
+### Click Automation Workflow
+
+1. Find the window:
+```
+find_windows { "processName": "notepad" }
+```
+
+2. Get UI elements with bounding boxes:
+```
+get_ui_elements { "handle": 12345, "controlTypes": "Button,MenuItem" }
+```
+
+3. Find the target element in the response and calculate center:
+   - Element bounds: `{ "x": 100, "y": 200, "width": 80, "height": 30 }`
+   - Center: x = 100 + 80/2 = 140, y = 200 + 30/2 = 215
+
+4. Click the element:
+```
+click { "x": 140, "y": 215 }
+```
+
 ---
 
 ## Error Codes
@@ -1677,3 +1869,5 @@ Delete a layout preset.
 | `ConfirmationRequired` | Kill operation requires confirm=true |
 | `PresetNotFound` | Layout preset doesn't exist |
 | `InvalidPresetName` | Preset name is empty or invalid |
+| `CoordinatesOutOfBounds` | Click coordinates outside screen bounds |
+| `SendInputFailed` | SendInput API call failed |

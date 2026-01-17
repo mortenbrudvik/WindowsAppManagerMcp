@@ -105,6 +105,7 @@
 - `src/WindowsAppManagerMcp/Models/LayoutPreset.cs`
 - `src/WindowsAppManagerMcp/Models/ErrorCodes.cs`
 - `src/WindowsAppManagerMcp/Models/ScreenshotModels.cs`
+- `src/WindowsAppManagerMcp/Models/InputModels.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LaunchResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/LayoutApplyResult.cs`
 - `src/WindowsAppManagerMcp/Models/Results/KillResult.cs`
@@ -114,6 +115,7 @@
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Kernel32.cs`
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Shcore.cs`
 - `src/WindowsAppManagerMcp/Native/NativeMethods.Gdi32.cs`
+- `src/WindowsAppManagerMcp/Native/NativeMethods.Input.cs`
 - `src/WindowsAppManagerMcp/Native/NativeStructs.cs`
 - `src/WindowsAppManagerMcp/Native/NativeEnums.cs`
 - `src/WindowsAppManagerMcp/Native/ScreenCaptureWrapper.cs`
@@ -126,12 +128,14 @@
 - `src/WindowsAppManagerMcp/Services/Interfaces/IInputValidationService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/IScreenCaptureWrapper.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/IScreenshotService.cs`
+- `src/WindowsAppManagerMcp/Services/Interfaces/IInputSimulationService.cs`
 - `src/WindowsAppManagerMcp/Services/WindowService.cs`
 - `src/WindowsAppManagerMcp/Services/MonitorService.cs`
 - `src/WindowsAppManagerMcp/Services/ProcessService.cs`
 - `src/WindowsAppManagerMcp/Services/LayoutService.cs`
 - `src/WindowsAppManagerMcp/Services/InputValidationService.cs`
 - `src/WindowsAppManagerMcp/Services/ScreenshotService.cs`
+- `src/WindowsAppManagerMcp/Services/InputSimulationService.cs`
 - `src/WindowsAppManagerMcp/Services/Interfaces/INativeWindowWrapper.cs`
 - `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs`
 
@@ -142,6 +146,7 @@
 - `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs`
 - `src/WindowsAppManagerMcp/Tools/LayoutPresetTools.cs`
 - `src/WindowsAppManagerMcp/Tools/ScreenshotTools.cs`
+- `src/WindowsAppManagerMcp/Tools/InputSimulationTools.cs`
 
 ### ✅ Complete - Configuration & Docs
 - `WindowsAppManagerMcp.sln`
@@ -173,7 +178,7 @@
 
 ---
 
-## MCP Tools Summary (32 Tools)
+## MCP Tools Summary (36 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -201,6 +206,10 @@
 | `capture_window` | Screenshot | Capture a window |
 | `capture_with_elements` | Screenshot | Capture window with UI element overlays |
 | `get_ui_elements` | UI Automation | Get UI element tree with bounding boxes |
+| `click` | Input Simulation | Left click at screen coordinates |
+| `right_click` | Input Simulation | Right click at screen coordinates |
+| `double_click` | Input Simulation | Double left click at screen coordinates |
+| `mouse_move` | Input Simulation | Move cursor without clicking |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |
@@ -246,6 +255,8 @@
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/MonitorInfoToolsTests.cs` (10 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/AppLauncherToolsTests.cs` (14 tests)
 - `tests/WindowsAppManagerMcp.Tests/Unit/Tools/LayoutPresetToolsTests.cs` (23 tests)
+- `tests/WindowsAppManagerMcp.Tests/Unit/Services/InputSimulationServiceTests.cs` (17 tests)
+- `tests/WindowsAppManagerMcp.Tests/Unit/Tools/InputSimulationToolsTests.cs` (24 tests)
 
 ### ✅ Complete - Integration Tests
 - `tests/WindowsAppManagerMcp.Tests/Integration/LayoutServiceIntegrationTests.cs` (14 tests)
@@ -269,7 +280,7 @@
 | Phase 9: Development Tooling | ██████████ 100% |
 | Phase 10: Screenshot Capture | ██████████ 100% |
 | Phase 11: Enhanced Visual Tools | ░░░░░░░░░░ 0% |
-| Phase 12: Advanced Automation | ░░░░░░░░░░ 0% |
+| Phase 12: Advanced Automation | ██░░░░░░░░ 17% |
 
 **Core Implementation: ~98%**
 **With Screenshot: 100%**
@@ -434,7 +445,7 @@ Get UI element tree with bounding boxes without image capture.
 
 | # | Task | Status | Priority | Notes |
 |---|------|--------|----------|-------|
-| 12.1 | Click simulation | ⏳ Pending | P2 | Send click events to specific coordinates |
+| 12.1 | Click simulation | ✅ Complete | P2 | `click`, `right_click`, `double_click`, `mouse_move` tools using SendInput API |
 | 12.2 | Keyboard input | ⏳ Pending | P2 | Send keystrokes to focused window |
 | 12.3 | Element interaction | ⏳ Pending | P2 | Click/type on specific UI elements |
 | 12.4 | Accessibility tree navigation | ⏳ Pending | P3 | Navigate and interact via UI Automation |

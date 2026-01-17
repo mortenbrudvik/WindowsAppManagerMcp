@@ -105,3 +105,65 @@ internal struct WINDOWPLACEMENT
         return wp;
     }
 }
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct MOUSEINPUT
+{
+    public int dx;
+    public int dy;
+    public uint mouseData;
+    public uint dwFlags;
+    public uint time;
+    public nint dwExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct KEYBDINPUT
+{
+    public ushort wVk;
+    public ushort wScan;
+    public uint dwFlags;
+    public uint time;
+    public nint dwExtraInfo;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HARDWAREINPUT
+{
+    public uint uMsg;
+    public ushort wParamL;
+    public ushort wParamH;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct INPUT
+{
+    [FieldOffset(0)]
+    public uint type;
+
+    [FieldOffset(8)]
+    public MOUSEINPUT mi;
+
+    [FieldOffset(8)]
+    public KEYBDINPUT ki;
+
+    [FieldOffset(8)]
+    public HARDWAREINPUT hi;
+
+    public static INPUT MouseInput(int dx, int dy, uint flags, uint mouseData = 0)
+    {
+        return new INPUT
+        {
+            type = NativeEnums.INPUT_MOUSE,
+            mi = new MOUSEINPUT
+            {
+                dx = dx,
+                dy = dy,
+                dwFlags = flags,
+                mouseData = mouseData,
+                time = 0,
+                dwExtraInfo = nint.Zero
+            }
+        };
+    }
+}
