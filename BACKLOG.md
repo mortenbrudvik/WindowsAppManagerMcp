@@ -178,7 +178,7 @@
 
 ---
 
-## MCP Tools Summary (36 Tools)
+## MCP Tools Summary (38 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -210,6 +210,8 @@
 | `right_click` | Input Simulation | Right click at screen coordinates |
 | `double_click` | Input Simulation | Double left click at screen coordinates |
 | `mouse_move` | Input Simulation | Move cursor without clicking |
+| `type_text` | Input Simulation | Type text using Unicode characters |
+| `send_keys` | Input Simulation | Send key combinations (Ctrl+C, Alt+F4, etc.) |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |
@@ -280,7 +282,7 @@
 | Phase 9: Development Tooling | ██████████ 100% |
 | Phase 10: Screenshot Capture | ██████████ 100% |
 | Phase 11: Enhanced Visual Tools | ░░░░░░░░░░ 0% |
-| Phase 12: Advanced Automation | ██░░░░░░░░ 17% |
+| Phase 12: Advanced Automation | ████░░░░░░ 33% |
 
 **Core Implementation: ~98%**
 **With Screenshot: 100%**
@@ -446,7 +448,7 @@ Get UI element tree with bounding boxes without image capture.
 | # | Task | Status | Priority | Notes |
 |---|------|--------|----------|-------|
 | 12.1 | Click simulation | ✅ Complete | P2 | `click`, `right_click`, `double_click`, `mouse_move` tools using SendInput API |
-| 12.2 | Keyboard input | ⏳ Pending | P2 | Send keystrokes to focused window |
+| 12.2 | Keyboard input | ✅ Complete | P2 | `type_text`, `send_keys` tools using SendInput API with Unicode and VK support |
 | 12.3 | Element interaction | ⏳ Pending | P2 | Click/type on specific UI elements |
 | 12.4 | Accessibility tree navigation | ⏳ Pending | P3 | Navigate and interact via UI Automation |
 | 12.5 | Wait for element | ⏳ Pending | P2 | Wait until UI element appears/changes |

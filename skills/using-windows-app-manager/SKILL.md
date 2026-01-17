@@ -9,6 +9,7 @@ description: |
   - Take screenshots of screens, windows, or regions
   - Get UI elements or element coordinates from windows
   - Click, right-click, double-click, or move the mouse cursor
+  - Type text or send keyboard shortcuts
   - Launch applications or open programs
   - List or kill processes
   - Save, apply, restore, or manage window layouts
@@ -16,7 +17,7 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 36 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 38 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## When to Use
 
@@ -52,12 +53,16 @@ Use this skill when the user asks to:
 - "Get all UI elements from the [app] window"
 - "Get all buttons and text inputs from [app]"
 
-### Input Simulation / Click Automation
+### Input Simulation / Click & Keyboard Automation
 - "Click at position [x, y]"
 - "Right-click at [x, y]"
 - "Double-click at [x, y]"
 - "Move the mouse to [x, y]"
 - "Click the [button/menu item]" (requires get_ui_elements first)
+- "Type 'Hello World' in the text field"
+- "Press Ctrl+C to copy" / "Press Ctrl+V to paste"
+- "Press Enter" / "Press Tab"
+- "Press Alt+F4 to close"
 
 ### Layout Management
 - "Save my current window arrangement as [name]"
@@ -121,7 +126,7 @@ Use this skill when the user asks to:
 |------|-------------|----------------|
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, interactableOnly |
 
-### Input Simulation (4 tools)
+### Input Simulation (6 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -129,6 +134,8 @@ Use this skill when the user asks to:
 | `right_click` | Right click at coordinates | x, y |
 | `double_click` | Double left click | x, y, delayMs |
 | `mouse_move` | Move cursor (no click) | x, y |
+| `type_text` | Type text using Unicode | text, delayMs |
+| `send_keys` | Send key combinations | keys (e.g., `^c`, `{ENTER}`) |
 
 ### App Launch (3 tools)
 
@@ -211,6 +218,19 @@ The `snap_window` tool supports 14 positions:
 3. Find target element and calculate center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
 4. Use `click`, `right_click`, or `double_click` with the calculated coordinates
 
+### Keyboard Automation
+1. Use `focus_window` to focus the target window
+2. Use `click` to click on a text field (get coordinates from `get_ui_elements`)
+3. Use `type_text` to enter text
+4. Use `send_keys` for keyboard shortcuts:
+   - `^c` = Ctrl+C (copy)
+   - `^v` = Ctrl+V (paste)
+   - `^a` = Ctrl+A (select all)
+   - `{ENTER}` = Enter key
+   - `{TAB}` = Tab key
+   - `%{F4}` = Alt+F4 (close window)
+   - `+{HOME}` = Shift+Home (select to start)
+
 ## Tips
 
 - Always use `find_windows` first to get window handles before manipulating windows
@@ -227,6 +247,10 @@ The `snap_window` tool supports 14 positions:
 - Calculate click center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
 - Coordinates are validated against monitor bounds before clicking
 - Use `mouse_move` to hover before clicking if needed for hover effects
+- Keyboard input (`type_text`, `send_keys`) goes to the focused window - use `focus_window` first
+- `type_text` supports any Unicode characters (any language)
+- `send_keys` supports modifiers: `^` = Ctrl, `%` = Alt, `+` = Shift
+- Special keys in braces: `{ENTER}`, `{TAB}`, `{F1}`, `{DELETE}`, etc.
 
 ## Full Documentation
 

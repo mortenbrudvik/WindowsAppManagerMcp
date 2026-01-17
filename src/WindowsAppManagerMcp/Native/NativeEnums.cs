@@ -105,4 +105,90 @@ internal static class NativeEnums
     public const uint MOUSEEVENTF_HWHEEL = 0x1000;
     public const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
     public const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+
+    // Keyboard event flags for SendInput
+    public const uint KEYEVENTF_KEYDOWN = 0x0000;
+    public const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint KEYEVENTF_UNICODE = 0x0004;
+    public const uint KEYEVENTF_SCANCODE = 0x0008;
+
+    // Virtual Key Codes
+    public const ushort VK_BACK = 0x08;       // Backspace
+    public const ushort VK_TAB = 0x09;
+    public const ushort VK_CLEAR = 0x0C;
+    public const ushort VK_RETURN = 0x0D;     // Enter
+    public const ushort VK_SHIFT = 0x10;
+    public const ushort VK_CONTROL = 0x11;
+    public const ushort VK_MENU = 0x12;       // Alt
+    public const ushort VK_PAUSE = 0x13;
+    public const ushort VK_CAPITAL = 0x14;    // Caps Lock
+    public const ushort VK_ESCAPE = 0x1B;
+    public const ushort VK_SPACE = 0x20;
+    public const ushort VK_PRIOR = 0x21;      // Page Up
+    public const ushort VK_NEXT = 0x22;       // Page Down
+    public const ushort VK_END = 0x23;
+    public const ushort VK_HOME = 0x24;
+    public const ushort VK_LEFT = 0x25;
+    public const ushort VK_UP = 0x26;
+    public const ushort VK_RIGHT = 0x27;
+    public const ushort VK_DOWN = 0x28;
+    public const ushort VK_SELECT = 0x29;
+    public const ushort VK_PRINT = 0x2A;
+    public const ushort VK_EXECUTE = 0x2B;
+    public const ushort VK_SNAPSHOT = 0x2C;   // Print Screen
+    public const ushort VK_INSERT = 0x2D;
+    public const ushort VK_DELETE = 0x2E;
+    public const ushort VK_HELP = 0x2F;
+
+    // Number keys (0-9) = 0x30-0x39
+    // Letter keys (A-Z) = 0x41-0x5A
+
+    public const ushort VK_LWIN = 0x5B;       // Left Windows
+    public const ushort VK_RWIN = 0x5C;       // Right Windows
+    public const ushort VK_APPS = 0x5D;       // Applications/Context menu
+    public const ushort VK_SLEEP = 0x5F;
+
+    // Numpad keys
+    public const ushort VK_NUMPAD0 = 0x60;
+    public const ushort VK_NUMPAD1 = 0x61;
+    public const ushort VK_NUMPAD2 = 0x62;
+    public const ushort VK_NUMPAD3 = 0x63;
+    public const ushort VK_NUMPAD4 = 0x64;
+    public const ushort VK_NUMPAD5 = 0x65;
+    public const ushort VK_NUMPAD6 = 0x66;
+    public const ushort VK_NUMPAD7 = 0x67;
+    public const ushort VK_NUMPAD8 = 0x68;
+    public const ushort VK_NUMPAD9 = 0x69;
+    public const ushort VK_MULTIPLY = 0x6A;
+    public const ushort VK_ADD = 0x6B;
+    public const ushort VK_SEPARATOR = 0x6C;
+    public const ushort VK_SUBTRACT = 0x6D;
+    public const ushort VK_DECIMAL = 0x6E;
+    public const ushort VK_DIVIDE = 0x6F;
+
+    // Function keys
+    public const ushort VK_F1 = 0x70;
+    public const ushort VK_F2 = 0x71;
+    public const ushort VK_F3 = 0x72;
+    public const ushort VK_F4 = 0x73;
+    public const ushort VK_F5 = 0x74;
+    public const ushort VK_F6 = 0x75;
+    public const ushort VK_F7 = 0x76;
+    public const ushort VK_F8 = 0x77;
+    public const ushort VK_F9 = 0x78;
+    public const ushort VK_F10 = 0x79;
+    public const ushort VK_F11 = 0x7A;
+    public const ushort VK_F12 = 0x7B;
+
+    public const ushort VK_NUMLOCK = 0x90;
+    public const ushort VK_SCROLL = 0x91;     // Scroll Lock
+
+    // Modifier keys (left/right specific)
+    public const ushort VK_LSHIFT = 0xA0;
+    public const ushort VK_RSHIFT = 0xA1;
+    public const ushort VK_LCONTROL = 0xA2;
+    public const ushort VK_RCONTROL = 0xA3;
+    public const ushort VK_LMENU = 0xA4;      // Left Alt
+    public const ushort VK_RMENU = 0xA5;      // Right Alt
 }

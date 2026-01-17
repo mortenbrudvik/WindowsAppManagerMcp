@@ -66,6 +66,21 @@ public class InputSimulationToolsTests
         mock.Setup(s => s.GetCursorPosition())
             .Returns((500, 500));
 
+        mock.Setup(s => s.TypeText(It.IsAny<string>(), It.IsAny<int>()))
+            .Returns((string text, int delay) => new TypeTextResult(
+                Success: success,
+                Text: text,
+                CharactersTyped: text?.Length ?? 0,
+                Error: error,
+                ErrorCode: errorCode));
+
+        mock.Setup(s => s.SendKeys(It.IsAny<string>()))
+            .Returns((string keys) => new SendKeysResult(
+                Success: success,
+                Keys: keys,
+                Error: error,
+                ErrorCode: errorCode));
+
         return mock;
     }
 
@@ -375,6 +390,181 @@ public class InputSimulationToolsTests
         // Assert
         result.X.Should().Be(x);
         result.Y.Should().Be(y);
+    }
+
+    #endregion
+
+    #region TypeText Tests
+
+    [Fact]
+    public void TypeText_CallsServiceWithCorrectParameters()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.TypeText("Hello World");
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeText("Hello World", 0), Times.Once);
+    }
+
+    [Fact]
+    public void TypeText_WithCustomDelay_PassesClampedDelay()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.TypeText("Hello", delayMs: 50);
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeText("Hello", 50), Times.Once);
+    }
+
+    [Fact]
+    public void TypeText_WithDelayBelowMinimum_ClampsTo0()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.TypeText("Hello", delayMs: -10);
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeText("Hello", 0), Times.Once);
+    }
+
+    [Fact]
+    public void TypeText_WithDelayAboveMaximum_ClampsTo100()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.TypeText("Hello", delayMs: 500);
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeText("Hello", 100), Times.Once);
+    }
+
+    [Fact]
+    public void TypeText_ReturnsServiceResult()
+    {
+        // Arrange
+        var expectedResult = new TypeTextResult(true, "Hello", 5);
+        _mockInputService.Setup(s => s.TypeText("Hello", 0)).Returns(expectedResult);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TypeText("Hello");
+
+        // Assert
+        result.Should().Be(expectedResult);
+    }
+
+    [Fact]
+    public void TypeText_WhenServiceReturnsError_ReturnsError()
+    {
+        // Arrange
+        var errorResult = new TypeTextResult(
+            Success: false,
+            Text: "",
+            CharactersTyped: 0,
+            Error: "Text cannot be empty",
+            ErrorCode: InputErrorCode.EmptyText);
+        _mockInputService.Setup(s => s.TypeText("", 0)).Returns(errorResult);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TypeText("");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.EmptyText);
+    }
+
+    #endregion
+
+    #region SendKeys Tests
+
+    [Fact]
+    public void SendKeys_CallsServiceWithCorrectKeys()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.SendKeys("{ENTER}");
+
+        // Assert
+        _mockInputService.Verify(s => s.SendKeys("{ENTER}"), Times.Once);
+    }
+
+    [Fact]
+    public void SendKeys_WithModifierKeys_PassesToService()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.SendKeys("^c");
+
+        // Assert
+        _mockInputService.Verify(s => s.SendKeys("^c"), Times.Once);
+    }
+
+    [Fact]
+    public void SendKeys_ReturnsServiceResult()
+    {
+        // Arrange
+        var expectedResult = new SendKeysResult(true, "{ENTER}");
+        _mockInputService.Setup(s => s.SendKeys("{ENTER}")).Returns(expectedResult);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("{ENTER}");
+
+        // Assert
+        result.Should().Be(expectedResult);
+    }
+
+    [Fact]
+    public void SendKeys_WhenServiceReturnsError_ReturnsError()
+    {
+        // Arrange
+        var errorResult = new SendKeysResult(
+            Success: false,
+            Keys: "{UNKNOWNKEY}",
+            Error: "Unknown key: UNKNOWNKEY",
+            ErrorCode: InputErrorCode.UnknownKey);
+        _mockInputService.Setup(s => s.SendKeys("{UNKNOWNKEY}")).Returns(errorResult);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("{UNKNOWNKEY}");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
+    }
+
+    [Theory]
+    [InlineData("^a")]
+    [InlineData("%{F4}")]
+    [InlineData("+{HOME}")]
+    [InlineData("{TAB}")]
+    [InlineData("{F1}")]
+    public void SendKeys_WithVariousKeyFormats_PassesToService(string keys)
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.SendKeys(keys);
+
+        // Assert
+        _mockInputService.Verify(s => s.SendKeys(keys), Times.Once);
     }
 
     #endregion

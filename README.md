@@ -67,7 +67,7 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 
 Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
-## Available Tools (36)
+## Available Tools (38)
 
 | Category | Tools |
 |----------|-------|
@@ -77,7 +77,7 @@ Download the latest release from the [Releases](https://github.com/mortenbrudvik
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements` |
-| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move` |
+| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 
@@ -119,11 +119,15 @@ Once configured, you can ask Claude to:
 - "Capture the Notepad window with UI element overlays"
 - "Get all buttons and text inputs from the Settings window"
 
-### Click Automation
+### Click & Keyboard Automation
 - "Click at position 500, 300"
 - "Right-click at 600, 400"
 - "Double-click the file at position 200, 150"
 - "Move the mouse to 800, 600"
+- "Type 'Hello World' into the text field"
+- "Press Ctrl+C to copy"
+- "Press Enter to confirm"
+- "Press Alt+F4 to close the window"
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"
@@ -179,7 +183,7 @@ dotnet test
 dotnet test --collect:"XPlat Code Coverage"
 ```
 
-- **726 tests** covering unit and integration scenarios
+- **780 tests** covering unit and integration scenarios
 - ~70% code coverage
 
 ## Project Structure

@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 36 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 38 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ A comprehensive guide to all 36 MCP tools for managing Windows applications, win
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
 | [UI Automation](#ui-automation) | get_ui_elements | 1 |
-| [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move | 4 |
+| [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move, type_text, send_keys | 6 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
 
@@ -1219,7 +1219,7 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
 
 ## Input Simulation
 
-Tools for simulating mouse input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking.
+Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Keyboard input is sent to the currently focused window.
 
 ### click
 
@@ -1382,6 +1382,201 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
   "success": true,
   "x": 800,
   "y": 600
+}
+```
+
+---
+
+### type_text
+
+Type text by simulating keyboard input. Text is sent to the currently focused window using Unicode characters, supporting any language.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| text | string | Yes | - | The text to type |
+| delayMs | int | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
+
+**Example:**
+> "Type 'Hello World' into the focused text field"
+
+```json
+{
+  "name": "type_text",
+  "arguments": {
+    "text": "Hello World"
+  }
+}
+```
+
+**Example with delay:**
+> "Type text slowly with 50ms between each keystroke"
+
+```json
+{
+  "name": "type_text",
+  "arguments": {
+    "text": "Typing slowly...",
+    "delayMs": 50
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "text": "Hello World",
+  "charactersTyped": 11
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "text": "",
+  "charactersTyped": 0,
+  "error": "Text cannot be empty",
+  "errorCode": "EmptyText"
+}
+```
+
+---
+
+### send_keys
+
+Send key combinations to the focused window. Supports special keys and modifier combinations using SendKeys-style syntax.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| keys | string | Yes | - | Keys to send in SendKeys format (see syntax below) |
+
+**SendKeys Syntax:**
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `{KEY}` | Special key by name | `{ENTER}`, `{TAB}`, `{F1}` |
+| `^` | Control modifier | `^c` = Ctrl+C |
+| `%` | Alt modifier | `%{F4}` = Alt+F4 |
+| `+` | Shift modifier | `+{HOME}` = Shift+Home |
+| Regular characters | Sent directly | `abc` types "abc" |
+
+**Supported Special Keys:**
+
+| Key Name | Aliases | Description |
+|----------|---------|-------------|
+| `{ENTER}` | `{RETURN}` | Enter key |
+| `{TAB}` | - | Tab key |
+| `{ESC}` | `{ESCAPE}` | Escape key |
+| `{BACKSPACE}` | `{BS}`, `{BKSP}` | Backspace |
+| `{DELETE}` | `{DEL}` | Delete key |
+| `{INSERT}` | `{INS}` | Insert key |
+| `{UP}` | - | Up arrow |
+| `{DOWN}` | - | Down arrow |
+| `{LEFT}` | - | Left arrow |
+| `{RIGHT}` | - | Right arrow |
+| `{HOME}` | - | Home key |
+| `{END}` | - | End key |
+| `{PGUP}` | `{PAGEUP}` | Page Up |
+| `{PGDN}` | `{PAGEDOWN}` | Page Down |
+| `{SPACE}` | - | Space bar |
+| `{F1}` - `{F12}` | - | Function keys |
+| `{CAPSLOCK}` | `{CAPS}` | Caps Lock |
+| `{NUMLOCK}` | - | Num Lock |
+| `{SCROLLLOCK}` | `{SCROLL}` | Scroll Lock |
+| `{PRTSC}` | `{PRINTSCREEN}` | Print Screen |
+| `{PAUSE}` | `{BREAK}` | Pause/Break |
+| `{WIN}` | `{LWIN}` | Windows key |
+
+**Example 1:** Press Enter
+> "Press Enter to confirm"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "{ENTER}"
+  }
+}
+```
+
+**Example 2:** Copy (Ctrl+C)
+> "Copy selected text"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "^c"
+  }
+}
+```
+
+**Example 3:** Select all and delete (Ctrl+A, Delete)
+> "Clear all text in the field"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "^a{DELETE}"
+  }
+}
+```
+
+**Example 4:** Close window (Alt+F4)
+> "Close the current window"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "%{F4}"
+  }
+}
+```
+
+**Example 5:** Select to beginning (Shift+Home)
+> "Select text from cursor to beginning of line"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "+{HOME}"
+  }
+}
+```
+
+**Example 6:** Multiple modifiers (Ctrl+Shift+End)
+> "Select from cursor to end of document"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "^+{END}"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "keys": "^c"
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "keys": "{UNKNOWNKEY}",
+  "error": "Unknown key: UNKNOWNKEY",
+  "errorCode": "UnknownKey"
 }
 ```
 
@@ -1854,6 +2049,62 @@ get_ui_elements { "handle": 12345, "controlTypes": "Button,MenuItem" }
 click { "x": 140, "y": 215 }
 ```
 
+### Keyboard Automation Workflow
+
+1. Focus the target window:
+```
+focus_window { "handle": 12345 }
+```
+
+2. Click on a text input field (get coordinates from get_ui_elements):
+```
+click { "x": 500, "y": 300 }
+```
+
+3. Type text into the field:
+```
+type_text { "text": "Hello World" }
+```
+
+4. Use keyboard shortcuts:
+```
+send_keys { "keys": "^a" }       // Select all
+send_keys { "keys": "^c" }       // Copy
+send_keys { "keys": "{TAB}" }    // Move to next field
+send_keys { "keys": "^v" }       // Paste
+send_keys { "keys": "{ENTER}" }  // Submit
+```
+
+### Form Automation Example
+
+Complete a form with multiple fields:
+
+```
+// 1. Focus the window
+focus_window { "handle": 12345 }
+
+// 2. Click first field
+click { "x": 500, "y": 100 }
+
+// 3. Type name
+type_text { "text": "John Doe" }
+
+// 4. Tab to next field
+send_keys { "keys": "{TAB}" }
+
+// 5. Type email
+type_text { "text": "john@example.com" }
+
+// 6. Tab to next field
+send_keys { "keys": "{TAB}" }
+
+// 7. Type message
+type_text { "text": "This is my message" }
+
+// 8. Submit form
+send_keys { "keys": "{ENTER}" }
+```
+
 ---
 
 ## Error Codes
@@ -1871,3 +2122,6 @@ click { "x": 140, "y": 215 }
 | `InvalidPresetName` | Preset name is empty or invalid |
 | `CoordinatesOutOfBounds` | Click coordinates outside screen bounds |
 | `SendInputFailed` | SendInput API call failed |
+| `EmptyText` | Text or keys string is empty |
+| `InvalidKeySpecification` | Invalid key specification format |
+| `UnknownKey` | Unknown special key name in braces |

@@ -1,6 +1,6 @@
 {
   "name": "windows-app-manager",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Comprehensive Windows application and window management from Claude. Launch apps, control windows, snap layouts, and automate desktop workflows.",
   "author": {
     "name": "Morten Brudvik"

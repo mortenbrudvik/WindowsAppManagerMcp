@@ -166,4 +166,36 @@ internal struct INPUT
             }
         };
     }
+
+    public static INPUT KeyboardInput(ushort vk, uint flags)
+    {
+        return new INPUT
+        {
+            type = NativeEnums.INPUT_KEYBOARD,
+            ki = new KEYBDINPUT
+            {
+                wVk = vk,
+                wScan = 0,
+                dwFlags = flags,
+                time = 0,
+                dwExtraInfo = nint.Zero
+            }
+        };
+    }
+
+    public static INPUT UnicodeInput(char character, uint flags)
+    {
+        return new INPUT
+        {
+            type = NativeEnums.INPUT_KEYBOARD,
+            ki = new KEYBDINPUT
+            {
+                wVk = 0,
+                wScan = character,
+                dwFlags = flags | NativeEnums.KEYEVENTF_UNICODE,
+                time = 0,
+                dwExtraInfo = nint.Zero
+            }
+        };
+    }
 }

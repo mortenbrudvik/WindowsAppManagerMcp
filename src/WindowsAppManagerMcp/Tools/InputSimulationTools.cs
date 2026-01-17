@@ -63,4 +63,25 @@ public class InputSimulationTools
     {
         return _inputService.MoveMouse(x, y);
     }
+
+    [McpServerTool(Name = "type_text")]
+    [Description("Type text by simulating keyboard input. Text is sent to the currently focused window using Unicode characters. Works with any language/characters.")]
+    public TypeTextResult TypeText(
+        [Description("The text to type")]
+        string text,
+        [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
+        int delayMs = 0)
+    {
+        delayMs = Math.Clamp(delayMs, 0, 100);
+        return _inputService.TypeText(text, delayMs);
+    }
+
+    [McpServerTool(Name = "send_keys")]
+    [Description("Send key combinations to the focused window. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{ENTER}' (Enter key), '%{F4}' (Alt+F4), '+{HOME}' (Shift+Home).")]
+    public SendKeysResult SendKeys(
+        [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
+        string keys)
+    {
+        return _inputService.SendKeys(keys);
+    }
 }

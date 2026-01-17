@@ -36,4 +36,18 @@ public interface IInputSimulationService
     /// Checks if the given screen coordinates are within the bounds of any connected monitor.
     /// </summary>
     bool IsValidScreenCoordinate(int x, int y);
+
+    /// <summary>
+    /// Types text by simulating keyboard input using Unicode characters.
+    /// </summary>
+    /// <param name="text">The text to type.</param>
+    /// <param name="delayBetweenKeysMs">Optional delay between keystrokes in milliseconds (0-100).</param>
+    TypeTextResult TypeText(string text, int delayBetweenKeysMs = 0);
+
+    /// <summary>
+    /// Sends key combinations using SendKeys-style syntax.
+    /// Supports special keys like {ENTER}, {TAB}, {F1}-{F12}, and modifiers ^ (Ctrl), % (Alt), + (Shift).
+    /// </summary>
+    /// <param name="keys">The keys to send in SendKeys format.</param>
+    SendKeysResult SendKeys(string keys);
 }

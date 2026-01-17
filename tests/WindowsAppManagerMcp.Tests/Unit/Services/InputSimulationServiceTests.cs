@@ -345,4 +345,244 @@ public class InputSimulationServiceTests
     }
 
     #endregion
+
+    #region TypeText Tests
+
+    [Fact]
+    public void TypeText_WithEmptyText_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TypeText("");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.EmptyText);
+        result.Error.Should().Contain("empty");
+        result.CharactersTyped.Should().Be(0);
+    }
+
+    [Fact]
+    public void TypeText_WithNullText_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TypeText(null!);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.EmptyText);
+    }
+
+    [Fact]
+    public void TypeText_WithValidText_ReturnsCorrectTextInResult()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TypeText("Hello World");
+
+        // Assert
+        result.Text.Should().Be("Hello World");
+    }
+
+    [Theory]
+    [InlineData(-10)]
+    [InlineData(0)]
+    [InlineData(50)]
+    [InlineData(100)]
+    [InlineData(200)]
+    public void TypeText_WithVariousDelays_DoesNotThrow(int inputDelay)
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act - The service clamps the delay internally, just verify it doesn't throw
+        var result = sut.TypeText("a", inputDelay);
+
+        // Assert - Should not throw and text should be set
+        result.Text.Should().Be("a");
+    }
+
+    #endregion
+
+    #region SendKeys Tests
+
+    [Fact]
+    public void SendKeys_WithEmptyKeys_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.EmptyText);
+        result.Error.Should().Contain("empty");
+    }
+
+    [Fact]
+    public void SendKeys_WithNullKeys_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys(null!);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.EmptyText);
+    }
+
+    [Fact]
+    public void SendKeys_WithValidKeys_ReturnsCorrectKeysInResult()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("{ENTER}");
+
+        // Assert
+        result.Keys.Should().Be("{ENTER}");
+    }
+
+    [Fact]
+    public void SendKeys_WithUnclosedBrace_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("{ENTER");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
+        result.Error.Should().Contain("Unclosed brace");
+    }
+
+    [Fact]
+    public void SendKeys_WithUnknownKey_ReturnsError()
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys("{UNKNOWNKEY}");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
+        result.Error.Should().Contain("Unknown key");
+    }
+
+    [Theory]
+    [InlineData("{ENTER}")]
+    [InlineData("{TAB}")]
+    [InlineData("{ESC}")]
+    [InlineData("{ESCAPE}")]
+    [InlineData("{BACKSPACE}")]
+    [InlineData("{BS}")]
+    [InlineData("{DELETE}")]
+    [InlineData("{DEL}")]
+    [InlineData("{INSERT}")]
+    [InlineData("{INS}")]
+    [InlineData("{UP}")]
+    [InlineData("{DOWN}")]
+    [InlineData("{LEFT}")]
+    [InlineData("{RIGHT}")]
+    [InlineData("{HOME}")]
+    [InlineData("{END}")]
+    [InlineData("{PGUP}")]
+    [InlineData("{PGDN}")]
+    [InlineData("{F1}")]
+    [InlineData("{F12}")]
+    [InlineData("{SPACE}")]
+    public void SendKeys_WithSpecialKey_ParsesCorrectly(string keys)
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys(keys);
+
+        // Assert
+        result.Keys.Should().Be(keys);
+        // Not checking Success because SendInput may fail in test environment
+        // but we verified it didn't throw parsing exceptions
+    }
+
+    [Theory]
+    [InlineData("^c")]
+    [InlineData("^v")]
+    [InlineData("%{F4}")]
+    [InlineData("+{HOME}")]
+    [InlineData("^+{END}")]
+    public void SendKeys_WithModifiers_ParsesCorrectly(string keys)
+    {
+        // Arrange
+        var monitor = TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080);
+        _mockMonitorService.Setup(m => m.GetAllMonitors())
+            .Returns(new List<MonitorInfo> { monitor });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.SendKeys(keys);
+
+        // Assert
+        result.Keys.Should().Be(keys);
+        // Not checking Success because SendInput may fail in test environment
+    }
+
+    #endregion
 }

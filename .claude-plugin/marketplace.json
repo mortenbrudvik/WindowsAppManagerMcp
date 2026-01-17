@@ -12,7 +12,7 @@
     {
       "name": "windows-app-manager",
       "description": "Comprehensive Windows application and window management. Launch apps, control windows, snap layouts, and automate desktop workflows.",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "source": "./",
       "author": {
         "name": "Morten Brudvik"
