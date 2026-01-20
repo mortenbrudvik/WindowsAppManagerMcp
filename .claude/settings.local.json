@@ -57,7 +57,13 @@
       "Bash(start msedge:*)",
       "Bash(start:*)",
       "WebFetch(domain:playbooks.com)",
-      "mcp__plugin_windows-app-manager_windows-app-manager__list_layouts"
+      "mcp__plugin_windows-app-manager_windows-app-manager__list_layouts",
+      "Skill(update-plugin)",
+      "Bash(powershell.exe -NoProfile -Command \"$version = ''1.11.0''; $dest = Join-Path $env:USERPROFILE ''.claude\\\\plugins\\\\cache\\\\windows-app-manager-marketplace\\\\windows-app-manager'' $version; New-Item -ItemType Directory -Force -Path \\(Join-Path $dest ''.claude-plugin\\\\bin''\\) | Out-Null; New-Item -ItemType Directory -Force -Path \\(Join-Path $dest ''skills''\\) | Out-Null; New-Item -ItemType Directory -Force -Path \\(Join-Path $dest ''.claude\\\\commands''\\) | Out-Null; Copy-Item -Force ''.claude-plugin\\\\plugin.json'' \\(Join-Path $dest ''.claude-plugin\\\\''\\); Copy-Item -Force ''.claude-plugin\\\\marketplace.json'' \\(Join-Path $dest ''.claude-plugin\\\\''\\); Copy-Item -Recurse -Force ''.claude-plugin\\\\bin\\\\*'' \\(Join-Path $dest ''.claude-plugin\\\\bin\\\\''\\); Copy-Item -Recurse -Force ''skills\\\\*'' \\(Join-Path $dest ''skills\\\\''\\); Copy-Item -Recurse -Force ''.claude\\\\commands\\\\*'' \\(Join-Path $dest ''.claude\\\\commands\\\\''\\); Write-Host ''Files copied to:'' $dest\")",
+      "Bash(powershell.exe:*)",
+      "Bash(git rev-parse:*)",
+      "mcp__plugin_windows-app-manager_windows-app-manager__capture_window",
+      "Bash(powershell -Command \"$json = Get-Content ''mcp-plugin_windows-app-manager_windows-app-manager-capture_window-1768900851994.txt'' -Raw | ConvertFrom-Json; $base64 = $json[0].text -replace ''.*base64,'',''''; [System.IO.File]::WriteAllBytes\\(''C:\\\\Users\\\\MortenBrudvikEpsis\\\\.claude\\\\projects\\\\C--Users-MortenBrudvikEpsis-code-projects-WindowsAppManagerMcp\\\\8986fa3c-f7d2-49e6-ac83-a4ac3bcdc577\\\\scratchpad\\\\vg_screenshot.jpg'', [System.Convert]::FromBase64String\\($base64\\)\\)\")"
     ]
   }
 }
