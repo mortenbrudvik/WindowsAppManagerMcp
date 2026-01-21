@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -48,7 +49,7 @@ public class ScreenshotService : IScreenshotService
         );
     }
 
-    public ScreenshotResult CaptureMonitor(int monitorIndex, string format = "png", int quality = 85)
+    public ScreenshotResult CaptureMonitor(int monitorIndex, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
         try
         {
@@ -63,17 +64,57 @@ public class ScreenshotService : IScreenshotService
 
             var normalizedFormat = NormalizeFormat(format);
             var pixelData = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-            var imageData = EncodeImage(pixelData, bounds.Width, bounds.Height, normalizedFormat, quality);
+
+            string? imageData = null;
+            string? filePath = null;
+            int? originalWidth = null;
+            int? originalHeight = null;
+            int finalWidth = bounds.Width;
+            int finalHeight = bounds.Height;
+
+            // Create bitmap and resize if needed
+            using var bitmap = CreateBitmapFromPixelData(pixelData, bounds.Width, bounds.Height);
+            Bitmap? resizedBitmap = null;
+
+            try
+            {
+                if (maxWidth.HasValue && bounds.Width > maxWidth.Value)
+                {
+                    originalWidth = bounds.Width;
+                    originalHeight = bounds.Height;
+                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
+                    finalWidth = resizedBitmap.Width;
+                    finalHeight = resizedBitmap.Height;
+                }
+
+                var outputBitmap = resizedBitmap ?? bitmap;
+
+                if (saveToFile)
+                {
+                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
+                }
+                else
+                {
+                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
+                }
+            }
+            finally
+            {
+                resizedBitmap?.Dispose();
+            }
 
             return new ScreenshotResult(
                 Success: true,
                 ImageData: imageData,
                 ImageFormat: normalizedFormat,
-                Width: bounds.Width,
-                Height: bounds.Height,
+                Width: finalWidth,
+                Height: finalHeight,
                 CapturedRegion: new CapturedRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height),
                 MonitorIndex: monitorIndex,
-                ScaleFactor: monitor.ScaleFactor
+                ScaleFactor: monitor.ScaleFactor,
+                FilePath: filePath,
+                OriginalWidth: originalWidth,
+                OriginalHeight: originalHeight
             );
         }
         catch (Exception ex)
@@ -82,7 +123,7 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    public ScreenshotResult CaptureRegion(int x, int y, int width, int height, string format = "png", int quality = 85)
+    public ScreenshotResult CaptureRegion(int x, int y, int width, int height, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
         try
         {
@@ -93,7 +134,44 @@ public class ScreenshotService : IScreenshotService
 
             var normalizedFormat = NormalizeFormat(format);
             var pixelData = _captureWrapper.CaptureScreenRegion(x, y, width, height);
-            var imageData = EncodeImage(pixelData, width, height, normalizedFormat, quality);
+
+            string? imageData = null;
+            string? filePath = null;
+            int? originalWidth = null;
+            int? originalHeight = null;
+            int finalWidth = width;
+            int finalHeight = height;
+
+            // Create bitmap and resize if needed
+            using var bitmap = CreateBitmapFromPixelData(pixelData, width, height);
+            Bitmap? resizedBitmap = null;
+
+            try
+            {
+                if (maxWidth.HasValue && width > maxWidth.Value)
+                {
+                    originalWidth = width;
+                    originalHeight = height;
+                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
+                    finalWidth = resizedBitmap.Width;
+                    finalHeight = resizedBitmap.Height;
+                }
+
+                var outputBitmap = resizedBitmap ?? bitmap;
+
+                if (saveToFile)
+                {
+                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
+                }
+                else
+                {
+                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
+                }
+            }
+            finally
+            {
+                resizedBitmap?.Dispose();
+            }
 
             // Determine which monitor contains the center of the region
             var centerX = x + width / 2;
@@ -104,11 +182,14 @@ public class ScreenshotService : IScreenshotService
                 Success: true,
                 ImageData: imageData,
                 ImageFormat: normalizedFormat,
-                Width: width,
-                Height: height,
+                Width: finalWidth,
+                Height: finalHeight,
                 CapturedRegion: new CapturedRegion(x, y, width, height),
                 MonitorIndex: monitor?.Index,
-                ScaleFactor: monitor?.ScaleFactor ?? 1.0
+                ScaleFactor: monitor?.ScaleFactor ?? 1.0,
+                FilePath: filePath,
+                OriginalWidth: originalWidth,
+                OriginalHeight: originalHeight
             );
         }
         catch (Exception ex)
@@ -117,7 +198,7 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    public ScreenshotResult CaptureWindow(nint windowHandle, bool includeFrame = true, string format = "png", int quality = 85)
+    public ScreenshotResult CaptureWindow(nint windowHandle, bool includeFrame = true, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
         try
         {
@@ -128,7 +209,44 @@ public class ScreenshotService : IScreenshotService
 
             var normalizedFormat = NormalizeFormat(format);
             var (pixelData, width, height) = _captureWrapper.CaptureWindow(windowHandle, includeFrame);
-            var imageData = EncodeImage(pixelData, width, height, normalizedFormat, quality);
+
+            string? imageData = null;
+            string? filePath = null;
+            int? originalWidth = null;
+            int? originalHeight = null;
+            int finalWidth = width;
+            int finalHeight = height;
+
+            // Create bitmap and resize if needed
+            using var bitmap = CreateBitmapFromPixelData(pixelData, width, height);
+            Bitmap? resizedBitmap = null;
+
+            try
+            {
+                if (maxWidth.HasValue && width > maxWidth.Value)
+                {
+                    originalWidth = width;
+                    originalHeight = height;
+                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
+                    finalWidth = resizedBitmap.Width;
+                    finalHeight = resizedBitmap.Height;
+                }
+
+                var outputBitmap = resizedBitmap ?? bitmap;
+
+                if (saveToFile)
+                {
+                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
+                }
+                else
+                {
+                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
+                }
+            }
+            finally
+            {
+                resizedBitmap?.Dispose();
+            }
 
             // Get the monitor for this window
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
@@ -137,11 +255,14 @@ public class ScreenshotService : IScreenshotService
                 Success: true,
                 ImageData: imageData,
                 ImageFormat: normalizedFormat,
-                Width: width,
-                Height: height,
+                Width: finalWidth,
+                Height: finalHeight,
                 CapturedRegion: new CapturedRegion(0, 0, width, height),
                 MonitorIndex: monitor?.Index,
-                ScaleFactor: monitor?.ScaleFactor ?? 1.0
+                ScaleFactor: monitor?.ScaleFactor ?? 1.0,
+                FilePath: filePath,
+                OriginalWidth: originalWidth,
+                OriginalHeight: originalHeight
             );
         }
         catch (Exception ex)
@@ -154,6 +275,106 @@ public class ScreenshotService : IScreenshotService
     {
         format = format.ToLowerInvariant();
         return format is "png" or "jpeg" or "jpg" ? format : "png";
+    }
+
+    private static Bitmap ResizeImage(Bitmap original, int maxWidth)
+    {
+        if (original.Width <= maxWidth)
+            return original;
+
+        double scale = (double)maxWidth / original.Width;
+        int newHeight = (int)(original.Height * scale);
+
+        var resized = new Bitmap(maxWidth, newHeight);
+        using (var g = Graphics.FromImage(resized))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.CompositingQuality = CompositingQuality.HighQuality;
+            g.SmoothingMode = SmoothingMode.HighQuality;
+            g.DrawImage(original, 0, 0, maxWidth, newHeight);
+        }
+        return resized;
+    }
+
+    private static string GenerateTempFilePath(string format)
+    {
+        var extension = format == "jpeg" || format == "jpg" ? "jpg" : "png";
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var fileName = $"screenshot_{timestamp}_{Guid.NewGuid():N}.{extension}";
+        return Path.Combine(Path.GetTempPath(), fileName);
+    }
+
+    private static string SaveImageToFile(byte[] pixelData, int width, int height, string format, int quality, string? outputPath)
+    {
+        var filePath = outputPath ?? GenerateTempFilePath(format);
+        quality = Math.Clamp(quality, 1, 100);
+
+        // Ensure directory exists
+        var directory = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        // Create bitmap from raw BGRA pixel data
+        using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+
+        var bitmapData = bitmap.LockBits(
+            new Rectangle(0, 0, width, height),
+            ImageLockMode.WriteOnly,
+            PixelFormat.Format32bppArgb);
+
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bitmapData.Scan0, pixelData.Length);
+        }
+        finally
+        {
+            bitmap.UnlockBits(bitmapData);
+        }
+
+        if (format == "png")
+        {
+            bitmap.Save(filePath, ImageFormat.Png);
+        }
+        else
+        {
+            var encoder = ImageCodecInfo.GetImageEncoders()
+                .First(c => c.MimeType == "image/jpeg");
+            var encoderParams = new EncoderParameters(1);
+            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, quality);
+            bitmap.Save(filePath, encoder, encoderParams);
+        }
+
+        return filePath;
+    }
+
+    private static string SaveBitmapToFile(Bitmap bitmap, string format, int quality, string? outputPath)
+    {
+        var filePath = outputPath ?? GenerateTempFilePath(format);
+        quality = Math.Clamp(quality, 1, 100);
+
+        // Ensure directory exists
+        var directory = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        if (format == "png")
+        {
+            bitmap.Save(filePath, ImageFormat.Png);
+        }
+        else
+        {
+            var encoder = ImageCodecInfo.GetImageEncoders()
+                .First(c => c.MimeType == "image/jpeg");
+            var encoderParams = new EncoderParameters(1);
+            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, quality);
+            bitmap.Save(filePath, encoder, encoderParams);
+        }
+
+        return filePath;
     }
 
     private static string EncodeImage(byte[] pixelData, int width, int height, string format, int quality)
@@ -203,7 +424,10 @@ public class ScreenshotService : IScreenshotService
         bool includeFrame = true,
         string format = "png",
         int quality = 85,
-        bool highlightInteractable = true)
+        bool highlightInteractable = true,
+        bool saveToFile = false,
+        string? outputPath = null,
+        int? maxWidth = null)
     {
         var captureStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -229,12 +453,62 @@ public class ScreenshotService : IScreenshotService
             var annotations = new List<AnnotatedElement>();
             using (var graphics = Graphics.FromImage(bitmap))
             {
-                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 DrawElementOverlays(graphics, elements, windowBounds, width, height, highlightInteractable, annotations);
             }
 
-            // Encode the annotated image
-            var imageData = EncodeBitmap(bitmap, normalizedFormat, quality);
+            string? imageData = null;
+            string? filePath = null;
+            int? originalWidth = null;
+            int? originalHeight = null;
+            int finalWidth = width;
+            int finalHeight = height;
+
+            Bitmap? resizedBitmap = null;
+            IReadOnlyList<AnnotatedElement> finalAnnotations = annotations;
+
+            try
+            {
+                if (maxWidth.HasValue && width > maxWidth.Value)
+                {
+                    originalWidth = width;
+                    originalHeight = height;
+                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
+                    finalWidth = resizedBitmap.Width;
+                    finalHeight = resizedBitmap.Height;
+
+                    // Scale element coordinates proportionally
+                    double scale = (double)finalWidth / width;
+                    finalAnnotations = annotations.Select(a => new AnnotatedElement(
+                        Name: a.Name,
+                        ControlType: a.ControlType,
+                        AutomationId: a.AutomationId,
+                        ImageBounds: new BoundsDto(
+                            (int)(a.ImageBounds.X * scale),
+                            (int)(a.ImageBounds.Y * scale),
+                            (int)(a.ImageBounds.Width * scale),
+                            (int)(a.ImageBounds.Height * scale)),
+                        ScreenBounds: a.ScreenBounds, // Screen bounds stay the same
+                        IsEnabled: a.IsEnabled,
+                        OverlayColor: a.OverlayColor
+                    )).ToList();
+                }
+
+                var outputBitmap = resizedBitmap ?? bitmap;
+
+                if (saveToFile)
+                {
+                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
+                }
+                else
+                {
+                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
+                }
+            }
+            finally
+            {
+                resizedBitmap?.Dispose();
+            }
 
             annotationStopwatch.Stop();
 
@@ -245,15 +519,18 @@ public class ScreenshotService : IScreenshotService
                 Success: true,
                 ImageData: imageData,
                 ImageFormat: normalizedFormat,
-                Width: width,
-                Height: height,
+                Width: finalWidth,
+                Height: finalHeight,
                 WindowHandle: (long)windowHandle,
                 WindowTitle: null, // Will be filled by the tool layer
-                Elements: annotations,
-                ElementCount: annotations.Count,
+                Elements: finalAnnotations,
+                ElementCount: finalAnnotations.Count,
                 CaptureElapsedMs: Math.Round(captureMs, 2),
                 AnnotationElapsedMs: Math.Round(annotationStopwatch.Elapsed.TotalMilliseconds, 2),
-                MonitorScaleFactor: monitor?.ScaleFactor
+                MonitorScaleFactor: monitor?.ScaleFactor,
+                FilePath: filePath,
+                OriginalWidth: originalWidth,
+                OriginalHeight: originalHeight
             );
         }
         catch (Exception ex)

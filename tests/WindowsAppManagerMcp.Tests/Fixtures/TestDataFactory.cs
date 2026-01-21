@@ -464,16 +464,20 @@ public static class TestDataFactory
 
         var screenshotResult = CreateScreenshotResult(success: success, error: error);
 
-        mock.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>()))
+        mock.Setup(s => s.CaptureMonitor(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(screenshotResult);
 
         mock.Setup(s => s.CaptureRegion(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<string>(), It.IsAny<int>()))
+                It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(screenshotResult);
 
         mock.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>()))
+                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(screenshotResult);
 
         var annotatedResult = CreateAnnotatedScreenshotResult(success: success, error: error);
@@ -484,7 +488,10 @@ public static class TestDataFactory
                 It.IsAny<bool>(),
                 It.IsAny<string>(),
                 It.IsAny<int>(),
-                It.IsAny<bool>()))
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>(),
+                It.IsAny<int?>()))
             .Returns(annotatedResult);
 
         return mock;

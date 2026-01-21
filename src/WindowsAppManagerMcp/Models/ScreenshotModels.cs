@@ -9,7 +9,10 @@ public record ScreenshotResult(
     CapturedRegion CapturedRegion,
     int? MonitorIndex,
     double ScaleFactor,
-    string? Error = null
+    string? FilePath = null,
+    string? Error = null,
+    int? OriginalWidth = null,
+    int? OriginalHeight = null
 );
 
 public record CapturedRegion(
@@ -63,7 +66,10 @@ public record AnnotatedScreenshotResult(
     double CaptureElapsedMs,
     double AnnotationElapsedMs,
     double? MonitorScaleFactor = null,
-    string? Error = null
+    string? FilePath = null,
+    string? Error = null,
+    int? OriginalWidth = null,
+    int? OriginalHeight = null
 );
 
 /// <summary>

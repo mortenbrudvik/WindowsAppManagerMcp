@@ -37,11 +37,17 @@ public class ScreenshotTools
         [Description("Image format: 'png' (lossless, larger) or 'jpeg' (smaller, lossy). Default: 'png'")]
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
-        int quality = 85)
+        int quality = 85,
+        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        bool saveToFile = false,
+        [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
+        string? outputPath = null,
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        int? maxWidth = null)
     {
         var monitors = _screenshotService.ListScreens();
         var index = monitorIndex ?? monitors.PrimaryIndex;
-        return _screenshotService.CaptureMonitor(index, format, quality);
+        return _screenshotService.CaptureMonitor(index, format, quality, saveToFile, outputPath, maxWidth);
     }
 
     [McpServerTool(Name = "capture_region")]
@@ -58,9 +64,15 @@ public class ScreenshotTools
         [Description("Image format: 'png' (lossless, larger) or 'jpeg' (smaller, lossy). Default: 'png'")]
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
-        int quality = 85)
+        int quality = 85,
+        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        bool saveToFile = false,
+        [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
+        string? outputPath = null,
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        int? maxWidth = null)
     {
-        return _screenshotService.CaptureRegion(x, y, width, height, format, quality);
+        return _screenshotService.CaptureRegion(x, y, width, height, format, quality, saveToFile, outputPath, maxWidth);
     }
 
     [McpServerTool(Name = "capture_window")]
@@ -73,9 +85,15 @@ public class ScreenshotTools
         [Description("Image format: 'png' (lossless, larger) or 'jpeg' (smaller, lossy). Default: 'png'")]
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
-        int quality = 85)
+        int quality = 85,
+        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        bool saveToFile = false,
+        [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
+        string? outputPath = null,
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        int? maxWidth = null)
     {
-        return _screenshotService.CaptureWindow((nint)handle, includeFrame, format, quality);
+        return _screenshotService.CaptureWindow((nint)handle, includeFrame, format, quality, saveToFile, outputPath, maxWidth);
     }
 
     [McpServerTool(Name = "capture_with_elements")]
@@ -100,7 +118,13 @@ public class ScreenshotTools
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
         [Description("Timeout for UI element retrieval in ms. Default: 5000")]
-        int timeoutMs = 5000)
+        int timeoutMs = 5000,
+        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        bool saveToFile = false,
+        [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
+        string? outputPath = null,
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Element coordinates in result are scaled to match. Combine with format='jpeg' for smallest files.")]
+        int? maxWidth = null)
     {
         var windowHandle = (nint)handle;
 
@@ -186,7 +210,10 @@ public class ScreenshotTools
             includeFrame,
             format,
             quality,
-            highlightInteractable);
+            highlightInteractable,
+            saveToFile,
+            outputPath,
+            maxWidth);
 
         // Add window title to result
         return result with { WindowTitle = windowInfo.Title };

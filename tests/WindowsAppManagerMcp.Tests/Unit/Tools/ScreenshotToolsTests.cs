@@ -91,7 +91,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot();
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "png", 85), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "png", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot(monitorIndex: 2);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(2, "png", 85), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(2, "png", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot(format: "jpeg");
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 85), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot(format: "jpeg", quality: 95);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 95), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 95, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -138,7 +138,9 @@ public class ScreenshotToolsTests
     {
         // Arrange
         var expectedResult = TestDataFactory.CreateScreenshotResult();
-        _mockScreenshotService.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>()))
+        _mockScreenshotService.Setup(s => s.CaptureMonitor(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(expectedResult);
         var sut = CreateSut();
 
@@ -161,7 +163,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot(monitorIndex: 1, format: "jpeg", quality: 75);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "jpeg", 75), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "jpeg", 75, false, null, null), Times.Once);
     }
 
     #endregion
@@ -178,7 +180,7 @@ public class ScreenshotToolsTests
         sut.CaptureRegion(100, 200, 800, 600);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(100, 200, 800, 600, "png", 85), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(100, 200, 800, 600, "png", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -191,7 +193,7 @@ public class ScreenshotToolsTests
         sut.CaptureRegion(0, 0, 400, 300, format: "jpeg");
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 85), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -204,7 +206,7 @@ public class ScreenshotToolsTests
         sut.CaptureRegion(0, 0, 400, 300, format: "jpeg", quality: 90);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 90), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 90, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -215,7 +217,8 @@ public class ScreenshotToolsTests
             width: 800, height: 600, regionX: 100, regionY: 200);
         _mockScreenshotService.Setup(s => s.CaptureRegion(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<string>(), It.IsAny<int>()))
+                It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(expectedResult);
         var sut = CreateSut();
 
@@ -243,7 +246,7 @@ public class ScreenshotToolsTests
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "png", 85), Times.Once);
+            new nint(12345), true, "png", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -257,7 +260,7 @@ public class ScreenshotToolsTests
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), false, "png", 85), Times.Once);
+            new nint(12345), false, "png", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -271,7 +274,7 @@ public class ScreenshotToolsTests
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "jpeg", 85), Times.Once);
+            new nint(12345), true, "jpeg", 85, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -285,7 +288,7 @@ public class ScreenshotToolsTests
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "jpeg", 70), Times.Once);
+            new nint(12345), true, "jpeg", 70, false, null, null), Times.Once);
     }
 
     [Fact]
@@ -294,7 +297,8 @@ public class ScreenshotToolsTests
         // Arrange
         var expectedResult = TestDataFactory.CreateScreenshotResult(width: 1024, height: 768);
         _mockScreenshotService.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>()))
+                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(expectedResult);
         var sut = CreateSut();
 
@@ -316,7 +320,7 @@ public class ScreenshotToolsTests
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(99999), false, "jpeg", 50), Times.Once);
+            new nint(99999), false, "jpeg", 50, false, null, null), Times.Once);
     }
 
     #endregion
@@ -329,7 +333,9 @@ public class ScreenshotToolsTests
         // Arrange
         var errorResult = TestDataFactory.CreateScreenshotResult(
             success: false, imageData: null, error: "Monitor not found");
-        _mockScreenshotService.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>()))
+        _mockScreenshotService.Setup(s => s.CaptureMonitor(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(errorResult);
         var sut = CreateSut();
 
@@ -348,7 +354,8 @@ public class ScreenshotToolsTests
         var errorResult = TestDataFactory.CreateScreenshotResult(
             success: false, imageData: null, error: "Invalid window handle");
         _mockScreenshotService.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>()))
+                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
             .Returns(errorResult);
         var sut = CreateSut();
 
@@ -509,7 +516,10 @@ public class ScreenshotToolsTests
             true, // default includeFrame
             "png", // default format
             85, // default quality
-            true // default highlightInteractable
+            true, // default highlightInteractable
+            false, // default saveToFile
+            null, // default outputPath
+            null // default maxWidth
         ), Times.Once);
     }
 
@@ -545,7 +555,10 @@ public class ScreenshotToolsTests
             It.IsAny<bool>(),
             "jpeg",
             70,
-            It.IsAny<bool>()
+            It.IsAny<bool>(),
+            It.IsAny<bool>(),
+            It.IsAny<string?>(),
+            It.IsAny<int?>()
         ), Times.Once);
     }
 
@@ -566,7 +579,10 @@ public class ScreenshotToolsTests
             It.IsAny<bool>(),
             It.IsAny<string>(),
             It.IsAny<int>(),
-            false
+            false,
+            It.IsAny<bool>(),
+            It.IsAny<string?>(),
+            It.IsAny<int?>()
         ), Times.Once);
     }
 

@@ -15,7 +15,10 @@ public interface IScreenshotService
     /// <param name="monitorIndex">Index of the monitor to capture (0-based)</param>
     /// <param name="format">Image format: "png" or "jpeg"</param>
     /// <param name="quality">JPEG quality (1-100, ignored for PNG)</param>
-    ScreenshotResult CaptureMonitor(int monitorIndex, string format = "png", int quality = 85);
+    /// <param name="saveToFile">If true, saves to file instead of returning base64</param>
+    /// <param name="outputPath">Optional output file path. If null, generates temp path</param>
+    /// <param name="maxWidth">Maximum width in pixels. Images wider than this are scaled down proportionally</param>
+    ScreenshotResult CaptureMonitor(int monitorIndex, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null);
 
     /// <summary>
     /// Captures a region of the screen.
@@ -26,7 +29,10 @@ public interface IScreenshotService
     /// <param name="height">Height of the region</param>
     /// <param name="format">Image format: "png" or "jpeg"</param>
     /// <param name="quality">JPEG quality (1-100, ignored for PNG)</param>
-    ScreenshotResult CaptureRegion(int x, int y, int width, int height, string format = "png", int quality = 85);
+    /// <param name="saveToFile">If true, saves to file instead of returning base64</param>
+    /// <param name="outputPath">Optional output file path. If null, generates temp path</param>
+    /// <param name="maxWidth">Maximum width in pixels. Images wider than this are scaled down proportionally</param>
+    ScreenshotResult CaptureRegion(int x, int y, int width, int height, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null);
 
     /// <summary>
     /// Captures a specific window.
@@ -35,7 +41,10 @@ public interface IScreenshotService
     /// <param name="includeFrame">Whether to include the window frame/decoration</param>
     /// <param name="format">Image format: "png" or "jpeg"</param>
     /// <param name="quality">JPEG quality (1-100, ignored for PNG)</param>
-    ScreenshotResult CaptureWindow(nint windowHandle, bool includeFrame = true, string format = "png", int quality = 85);
+    /// <param name="saveToFile">If true, saves to file instead of returning base64</param>
+    /// <param name="outputPath">Optional output file path. If null, generates temp path</param>
+    /// <param name="maxWidth">Maximum width in pixels. Images wider than this are scaled down proportionally</param>
+    ScreenshotResult CaptureWindow(nint windowHandle, bool includeFrame = true, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null);
 
     /// <summary>
     /// Captures a window with UI element bounding box overlays drawn on the image.
@@ -47,6 +56,9 @@ public interface IScreenshotService
     /// <param name="format">Image format: "png" or "jpeg"</param>
     /// <param name="quality">JPEG quality (1-100, ignored for PNG)</param>
     /// <param name="highlightInteractable">Use brighter colors for enabled/interactable elements</param>
+    /// <param name="saveToFile">If true, saves to file instead of returning base64</param>
+    /// <param name="outputPath">Optional output file path. If null, generates temp path</param>
+    /// <param name="maxWidth">Maximum width in pixels. Images wider than this are scaled down proportionally</param>
     AnnotatedScreenshotResult CaptureWindowWithElements(
         nint windowHandle,
         IReadOnlyList<UIElementInfo> elements,
@@ -54,5 +66,8 @@ public interface IScreenshotService
         bool includeFrame = true,
         string format = "png",
         int quality = 85,
-        bool highlightInteractable = true);
+        bool highlightInteractable = true,
+        bool saveToFile = false,
+        string? outputPath = null,
+        int? maxWidth = null);
 }
