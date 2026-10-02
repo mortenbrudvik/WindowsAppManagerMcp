@@ -8,6 +8,8 @@ namespace WindowsAppManagerMcp.Services;
 
 public class ScreenshotService : IScreenshotService
 {
+    internal const string MaxWidthMustBePositive = "maxWidth must be a positive number of pixels.";
+
     private readonly IScreenCaptureWrapper _captureWrapper;
     private readonly IMonitorService _monitorService;
 
@@ -51,6 +53,11 @@ public class ScreenshotService : IScreenshotService
 
     public ScreenshotResult CaptureMonitor(int monitorIndex, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
+        if (maxWidth is <= 0)
+        {
+            return CreateErrorResult(MaxWidthMustBePositive);
+        }
+
         try
         {
             var monitors = _monitorService.GetAllMonitors();
@@ -62,59 +69,28 @@ public class ScreenshotService : IScreenshotService
             var monitor = monitors[monitorIndex];
             var bounds = monitor.Bounds;
 
+            if (CollapsedHeightError(bounds.Width, bounds.Height, maxWidth) is { } heightError)
+            {
+                return CreateErrorResult(heightError);
+            }
+
             var normalizedFormat = NormalizeFormat(format);
             var pixelData = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-
-            string? imageData = null;
-            string? filePath = null;
-            int? originalWidth = null;
-            int? originalHeight = null;
-            int finalWidth = bounds.Width;
-            int finalHeight = bounds.Height;
-
-            // Create bitmap and resize if needed
             using var bitmap = CreateBitmapFromPixelData(pixelData, bounds.Width, bounds.Height);
-            Bitmap? resizedBitmap = null;
-
-            try
-            {
-                if (maxWidth.HasValue && bounds.Width > maxWidth.Value)
-                {
-                    originalWidth = bounds.Width;
-                    originalHeight = bounds.Height;
-                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
-                    finalWidth = resizedBitmap.Width;
-                    finalHeight = resizedBitmap.Height;
-                }
-
-                var outputBitmap = resizedBitmap ?? bitmap;
-
-                if (saveToFile)
-                {
-                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
-                }
-                else
-                {
-                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
-                }
-            }
-            finally
-            {
-                resizedBitmap?.Dispose();
-            }
+            var stored = StoreImage(bitmap, bounds.Width, bounds.Height, normalizedFormat, quality, saveToFile, outputPath, maxWidth);
 
             return new ScreenshotResult(
                 Success: true,
-                ImageData: imageData,
+                ImageData: stored.ImageData,
                 ImageFormat: normalizedFormat,
-                Width: finalWidth,
-                Height: finalHeight,
+                Width: stored.Width,
+                Height: stored.Height,
                 CapturedRegion: new CapturedRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height),
                 MonitorIndex: monitorIndex,
                 ScaleFactor: monitor.ScaleFactor,
-                FilePath: filePath,
-                OriginalWidth: originalWidth,
-                OriginalHeight: originalHeight
+                FilePath: stored.FilePath,
+                OriginalWidth: stored.OriginalWidth,
+                OriginalHeight: stored.OriginalHeight
             );
         }
         catch (Exception ex)
@@ -125,6 +101,11 @@ public class ScreenshotService : IScreenshotService
 
     public ScreenshotResult CaptureRegion(int x, int y, int width, int height, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
+        if (maxWidth is <= 0)
+        {
+            return CreateErrorResult(MaxWidthMustBePositive);
+        }
+
         try
         {
             if (width <= 0 || height <= 0)
@@ -132,46 +113,15 @@ public class ScreenshotService : IScreenshotService
                 return CreateErrorResult("Width and height must be positive values");
             }
 
+            if (CollapsedHeightError(width, height, maxWidth) is { } heightError)
+            {
+                return CreateErrorResult(heightError);
+            }
+
             var normalizedFormat = NormalizeFormat(format);
             var pixelData = _captureWrapper.CaptureScreenRegion(x, y, width, height);
-
-            string? imageData = null;
-            string? filePath = null;
-            int? originalWidth = null;
-            int? originalHeight = null;
-            int finalWidth = width;
-            int finalHeight = height;
-
-            // Create bitmap and resize if needed
             using var bitmap = CreateBitmapFromPixelData(pixelData, width, height);
-            Bitmap? resizedBitmap = null;
-
-            try
-            {
-                if (maxWidth.HasValue && width > maxWidth.Value)
-                {
-                    originalWidth = width;
-                    originalHeight = height;
-                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
-                    finalWidth = resizedBitmap.Width;
-                    finalHeight = resizedBitmap.Height;
-                }
-
-                var outputBitmap = resizedBitmap ?? bitmap;
-
-                if (saveToFile)
-                {
-                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
-                }
-                else
-                {
-                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
-                }
-            }
-            finally
-            {
-                resizedBitmap?.Dispose();
-            }
+            var stored = StoreImage(bitmap, width, height, normalizedFormat, quality, saveToFile, outputPath, maxWidth);
 
             // Determine which monitor contains the center of the region
             var centerX = x + width / 2;
@@ -180,16 +130,16 @@ public class ScreenshotService : IScreenshotService
 
             return new ScreenshotResult(
                 Success: true,
-                ImageData: imageData,
+                ImageData: stored.ImageData,
                 ImageFormat: normalizedFormat,
-                Width: finalWidth,
-                Height: finalHeight,
+                Width: stored.Width,
+                Height: stored.Height,
                 CapturedRegion: new CapturedRegion(x, y, width, height),
                 MonitorIndex: monitor?.Index,
                 ScaleFactor: monitor?.ScaleFactor ?? 1.0,
-                FilePath: filePath,
-                OriginalWidth: originalWidth,
-                OriginalHeight: originalHeight
+                FilePath: stored.FilePath,
+                OriginalWidth: stored.OriginalWidth,
+                OriginalHeight: stored.OriginalHeight
             );
         }
         catch (Exception ex)
@@ -200,6 +150,11 @@ public class ScreenshotService : IScreenshotService
 
     public ScreenshotResult CaptureWindow(nint windowHandle, bool includeFrame = true, string format = "png", int quality = 85, bool saveToFile = false, string? outputPath = null, int? maxWidth = null)
     {
+        if (maxWidth is <= 0)
+        {
+            return CreateErrorResult(MaxWidthMustBePositive);
+        }
+
         try
         {
             if (!_captureWrapper.IsValidWindow(windowHandle))
@@ -210,59 +165,29 @@ public class ScreenshotService : IScreenshotService
             var normalizedFormat = NormalizeFormat(format);
             var (pixelData, width, height) = _captureWrapper.CaptureWindow(windowHandle, includeFrame);
 
-            string? imageData = null;
-            string? filePath = null;
-            int? originalWidth = null;
-            int? originalHeight = null;
-            int finalWidth = width;
-            int finalHeight = height;
+            if (CollapsedHeightError(width, height, maxWidth) is { } heightError)
+            {
+                return CreateErrorResult(heightError);
+            }
 
-            // Create bitmap and resize if needed
             using var bitmap = CreateBitmapFromPixelData(pixelData, width, height);
-            Bitmap? resizedBitmap = null;
-
-            try
-            {
-                if (maxWidth.HasValue && width > maxWidth.Value)
-                {
-                    originalWidth = width;
-                    originalHeight = height;
-                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
-                    finalWidth = resizedBitmap.Width;
-                    finalHeight = resizedBitmap.Height;
-                }
-
-                var outputBitmap = resizedBitmap ?? bitmap;
-
-                if (saveToFile)
-                {
-                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
-                }
-                else
-                {
-                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
-                }
-            }
-            finally
-            {
-                resizedBitmap?.Dispose();
-            }
+            var stored = StoreImage(bitmap, width, height, normalizedFormat, quality, saveToFile, outputPath, maxWidth);
 
             // Get the monitor for this window
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
 
             return new ScreenshotResult(
                 Success: true,
-                ImageData: imageData,
+                ImageData: stored.ImageData,
                 ImageFormat: normalizedFormat,
-                Width: finalWidth,
-                Height: finalHeight,
+                Width: stored.Width,
+                Height: stored.Height,
                 CapturedRegion: new CapturedRegion(0, 0, width, height),
                 MonitorIndex: monitor?.Index,
                 ScaleFactor: monitor?.ScaleFactor ?? 1.0,
-                FilePath: filePath,
-                OriginalWidth: originalWidth,
-                OriginalHeight: originalHeight
+                FilePath: stored.FilePath,
+                OriginalWidth: stored.OriginalWidth,
+                OriginalHeight: stored.OriginalHeight
             );
         }
         catch (Exception ex)
@@ -277,23 +202,151 @@ public class ScreenshotService : IScreenshotService
         return format is "png" or "jpeg" or "jpg" ? format : "png";
     }
 
+    private readonly record struct StoredImage(
+        string? ImageData,
+        string? FilePath,
+        int Width,
+        int Height,
+        int? OriginalWidth,
+        int? OriginalHeight);
+
+    private static StoredImage StoreImage(
+        Bitmap source,
+        int width,
+        int height,
+        string format,
+        int quality,
+        bool saveToFile,
+        string? outputPath,
+        int? maxWidth)
+    {
+        Bitmap? resized = null;
+        try
+        {
+            var output = source;
+            var finalWidth = width;
+            var finalHeight = height;
+            int? originalWidth = null;
+            int? originalHeight = null;
+
+            if (maxWidth is int limit && width > limit)
+            {
+                originalWidth = width;
+                originalHeight = height;
+                resized = ResizeImage(source, limit);
+                output = resized;
+                finalWidth = resized.Width;
+                finalHeight = resized.Height;
+            }
+
+            string? imageData = null;
+            string? filePath = null;
+            if (saveToFile)
+            {
+                filePath = SaveBitmapToFile(output, format, quality, outputPath);
+            }
+            else
+            {
+                imageData = EncodeBitmap(output, format, quality);
+            }
+
+            return new StoredImage(imageData, filePath, finalWidth, finalHeight, originalWidth, originalHeight);
+        }
+        finally
+        {
+            if (resized != null && !ReferenceEquals(resized, source))
+            {
+                resized.Dispose();
+            }
+        }
+    }
+
+    private static string? CollapsedHeightError(int width, int height, int? maxWidth)
+    {
+        if (maxWidth is not int limit || width <= limit)
+        {
+            return null;
+        }
+
+        var newHeight = (int)(height * ((double)limit / width));
+        if (newHeight >= 1)
+        {
+            return null;
+        }
+
+        return $"maxWidth {limit} would scale a {width}x{height} image to height 0.";
+    }
+
     private static Bitmap ResizeImage(Bitmap original, int maxWidth)
     {
+        if (maxWidth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxWidth), MaxWidthMustBePositive);
+        }
+
+        // Returning the source is an alias. Callers must not dispose it.
         if (original.Width <= maxWidth)
+        {
             return original;
+        }
 
         double scale = (double)maxWidth / original.Width;
         int newHeight = (int)(original.Height * scale);
+        if (newHeight < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxWidth),
+                $"maxWidth {maxWidth} would scale a {original.Width}x{original.Height} image to height 0.");
+        }
 
         var resized = new Bitmap(maxWidth, newHeight);
-        using (var g = Graphics.FromImage(resized))
+        try
         {
+            using var g = Graphics.FromImage(resized);
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.CompositingQuality = CompositingQuality.HighQuality;
             g.SmoothingMode = SmoothingMode.HighQuality;
             g.DrawImage(original, 0, 0, maxWidth, newHeight);
+            return resized;
         }
-        return resized;
+        catch
+        {
+            resized.Dispose();
+            throw;
+        }
+    }
+
+    private static List<AnnotatedElement> ScaleAnnotations(
+        IReadOnlyList<AnnotatedElement> annotations,
+        double scale,
+        int finalWidth,
+        int finalHeight)
+    {
+        return annotations.Select(annotation =>
+        {
+            var x = ClampToImage(RoundScaled(annotation.ImageBounds.X, scale), finalWidth);
+            var y = ClampToImage(RoundScaled(annotation.ImageBounds.Y, scale), finalHeight);
+            var width = ScaleLength(annotation.ImageBounds.Width, scale, finalWidth - x);
+            var height = ScaleLength(annotation.ImageBounds.Height, scale, finalHeight - y);
+            return annotation with { ImageBounds = new BoundsDto(x, y, width, height) };
+        }).ToList();
+    }
+
+    private static int RoundScaled(int value, double scale) =>
+        (int)Math.Round(value * scale, MidpointRounding.AwayFromZero);
+
+    private static int ClampToImage(int value, int limit) =>
+        Math.Clamp(value, 0, Math.Max(0, limit - 1));
+
+    private static int ScaleLength(int value, double scale, int room)
+    {
+        if (value <= 0 || room <= 0)
+        {
+            return 0;
+        }
+
+        var scaled = Math.Max(1, RoundScaled(value, scale));
+        return Math.Min(scaled, room);
     }
 
     private static string GenerateTempFilePath(string format)
@@ -429,6 +482,11 @@ public class ScreenshotService : IScreenshotService
         string? outputPath = null,
         int? maxWidth = null)
     {
+        if (maxWidth is <= 0)
+        {
+            return CreateAnnotatedErrorResult(windowHandle, MaxWidthMustBePositive);
+        }
+
         var captureStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
@@ -444,12 +502,15 @@ public class ScreenshotService : IScreenshotService
             captureStopwatch.Stop();
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
 
+            if (CollapsedHeightError(width, height, maxWidth) is { } heightError)
+            {
+                return CreateAnnotatedErrorResult(windowHandle, heightError);
+            }
+
             var annotationStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            // Create bitmap and draw overlays
             using var bitmap = CreateBitmapFromPixelData(pixelData, width, height);
 
-            // Flatten elements and collect annotations
             var annotations = new List<AnnotatedElement>();
             using (var graphics = Graphics.FromImage(bitmap))
             {
@@ -457,70 +518,25 @@ public class ScreenshotService : IScreenshotService
                 DrawElementOverlays(graphics, elements, windowBounds, width, height, highlightInteractable, annotations);
             }
 
-            string? imageData = null;
-            string? filePath = null;
-            int? originalWidth = null;
-            int? originalHeight = null;
-            int finalWidth = width;
-            int finalHeight = height;
-
-            Bitmap? resizedBitmap = null;
+            var stored = StoreImage(bitmap, width, height, normalizedFormat, quality, saveToFile, outputPath, maxWidth);
             IReadOnlyList<AnnotatedElement> finalAnnotations = annotations;
-
-            try
+            if (stored.OriginalWidth is int originalWidth && originalWidth > 0)
             {
-                if (maxWidth.HasValue && width > maxWidth.Value)
-                {
-                    originalWidth = width;
-                    originalHeight = height;
-                    resizedBitmap = ResizeImage(bitmap, maxWidth.Value);
-                    finalWidth = resizedBitmap.Width;
-                    finalHeight = resizedBitmap.Height;
-
-                    // Scale element coordinates proportionally
-                    double scale = (double)finalWidth / width;
-                    finalAnnotations = annotations.Select(a => new AnnotatedElement(
-                        Name: a.Name,
-                        ControlType: a.ControlType,
-                        AutomationId: a.AutomationId,
-                        ImageBounds: new BoundsDto(
-                            (int)(a.ImageBounds.X * scale),
-                            (int)(a.ImageBounds.Y * scale),
-                            (int)(a.ImageBounds.Width * scale),
-                            (int)(a.ImageBounds.Height * scale)),
-                        ScreenBounds: a.ScreenBounds, // Screen bounds stay the same
-                        IsEnabled: a.IsEnabled,
-                        OverlayColor: a.OverlayColor
-                    )).ToList();
-                }
-
-                var outputBitmap = resizedBitmap ?? bitmap;
-
-                if (saveToFile)
-                {
-                    filePath = SaveBitmapToFile(outputBitmap, normalizedFormat, quality, outputPath);
-                }
-                else
-                {
-                    imageData = EncodeBitmap(outputBitmap, normalizedFormat, quality);
-                }
-            }
-            finally
-            {
-                resizedBitmap?.Dispose();
+                // ScreenBounds stay in screen pixels. Only ImageBounds follow the output image.
+                var scale = (double)stored.Width / originalWidth;
+                finalAnnotations = ScaleAnnotations(annotations, scale, stored.Width, stored.Height);
             }
 
             annotationStopwatch.Stop();
 
-            // Get window title and monitor info
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
 
             return new AnnotatedScreenshotResult(
                 Success: true,
-                ImageData: imageData,
+                ImageData: stored.ImageData,
                 ImageFormat: normalizedFormat,
-                Width: finalWidth,
-                Height: finalHeight,
+                Width: stored.Width,
+                Height: stored.Height,
                 WindowHandle: (long)windowHandle,
                 WindowTitle: null, // Will be filled by the tool layer
                 Elements: finalAnnotations,
@@ -528,9 +544,9 @@ public class ScreenshotService : IScreenshotService
                 CaptureElapsedMs: Math.Round(captureMs, 2),
                 AnnotationElapsedMs: Math.Round(annotationStopwatch.Elapsed.TotalMilliseconds, 2),
                 MonitorScaleFactor: monitor?.ScaleFactor,
-                FilePath: filePath,
-                OriginalWidth: originalWidth,
-                OriginalHeight: originalHeight
+                FilePath: stored.FilePath,
+                OriginalWidth: stored.OriginalWidth,
+                OriginalHeight: stored.OriginalHeight
             );
         }
         catch (Exception ex)

@@ -30,7 +30,7 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "take_screenshot")]
-    [Description("Capture a screenshot of a specific monitor. Returns base64-encoded image data. Use list_screens to get available monitor indices.")]
+    [Description("Capture a screenshot of a specific monitor. Returns base64 image data in ImageData unless saveToFile is true, in which case ImageData is null and FilePath is set. Use list_screens to get available monitor indices.")]
     public ScreenshotResult TakeScreenshot(
         [Description("Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
@@ -38,11 +38,11 @@ public class ScreenshotTools
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
         int quality = 85,
-        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        [Description("When true, writes the output image after any maxWidth resize, sets FilePath, and leaves ImageData null. When false, ImageData is base64 and FilePath is null. Default: false")]
         bool saveToFile = false,
         [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
         string? outputPath = null,
-        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Narrower images are unchanged. Combine with format='jpeg' for smallest files.")]
         int? maxWidth = null)
     {
         var monitors = _screenshotService.ListScreens();
@@ -51,7 +51,7 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "capture_region")]
-    [Description("Capture a screenshot of an arbitrary screen region. Returns base64-encoded image data.")]
+    [Description("Capture a screenshot of an arbitrary screen region. Returns base64 image data in ImageData unless saveToFile is true, in which case ImageData is null and FilePath is set.")]
     public ScreenshotResult CaptureRegion(
         [Description("X coordinate of the region's left edge")]
         int x,
@@ -65,18 +65,18 @@ public class ScreenshotTools
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
         int quality = 85,
-        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        [Description("When true, writes the output image after any maxWidth resize, sets FilePath, and leaves ImageData null. When false, ImageData is base64 and FilePath is null. Default: false")]
         bool saveToFile = false,
         [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
         string? outputPath = null,
-        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Narrower images are unchanged. Combine with format='jpeg' for smallest files.")]
         int? maxWidth = null)
     {
         return _screenshotService.CaptureRegion(x, y, width, height, format, quality, saveToFile, outputPath, maxWidth);
     }
 
     [McpServerTool(Name = "capture_window")]
-    [Description("Capture a screenshot of a specific window. Works even if the window is partially occluded by other windows. Returns base64-encoded image data.")]
+    [Description("Capture a screenshot of a specific window. Works even if the window is partially occluded by other windows. Returns base64 image data in ImageData unless saveToFile is true, in which case ImageData is null and FilePath is set.")]
     public ScreenshotResult CaptureWindow(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
         long handle,
@@ -86,11 +86,11 @@ public class ScreenshotTools
         string format = "png",
         [Description("JPEG quality (1-100). Only used when format is 'jpeg'. Default: 85")]
         int quality = 85,
-        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        [Description("When true, writes the output image after any maxWidth resize, sets FilePath, and leaves ImageData null. When false, ImageData is base64 and FilePath is null. Default: false")]
         bool saveToFile = false,
         [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
         string? outputPath = null,
-        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Combine with format='jpeg' for smallest files.")]
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Narrower images are unchanged. Combine with format='jpeg' for smallest files.")]
         int? maxWidth = null)
     {
         return _screenshotService.CaptureWindow((nint)handle, includeFrame, format, quality, saveToFile, outputPath, maxWidth);
@@ -119,13 +119,30 @@ public class ScreenshotTools
         bool highlightInteractable = true,
         [Description("Timeout for UI element retrieval in ms. Default: 5000")]
         int timeoutMs = 5000,
-        [Description("Save to file instead of returning base64 (reduces token usage for large screenshots). Default: false")]
+        [Description("When true, writes the output image after any maxWidth resize, sets FilePath, and leaves ImageData null. When false, ImageData is base64 and FilePath is null. Default: false")]
         bool saveToFile = false,
         [Description("Output file path when saveToFile is true. If not specified, saves to temp directory with auto-generated name.")]
         string? outputPath = null,
-        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Element coordinates in result are scaled to match. Combine with format='jpeg' for smallest files.")]
+        [Description("Maximum image width in pixels. Images wider than this are scaled down proportionally. Narrower images are unchanged. ImageBounds are scaled to the output image. ScreenBounds stay in screen pixels. Combine with format='jpeg' for smallest files.")]
         int? maxWidth = null)
     {
+        if (maxWidth is <= 0)
+        {
+            return new AnnotatedScreenshotResult(
+                Success: false,
+                ImageData: null,
+                ImageFormat: "png",
+                Width: 0,
+                Height: 0,
+                WindowHandle: handle,
+                WindowTitle: null,
+                Elements: null,
+                ElementCount: 0,
+                CaptureElapsedMs: 0,
+                AnnotationElapsedMs: 0,
+                Error: "maxWidth must be a positive number of pixels.");
+        }
+
         var windowHandle = (nint)handle;
 
         // Get window info for bounds and title
