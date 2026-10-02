@@ -491,3 +491,6 @@ tmpclaude-*
 
 # Windows artifacts
 nul
+
+# Local git worktrees
+.worktrees/
