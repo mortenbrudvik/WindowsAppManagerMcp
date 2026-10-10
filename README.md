@@ -22,8 +22,11 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 ### Prerequisites
 
-- Windows 10/11
-- .NET 8.0 Runtime (or use self-contained build)
+- Windows 10/11 (x64)
+- [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0) (the "Windows Desktop Runtime" download).
+  The server exe is framework-dependent and uses WPF UI Automation, so the base .NET Runtime alone is not enough:
+  without the Desktop Runtime the server exits at startup and no windows-app-manager tools appear.
+  Check with `dotnet --list-runtimes`, which should list `Microsoft.WindowsDesktop.App 8.x`.
 
 ### Option 1: Claude Code Plugin (Recommended)
 
@@ -39,9 +42,13 @@ Install as a Claude Code plugin:
 
 Then restart Claude Code. The plugin includes a skill with usage guidance.
 
+The plugin runs the pre-built `bin/WindowsAppManagerMcp.exe` from this repository, so it needs the
+.NET 8 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between.
+
 ### Option 2: Claude Desktop (Manual)
 
-Add to your `claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
+Get `WindowsAppManagerMcp.exe` from a release (Option 4) or build it (Option 3), then add it to your
+`claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
 
 ```json
 {
@@ -60,12 +67,20 @@ Then restart Claude Desktop.
 ```bash
 git clone https://github.com/mortenbrudvik/WindowsAppManagerMcp.git
 cd WindowsAppManagerMcp
-dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./bin
+dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
+
+This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe that needs the
+.NET 8 Desktop Runtime. To bundle the runtime instead, add `--self-contained`; the output is much larger
+(about 160 MB) and includes native WPF DLLs that must stay next to the exe. Do not publish into `./bin`:
+that folder holds the committed plugin exe (see [Building](#building)).
 
 ### Option 4: Download Release
 
-Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
+Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
+page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is the same
+framework-dependent build and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
+is pushed; no release was published for the tags up to v1.11.0, so until the next tag use Option 3.
 
 ## Available Tools (38)
 
@@ -167,9 +182,23 @@ dotnet build
 # Run tests
 dotnet test
 
-# Publish self-contained executable
-dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./publish
+# Publish the exe (framework-dependent single file, needs the .NET 8 Desktop Runtime)
+dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
+
+### Versioning and the plugin binary
+
+- The version is defined once, as `<Version>` in `Directory.Build.props`. Change it with
+  `./scripts/Set-Version.ps1 -Version X.Y.Z`, which also updates `.claude-plugin/plugin.json` and
+  `.claude-plugin/marketplace.json` (tests fail if they drift). The server reports it, with the
+  commit SHA, as `serverInfo.version` in the MCP handshake.
+- The plugin runs the committed `bin/WindowsAppManagerMcp.exe`; it is the only binary in git.
+  Refresh it only with `./scripts/Publish-Plugin.ps1` (the `/commit` release flow does this). The
+  script refuses uncommitted `src/` changes and verifies the exe reports `<version>+<HEAD sha>`.
+- `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and was
+  built from the current `src/`. The Build workflow runs it on pushes and pull requests as a warning and on `v*`
+  tags as an error, so a release cannot ship a stale exe. The tag's GitHub release gets
+  `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`.
 
 ## Testing
 
@@ -232,7 +261,7 @@ WindowsAppManagerMcp/
 ## Requirements
 
 - Windows 10 version 1607+ or Windows 11
-- .NET 8.0 Runtime (or self-contained build)
+- .NET 8 Desktop Runtime (x64), not just the base .NET Runtime (see [Prerequisites](#prerequisites))
 - DPI awareness enabled for accurate positioning on high-DPI displays
 
 ## License

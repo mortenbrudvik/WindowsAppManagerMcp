@@ -31,8 +31,11 @@ x86/
 [Aa][Rr][Mm]64/
 bld/
 [Bb]in/
-# Exception: include plugin bin/ for Claude Code plugin pre-built exe
-!.claude-plugin/bin/
+# The plugin exe, bin/WindowsAppManagerMcp.exe at the repository root, is the one binary in git
+# (.claude-plugin/plugin.json runs it). It stays tracked although bin/ is ignored; refresh it only
+# with scripts/Publish-Plugin.ps1. Former copies elsewhere must not come back:
+/dist/
+/publish-new/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/

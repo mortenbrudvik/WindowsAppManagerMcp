@@ -342,7 +342,7 @@ WindowsAppManagerMcp/
 │   └── using-windows-app-manager/
 │       └── SKILL.md             # How to use the 21 tools effectively
 ├── bin/
-│   └── WindowsAppManagerMcp.exe # Pre-built self-contained executable
+│   └── WindowsAppManagerMcp.exe # Pre-built framework-dependent exe (needs .NET 8 Desktop Runtime)
 ```
 
 ### Compatibility
@@ -359,15 +359,15 @@ WindowsAppManagerMcp/
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | 9.1 | Add `/commit` skill for versioned releases | ✅ Complete | Creates tagged commits with version updates |
-| 9.2 | Auto-build dist binaries on `/commit` | ✅ Complete | Ensures `dist/` binary always matches source |
+| 9.2 | Auto-build the plugin binary on `/commit` | ✅ Complete | `scripts/Publish-Plugin.ps1` rebuilds `bin/` (the exe the plugin runs); CI checks it on release tags |
 
 ### /commit Workflow
 
 The `/commit` skill automates the release process:
 
 1. **Gather Information** - Version number and description
-2. **Update Version Numbers** - plugin.json, marketplace.json
-3. **Build Release Binary** - `dotnet publish` to dist/
+2. **Update Version Numbers** - `scripts/Set-Version.ps1` (Directory.Build.props, plugin.json, marketplace.json)
+3. **Build Release Binary** - `scripts/Publish-Plugin.ps1` publishes to bin/
 4. **Review Changes** - git status/diff
 5. **Commit and Tag** - Conventional commit with annotated tag
 6. **Push** - Push commit and tags to origin
