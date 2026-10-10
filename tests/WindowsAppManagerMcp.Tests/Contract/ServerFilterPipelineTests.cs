@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
@@ -71,6 +72,37 @@ public class ServerFilterPipelineTests
         var duration = int.Parse(Regex.Match(finished, @"finished in (\d+) ms").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
         duration.Should().BeGreaterThanOrEqualTo((int)GateHeld.TotalMilliseconds - 50, "the call waited for the gate before it ran");
         finished.Should().EndWith(": ok");
+    }
+
+    [Fact]
+    public async Task AnUnknownTool_WhilePaused_IsStillAProtocolError()
+    {
+        // docs/TOOLS.md: an unknown tool name is reported as a JSON-RPC protocol error, not as a tool result. A call
+        // that runs nothing cannot change which window is in front, so the pause does not apply to it.
+        var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+        await using var server = await StartServerAsync(session);
+
+        var act = async () => await server.CallToolAsync("no_such_tool");
+
+        (await act.Should().ThrowAsync<McpProtocolException>()).Which.Message.Should().Contain("no_such_tool");
+    }
+
+    [Fact]
+    public async Task AnUnknownTool_DoesNotWaitForTheInputGate()
+    {
+        await using var server = await StartServerAsync(session: null);
+        var gate = InputGate.Enter();
+        try
+        {
+            var act = async () => await server.CallToolAsync("no_such_tool", timeout: TimeSpan.FromSeconds(5));
+
+            await act.Should().ThrowAsync<McpProtocolException>("the protocol error comes back at once, not after the gate is free");
+        }
+        finally
+        {
+            gate.Dispose();
+        }
     }
 
     /// <summary>

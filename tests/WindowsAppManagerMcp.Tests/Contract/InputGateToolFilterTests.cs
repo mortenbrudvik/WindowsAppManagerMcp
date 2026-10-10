@@ -226,6 +226,41 @@ public class InputGateToolFilterTests
     }
 
     [Fact]
+    public async Task ANameTheServerDoesNotServe_PassesStraightThrough_EvenWhilePaused()
+    {
+        // Arrange - the server serves focus_window only; the user has paused input and an input call holds the gate
+        var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+        var reached = false;
+        var handler = InputGateToolFilter.Filter((_, _) =>
+        {
+            reached = true; // the SDK's handler, which reports the unknown name as a protocol error
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        using var gate = InputGate.Enter();
+
+        // Act
+        var call = handler(CreateRequest("focus_windwo", session, servedTools: ["focus_window"]), CancellationToken.None).AsTask();
+
+        // Assert
+        (await Task.WhenAny(call, Task.Delay(Timeout)) == call).Should().BeTrue("an unknown name must not wait for the gate");
+        (await call).IsError.Should().NotBe(true);
+        reached.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AServedToolOnNoList_StillRunsInsideTheGate()
+    {
+        var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+        var handler = InputGateToolFilter.Filter((_, _) => ValueTask.FromResult(new CallToolResult()));
+
+        var result = await handler(CreateRequest("a_tool_nobody_classified", session, servedTools: ["a_tool_nobody_classified"]), CancellationToken.None);
+
+        result.IsError.Should().BeTrue("a served tool nobody classified fails safe");
+    }
+
+    [Fact]
     public void AddInputGateSerialization_RegistersTheFilter()
     {
         var services = new ServiceCollection();
@@ -237,10 +272,29 @@ public class InputGateToolFilterTests
             .Should().ContainSingle();
     }
 
-    private static RequestContext<CallToolRequestParams> CreateRequest(string tool, IInputSession? session = null) =>
-        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
+    /// <summary>
+    /// A call of <paramref name="tool"/>. With <paramref name="servedTools"/> the server serves those tools; without,
+    /// its tool collection is unknown (null), as for a server the filter cannot ask.
+    /// </summary>
+    private static RequestContext<CallToolRequestParams> CreateRequest(
+        string tool, IInputSession? session = null, IReadOnlyList<string>? servedTools = null)
+    {
+        var server = new Mock<McpServer>();
+        if (servedTools != null)
+        {
+            var tools = new McpServerPrimitiveCollection<McpServerTool>();
+            foreach (var name in servedTools)
+            {
+                tools.Add(McpServerTool.Create(() => "ok", new McpServerToolCreateOptions { Name = name }));
+            }
+
+            server.Setup(s => s.ServerOptions).Returns(new McpServerOptions { ToolCollection = tools });
+        }
+
+        return new(server.Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
         {
             Params = new CallToolRequestParams { Name = tool },
             Services = session == null ? null : new ServiceCollection().AddSingleton(session).BuildServiceProvider()
         };
+    }
 }

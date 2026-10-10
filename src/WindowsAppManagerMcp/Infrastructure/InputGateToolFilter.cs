@@ -17,7 +17,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/> and <see cref="ControlTools"/>
 /// runs inside the gate, so a new tool is serialized until it is reviewed onto another list. A contract test
-/// checks that every tool the server serves is in exactly one of the four lists.
+/// checks that every tool the server serves is in exactly one of the four lists. A name the server does not
+/// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
+/// cannot change which window is in front.
 /// <para>
 /// While the user has paused input (roadmap M1.10), the same tools return PausedByUser without running: they
 /// take the foreground from the user, close windows, or start programs that could type. Read-only tools keep
@@ -81,15 +83,15 @@ public static class InputGateToolFilter
 
     /// <summary>
     /// Call-tool filter: a tool that <see cref="RunsInsideTheGate"/> waits for the input gate and holds it
-    /// until it returns, or returns PausedByUser while the user has paused input; every other tool passes
-    /// straight through.
+    /// until it returns, or returns PausedByUser while the user has paused input; every other tool, and a name
+    /// the server does not serve, passes straight through.
     /// </summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
         async (request, cancellationToken) =>
         {
             var name = request.Params?.Name;
-            if (!RunsInsideTheGate(name))
+            if (!RunsInsideTheGate(name) || IsUnknownTool(request, name))
             {
                 return await next(request, cancellationToken).ConfigureAwait(false);
             }
@@ -108,6 +110,14 @@ public static class InputGateToolFilter
                     : await next(request, cancellationToken).ConfigureAwait(false);
             }
         };
+
+    /// <summary>
+    /// True when the server serves no tool named <paramref name="name"/>: the SDK answers the call with a protocol
+    /// error ("Unknown tool"). False when the filter cannot see the server's tools, so such a call fails safe.
+    /// </summary>
+    private static bool IsUnknownTool(RequestContext<CallToolRequestParams> request, string? name) =>
+        request.Server?.ServerOptions?.ToolCollection is { } tools &&
+        (name == null || !tools.TryGetPrimitive(name, out _));
 
     private static CallToolResult PausedResult(string? toolName, IInputSession session) =>
         ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser),
