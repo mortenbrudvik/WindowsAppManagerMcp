@@ -93,8 +93,8 @@ Use this skill when the user asks to:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `find_windows` | Find windows by criteria | titleContains, processName, processId, handle |
-| `get_all_windows` | List all visible windows | includeMinimized |
+| `find_windows` | Find windows by criteria | titleContains, processName, processId, handle, className |
+| `get_all_windows` | List user-facing app windows | includeMinimized |
 | `get_foreground_window` | Get focused window | (none) |
 
 ### Window Control (8 tools)
@@ -310,7 +310,9 @@ To close a window, use `close_window`, not a key chord.
 ## Tips
 
 - Always use `find_windows` first to get window handles before manipulating windows
-- Use `processName` filter for reliable matching (titles can change)
+- Use `processName` filter for reliable matching (titles can change). UWP apps such as Calculator or Settings are reported under their own process (for example `CalculatorApp`), with `hostProcessName: "ApplicationFrameHost"`
+- `find_windows` and `get_all_windows` list only user-facing app windows: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows. Dialogs are listed, with `ownerHandle`. To reach the taskbar, tray or an untitled popup, pass `className` (for example `Shell_TrayWnd`) or a `handle`, or set `includeShell: true`
+- `get_foreground_window` reports any window, including untitled menus and popups (empty `title`, check `className`)
 - Layout presets can auto-launch missing applications with `launchMissing: true`
 - The `close_window` tool sends WM_CLOSE for graceful shutdown (apps can prompt to save)
 - Monitor indices are 0-based; the primary monitor is not always 0 (check `primaryIndex`)

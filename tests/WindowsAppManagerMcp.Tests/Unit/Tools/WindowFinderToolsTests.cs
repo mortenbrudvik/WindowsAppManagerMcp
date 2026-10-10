@@ -23,12 +23,7 @@ public class WindowFinderToolsTests
     public void FindWindows_CallsServiceWithCorrectParameters()
     {
         // Arrange
-        _mockWindowService.Setup(w => w.FindWindows(
-            It.IsAny<string?>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>(),
-            It.IsAny<nint?>(),
-            It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Returns(new List<WindowInfo>());
         var sut = CreateSut();
 
@@ -38,27 +33,91 @@ public class WindowFinderToolsTests
             processName: "notepad",
             processId: 1234,
             handle: 5678,
-            visibleOnly: false);
+            visibleOnly: false,
+            className: "Shell_TrayWnd",
+            includeCloaked: true,
+            includeToolWindows: true,
+            includeShell: true);
 
         // Assert
-        _mockWindowService.Verify(w => w.FindWindows(
-            "Test",
-            "notepad",
-            1234,
-            new nint(5678),
-            false), Times.Once);
+        _mockWindowService.Verify(w => w.FindWindows(new WindowQuery
+        {
+            TitleContains = "Test",
+            ProcessName = "notepad",
+            ProcessId = 1234,
+            Handle = new nint(5678),
+            VisibleOnly = false,
+            ClassName = "Shell_TrayWnd",
+            IncludeCloaked = true,
+            IncludeToolWindows = true,
+            IncludeShell = true
+        }), Times.Once);
+    }
+
+    [Fact]
+    public void FindWindows_ByDefault_AsksForVisibleUserFacingWindows()
+    {
+        // Arrange
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(new List<WindowInfo>());
+        var sut = CreateSut();
+
+        // Act
+        sut.FindWindows();
+
+        // Assert - the default query keeps the user-facing filter
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q =>
+            q == new WindowQuery() && q.VisibleOnly && !q.SkipsUserFacingFilter)), Times.Once);
+    }
+
+    [Fact]
+    public void FindWindows_MapsWindowIdentityToDto()
+    {
+        // Arrange - a UWP frame owned by another window, reported under the app's process
+        var windowInfo = TestDataFactory.CreateWindowInfo(processName: "CalculatorApp", processId: 600) with
+        {
+            ClassName = "ApplicationFrameWindow",
+            IsCloaked = true,
+            OwnerHandle = new nint(777),
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 500
+        };
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(new List<WindowInfo> { windowInfo });
+        var sut = CreateSut();
+
+        // Act
+        var dto = sut.FindWindows().Should().ContainSingle().Which;
+
+        // Assert
+        dto.ClassName.Should().Be("ApplicationFrameWindow");
+        dto.IsCloaked.Should().BeTrue();
+        dto.OwnerHandle.Should().Be(777);
+        dto.ProcessName.Should().Be("CalculatorApp");
+        dto.HostProcessName.Should().Be("ApplicationFrameHost");
+        dto.HostProcessId.Should().Be(500);
+    }
+
+    [Fact]
+    public void FindWindows_LeavesOwnerAndHostNull_ForAnOrdinaryWindow()
+    {
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(new List<WindowInfo> { TestDataFactory.CreateWindowInfo() with { ClassName = "Notepad" } });
+
+        var dto = CreateSut().FindWindows().Should().ContainSingle().Which;
+
+        dto.ClassName.Should().Be("Notepad");
+        dto.IsCloaked.Should().BeFalse();
+        dto.OwnerHandle.Should().BeNull();
+        dto.HostProcessName.Should().BeNull();
+        dto.HostProcessId.Should().BeNull();
     }
 
     [Fact]
     public void FindWindows_ReturnsEmptyList_WhenNoWindowsFound()
     {
         // Arrange
-        _mockWindowService.Setup(w => w.FindWindows(
-            It.IsAny<string?>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>(),
-            It.IsAny<nint?>(),
-            It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Returns(new List<WindowInfo>());
         var sut = CreateSut();
 
@@ -84,12 +143,7 @@ public class WindowFinderToolsTests
             isVisible: true,
             monitorIndex: 1);
 
-        _mockWindowService.Setup(w => w.FindWindows(
-            It.IsAny<string?>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>(),
-            It.IsAny<nint?>(),
-            It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Returns(new List<WindowInfo> { windowInfo });
         var sut = CreateSut();
 
@@ -116,12 +170,7 @@ public class WindowFinderToolsTests
     public void FindWindows_ConvertsNullHandleCorrectly()
     {
         // Arrange
-        _mockWindowService.Setup(w => w.FindWindows(
-            It.IsAny<string?>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>(),
-            It.IsAny<nint?>(),
-            It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Returns(new List<WindowInfo>());
         var sut = CreateSut();
 
@@ -129,8 +178,7 @@ public class WindowFinderToolsTests
         sut.FindWindows(handle: null);
 
         // Assert
-        _mockWindowService.Verify(w => w.FindWindows(
-            null, null, null, null, true), Times.Once);
+        _mockWindowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q => q.Handle == null)), Times.Once);
     }
 
     #endregion
@@ -231,12 +279,7 @@ public class WindowFinderToolsTests
     {
         // Arrange
         var windowInfo = TestDataFactory.CreateWindowInfo(state: state);
-        _mockWindowService.Setup(w => w.FindWindows(
-            It.IsAny<string?>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>(),
-            It.IsAny<nint?>(),
-            It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
             .Returns(new List<WindowInfo> { windowInfo });
         var sut = CreateSut();
 
