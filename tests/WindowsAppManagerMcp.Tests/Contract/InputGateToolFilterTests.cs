@@ -226,6 +226,55 @@ public class InputGateToolFilterTests
     }
 
     [Fact]
+    public async Task AWindowChangingTool_GivesUpWaitingForTheGate_WithInputBusy()
+    {
+        // Arrange - another call holds the gate and does not let go
+        var ran = false;
+        var handler = InputGateToolFilter.CreateFilter(TimeSpan.FromMilliseconds(100))((_, _) =>
+        {
+            ran = true;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        using var gate = InputGate.Enter();
+
+        // Act
+        var result = await handler(CreateRequest("move_window"), CancellationToken.None).AsTask().WaitAsync(Timeout);
+
+        // Assert
+        ran.Should().BeFalse();
+        result.IsError.Should().BeTrue();
+        var payload = System.Text.Json.JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        payload.GetProperty("errorCode").GetString().Should().Be("InputBusy");
+        payload.GetProperty("error").GetString().Should().Contain("Nothing was done");
+    }
+
+    [Fact]
+    public async Task APauseWhileWaitingForTheGate_ReturnsPausedByUser_WithoutWaitingForTheGate()
+    {
+        // Arrange - an input call holds the gate for longer than this test runs
+        var session = new InputSession(new FakeInputWrapper());
+        var handler = InputGateToolFilter.Filter((_, _) => ValueTask.FromResult(new CallToolResult()));
+        using var gate = InputGate.Enter();
+        var call = handler(CreateRequest("focus_window", session), CancellationToken.None).AsTask();
+
+        // Act
+        session.Pause(InputControlSources.Hotkey);
+
+        // Assert
+        var result = await call.WaitAsync(Timeout);
+        InputGate.IsHeld.Should().BeTrue("the call returned while the gate was still held");
+        System.Text.Json.JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement
+            .GetProperty("errorCode").GetString().Should().Be("PausedByUser");
+    }
+
+    [Fact]
+    public void AWindowChangingTool_WaitsForTheGateAsLongAsAnInputCallDoes()
+    {
+        InputGateToolFilter.GateWaitTimeout.Should().Be(InputGate.InputWaitTimeout);
+        InputGate.InputWaitTimeout.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task ANameTheServerDoesNotServe_PassesStraightThrough_EvenWhilePaused()
     {
         // Arrange - the server serves focus_window only; the user has paused input and an input call holds the gate
