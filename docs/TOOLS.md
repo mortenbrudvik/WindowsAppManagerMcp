@@ -27,7 +27,7 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 
 - **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_move`, `type_text` and `send_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
 - Input never reaches the agent's own host (the terminal, editor or chat app the server was started from) unless the call names that window as `windowHandle` and passes `allowHostTarget: true`. Do that only when the user explicitly asked for it.
-- Key chords that close, quit or lock a window (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+Shift+Esc, Win+L) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
+- Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window. Closing more than 3 windows in one batch needs `confirm: true`.
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
@@ -40,7 +40,7 @@ The user, not the agent, decides which applications the agent may act on. The se
 |----------|---------|---------|
 | `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, CredentialUIBroker, consent` | Image names (with or without `.exe`, separated by commas or semicolons) the agent may not act on. A value replaces the default list; the entry `default` puts the default list back in, and `none` alone turns it off |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only image names the agent may act on. The deny list still wins |
-| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here). `default` and `none` work as above |
+| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here; `send_keys` itself has no Windows-key modifier, so `#l` waits for one). `default` and `none` work as above |
 
 The policy applies to:
 
