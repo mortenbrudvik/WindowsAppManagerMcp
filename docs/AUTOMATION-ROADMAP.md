@@ -185,11 +185,13 @@ Post-action reads, get_foreground_window and the guard must be able to see untit
 
 ### M1.7 Close guards for shell and agent-host windows
 
-**Priority:** P0 · **Effort:** S · **Kind:** fix
+**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m1-close-guards` (Done)
 
 close_window today posts WM_CLOSE to Program Manager (which opens the Shut Down dialog) or to the agent's own terminal after nothing more than an IsWindow check.
 
 **Design.** close_window and close_windows_batch refuse Progman, WorkerW, Shell_TrayWnd, Shell_SecondaryTrayWnd and HostGuard windows with ProtectedWindow, unless force=true. A batch of more than 3 items requires confirm=true. A PostMessage failure reads GetLastPInvokeError and maps 5 to AccessDenied. Verified close with prompt detection follows in M2.5.
+
+**As shipped.** WindowService takes IHostGuard and checks before it posts WM_CLOSE. The shell rule looks at the window, its GA_ROOT top-level window and its GA_ROOTOWNER root owner, and also matches the GetShellWindow() window whatever its class: DefWindowProc destroys any window that gets WM_CLOSE and does not handle it, so a child or an owned helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the taskbar itself. The host rule is IHostGuard.IsHostWindow (root-owner aware). File Explorer folder windows stay closable. force=true skips both rules; in close_windows_batch it applies to every window, and refusals are reported per window (WindowResultItem.ErrorCode) while the rest of the batch goes on. More than 3 windows without confirm=true is a ConfirmationRequired tool error and nothing is closed. INativeWindowWrapper.PostMessage now returns Win32CallResult(Succeeded, Win32Error), with the error read inside the wrapper right after the call; a NativeCallGuardTests rule keeps last-error reads in the Native wrappers. 5 maps to AccessDenied, 1400 (the window closed in between) to InvalidHandle, and anything else to CloseFailed with the Win32 error in the message. Still open: WindowInfo.IsAgentHost (M1.1/M1.6) and the McpServerTool Destructive annotations (M2).
 
 *Sources: r1:R55, r2:R10, r1:WC-12, r1:PAL-5, r2:WC-11*
 
@@ -989,7 +991,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-WIN-06 | medium | Windows & monitors | MonitorService singleton clears and rebuilds a shared List on every call with no locking | `src/WindowsAppManagerMcp/Services/MonitorService.cs:18` | both | fixed |
 | D-WIN-07 | medium | Windows & monitors | Invalid monitorIndex, positioning and state values are silently coerced to defaults and reported as success | `src/WindowsAppManagerMcp/Services/MonitorService.cs:113` | both | open |
 | D-WIN-08 | medium | Windows & monitors | set_window_state reports ShowWindow's previous-visibility flag as Success | `src/WindowsAppManagerMcp/Services/WindowService.cs:181` | both | open |
-| D-WIN-09 | medium | Windows & monitors | close_window / close_windows_batch have no guard for shell or agent-host windows | `src/WindowsAppManagerMcp/Services/WindowService.cs:309` | both | open |
+| D-WIN-09 | medium | Windows & monitors | close_window / close_windows_batch have no guard for shell or agent-host windows | `src/WindowsAppManagerMcp/Services/WindowService.cs:309` | both | fixed |
 | D-WIN-10 | medium | Windows & monitors | close_window reports success as soon as WM_CLOSE is queued | `src/WindowsAppManagerMcp/Services/WindowService.cs:309` | r2 | open |
 | D-WIN-11 | medium | Windows & monitors | Native window failures return a bare success:false; GetLastError is never read and elevation/UIPI is never detected | `src/WindowsAppManagerMcp/Tools/WindowManagerTools.cs:40` | both | partly fixed |
 | D-WIN-12 | medium | Windows & monitors | Calls on hung ('Not Responding') windows can block a tool call indefinitely | `src/WindowsAppManagerMcp/Native/NativeWindowWrapper.cs:63` | both | open |
