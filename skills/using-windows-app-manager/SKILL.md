@@ -132,12 +132,12 @@ Use this skill when the user asks to:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `list_screens` | List screens for capture | (none) |
-| `take_screenshot` | Capture a monitor | monitorIndex, format, maxWidth, saveToFile |
-| `capture_region` | Capture screen region | x, y, width, height, format, maxWidth, saveToFile |
-| `capture_window` | Capture a window | handle, includeFrame, format, maxWidth, saveToFile |
-| `capture_with_elements` | Capture with UI overlays | handle, maxDepth, maxWidth, saveToFile |
+| `take_screenshot` | Capture a monitor | monitorIndex, maxDimension, output |
+| `capture_region` | Capture screen region | x, y, width, height, maxDimension, output |
+| `capture_window` | Capture a window | handle, includeFrame, maxDimension, output |
+| `capture_with_elements` | Capture with UI overlays | handle, maxDepth, maxDimension, output |
 
-All capture tools also accept `quality` (JPEG) and `outputPath` (used with `saveToFile`).
+All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` (with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`.
 
 ### UI Automation (1 tool)
 
@@ -188,19 +188,21 @@ All capture tools also accept `quality` (JPEG) and `outputPath` (used with `save
 - Screen coordinates are physical pixels on the virtual desktop. This covers the `x`/`y` input parameters, window `bounds`, element `bounds` and `screenBounds`, and monitor `bounds`. The server is per-monitor DPI aware, so do not multiply by `scaleFactor`.
 - The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates.
 - Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`.
-- Image pixels are never screen pixels. To click something, use `screenBounds` from `capture_with_elements` or `bounds` from `get_ui_elements`, not positions measured on a capture image. A capture image starts at the top-left corner of what was captured, and `maxWidth` can also scale it down (`originalWidth`/`originalHeight` are then set). If you must convert an image point (ix, iy), use `x = originX + ix * capturedRegion.width / width` and `y = originY + iy * capturedRegion.height / height`, where the origin is:
-  - `take_screenshot`, `capture_region`: `capturedRegion.x`, `capturedRegion.y` (the monitor's or region's top-left corner, which can be negative).
-  - `capture_window` with `includeFrame: true` (default): the window's `bounds.x`, `bounds.y` from `find_windows`. Its `capturedRegion` is always at (0, 0) because the image starts at the window, not at the screen origin.
-  - `capture_window` with `includeFrame: false`: the client area's corner, which no tool reports, so do not convert.
-  - `scaleFactor` is the monitor's DPI scale; it plays no part in this.
+- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured and is usually scaled down (to 1568 pixels on the long edge by default). To click a point you see at (ix, iy) in a capture, convert it with the capture's `imageToScreen`:
+  - `x = imageToScreen.offsetX + ix * imageToScreen.scaleX`
+  - `y = imageToScreen.offsetY + iy * imageToScreen.scaleY`
+  - Round to whole pixels. The offset is the screen position of the image's top-left pixel (`capturedRegion.x`, `capturedRegion.y`): the monitor's or region's corner, the window's corner, or the client area's corner with `includeFrame: false`. It can be negative.
+  - `scaleFactor` is the monitor's DPI scale for information only; never multiply by it.
+  - Prefer `screenBounds` from `capture_with_elements` or `bounds` from `get_ui_elements` when the control is there: they need no conversion. Convert only from a fresh capture, because windows move.
 - Clicks outside every monitor are rejected with `CoordinatesOutOfBounds`.
 
 ## Screenshots
 
-The capture tools return JSON text. The image is a base64 string in `imageData`. It is not sent as image content, so reading that string does not let you see the picture, and a full-resolution PNG is very large.
+The capture tools return the image as image content, so you see the picture directly, followed by JSON metadata: `width`/`height` of the image, `capturedRegion` (the captured screen rectangle), `imageToScreen` (see Coordinates) and `filePath` when a file was written.
 
-- To look at a capture, pass `saveToFile: true` and open the returned `filePath` with your client's file or image viewer (in Claude Code, the Read tool shows images). `imageData` is then left out. By default the file goes to the temp directory with a new name. `outputPath` chooses the location but overwrites any existing file there without asking, so prefer the default or a new name in a scratch folder.
-- To keep a capture small, pass `maxWidth` (for example 1280) and `format: "jpeg"`.
+- Defaults are sized for vision: the long edge is at most 1568 pixels (`maxDimension`; 0 keeps full resolution), and the format is JPEG, or PNG when the image is at most 512 pixels on its long edge. Pass `format: "png"` when exact pixels matter, or capture a small region to read small text.
+- `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
+- A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists` or `CaptureFailed` (a minimized window cannot be captured).
 - If you only need positions, call `get_ui_elements`. It returns element bounds with no image data.
 
 ## Reading Browser Pages
@@ -266,9 +268,8 @@ The `snap_window` tool supports 14 positions:
 
 ### Capture and View Window Content
 1. Use `find_windows` to locate the target window
-2. Use `capture_window` with `saveToFile: true`, `format: "jpeg"` and `maxWidth: 1280`
-3. Open the returned `filePath` to view the image
-4. For anything you will click, take coordinates from `get_ui_elements` or from `screenBounds` in `capture_with_elements`
+2. Use `capture_window` with the window's `handle`; the image comes back as image content you can see
+3. For anything you will click, take coordinates from `get_ui_elements` or from `screenBounds` in `capture_with_elements`, or convert a point in the image with `imageToScreen`
 
 ### Get UI Elements for Programmatic Interaction
 1. Use `find_windows` to locate the target window
@@ -278,7 +279,7 @@ The `snap_window` tool supports 14 positions:
 
 ### Visual Element Discovery
 1. Use `find_windows` to locate the target window
-2. Use `capture_with_elements` (with `saveToFile: true`) to get an annotated screenshot
+2. Use `capture_with_elements` to get an annotated screenshot
 3. Elements are color-coded (green=buttons, blue=inputs, etc.)
 4. Use `imageBounds` for visual reference, `screenBounds` for clicks
 
@@ -314,7 +315,7 @@ To close a window, use `close_window`, not a key chord.
 - Layout presets can auto-launch missing applications with `launchMissing: true`
 - The `close_window` tool sends WM_CLOSE for graceful shutdown (apps can prompt to save)
 - Monitor indices are 0-based; the primary monitor is not always 0 (check `primaryIndex`)
-- Use PNG for UI clarity and JPEG for smaller size; see Screenshots above for viewing captures
+- Captures default to JPEG at 1568 pixels on the long edge (PNG for small images); pass `format: "png"` or a smaller region when you need exact pixels
 - `capture_window` works on occluded windows but not minimized ones
 - `capture_with_elements` provides visual overlays - great for debugging UI automation
 - `get_ui_elements` is lightweight when only coordinates are needed (no image data)
