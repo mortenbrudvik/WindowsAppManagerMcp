@@ -266,6 +266,35 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void TogglePauseByHotkey_AfterTheWallClockWentBack_StillResumes()
+    {
+        // A time sync (or the user) set the clock back an hour while input was paused; the delay after the pause
+        // is measured on the monotonic clock, so the user's press 2 s after the pause still resumes
+        var sut = CreateSut();
+        sut.TogglePauseByHotkey();
+
+        _time.SetWallClock(_time.Now - TimeSpan.FromHours(1));
+        _time.Advance(InputSession.HotkeyResumeDelay);
+        sut.TogglePauseByHotkey();
+
+        sut.IsPaused.Should().BeFalse();
+        sut.PauseState.ResumedBy.Should().Be(InputControlSources.Hotkey);
+    }
+
+    [Fact]
+    public void TogglePauseByHotkey_ASecondPressRightAfterThePause_DoesNotResume_EvenIfTheWallClockJumpedAhead()
+    {
+        var sut = CreateSut();
+        sut.TogglePauseByHotkey();
+
+        _time.SetWallClock(_time.Now + TimeSpan.FromHours(1));
+        _time.Advance(TimeSpan.FromMilliseconds(100));
+        sut.TogglePauseByHotkey();
+
+        sut.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
     public void Resume_ForAnEarlierPause_IsRefused()
     {
         // resume_input asked about the first pause; the user resumed and paused again meanwhile
