@@ -181,6 +181,20 @@ public class DependencyInjectionTests : IDisposable
         layoutService.GetAllPresets().Should().NotBeNull();
     }
 
+    [Fact]
+    public void UIElementService_ReceivesTheWindowWrapper_SoStuckReadsAreCountedPerApplication()
+    {
+        // Act - the window wrapper is an optional constructor parameter; without it every walk would
+        // share one stuck-read count, and one hung application would block all of them
+        var service = _serviceProvider.GetRequiredService<IUIElementService>();
+        var windows = typeof(UIElementService)
+            .GetField("_windows", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(service);
+
+        // Assert
+        windows.Should().BeSameAs(_serviceProvider.GetRequiredService<INativeWindowWrapper>());
+    }
+
     #endregion
 
     #region T7.3.8: Service Provider Build No Circular Dependencies
