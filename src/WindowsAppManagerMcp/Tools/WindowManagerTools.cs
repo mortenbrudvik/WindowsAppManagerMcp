@@ -197,7 +197,7 @@ public class WindowManagerTools
     public BatchWindowResult CloseWindowsBatch(
         [Description("Array of window handles to close")]
         WindowCloseRequest[] windows,
-        [Description("Delay between operations in milliseconds (default: 50)")]
+        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
         [Description("Must be true to close more than 3 windows in one batch. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
         bool confirm = false,
@@ -302,7 +302,7 @@ public class WindowManagerTools
     public BatchWindowResult SetWindowsBoundsBatch(
         [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowBoundsPlacement[] placements,
-        [Description("Delay between operations in milliseconds (default: 50)")]
+        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50)
     {
         var servicePlacements = placements.Select(p =>
@@ -334,7 +334,7 @@ public class WindowManagerTools
     public BatchWindowResult SnapWindowsBatch(
         [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowSnapPlacement[] placements,
-        [Description("Delay between operations in milliseconds (default: 50)")]
+        [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50)
     {
         var servicePlacements = new List<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)>();
@@ -394,7 +394,7 @@ public class WindowManagerTools
     public BatchWindowResult SetWindowsStateBatch(
         [Description("Array of state changes with handle and state")]
         WindowStateChange[] changes,
-        [Description("Delay between operations in milliseconds (default: 30)")]
+        [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
         int delayBetweenMs = 30)
     {
         var serviceChanges = changes.Select(c =>

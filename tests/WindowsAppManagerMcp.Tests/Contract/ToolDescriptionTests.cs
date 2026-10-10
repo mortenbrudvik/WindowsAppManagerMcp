@@ -250,6 +250,28 @@ public class ToolDescriptionTests
         text.Should().ContainEquivalentOf($"more than {WindowsAppManagerMcp.Tools.WindowManagerTools.MaxCloseBatchWithoutConfirm} windows");
     }
 
+    [Fact]
+    public void TheWaitsTheServerClamps_StateTheirRange()
+    {
+        // A batch's delay and a launch's wait for its window are waited out inside the input gate, so the server
+        // clamps them; the agent reads the range in tools/list
+        var waits = ServerToolCatalog.AllDescriptions()
+            .Where(d => d.Source.EndsWith(".delayBetweenMs", StringComparison.Ordinal) ||
+                        d.Source.EndsWith(".waitTimeoutMs", StringComparison.Ordinal))
+            .ToList();
+
+        waits.Select(d => d.Source).Should().BeEquivalentTo(
+            "close_windows_batch.delayBetweenMs", "set_windows_bounds_batch.delayBetweenMs", "snap_windows_batch.delayBetweenMs",
+            "set_windows_state_batch.delayBetweenMs", "launch_application.waitTimeoutMs", "launch_applications_batch.waitTimeoutMs");
+        foreach (var (source, text) in waits)
+        {
+            var range = source.EndsWith(".delayBetweenMs", StringComparison.Ordinal)
+                ? $"0-{WindowService.MaxDelayBetweenMs}"
+                : $"0-{WindowsAppManagerMcp.Tools.AppLauncherTools.MaxWaitTimeoutMs}";
+            text.Should().Contain($"({range}, default: ", source);
+        }
+    }
+
     private static string ParameterDescription(string toolName, string parameterName) =>
         ServerToolCatalog.AllDescriptions()
             .Single(d => d.Source == $"{toolName}.{parameterName}")
