@@ -1594,7 +1594,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `children`: the returned elements inside this one; absent when there are none.
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
-- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
 **Error Codes:**
@@ -1605,7 +1605,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 | `AutomationUnavailable` | UI Automation not available |
 | `ElementAccessFailed` | The window's elements disappeared while they were read |
 | `InvalidControlType` | A `controlTypes` name is not a known control type; `error` lists the valid names |
-| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
+| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering before one was (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
 
 ---

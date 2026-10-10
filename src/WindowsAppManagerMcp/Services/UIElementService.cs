@@ -20,7 +20,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
 /// siblings. An element whose interaction properties cannot be read (interactableOnly) is left out
 /// and counted too, but the elements inside it are still walked. A timeout ends the walk and returns
-/// what was read so far.</item>
+/// what was read so far. So does a walk that is abandoned because a UI Automation call did not return
+/// (a hung provider): the elements it had read until then are returned.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -78,18 +79,35 @@ public class UIElementService : IUIElementService
             return CreateErrorResult(windowHandle, stopwatch, invalidControlTypes, UIElementErrorCode.InvalidControlType);
         }
 
+        var progress = new WalkProgress();
         try
         {
             return _worker.Run(
                 TargetProcessId(windowHandle),
-                token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, token),
+                token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, progress, token),
                 cancellationToken,
                 StopGrace);
         }
         catch (TimeoutException ex)
         {
-            // The worker gave up on a read stuck in an application that does not answer
-            return CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+            // The worker gave up on a read stuck in an application that does not answer. The walk thread is
+            // still blocked in a UI Automation call; what it had read until then is returned all the same
+            return progress.Walk?.PartialResult(windowHandle, stopwatch) ??
+                   CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+    }
+
+    /// <summary>
+    /// The walk of one call, once it has started: the caller reads its partial tree when the worker abandons it.
+    /// </summary>
+    private sealed class WalkProgress
+    {
+        private Walk? _walk;
+
+        public Walk? Walk
+        {
+            get => Volatile.Read(ref _walk);
+            set => Volatile.Write(ref _walk, value);
         }
     }
 
@@ -143,6 +161,7 @@ public class UIElementService : IUIElementService
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
         Stopwatch stopwatch,
+        WalkProgress progress,
         CancellationToken cancellationToken)
     {
         try
@@ -176,7 +195,8 @@ public class UIElementService : IUIElementService
             }
 
             var windowTitle = TryReadName(window);
-            var walk = new Walk(_tree, maxDepth, filter, controlTypes, cancellationToken);
+            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, cancellationToken);
+            progress.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
             // window without controls
@@ -249,28 +269,134 @@ public class UIElementService : IUIElementService
         }
     }
 
-    /// <summary>The state of one tree walk.</summary>
+    /// <summary>
+    /// The state of one tree walk. The walk runs on the worker thread; when the worker abandons it, the caller
+    /// takes its partial tree (<see cref="PartialResult"/>) while the walk thread may still be blocked in a UI
+    /// Automation call, and may go on later. So the lists of the tree and the counts change only under
+    /// <see cref="_gate"/>, which is never held during a UI Automation call, and the partial tree is a copy.
+    /// </summary>
     private sealed class Walk(
         IUiaTree tree,
         int maxDepth,
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
+        string? windowTitle,
         CancellationToken cancellationToken)
     {
+        private readonly object _gate = new();
+
+        /// <summary>The elements whose children are being read, outermost first, with what was read inside them.</summary>
+        private readonly List<PendingElement> _pending = [];
+
+        /// <summary>The window's children read so far (level 1).</summary>
+        private List<UIElementInfo>? _top;
+
+        private int _elementCount;
+        private int _skippedElementCount;
+        private int _readCount;
+        private int _depthReached;
+
         /// <summary>Elements returned, nested ones included.</summary>
-        public int ElementCount { get; private set; }
+        public int ElementCount
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _elementCount;
+                }
+            }
+        }
 
         /// <summary>Elements, or lists of children, that could not be read.</summary>
-        public int SkippedElementCount { get; private set; }
+        public int SkippedElementCount
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _skippedElementCount;
+                }
+            }
+        }
 
         /// <summary>Elements whose properties were read, returned or not.</summary>
-        public int ReadCount { get; private set; }
+        public int ReadCount
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _readCount;
+                }
+            }
+        }
 
         /// <summary>The deepest level an element was read at (the window's children are level 1).</summary>
-        public int DepthReached { get; private set; }
+        public int DepthReached
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _depthReached;
+                }
+            }
+        }
 
         /// <summary>The walk stopped early because the timeout passed.</summary>
         public bool TimedOut { get; private set; }
+
+        /// <summary>
+        /// The tree read so far, for a walk the worker abandoned: the finished elements, and the elements whose
+        /// children were being read with the children read until then. Success with truncated=true; null when no
+        /// element passed the filters yet. Runs on the caller's thread.
+        /// </summary>
+        public UIElementResult? PartialResult(nint windowHandle, Stopwatch stopwatch)
+        {
+            List<UIElementInfo> elements;
+            int skipped, depthReached;
+            lock (_gate)
+            {
+                if (_top == null)
+                {
+                    return null;
+                }
+
+                // From the innermost element being read outwards: each takes the partial one inside it as its
+                // last child (or, when it is filtered out, those children take its place)
+                List<UIElementInfo>? inner = null;
+                for (var i = _pending.Count - 1; i >= 0; i--)
+                {
+                    var pending = _pending[i];
+                    var children = new List<UIElementInfo>(pending.Children);
+                    children.AddRange(inner ?? []);
+                    inner = pending.Included ? [Element(pending.Properties, children)] : children;
+                }
+
+                elements = [.. _top, .. inner ?? []];
+                skipped = _skippedElementCount;
+                depthReached = _depthReached;
+            }
+
+            var count = Count(elements);
+            return count == 0
+                ? null
+                : new UIElementResult(
+                    Success: true,
+                    WindowHandle: (long)windowHandle,
+                    WindowTitle: windowTitle,
+                    Elements: elements,
+                    TotalElementCount: count,
+                    Depth: maxDepth,
+                    ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
+                    SkippedElementCount: skipped,
+                    DepthReached: depthReached,
+                    Truncated: true,
+                    TruncationReason: UIElementTruncationReason.Timeout);
+
+            static int Count(IReadOnlyList<UIElementInfo>? list) => list?.Sum(e => 1 + Count(e.Children)) ?? 0;
+        }
 
         /// <summary>
         /// Reads the children of <paramref name="parent"/>, which are at <paramref name="level"/>, and
@@ -279,9 +405,24 @@ public class UIElementService : IUIElementService
         public List<UIElementInfo> ReadChildren(IUiaNode parent, int level, bool isWindow = false)
         {
             var output = new List<UIElementInfo>();
+            if (isWindow)
+            {
+                lock (_gate)
+                {
+                    _top = output;
+                }
+            }
+
+            ReadChildrenInto(parent, level, output, isWindow);
+            return output;
+        }
+
+        /// <summary>Reads the children of <paramref name="parent"/> into <paramref name="output"/>.</summary>
+        private void ReadChildrenInto(IUiaNode parent, int level, List<UIElementInfo> output, bool isWindow = false)
+        {
             if (StopRequested())
             {
-                return output;
+                return;
             }
 
             IReadOnlyList<IUiaNode> children;
@@ -292,13 +433,13 @@ public class UIElementService : IUIElementService
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 TimedOut = true;
-                return output;
+                return;
             }
             catch (Exception) when (!isWindow)
             {
                 // This element's children could not be read; the element itself is still returned
-                SkippedElementCount++;
-                return output;
+                Count(ref _skippedElementCount);
+                return;
             }
 
             foreach (var child in children)
@@ -310,8 +451,6 @@ public class UIElementService : IUIElementService
 
                 Visit(child, level, output);
             }
-
-            return output;
         }
 
         /// <summary>
@@ -325,8 +464,11 @@ public class UIElementService : IUIElementService
             try
             {
                 properties = tree.Read(node);
-                ReadCount++;
-                DepthReached = Math.Max(DepthReached, level);
+                lock (_gate)
+                {
+                    _readCount++;
+                    _depthReached = Math.Max(_depthReached, level);
+                }
 
                 if (filter?.VisibleOnly == true && properties.IsOffscreen)
                 {
@@ -340,30 +482,62 @@ public class UIElementService : IUIElementService
             {
                 // The element disappeared or its provider failed (ElementNotAvailable, COMException,
                 // TimeoutException, ...). Skip it; its siblings are still walked.
-                SkippedElementCount++;
+                Count(ref _skippedElementCount);
                 return;
             }
 
-            var children = level < maxDepth && !StopRequested()
-                ? ReadChildren(node, level + 1)
-                : [];
-
-            if (!included)
+            var children = new List<UIElementInfo>();
+            var readsChildren = level < maxDepth && !StopRequested();
+            if (readsChildren)
             {
-                output.AddRange(children);
-                return;
+                // While its children are read, the element is pending: a partial tree shows it with them
+                lock (_gate)
+                {
+                    _pending.Add(new PendingElement(properties, included, children));
+                }
+
+                ReadChildrenInto(node, level + 1, children);
             }
 
-            ElementCount++;
-            output.Add(new UIElementInfo(
+            // Finished: from the pending elements into its parent's list, in one step
+            lock (_gate)
+            {
+                if (readsChildren)
+                {
+                    _pending.RemoveAt(_pending.Count - 1);
+                }
+
+                if (!included)
+                {
+                    output.AddRange(children);
+                    return;
+                }
+
+                _elementCount++;
+                output.Add(Element(properties, children));
+            }
+        }
+
+        private static UIElementInfo Element(UiaNodeProperties properties, List<UIElementInfo> children) =>
+            new(
                 Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
                 ControlType: properties.ControlType,
                 AutomationId: string.IsNullOrEmpty(properties.AutomationId) ? null : properties.AutomationId,
                 Bounds: properties.Bounds.ToBounds(),
                 IsEnabled: properties.IsEnabled,
                 IsOffscreen: properties.IsOffscreen,
-                Children: children.Count > 0 ? children : null));
+                Children: children.Count > 0 ? children : null);
+
+        private void Count(ref int counter)
+        {
+            lock (_gate)
+            {
+                counter++;
+            }
         }
+
+        /// <summary>An element whose children are being read, and the elements read inside it so far.</summary>
+        private sealed record PendingElement(UiaNodeProperties Properties, bool Included, List<UIElementInfo> Children);
 
         /// <summary>
         /// The controlTypes, size and interactable filters, cheapest first: the interactable check
@@ -405,7 +579,7 @@ public class UIElementService : IUIElementService
                     // Only this element's own properties failed (a provider that rejects a pattern
                     // query, for example): leave the element out, but keep walking the elements
                     // inside it. A vanished element is skipped with its subtree, which is gone too.
-                    SkippedElementCount++;
+                    Count(ref _skippedElementCount);
                     return false;
                 }
             }
