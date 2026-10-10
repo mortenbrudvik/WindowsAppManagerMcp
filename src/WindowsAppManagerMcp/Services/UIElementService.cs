@@ -57,6 +57,10 @@ public class UIElementService : IUIElementService
         { ControlType.Window, "Window" }
     };
 
+    // Control types added in Windows 8. The managed client has no ControlType for them and returns
+    // null, so they are recognized by their LocalizedControlType ("app bar" and "semantic zoom" in English).
+    private static readonly string[] UnregisteredControlTypeNames = ["AppBar", "SemanticZoom"];
+
     /// <inheritdoc />
     public bool IsAvailable()
     {
@@ -277,8 +281,11 @@ public class UIElementService : IUIElementService
         {
             var current = element.Current;
 
-            // Get control type string
-            var controlTypeName = GetControlTypeName(current.ControlType);
+            // Get control type string. ControlType is null for types the managed client does not know.
+            var controlType = current.ControlType;
+            var controlTypeName = GetControlTypeName(
+                controlType,
+                controlType == null ? TryGetLocalizedControlType(current) : null);
 
             // Apply control type filter
             if (filterControlTypes != null && !filterControlTypes.Contains(controlTypeName))
@@ -364,26 +371,60 @@ public class UIElementService : IUIElementService
         }
     }
 
-    private static string GetControlTypeName(ControlType controlType)
+    private static string? TryGetLocalizedControlType(AutomationElement.AutomationElementInformation current)
     {
-        if (ControlTypeNames.TryGetValue(controlType, out var name))
+        try
         {
-            return name;
+            return current.LocalizedControlType;
         }
-
-        // Fallback: extract name from ControlType's ProgrammaticName
-        var programmaticName = controlType.ProgrammaticName;
-        if (!string.IsNullOrEmpty(programmaticName))
+        catch (Exception)
         {
-            var lastDot = programmaticName.LastIndexOf('.');
-            if (lastDot >= 0)
+            // The control type name is optional; never lose the element over it
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets a readable name for an element's control type.
+    /// </summary>
+    /// <param name="controlType">The element's control type. The managed UI Automation client returns
+    /// null for control types it does not know, such as AppBar (50040) and SemanticZoom (50039).</param>
+    /// <param name="localizedControlType">The element's LocalizedControlType, used when
+    /// <paramref name="controlType"/> is null.</param>
+    /// <returns>The control type name, a name derived from the localized control type, or "Unknown".</returns>
+    public static string GetControlTypeName(ControlType? controlType, string? localizedControlType = null)
+    {
+        if (controlType != null)
+        {
+            if (ControlTypeNames.TryGetValue(controlType, out var name))
             {
-                return programmaticName[(lastDot + 1)..];
+                return name;
             }
-            return programmaticName;
+
+            // Fallback: extract name from ControlType's ProgrammaticName
+            var programmaticName = controlType.ProgrammaticName;
+            if (!string.IsNullOrEmpty(programmaticName))
+            {
+                var lastDot = programmaticName.LastIndexOf('.');
+                if (lastDot >= 0)
+                {
+                    return programmaticName[(lastDot + 1)..];
+                }
+                return programmaticName;
+            }
         }
 
-        return "Unknown";
+        if (string.IsNullOrWhiteSpace(localizedControlType))
+        {
+            return "Unknown";
+        }
+
+        // "app bar" -> "AppBar"; split on any whitespace
+        var words = localizedControlType.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var pascalCased = string.Concat(words.Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
+
+        return UnregisteredControlTypeNames.FirstOrDefault(
+            n => n.Equals(pascalCased, StringComparison.OrdinalIgnoreCase)) ?? pascalCased;
     }
 
     private static UIElementResult CreateErrorResult(
