@@ -62,7 +62,13 @@ public enum WindowErrorCode
     AccessDenied = 23,
 
     /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
-    ConfirmationRequired = 24
+    ConfirmationRequired = 24,
+
+    /// <summary>
+    /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the window's process
+    /// (roadmap M1.12). force does not override it. Nothing was sent.
+    /// </summary>
+    TargetDeniedByPolicy = 25
 }
 
 /// <summary>
@@ -179,7 +185,13 @@ public enum ProcessErrorCode
     TerminationNotConfirmed = 12,
 
     /// <summary>The graceful close timeout is outside the allowed range.</summary>
-    InvalidTimeout = 13
+    InvalidTimeout = 13,
+
+    /// <summary>
+    /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the process (roadmap
+    /// M1.12). Nothing was done.
+    /// </summary>
+    TargetDeniedByPolicy = 14
 }
 
 /// <summary>
@@ -254,7 +266,13 @@ public enum ScreenshotErrorCode
     InvalidHandle = 9,
 
     /// <summary>Windows could not capture the pixels (for example the window is minimized).</summary>
-    CaptureFailed = 10
+    CaptureFailed = 10,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the server's target policy (WAM_DENY_PROCESSES,
+    /// WAM_ALLOW_PROCESSES) refuses the window's process (roadmap M1.12). Nothing was captured or read.
+    /// </summary>
+    TargetDeniedByPolicy = 11
 }
 
 /// <summary>

@@ -20,19 +20,26 @@ public class ProcessService : IProcessService
     private readonly IBrowserDetectionService _browserDetection;
     private readonly IExecutableResolver _executableResolver;
     private readonly INativeProcessWrapper _processWrapper;
+    private readonly ITargetPolicy? _targetPolicy;
 
+    /// <param name="targetPolicy">
+    /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
+    /// it; without it no process is refused by policy.
+    /// </param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
         IBrowserDetectionService browserDetection,
         IExecutableResolver? executableResolver = null,
-        INativeProcessWrapper? processWrapper = null)
+        INativeProcessWrapper? processWrapper = null,
+        ITargetPolicy? targetPolicy = null)
     {
         _windowService = windowService;
         _validationService = validationService;
         _browserDetection = browserDetection;
         _executableResolver = executableResolver ?? new ExecutableResolver();
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
+        _targetPolicy = targetPolicy;
     }
 
     public LaunchResult LaunchApplication(
@@ -450,6 +457,18 @@ public class ProcessService : IProcessService
                     ProcessName: processName,
                     ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
                     ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+            }
+
+            // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
+            if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
+                                  "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
+                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
             }
 
             // PID reuse guard: the process the agent saw in list_processes may have exited

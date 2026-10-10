@@ -51,15 +51,18 @@ public class ScreenshotTools
     private readonly IScreenshotService _screenshotService;
     private readonly IUIElementService _uiElementService;
     private readonly IWindowService _windowService;
+    private readonly ITargetPolicy _targetPolicy;
 
     public ScreenshotTools(
         IScreenshotService screenshotService,
         IUIElementService uiElementService,
-        IWindowService windowService)
+        IWindowService windowService,
+        ITargetPolicy targetPolicy)
     {
         _screenshotService = screenshotService;
         _uiElementService = uiElementService;
         _windowService = windowService;
+        _targetPolicy = targetPolicy ?? throw new ArgumentNullException(nameof(targetPolicy));
     }
 
     [McpServerTool(Name = "list_screens")]
@@ -159,6 +162,15 @@ public class ScreenshotTools
         [Description(MaxWidthDescription)]
         int? maxWidth = null)
     {
+        if (PolicyRefusal((nint)handle) is { } refusal)
+        {
+            return ToolImages.Create(
+                new ScreenshotResult(false, null, null, 0, 0, null, null, null, null,
+                    Error: refusal, ErrorCode: nameof(ScreenshotErrorCode.TargetDeniedByPolicy)),
+                image: null,
+                isError: true);
+        }
+
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
         return ToolImages.ToCallToolResult(_screenshotService.CaptureWindow((nint)handle, includeFrame, options));
     }
@@ -219,7 +231,14 @@ public class ScreenshotTools
         }
 
         // The title is informational: untitled windows (popups, menus) are still captured.
-        var windowTitle = _windowService.GetWindowInfo(windowHandle)?.Title;
+        var windowInfo = _windowService.GetWindowInfo(windowHandle);
+        var windowTitle = windowInfo?.Title;
+
+        // Neither the pixels nor the element texts of a window the user's policy denies
+        if (windowInfo != null && _targetPolicy.Evaluate(windowInfo) is { Allowed: false } verdict)
+        {
+            return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
+        }
 
         // Parse filter parameters
         string[]? controlTypeArray = null;
@@ -269,6 +288,19 @@ public class ScreenshotTools
 
         return ToolImages.ToCallToolResult(capture);
     }
+
+    /// <summary>
+    /// Why the target policy refuses capturing the window, or null. A window that cannot be read is left to
+    /// the capture, which reports InvalidHandle.
+    /// </summary>
+    private string? PolicyRefusal(nint handle) =>
+        _windowService.GetWindowInfo(handle) is { } window && _targetPolicy.Evaluate(window) is { Allowed: false } verdict
+            ? PolicyMessage(verdict)
+            : null;
+
+    private static string PolicyMessage(TargetPolicyVerdict verdict) =>
+        $"The window is refused by the server's target policy: {verdict.Reason}. Nothing was captured. The policy is set by " +
+        "the user in the server's environment; no tool argument changes it.";
 
     private static CaptureOptions Options(
         string? format,

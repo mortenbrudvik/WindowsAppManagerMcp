@@ -36,7 +36,8 @@ public class ScreenshotOptionTests
     private ScreenshotTools CreateSut() => new(
         _mockScreenshotService.Object,
         _mockUIElementService.Object,
-        _mockWindowService.Object);
+        _mockWindowService.Object,
+        new TargetPolicy(TargetPolicySettings.Default));
 
     [Fact]
     public void TakeScreenshot_ForwardsAllOptions()

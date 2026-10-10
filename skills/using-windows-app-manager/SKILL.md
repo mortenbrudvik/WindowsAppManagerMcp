@@ -36,7 +36,7 @@ The mouse and keyboard tools send real input to the user's desktop.
   - `DestructiveChordNeedsTarget`: `send_keys` with a chord that closes, quits or locks (Alt+F4 `%{F4}`, `^w`, `^q`, `^+{ESC}`) needs `windowHandle`. To close a window, use `close_window`.
   - `TargetInMenuMode`: a menu is open, so `type_text` would pick menu items. Close it with `send_keys` `{ESC}` (with `windowHandle`) or click into the field.
   - `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step.
-  - `TargetDeniedByPolicy`: the user does not allow the agent to act on that app (password managers and credential prompts by default). No argument changes it: ask the user to do the step.
+  - `TargetDeniedByPolicy`: the user does not allow the agent to act on that app (password managers and credential prompts by default). No argument changes it, not even `force` or `forceKill`: ask the user to do the step. `close_window`, `close_windows_batch`, `kill_process`, `capture_window` and `capture_with_elements` refuse such apps the same way.
   - `SessionLocked`, `DesktopUnavailable`: the screen is locked or a UAC prompt is shown. Wait for the user.
 - **Never send destructive keys blind.** Be careful with `^a{DELETE}` and with `{ENTER}` on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - **Close windows with `close_window`, not Alt+F4.** `close_window` and `close_windows_batch` send WM_CLOSE to the exact handle you pass. The app may still ask to save. They refuse the desktop shell (Program Manager, the taskbar) and your own terminal, editor or chat window with `errorCode: "ProtectedWindow"`; pass `force: true` only if the user explicitly asked to close that window. A batch of more than 3 windows needs `confirm: true`: check the list with `find_windows` first.
@@ -220,7 +220,7 @@ The capture tools return the image as image content, so you see the picture dire
 
 - Defaults are sized for vision: the long edge is at most 1568 pixels (`maxDimension`; 0 keeps full resolution), and the format is JPEG, or PNG when the image is at most 512 pixels on its long edge. Pass `format: "png"` when exact pixels matter, or capture a small region to read small text.
 - `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` on a drive letter (network paths are refused) ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
-- A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists` or `CaptureFailed` (a minimized window cannot be captured).
+- A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists` or `CaptureFailed` (a minimized window cannot be captured). `capture_window` and `capture_with_elements` return `TargetDeniedByPolicy` for an app the user's policy denies.
 - If you only need positions, call `get_ui_elements`. It returns element bounds with no image data.
 
 ## Reading Browser Pages

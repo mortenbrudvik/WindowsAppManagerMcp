@@ -38,9 +38,18 @@ The user, not the agent, decides which applications the agent may act on. The se
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, CredentialUIBroker, consent` | Image names (with or without `.exe`, separated by commas or semicolons) whose windows the agent may not send input to. A value replaces the default list; the entry `default` puts the default list back in, and `none` alone turns it off |
+| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, CredentialUIBroker, consent` | Image names (with or without `.exe`, separated by commas or semicolons) the agent may not act on. A value replaces the default list; the entry `default` puts the default list back in, and `none` alone turns it off |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only image names the agent may act on. The deny list still wins |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here). `default` and `none` work as above |
+
+The policy applies to:
+
+- every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
+- [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
+- [kill_process](#kill_process), even with `forceKill: true`;
+- [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
+
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works. The UI Automation and browser reading tools are not covered yet.
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart.
 
@@ -581,6 +590,7 @@ File Explorer folder windows are ordinary windows, even though explorer.exe also
 |------|---------|
 | `InvalidHandle` | The handle is not a window, or the window closed before the message was sent |
 | `ProtectedWindow` | The window is part of the desktop shell or of the agent's host, and `force` was not true. Nothing was sent |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the window's app. `force` does not override it; nothing was sent |
 | `AccessDenied` | Windows blocked the message (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks messages to it from the server |
 | `CloseFailed` | Windows did not accept the message for another reason; `error` gives the Win32 error |
 
@@ -894,7 +904,7 @@ Each window object contains:
 }
 ```
 
-Each window is handled like [close_window](#close_window): a protected window (the desktop shell, the agent's own host) is refused with `errorCode: "ProtectedWindow"` unless `force` is true, and the batch goes on with the next window. A failed item has `error` and `errorCode` (`InvalidHandle`, `ProtectedWindow`, `AccessDenied` or `CloseFailed`):
+Each window is handled like [close_window](#close_window): a protected window (the desktop shell, the agent's own host) is refused with `errorCode: "ProtectedWindow"` unless `force` is true, and the batch goes on with the next window. A failed item has `error` and `errorCode` (`InvalidHandle`, `TargetDeniedByPolicy`, `ProtectedWindow`, `AccessDenied` or `CloseFailed`):
 
 ```json
 {
@@ -1065,6 +1075,7 @@ The **Response** examples below show the metadata text, formatted.
 - **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)).
+- **Target policy:** [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) refuse a window whose app the user's [target policy](#target-policy) denies, with `TargetDeniedByPolicy`, before any pixel or element is read. [take_screenshot](#take_screenshot) and [capture_region](#capture_region) capture whatever is on screen, including a denied window that happens to be visible there: they do not black it out.
 - Image pixels are not screen coordinates. `capturedRegion` is the captured screen rectangle with its real origin, and `imageToScreen` converts image points to screen points; see [Image coordinates](#image-coordinates).
 - If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image.
 
@@ -2695,6 +2706,7 @@ To end the process anyway, call again with `forceKill: true`. This ends the proc
 | `ProtectedProcess` | Protected system or shell process (see below) |
 | `CannotTerminateSelf` | The PID is this server |
 | `CannotTerminateHost` | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process. `forceKill` does not override it; nothing was done |
 | `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `NoClosableWindow` | Graceful mode: no closable main window; process left running |
 | `GracefulCloseTimedOut` | Graceful mode: still running after the timeout; process left running |
@@ -3284,7 +3296,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools | The server's [target policy](#target-policy) refuses the window's process; no tool argument changes it, so ask the user |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [close_window](#close_window), close_windows_batch (per window), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
