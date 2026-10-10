@@ -1063,7 +1063,10 @@ start ./TestResults/report/index.html
 CI fails the build when line coverage of the `Category!=Desktop` run drops below the
 threshold in `.github/workflows/test.yml` (currently 59%). It measures the server assembly
 (package `WindowsAppManagerMcp`), merged over the coverage files of every test project: a line
-counts as covered when any project covers it.
+counts as covered when any project covers it. Lines are matched by full source path, because
+coverlet writes file names relative to a source root that depends on what each project
+instruments. Measured this way, the suite covers about 76% of the server's lines (October 2026); the
+threshold has not been raised to match yet.
 
 ---
 
@@ -1932,23 +1935,39 @@ what reached it, independent of what the server reports. `FixtureContract.Events
 events; the harness reads them with `FixtureEventLogReader`.
 
 **The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, starts the fixture
-(`FixtureAppSession`), waits for its ready event, builds the server services exactly as Program.cs
-registers them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose
-kills the fixture. Every native wrapper of the server sits behind a fail-closed guard
-(`WrapperGuard`):
+(`FixtureAppSession`), waits for its ready event, builds the server services as Program.cs registers
+them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose kills the
+fixture.
 
-- in the no-input tier the server can only read: input, window changes and UI Automation actions
-  throw `E2EGuardException` before they reach the wrapper;
-- in the input tier the server can act only on the fixture process. Keyboard input goes out only
-  while a fixture window is in front, mouse input only while the cursor is over a fixture window,
-  window calls only for fixture windows, and the check runs before every `SendInput` batch, so a
-  window that comes to the front mid-text stops the typing. This stands in for the server's own
-  target guard (roadmap M1.1 and M1.5) until it exists.
+Every native wrapper of the server sits behind a fail-closed guard (`WrapperGuard`). That includes
+the process and monitor wrappers that ProcessService and MonitorService would otherwise create
+themselves: `ServerHarness` registers them, so the container passes the guarded ones in. An ordinary
+test (`ServerHarnessTests`) resolves every service and fails if any of them holds a native wrapper
+outside the guard. A process handle returned by `OpenProcess` is guarded as well. The guard does not
+decide from member names: `WrapperCatalog` classifies every wrapper member explicitly (read, window
+action, input, process action or process start). A member it does not list is refused in every tier,
+and `WrapperCatalogTests` fails until a new wrapper or member is classified. When you merge a change
+that adds wrapper members, classify them there.
 
-A wrapper member the guard does not know (one a later change adds) is refused until a policy allows
-it. The harness finds the fixture exe from a path the build records in the test assembly; set
-`WAM_FIXTURE_APP_PATH` to use another build of `WamFixtureApp.exe` (for example in Windows Sandbox).
-The harness refuses any exe with another name.
+- In the no-input tier the server can only read. Input, window changes, process closes and kills
+  throw `E2EGuardException` before they reach the wrapper.
+- In the input tier the server can act only on the fixture process:
+  - keyboard input goes out only while a fixture window is in front;
+  - mouse input goes out only while the cursor is over a fixture window;
+  - window calls go through only when every window they name is a fixture window;
+  - closes and kills apply only to the fixture process, checked by id and process name.
+
+  The check runs before every `SendInput` batch, so a window that comes to the front mid-text stops
+  the typing. This stands in for the server's own target guard (roadmap M1.1 and M1.5) until it
+  exists.
+- In both tiers, starting a process (including `where.exe`) is refused. CDP (`ICdpService`) refuses
+  every call, because it talks to a browser's debug port over the network, outside the native
+  wrappers, and no fixture has one yet.
+
+UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
+forbids acting pattern calls outside the Native wrappers. The harness finds the fixture exe from a
+path the build records in the test assembly; set `WAM_FIXTURE_APP_PATH` to use another build of
+`WamFixtureApp.exe` (for example in Windows Sandbox). The harness refuses any exe with another name.
 
 **Writing a scenario.** Put it in `Scenarios/`, mark it `[DesktopNoInputFact]` when it only reads or
 captures and `[DesktopFact]` when it acts, and start from `E2ESession`:
