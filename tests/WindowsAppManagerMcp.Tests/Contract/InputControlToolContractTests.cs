@@ -74,26 +74,37 @@ public sealed class InputControlToolContractTests : IDisposable
             new McpServerToolCreateOptions { Name = "focus_window" });
         return InProcessMcpServer.StartAsync(
             [windowTool],
-            builder => builder
-                .AddCallToolFilter(next => async (request, token) =>
-                {
-                    // The JSON-RPC id of the call, which a client names when it cancels the call
-                    requestId?.TrySetResult(request.JsonRpcRequest.Id);
-                    try
+            builder =>
+            {
+                builder
+                    .AddCallToolFilter(next => async (request, token) =>
                     {
-                        return await next(request, token);
-                    }
-                    finally
-                    {
-                        callEnded?.TrySetResult();
-                    }
-                })
-                .AddInputGateSerialization()
-                .AddToolErrorReporting()
-                .WithTools(new InputControlTools(session, _hotkey, answerTimeout))
-                .WithTools(new InputSimulationTools(service)),
+                        // The JSON-RPC id of the call, which a client names when it cancels the call
+                        requestId?.TrySetResult(request.JsonRpcRequest.Id);
+                        try
+                        {
+                            return await next(request, token);
+                        }
+                        finally
+                        {
+                            callEnded?.TrySetResult();
+                        }
+                    })
+                    .AddInputGateSerialization()
+                    .AddToolErrorReporting()
+                    .WithTools(new InputSimulationTools(service));
+
+                // The input control tools are registered as the server registers them: the SDK builds a new
+                // instance from the services for every call, so no state of theirs outlives a call. Only a test
+                // that needs a shorter answer timeout registers one instance instead.
+                _ = answerTimeout is { } timeout
+                    ? builder.WithTools(new InputControlTools(session, _hotkey, timeout))
+                    : builder.WithTools<InputControlTools>();
+            },
             clientOptions: options,
-            configureServices: services => services.AddSingleton<IInputSession>(session));
+            configureServices: services => services
+                .AddSingleton<IInputSession>(session)
+                .AddSingleton<IPauseHotkey>(_hotkey));
     }
 
     private int _windowToolRuns;
@@ -301,7 +312,7 @@ public sealed class InputControlToolContractTests : IDisposable
         });
         var firstResult = Payload(await first);
 
-        // Assert - one question only; the first call's answer counts
+        // Assert - one question only, although every call gets its own InputControlTools; the first call's answer counts
         second.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeDeclined));
         second.GetProperty("error").GetString().Should().Contain("already waiting");
         _questions.Should().Be(1);

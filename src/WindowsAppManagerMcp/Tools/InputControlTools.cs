@@ -25,7 +25,6 @@ public class InputControlTools
     private readonly IInputSession _session;
     private readonly IPauseHotkey _hotkey;
     private readonly TimeSpan _answerTimeout;
-    private int _asking;
 
     /// <param name="session">The input session.</param>
     /// <param name="hotkey">The pause hotkey.</param>
@@ -105,21 +104,16 @@ public class InputControlTools
             return new ResumeInputResult(Success: true, WasPaused: false);
         }
 
-        // One question at a time: several open questions would give a careless "yes" several chances
-        if (Interlocked.CompareExchange(ref _asking, 1, 0) != 0)
+        // One question at a time: several open questions would give a careless "yes" several chances. The guard is the
+        // session's, not this instance's: the SDK builds a new InputControlTools for every call.
+        using var question = _session.TryOpenResumeQuestion();
+        if (question == null)
         {
             return Declined("Another resume_input call is already waiting for the user's answer. Input stays paused; wait for that " +
                             "answer instead of asking again.");
         }
 
-        try
-        {
-            return await AskToResumeAsync(server, state, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            Volatile.Write(ref _asking, 0);
-        }
+        return await AskToResumeAsync(server, state, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ResumeInputResult> AskToResumeAsync(McpServer server, InputPauseState state, CancellationToken cancellationToken)

@@ -645,4 +645,45 @@ public class InputSessionTests
     }
 
     #endregion
+
+    #region Resume question
+
+    [Fact]
+    public void TryOpenResumeQuestion_OnlyOneAtATime_AndClosingLetsTheNextOneOpen()
+    {
+        var sut = CreateSut();
+
+        var first = sut.TryOpenResumeQuestion();
+        var whileOpen = sut.TryOpenResumeQuestion();
+        first!.Dispose();
+        var afterClose = sut.TryOpenResumeQuestion();
+
+        first.Should().NotBeNull();
+        whileOpen.Should().BeNull("one question is still open");
+        afterClose.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TryOpenResumeQuestion_ClosingAQuestionTwice_DoesNotCloseTheNextOne()
+    {
+        var sut = CreateSut();
+        var first = sut.TryOpenResumeQuestion()!;
+        first.Dispose();
+        using var second = sut.TryOpenResumeQuestion();
+
+        first.Dispose();
+
+        second.Should().NotBeNull();
+        sut.TryOpenResumeQuestion().Should().BeNull("the second question is still open");
+    }
+
+    [Fact]
+    public void TryOpenResumeQuestion_IsPerSession()
+    {
+        using var open = CreateSut().TryOpenResumeQuestion();
+
+        CreateSut().TryOpenResumeQuestion().Should().NotBeNull("each server's session has its own question");
+    }
+
+    #endregion
 }

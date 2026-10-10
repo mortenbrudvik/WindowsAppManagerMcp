@@ -48,6 +48,7 @@ public sealed class InputSession : IInputSession, IDisposable
     private CancellationTokenSource _pauseSource = new();
     private InputPauseState _state = InputPauseState.Running;
     private InputReleaseRecord? _lastRelease;
+    private int _resumeQuestionOpen;
 
     public InputSession(
         INativeInputWrapper input,
@@ -331,6 +332,10 @@ public sealed class InputSession : IInputSession, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    public IDisposable? TryOpenResumeQuestion() =>
+        Interlocked.CompareExchange(ref _resumeQuestionOpen, 1, 0) == 0 ? new ResumeQuestion(this) : null;
+
     /// <summary>Stops the watcher thread and closes the shared pause.</summary>
     public void Dispose()
     {
@@ -522,6 +527,20 @@ public sealed class InputSession : IInputSession, IDisposable
         }
 
         return outcome;
+    }
+
+    /// <summary>An open resume question; disposing it (once) lets the next one open.</summary>
+    private sealed class ResumeQuestion(InputSession session) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0)
+            {
+                Volatile.Write(ref session._resumeQuestionOpen, 0);
+            }
+        }
     }
 
     private static bool Releases(InputEvent e, HeldInput key) => key.Kind switch
