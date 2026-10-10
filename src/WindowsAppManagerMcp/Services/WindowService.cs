@@ -4,12 +4,28 @@ using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
+/// <summary>
+/// Lists, reads, moves, resizes, restores, minimizes and closes windows.
+/// </summary>
+/// <remarks>
+/// SetWindowPos and ShowWindow on another thread's window wait until that thread answers, and the window tools run
+/// inside the process-wide input gate. So every such call goes through <see cref="IWindowCallRunner"/>: a window
+/// that does not answer is given up on at its deadline with <see cref="WindowNotRespondingException"/>, and a hung
+/// application cannot hold the gate, and with it every input and window tool, until it recovers.
+/// </remarks>
 public class WindowService : IWindowService
 {
+    /// <summary>
+    /// The longest delay the batches sleep between two windows, whatever delayBetweenMs asks for: they sleep inside
+    /// the input gate, so an agent's value must not hold it for long.
+    /// </summary>
+    public const int MaxDelayBetweenMs = 5000;
+
     private readonly IMonitorService _monitorService;
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IHostGuard _hostGuard;
     private readonly ITargetPolicy? _targetPolicy;
+    private readonly IWindowCallRunner _windowCalls;
 
     /// <param name="monitorService">Monitor lookups.</param>
     /// <param name="nativeWrapper">The window calls.</param>
@@ -18,14 +34,27 @@ public class WindowService : IWindowService
     /// The server's target policy, which close_window and close_windows_batch enforce (roadmap M1.12).
     /// The server always passes it; without it no window is refused by policy.
     /// </param>
+    /// <param name="windowCalls">
+    /// Runs the calls that can block on another thread's window (SetWindowPos, ShowWindow) with a deadline;
+    /// default a <see cref="WindowCallRunner"/> over <paramref name="nativeWrapper"/>.
+    /// </param>
     public WindowService(
-        IMonitorService monitorService, INativeWindowWrapper nativeWrapper, IHostGuard hostGuard, ITargetPolicy? targetPolicy = null)
+        IMonitorService monitorService,
+        INativeWindowWrapper nativeWrapper,
+        IHostGuard hostGuard,
+        ITargetPolicy? targetPolicy = null,
+        IWindowCallRunner? windowCalls = null)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
         _hostGuard = hostGuard ?? throw new ArgumentNullException(nameof(hostGuard));
         _targetPolicy = targetPolicy;
+        _windowCalls = windowCalls ?? new WindowCallRunner(nativeWrapper);
     }
+
+    /// <summary>The delay a batch sleeps between two windows for <paramref name="delayBetweenMs"/>: 0 to <see cref="MaxDelayBetweenMs"/>.</summary>
+    public static TimeSpan BatchDelay(int delayBetweenMs) =>
+        TimeSpan.FromMilliseconds(Math.Clamp(delayBetweenMs, 0, MaxDelayBetweenMs));
 
     public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true) =>
         FindWindows(new WindowQuery { IncludeMinimized = includeMinimized });
@@ -118,7 +147,7 @@ public class WindowService : IWindowService
         var width = rect.Value.Right - rect.Value.Left;
         var height = rect.Value.Bottom - rect.Value.Top;
 
-        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     /// <summary>
@@ -139,7 +168,7 @@ public class WindowService : IWindowService
         if (rect == null)
             return false;
 
-        return _nativeWrapper.SetWindowPos(
+        return SetWindowPos(
             handle,
             rect.Value.Left, rect.Value.Top, width, height,
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
@@ -153,10 +182,10 @@ public class WindowService : IWindowService
         // Restore window first if minimized
         if (_nativeWrapper.IsIconic(handle))
         {
-            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
+            ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool SetWindowState(nint handle, WindowState state)
@@ -172,7 +201,7 @@ public class WindowService : IWindowService
             _ => NativeEnums.SW_RESTORE
         };
 
-        return _nativeWrapper.ShowWindow(handle, cmd);
+        return ShowWindow(handle, cmd);
     }
 
     public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
@@ -254,16 +283,26 @@ public class WindowService : IWindowService
         // Restore if minimized
         if (_nativeWrapper.IsIconic(handle))
         {
-            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
+            ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool IsValidWindow(nint handle)
     {
         return handle != nint.Zero && _nativeWrapper.IsWindow(handle);
     }
+
+    /// <summary>SetWindowPos, with a deadline (<see cref="IWindowCallRunner"/>).</summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    private bool SetWindowPos(nint handle, int x, int y, int width, int height, uint flags) =>
+        _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags));
+
+    /// <summary>ShowWindow, with a deadline (<see cref="IWindowCallRunner"/>).</summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    private bool ShowWindow(nint handle, int command) =>
+        _windowCalls.Run(handle, () => _nativeWrapper.ShowWindow(handle, command));
 
     public WindowCloseResult CloseWindow(nint handle, bool force)
     {
@@ -402,7 +441,7 @@ public class WindowService : IWindowService
 
                 if (delayBetweenMs > 0 && i < placements.Count - 1)
                 {
-                    Thread.Sleep(delayBetweenMs);
+                    Thread.Sleep(BatchDelay(delayBetweenMs));
                 }
             }
             catch (Exception ex)
@@ -441,7 +480,7 @@ public class WindowService : IWindowService
 
                 if (delayBetweenMs > 0 && i < placements.Count - 1)
                 {
-                    Thread.Sleep(delayBetweenMs);
+                    Thread.Sleep(BatchDelay(delayBetweenMs));
                 }
             }
             catch (Exception ex)
@@ -475,7 +514,7 @@ public class WindowService : IWindowService
 
                 if (delayBetweenMs > 0 && i < changes.Count - 1)
                 {
-                    Thread.Sleep(delayBetweenMs);
+                    Thread.Sleep(BatchDelay(delayBetweenMs));
                 }
             }
             catch (Exception ex)
@@ -512,7 +551,7 @@ public class WindowService : IWindowService
             // Pause only after a close message was actually sent
             if (result.Success && delayBetweenMs > 0 && i < handles.Count - 1)
             {
-                Thread.Sleep(delayBetweenMs);
+                Thread.Sleep(BatchDelay(delayBetweenMs));
             }
         }
 

@@ -9,7 +9,9 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <remarks>
 /// A semaphore rather than a lock, because the tool filter holds it across awaits. It is not reentrant:
-/// code that holds it must not call into an input tool or a filtered tool.
+/// code that holds it must not call into an input tool or a filtered tool. Code that holds it must not wait
+/// without a bound either, or every input and window tool waits with it: window calls that can block on another
+/// thread's window go through <see cref="Interfaces.IWindowCallRunner"/>.
 /// </remarks>
 public static class InputGate
 {
@@ -17,7 +19,8 @@ public static class InputGate
 
     /// <summary>
     /// How long an input call waits for the gate before it gives up with InputBusy (roadmap M1.10): an input
-    /// call must not wait forever behind a long window-changing call or another input call.
+    /// call must not wait forever behind a long window-changing call or another input call. A window-changing
+    /// tool waits as long (<see cref="Infrastructure.InputGateToolFilter.GateWaitTimeout"/>).
     /// </summary>
     public static readonly TimeSpan InputWaitTimeout = TimeSpan.FromSeconds(30);
 

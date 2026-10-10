@@ -133,10 +133,12 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
             {
                 _threadId = _native.GetCurrentThreadId();
                 _native.CreateMessageQueue();
-                retry = !TryRegister(chord, registered);
+                retry = !TryRegister(chord, registered, ref holderMark);
             }
             catch (Exception ex)
             {
+                // The status says Failed, so nothing may listen: free a key that was registered before the failure
+                Free(registered, ref holderMark);
                 _status = _status with { State = PauseHotkeyState.Failed, Error = $"The hotkey could not be registered: {ex.GetType().Name}: {ex.Message}" };
                 retry = false;
             }
@@ -152,7 +154,7 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
                     return;
                 }
 
-                retry = !TryRegister(chord, registered);
+                retry = !TryRegister(chord, registered, ref holderMark);
             }
 
             if (registered.Count == 0)
@@ -160,7 +162,6 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
                 return;
             }
 
-            holderMark = MarkHolder(chord);
             Listen(registered);
         }
         catch (Exception ex)
@@ -170,20 +171,35 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
         }
         finally
         {
-            foreach (var id in registered)
-            {
-                _native.UnregisterHotKey(id);
-            }
-
-            holderMark?.Dispose();
+            Free(registered, ref holderMark);
         }
+    }
+
+    /// <summary>Unregisters the keys in <paramref name="registered"/> and removes the holder mark.</summary>
+    private void Free(List<int> registered, ref IDisposable? holderMark)
+    {
+        foreach (var id in registered)
+        {
+            _native.UnregisterHotKey(id);
+        }
+
+        registered.Clear();
+        holderMark?.Dispose();
+        holderMark = null;
     }
 
     /// <summary>
     /// Registers the keys of the chord and updates the status. False only when nothing was registered because
     /// someone else has the chord, so trying again later can help.
     /// </summary>
-    private bool TryRegister(PauseHotkeyChord chord, List<int> registered)
+    /// <remarks>
+    /// Once a key is registered, this server marks itself as the chord's holder (<paramref name="holderMark"/>)
+    /// before the status says Registered, and so before <see cref="Start"/> returns: a server that starts after
+    /// that finds the chord taken and marked, and reports <see cref="PauseHotkeyState.OtherServer"/>, not
+    /// <see cref="PauseHotkeyState.Failed"/> (another program). Only one that tries in the moment between the
+    /// registration and the mark sees Failed, until its next attempt.
+    /// </remarks>
+    private bool TryRegister(PauseHotkeyChord chord, List<int> registered, ref IDisposable? holderMark)
     {
         var failures = new List<string>();
         var taken = 0;
@@ -205,6 +221,7 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
         var allTaken = taken == chord.VirtualKeys.Count;
         if (registered.Count > 0)
         {
+            holderMark = MarkHolder(chord);
             if (_status.State is PauseHotkeyState.OtherServer or PauseHotkeyState.Failed)
             {
                 _logger?.LogWarning("The pause hotkey {Chord} is free again and is now registered by this server", chord.Text);
@@ -253,14 +270,18 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
         }
     }
 
-    /// <summary>Marks this server as the chord's holder, so other servers report that a server has it.</summary>
+    /// <summary>
+    /// Marks this server as the chord's holder, so other servers report that a server has it. A failure, of any
+    /// kind, is not fatal: the hotkey works without the mark, and a server that starts later only reports Failed
+    /// instead of OtherServer.
+    /// </summary>
     private IDisposable? MarkHolder(PauseHotkeyChord chord)
     {
         try
         {
             return _native.MarkChordHolder(ChordId(chord));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException)
+        catch (Exception ex)
         {
             _logger?.LogWarning(ex, "The pause hotkey is registered, but other servers cannot see that this server holds it");
             return null;

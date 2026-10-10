@@ -20,7 +20,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// ReadOnlyNativeWindowWrapper) may reach only the read-only APIs and the window reads of
 /// <see cref="WindowQueryNativeApis"/>, followed through their lambdas and helpers.</item>
 /// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, attaching thread
-/// input, and starting or stopping processes.</item>
+/// input, registering hotkeys, the named events every server on the desktop shares (the pause and the
+/// chord marks), and starting or stopping processes.</item>
 /// </list>
 /// </summary>
 public class NativeCallGuardTests
@@ -469,6 +470,51 @@ public class NativeCallGuardTests
     }
 
     [Fact]
+    public void NamedWaitHandles_AreOnlyOpenedByNativeHotkeyWrapper()
+    {
+        // Arrange - the shared pause and the chord holder marks are named events that every server on the desktop
+        // opens (Local\WindowsAppManagerMcp.*). Code that created, opened or set one outside the wrapper the tests
+        // replace with a fake would pause or resume the user's running servers from an ordinary test run. So every
+        // constructor of a WaitHandle type (EventWaitHandle, Mutex, Semaphore) that takes a name, every
+        // OpenExisting or TryOpenExisting, and the AccessControl factories (EventWaitHandleAcl and the like) stay
+        // in NativeHotkeyWrapper.
+
+        // Act
+        var callers = FindCallers(IsNamedWaitHandleAccess);
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeHotkeyWrapper),
+            "the scan must see the wrapper's own named events");
+        callers[typeof(NativeHotkeyWrapper)].Should().Contain(c => c.EndsWith("EventWaitHandle..ctor"))
+            .And.Contain(c => c.EndsWith("EventWaitHandle.TryOpenExisting"));
+        Unexpected(callers, typeof(NativeHotkeyWrapper)).Should().BeEmpty(
+            "named events, mutexes and semaphores are shared with other processes; open them only through " +
+            "INativeHotkeyWrapper, which the tests fake");
+    }
+
+    [Fact]
+    public void TheNamesOfTheSharedPauseAndTheChordMarks_AreOnlyUsedByNativeHotkeyWrapper()
+    {
+        // Arrange - a const string is copied into every method that uses it (ldstr), so a helper elsewhere that
+        // reused one of the names with an API the rule above does not know would show up here
+        string[] sharedNames = ["WindowsAppManagerMcp.InputPaused", "WindowsAppManagerMcp.PauseHotkeyHolder"];
+
+        // Act
+        var uses = ServerAssembly.GetTypes()
+            .SelectMany(type => type.GetMethods(DeclaredMembers).Cast<MethodBase>()
+                .Concat(type.GetConstructors(DeclaredMembers))
+                .SelectMany(method => GetLoadedStrings(method)
+                    .Where(text => sharedNames.Any(name => text.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                    .Select(text => (Owner: OutermostType(type), Use: $"{type.FullName}.{method.Name} loads '{text}'"))))
+            .ToList();
+
+        // Assert
+        uses.Should().Contain(u => u.Owner == typeof(NativeHotkeyWrapper), "the scan must see the wrapper's own names");
+        uses.Where(u => u.Owner != typeof(NativeHotkeyWrapper)).Select(u => u.Use).Should().BeEmpty(
+            "the names of the objects every server on the desktop shares belong to NativeHotkeyWrapper");
+    }
+
+    [Fact]
     public void AttachThreadInput_IsOnlyCalledByNativeThreadInputWrapper()
     {
         // Arrange - attaching shares keyboard state, focus and activation with another thread, so it must
@@ -530,6 +576,22 @@ public class NativeCallGuardTests
             .Select(i => $"{i.Name} imports {i.EntryPoint}")
             .Should().BeEmpty("processes must be started and stopped through NativeProcessWrapper, not by direct Win32 calls");
     }
+
+    /// <summary>
+    /// A constructor of a <see cref="WaitHandle"/> type (EventWaitHandle, Mutex, Semaphore) that takes a name, or
+    /// OpenExisting/TryOpenExisting of one: an object shared with every process of the logon session. Also the
+    /// factories of System.Threading.AccessControl (EventWaitHandleAcl, MutexAcl, SemaphoreAcl), which create and
+    /// open the same named objects from static classes that are not wait handles, and any other method that takes a
+    /// string and returns a wait handle.
+    /// </summary>
+    private static bool IsNamedWaitHandleAccess(MethodBase callee) =>
+        callee.DeclaringType is { } type &&
+        ((typeof(WaitHandle).IsAssignableFrom(type) &&
+          ((callee is ConstructorInfo && TakesAString(callee)) || callee.Name is "OpenExisting" or "TryOpenExisting")) ||
+         (type.Namespace == "System.Threading" && type.Name.EndsWith("Acl", StringComparison.Ordinal)) ||
+         (callee is MethodInfo method && typeof(WaitHandle).IsAssignableFrom(method.ReturnType) && TakesAString(callee)));
+
+    private static bool TakesAString(MethodBase method) => method.GetParameters().Any(p => p.ParameterType == typeof(string));
 
     private static List<string> Unexpected(Dictionary<Type, List<string>> callers, params Type[] allowedOwners) =>
         callers.Where(c => !allowedOwners.Contains(c.Key)).SelectMany(c => c.Value).ToList();
@@ -620,14 +682,38 @@ public class NativeCallGuardTests
     private static List<MethodBase> GetCalledMethods(MethodBase method)
     {
         var called = new List<MethodBase>();
-        var il = method.GetMethodBody()?.GetILAsByteArray();
-        if (il == null)
-            return called;
-
         var typeArguments = method.DeclaringType is { IsGenericType: true } declaring
             ? declaring.GetGenericArguments()
             : null;
         var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+
+        foreach (var token in TokenOperands(method, OperandType.InlineMethod))
+        {
+            try
+            {
+                if (method.Module.ResolveMethod(token, typeArguments, methodArguments) is { } callee)
+                    called.Add(callee);
+            }
+            catch (ArgumentException)
+            {
+                // Token that cannot be resolved in this generic context; not a call we track.
+            }
+        }
+
+        return called;
+    }
+
+    /// <summary>Decodes a method body's IL and returns the string literals it loads (ldstr).</summary>
+    private static List<string> GetLoadedStrings(MethodBase method) =>
+        TokenOperands(method, OperandType.InlineString).Select(token => method.Module.ResolveString(token)).ToList();
+
+    /// <summary>The metadata tokens of the instructions in a method body whose operand is of <paramref name="operandType"/>.</summary>
+    private static List<int> TokenOperands(MethodBase method, OperandType operandType)
+    {
+        var tokens = new List<int>();
+        var il = method.GetMethodBody()?.GetILAsByteArray();
+        if (il == null)
+            return tokens;
 
         var position = 0;
         while (position < il.Length)
@@ -637,19 +723,8 @@ public class NativeCallGuardTests
                 value = (ushort)(0xFE00 | il[position++]);
 
             var opCode = OpCodesByValue[value];
-            if (opCode.OperandType == OperandType.InlineMethod)
-            {
-                var token = BitConverter.ToInt32(il, position);
-                try
-                {
-                    if (method.Module.ResolveMethod(token, typeArguments, methodArguments) is { } callee)
-                        called.Add(callee);
-                }
-                catch (ArgumentException)
-                {
-                    // Token that cannot be resolved in this generic context; not a call we track.
-                }
-            }
+            if (opCode.OperandType == operandType)
+                tokens.Add(BitConverter.ToInt32(il, position));
 
             position += opCode.OperandType switch
             {
@@ -662,6 +737,6 @@ public class NativeCallGuardTests
             };
         }
 
-        return called;
+        return tokens;
     }
 }

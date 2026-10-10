@@ -140,6 +140,37 @@ public class AppLauncherToolsTests
         result.WindowHandle.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(5000, 5000)]
+    [InlineData(30000, 30000)]
+    [InlineData(int.MaxValue, 30000)] // the wait runs inside the input gate: an agent's value must not hold it for days
+    [InlineData(-5, 0)]
+    public void LaunchApplication_WaitsForTheWindowAtMostMaxWaitTimeoutMs(int waitTimeoutMs, int expected)
+    {
+        _mockProcessService.Setup(p => p.LaunchApplication(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
+            .Returns(new LaunchResult(true, 1234, null, null));
+        var sut = CreateSut();
+
+        sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: waitTimeoutMs);
+
+        _mockProcessService.Verify(p => p.LaunchApplication("notepad.exe", null, null, true, expected), Times.Once);
+        AppLauncherTools.MaxWaitTimeoutMs.Should().Be(30000);
+    }
+
+    [Fact]
+    public void LaunchApplicationsBatch_WaitsForEachWindowAtMostMaxWaitTimeoutMs()
+    {
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatch(
+                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), It.IsAny<bool>(), It.IsAny<int>()))
+            .Returns([new LaunchResult(true, 1234, null, null)]);
+        var sut = CreateSut();
+
+        sut.LaunchApplicationsBatch([new ApplicationLaunchRequest("notepad.exe")], waitForWindows: true, waitTimeoutMs: int.MaxValue);
+
+        _mockProcessService.Verify(p => p.LaunchApplicationsBatch(
+            It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), true, AppLauncherTools.MaxWaitTimeoutMs), Times.Once);
+    }
+
     #endregion
 
     #region ListProcesses Tests

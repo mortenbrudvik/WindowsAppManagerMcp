@@ -506,4 +506,47 @@ public class WindowManagerToolsTests
     }
 
     #endregion
+
+    #region A window that does not respond
+
+    [Theory]
+    [InlineData("move_window")]
+    [InlineData("resize_window")]
+    [InlineData("set_window_bounds")]
+    [InlineData("set_window_state")]
+    [InlineData("snap_window")]
+    [InlineData("move_window_to_monitor")]
+    public void AWindowThatDoesNotRespond_IsReportedAsNotResponding(string tool)
+    {
+        // Arrange - the service gave up on the window at its deadline (WindowCallRunner)
+        var handle = new nint(12345);
+        var notResponding = new WindowNotRespondingException(handle, "Window 12345 did not answer within 5 s.");
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, It.IsAny<int>(), It.IsAny<int>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.SetWindowBounds(handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Throws(notResponding);
+        _mockWindowService.Setup(w => w.SetWindowState(handle, It.IsAny<WindowState>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.SnapWindow(handle, It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>())).Throws(notResponding);
+        var sut = CreateSut();
+
+        // Act
+        var result = tool switch
+        {
+            "move_window" => sut.MoveWindow(12345, 0, 0),
+            "resize_window" => sut.ResizeWindow(12345, 640, 480),
+            "set_window_bounds" => sut.SetWindowBounds(12345, 0, 0, 640, 480),
+            "set_window_state" => sut.SetWindowState(12345, "minimize"),
+            "snap_window" => sut.SnapWindow(12345, "left_half"),
+            _ => sut.MoveWindowToMonitor(12345, 0)
+        };
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.NotResponding));
+        result.Error.Should().Contain("did not answer");
+    }
+
+    #endregion
 }

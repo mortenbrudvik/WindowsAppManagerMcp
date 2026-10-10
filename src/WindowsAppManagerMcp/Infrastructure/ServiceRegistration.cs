@@ -37,6 +37,9 @@ public static class ServiceRegistration
         services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
         services.AddSingleton<ICdpService, CdpService>();
         services.AddSingleton<IMonitorService, MonitorService>();
+        // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
+        // so a window tool cannot hold the input gate until the application recovers
+        services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
         services.AddSingleton<IWindowService, WindowService>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
@@ -133,14 +136,17 @@ public static class ServiceRegistration
     {
         ArgumentNullException.ThrowIfNull(builder);
 
+        // The SDK runs the first filter added as the outermost one (although the XML documentation of
+        // McpServerOptions.Filters says the last; ServerFilterPipelineTests pins the real order)
         return builder
+            // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
+            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added first, so it is the
+            // outermost filter: its call log includes the wait for the gate and the calls the gate filter
+            // refuses while input is paused
+            .AddToolErrorReporting()
             // Tools that can change which window is in front run inside the input gate, so they cannot
             // change it between an input call's guard check and its input
             .AddInputGateSerialization()
-            // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
-            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added last, so it is the
-            // outermost filter (see McpServerOptions.Filters): its call log includes the wait for the gate
-            .AddToolErrorReporting()
             .WithTools<WindowFinderTools>()
             .WithTools<WindowManagerTools>()
             .WithTools<MonitorInfoTools>()

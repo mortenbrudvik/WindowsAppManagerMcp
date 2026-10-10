@@ -818,24 +818,30 @@ public class BrowserReadingServiceTests
     {
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var matching = TimeSpan.Zero;
         _mockCdpService
             .Setup(c => c.FindTargetForWindowAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
                 await Task.Delay(300);
+                matching = watch.Elapsed;
                 return CdpResult<CdpTarget>.Ok(CdpTab);
             });
         SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "c")));
         var sut = CreateSut();
 
         // The largest budget, so a loaded test machine cannot use it up before the page read (a 2 s
-        // budget once ran out under a full-solution run); the 300 ms of matching must still be taken off
+        // budget once ran out under a full-solution run); the time the matching took must still be taken off
         await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort, TimeoutMs: CdpOptions.MaxTimeoutMs));
 
+        // The bound is the matching's measured time, not the 300 ms asked for: Task.Delay can end up to a timer
+        // tick early (a run once read 29700.1 ms), and the service's own stopwatch runs at least as long as this one
+        matching.Should().BeGreaterThan(TimeSpan.FromMilliseconds(250));
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
             It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(),
-            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs - 300)),
+            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs) - matching),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

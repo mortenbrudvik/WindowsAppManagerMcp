@@ -79,9 +79,10 @@ public sealed class InputSessionStartupTests : IDisposable
     [Fact]
     public async Task TwoServers_TheHotkeyOfTheFirst_PausesTheSecond()
     {
-        // Arrange - two servers on one desktop: the first registers the chord, the second finds it taken
+        // Arrange - two servers on one desktop: the first registers the chord (and is slow to mark itself as its
+        // holder), the second finds it taken by a server
         var desktop = new FakeNamedObjects();
-        var firstNative = new FakeHotkeyWrapper(desktop);
+        var firstNative = new FakeHotkeyWrapper(desktop) { OnMark = () => Thread.Sleep(200) };
         var secondNative = new FakeHotkeyWrapper(desktop) { OnRegister = (_, _, _) => Win32CallResult.Failure(1409) };
         using var first = new InputSession(new FakeInputWrapper(), PauseHotkeyOptions.Default, _clock);
         using var second = new InputSession(_input, PauseHotkeyOptions.Default, _clock);
@@ -91,6 +92,7 @@ public sealed class InputSessionStartupTests : IDisposable
         using var secondStartup = new InputSessionStartup(second, secondHotkey, desktop: secondNative);
         await firstStartup.StartAsync(CancellationToken.None);
         await secondStartup.StartAsync(CancellationToken.None);
+        var secondAtStart = secondHotkey.Status.State;
         var running = second.PauseToken;
 
         // Act - the user presses the chord, which reaches the first server only
@@ -100,6 +102,8 @@ public sealed class InputSessionStartupTests : IDisposable
         SpinWait.SpinUntil(() => running.IsCancellationRequested, Timeout).Should().BeTrue();
         second.Send([InputEvent.Key(VkControl, KeyDown)]).PausedByUser.Should().BeTrue();
         _input.Batches.Should().BeEmpty();
+        secondAtStart.Should().Be(PauseHotkeyState.OtherServer,
+            "the first server's Start returns only once it has marked itself as the holder, so the second never reports another program");
         secondHotkey.Status.State.Should().Be(PauseHotkeyState.OtherServer);
 
         await secondStartup.StopAsync(CancellationToken.None);

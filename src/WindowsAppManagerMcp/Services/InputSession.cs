@@ -22,7 +22,8 @@ public sealed class InputSession : IInputSession, IDisposable
 {
     /// <summary>
     /// A hotkey press within this time of the pause is ignored: the user gets no feedback from the hotkey, and
-    /// pressing it twice to be sure must not resume.
+    /// pressing it twice to be sure must not resume. Measured on the monotonic clock, so a change of the wall
+    /// clock (a time sync, or the user setting it) neither stretches nor skips it.
     /// </summary>
     public static readonly TimeSpan HotkeyResumeDelay = TimeSpan.FromSeconds(2);
 
@@ -43,9 +44,11 @@ public sealed class InputSession : IInputSession, IDisposable
     private bool _shared;
     private Thread? _watcher;
     private long _pauses;
+    private long _pausedTimestamp;
     private CancellationTokenSource _pauseSource = new();
     private InputPauseState _state = InputPauseState.Running;
     private InputReleaseRecord? _lastRelease;
+    private int _resumeQuestionOpen;
 
     public InputSession(
         INativeInputWrapper input,
@@ -184,7 +187,7 @@ public sealed class InputSession : IInputSession, IDisposable
                 return;
             }
 
-            if (_state.PausedAt is { } pausedAt && _time.GetUtcNow() - pausedAt < HotkeyResumeDelay)
+            if (_time.GetElapsedTime(_pausedTimestamp) < HotkeyResumeDelay)
             {
                 _logger?.LogWarning("The pause hotkey was pressed again within {Delay} s of the pause; input stays paused",
                     HotkeyResumeDelay.TotalSeconds);
@@ -329,6 +332,10 @@ public sealed class InputSession : IInputSession, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    public IDisposable? TryOpenResumeQuestion() =>
+        Interlocked.CompareExchange(ref _resumeQuestionOpen, 1, 0) == 0 ? new ResumeQuestion(this) : null;
+
     /// <summary>Stops the watcher thread and closes the shared pause.</summary>
     public void Dispose()
     {
@@ -415,7 +422,9 @@ public sealed class InputSession : IInputSession, IDisposable
 
     private void ApplyPauseLocked(string source)
     {
+        // PausedAt is for reports; the hotkey's resume delay is measured from the monotonic timestamp
         _state = _state with { Paused = true, PausedBy = source, PausedAt = _time.GetUtcNow(), PauseNumber = ++_pauses };
+        _pausedTimestamp = _time.GetTimestamp();
 
         // Running calls stop at their next check. CancelAsync runs their callbacks on the thread pool, not on this
         // thread (the hotkey's or the watcher's); no batch can start meanwhile, because Send checks the state first.
@@ -518,6 +527,20 @@ public sealed class InputSession : IInputSession, IDisposable
         }
 
         return outcome;
+    }
+
+    /// <summary>An open resume question; disposing it (once) lets the next one open.</summary>
+    private sealed class ResumeQuestion(InputSession session) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0)
+            {
+                Volatile.Write(ref session._resumeQuestionOpen, 0);
+            }
+        }
     }
 
     private static bool Releases(InputEvent e, HeldInput key) => key.Kind switch

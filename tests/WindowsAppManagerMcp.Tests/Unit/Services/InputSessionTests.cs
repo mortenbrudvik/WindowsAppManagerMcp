@@ -266,6 +266,35 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void TogglePauseByHotkey_AfterTheWallClockWentBack_StillResumes()
+    {
+        // A time sync (or the user) set the clock back an hour while input was paused; the delay after the pause
+        // is measured on the monotonic clock, so the user's press 2 s after the pause still resumes
+        var sut = CreateSut();
+        sut.TogglePauseByHotkey();
+
+        _time.SetWallClock(_time.Now - TimeSpan.FromHours(1));
+        _time.Advance(InputSession.HotkeyResumeDelay);
+        sut.TogglePauseByHotkey();
+
+        sut.IsPaused.Should().BeFalse();
+        sut.PauseState.ResumedBy.Should().Be(InputControlSources.Hotkey);
+    }
+
+    [Fact]
+    public void TogglePauseByHotkey_ASecondPressRightAfterThePause_DoesNotResume_EvenIfTheWallClockJumpedAhead()
+    {
+        var sut = CreateSut();
+        sut.TogglePauseByHotkey();
+
+        _time.SetWallClock(_time.Now + TimeSpan.FromHours(1));
+        _time.Advance(TimeSpan.FromMilliseconds(100));
+        sut.TogglePauseByHotkey();
+
+        sut.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
     public void Resume_ForAnEarlierPause_IsRefused()
     {
         // resume_input asked about the first pause; the user resumed and paused again meanwhile
@@ -613,6 +642,47 @@ public class InputSessionTests
         var keys = new ushort[] { 0xA2, 0xA4, 0xA0 }.Select(vk => HeldInput.Key(vk)).ToList();
 
         new InputSession(_input, off).IsPauseChordHeld(keys).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Resume question
+
+    [Fact]
+    public void TryOpenResumeQuestion_OnlyOneAtATime_AndClosingLetsTheNextOneOpen()
+    {
+        var sut = CreateSut();
+
+        var first = sut.TryOpenResumeQuestion();
+        var whileOpen = sut.TryOpenResumeQuestion();
+        first!.Dispose();
+        var afterClose = sut.TryOpenResumeQuestion();
+
+        first.Should().NotBeNull();
+        whileOpen.Should().BeNull("one question is still open");
+        afterClose.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TryOpenResumeQuestion_ClosingAQuestionTwice_DoesNotCloseTheNextOne()
+    {
+        var sut = CreateSut();
+        var first = sut.TryOpenResumeQuestion()!;
+        first.Dispose();
+        using var second = sut.TryOpenResumeQuestion();
+
+        first.Dispose();
+
+        second.Should().NotBeNull();
+        sut.TryOpenResumeQuestion().Should().BeNull("the second question is still open");
+    }
+
+    [Fact]
+    public void TryOpenResumeQuestion_IsPerSession()
+    {
+        using var open = CreateSut().TryOpenResumeQuestion();
+
+        CreateSut().TryOpenResumeQuestion().Should().NotBeNull("each server's session has its own question");
     }
 
     #endregion

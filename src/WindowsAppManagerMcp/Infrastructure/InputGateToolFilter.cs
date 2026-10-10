@@ -17,11 +17,23 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/> and <see cref="ControlTools"/>
 /// runs inside the gate, so a new tool is serialized until it is reviewed onto another list. A contract test
-/// checks that every tool the server serves is in exactly one of the four lists.
+/// checks that every tool the server serves is in exactly one of the four lists. A name the server does not
+/// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
+/// cannot change which window is in front.
 /// <para>
 /// While the user has paused input (roadmap M1.10), the same tools return PausedByUser without running: they
 /// take the foreground from the user, close windows, or start programs that could type. Read-only tools keep
 /// working, so the agent can still look.
+/// </para>
+/// <para>
+/// Every single wait is bounded. A tool waits for the gate at most <see cref="GateWaitTimeout"/>, as an input call
+/// does, then returns InputBusy without running; a pause while it waits returns PausedByUser at once. And a tool
+/// that holds the gate does not wait on a window without a deadline: SetWindowPos and ShowWindow go through
+/// <see cref="Services.Interfaces.IWindowCallRunner"/>, so a hung application cannot hold the gate until it recovers.
+/// A batch's total time inside the gate still grows with its length: up to the clamped waitTimeoutMs per launched
+/// application, the clamped delayBetweenMs per window, and one call deadline per window of a slow but live
+/// application. The agent chooses that length; a tool that waits for the gate meanwhile gets InputBusy after
+/// <see cref="GateWaitTimeout"/>.
 /// </para>
 /// </remarks>
 public static class InputGateToolFilter
@@ -68,6 +80,12 @@ public static class InputGateToolFilter
         "resume_input", "release_all_input"
     };
 
+    /// <summary>
+    /// How long a tool waits for the input gate before it gives up with InputBusy and does nothing: as long as an
+    /// input call waits (<see cref="InputGate.InputWaitTimeout"/>).
+    /// </summary>
+    public static TimeSpan GateWaitTimeout => InputGate.InputWaitTimeout;
+
     /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>
     public static IMcpServerBuilder AddInputGateSerialization(this IMcpServerBuilder builder)
     {
@@ -81,15 +99,22 @@ public static class InputGateToolFilter
 
     /// <summary>
     /// Call-tool filter: a tool that <see cref="RunsInsideTheGate"/> waits for the input gate and holds it
-    /// until it returns, or returns PausedByUser while the user has paused input; every other tool passes
-    /// straight through.
+    /// until it returns, or returns PausedByUser while the user has paused input; every other tool, and a name
+    /// the server does not serve, passes straight through.
     /// </summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
-        async (request, cancellationToken) =>
+        CreateFilter(GateWaitTimeout)(next);
+
+    /// <summary>
+    /// Creates the filter with a different wait for the gate. <see cref="Filter"/> is this filter with
+    /// <see cref="GateWaitTimeout"/>; tests pass a short one to check InputBusy without waiting.
+    /// </summary>
+    public static McpRequestFilter<CallToolRequestParams, CallToolResult> CreateFilter(TimeSpan gateWaitTimeout) =>
+        next => async (request, cancellationToken) =>
         {
             var name = request.Params?.Name;
-            if (!RunsInsideTheGate(name))
+            if (!RunsInsideTheGate(name) || IsUnknownTool(request, name))
             {
                 return await next(request, cancellationToken).ConfigureAwait(false);
             }
@@ -100,14 +125,47 @@ public static class InputGateToolFilter
                 return PausedResult(name, session);
             }
 
-            using (await InputGate.EnterAsync(cancellationToken).ConfigureAwait(false))
+            IDisposable? gate;
+            using (var wait = CancellationTokenSource.CreateLinkedTokenSource(
+                       cancellationToken, session?.PauseToken ?? CancellationToken.None))
             {
-                // The user may have paused while this call waited for the gate
+                try
+                {
+                    gate = await InputGate.TryEnterAsync(gateWaitTimeout, wait.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The user paused while this call waited for the gate
+                    return PausedResult(name, session!);
+                }
+            }
+
+            if (gate == null)
+            {
+                return BusyResult(name, gateWaitTimeout);
+            }
+
+            using (gate)
+            {
+                // The user may have paused just as this call got the gate
                 return session?.IsPaused == true
                     ? PausedResult(name, session)
                     : await next(request, cancellationToken).ConfigureAwait(false);
             }
         };
+
+    /// <summary>
+    /// True when the server serves no tool named <paramref name="name"/>: the SDK answers the call with a protocol
+    /// error ("Unknown tool"). False when the filter cannot see the server's tools, so such a call fails safe.
+    /// </summary>
+    private static bool IsUnknownTool(RequestContext<CallToolRequestParams> request, string? name) =>
+        request.Server?.ServerOptions?.ToolCollection is { } tools &&
+        (name == null || !tools.TryGetPrimitive(name, out _));
+
+    private static CallToolResult BusyResult(string? toolName, TimeSpan waited) =>
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(InputErrorCode.InputBusy),
+            $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
+            "did not start. Retry when your other calls have finished.");
 
     private static CallToolResult PausedResult(string? toolName, IInputSession session) =>
         ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser),

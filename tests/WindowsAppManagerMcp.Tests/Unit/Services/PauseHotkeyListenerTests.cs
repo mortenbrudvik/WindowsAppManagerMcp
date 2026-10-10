@@ -16,6 +16,9 @@ public class PauseHotkeyListenerTests
 
     private static readonly TimeSpan Retry = TimeSpan.FromMilliseconds(20);
 
+    /// <summary>How long a slow <see cref="FakeHotkeyWrapper.OnMark"/> takes: long enough that a race with it would lose.</summary>
+    private static readonly TimeSpan SlowMark = TimeSpan.FromMilliseconds(200);
+
     private PauseHotkeyListener CreateSut(PauseHotkeyOptions? options = null, FakeHotkeyWrapper? native = null) =>
         new(native ?? _native, options ?? PauseHotkeyOptions.Default, retryInterval: Retry);
 
@@ -110,9 +113,10 @@ public class PauseHotkeyListenerTests
     [Fact]
     public void AChordThatIsTaken_IsRegisteredOnceItIsFree()
     {
-        // Arrange - another server holds the chord, then stops
+        // Arrange - another server holds the chord, then stops; marking this server as the holder is slow
         var free = false;
         _native.OnRegister = (_, _, _) => Volatile.Read(ref free) ? Win32CallResult.Ok : Win32CallResult.Failure(1409);
+        _native.OnMark = () => Thread.Sleep(SlowMark);
         using var sut = CreateSut();
         var pressed = new ManualResetEventSlim();
         sut.Start(pressed.Set);
@@ -121,7 +125,8 @@ public class PauseHotkeyListenerTests
         // Act
         Volatile.Write(ref free, true);
 
-        // Assert - the next attempt registers it, marks this server as its holder, and the hotkey works
+        // Assert - the next attempt registers it, marks this server as its holder before it reports Registered,
+        // and the hotkey works
         SpinWait.SpinUntil(() => sut.Status.State == PauseHotkeyState.Registered, Timeout).Should().BeTrue();
         whileTaken.Should().Be(PauseHotkeyState.Failed);
         _native.Desktop.IsMarked(DefaultChordId).Should().BeTrue();
@@ -162,6 +167,9 @@ public class PauseHotkeyListenerTests
     [Fact]
     public void Registering_MarksThisServerAsTheHolder_AndStopRemovesTheMark()
     {
+        // A slow mark: Start returns only once the mark exists, so a server that starts right after this one
+        // finds the chord taken by a server (OtherServer), not by another program (Failed)
+        _native.OnMark = () => Thread.Sleep(SlowMark);
         var sut = CreateSut();
         sut.Start(() => { });
         var markedWhileRunning = _native.Desktop.IsMarked(DefaultChordId);
@@ -169,6 +177,43 @@ public class PauseHotkeyListenerTests
         sut.Stop();
 
         markedWhileRunning.Should().BeTrue();
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AHolderMarkThatFails_DoesNotStopTheHotkey()
+    {
+        // Arrange - any failure of the mark: without it, a server that starts later only reports Failed instead of
+        // OtherServer; the hotkey itself works, and the status says so
+        _native.OnMark = () => throw new InvalidOperationException("mark failed");
+        using var sut = CreateSut();
+        var pressed = new ManualResetEventSlim();
+
+        // Act
+        sut.Start(pressed.Set);
+        _native.Press();
+
+        // Assert
+        pressed.Wait(Timeout).Should().BeTrue();
+        sut.Status.State.Should().Be(PauseHotkeyState.Registered);
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ARegistrationThatThrows_AfterAKeyWasRegistered_IsFailed_AndFreesThatKey()
+    {
+        // Arrange - Break registers, then registering Pause throws: the status says Failed, so nothing may listen
+        _native.OnRegister = (_, _, vk) => vk == VkPause ? throw new InvalidOperationException("register failed") : Win32CallResult.Ok;
+        using var sut = CreateSut();
+
+        // Act
+        sut.Start(() => { });
+
+        // Assert - freed before Start returned
+        sut.Status.State.Should().Be(PauseHotkeyState.Failed);
+        sut.Status.Error.Should().Contain("register failed");
+        _native.Registered.Should().BeEmpty();
+        _native.Unregistered.Should().Equal(PauseHotkeyListener.FirstHotkeyId);
         _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
     }
 

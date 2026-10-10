@@ -112,4 +112,12 @@ public interface IInputSession
 
     /// <summary>The last release that sent something; null if none.</summary>
     InputReleaseRecord? LastRelease { get; }
+
+    /// <summary>
+    /// Opens the one question resume_input may have open at a time (several open questions would give a careless
+    /// "yes" several chances): null while another call's question is still open. Disposing the result closes it.
+    /// The state is the session's, which the whole server shares, because the MCP SDK builds a new tool instance
+    /// for every call.
+    /// </summary>
+    IDisposable? TryOpenResumeQuestion();
 }
