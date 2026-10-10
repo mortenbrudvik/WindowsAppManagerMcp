@@ -171,7 +171,16 @@ public enum LayoutErrorCode
     ArrangeFailed = 5,
 
     /// <summary>Invalid layout name.</summary>
-    InvalidName = 6
+    InvalidName = 6,
+
+    /// <summary>The layout storage folder could not be created or used.</summary>
+    StorageUnavailable = 7,
+
+    /// <summary>No open window matched one or more placements in the layout.</summary>
+    WindowNotFound = 8,
+
+    /// <summary>No windows matched the capture filters, so nothing was saved.</summary>
+    NoWindowsCaptured = 9
 }
 
 /// <summary>

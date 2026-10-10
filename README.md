@@ -167,11 +167,13 @@ The `snap_window` tool supports 14 predefined positions:
 
 ## Example Layout Presets
 
-The `config/layouts/` folder contains example presets:
+The `config/layouts/` folder contains example presets. They are built into the server and added to your layouts folder the first time a layout tool runs:
 
 - `work-setup.json` - Typical development workspace
 - `dual-monitor.json` - Multi-monitor configuration
-- `focus-mode.json` - Single maximized window
+- `focus-mode.json` - Single centered window
+
+Presets are stored in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`, outside the plugin folder, so they survive plugin updates. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute path. On first run, presets saved by older versions (in a `layouts` folder next to the executable) are copied there and the originals are left in place. Existing presets are never overwritten, and a sample you delete is not added back.
 
 ## Building
 

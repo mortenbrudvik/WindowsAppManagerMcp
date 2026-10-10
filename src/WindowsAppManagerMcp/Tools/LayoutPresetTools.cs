@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -16,9 +17,11 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "list_layouts")]
-    [Description("List all saved layout presets. Returns preset names, descriptions, and window counts.")]
+    [Description(@"List all saved layout presets. Returns preset names, descriptions, and window counts. Presets are JSON files in %LOCALAPPDATA%\WindowsAppManagerMcp\layouts (or the folder in the WAM_LAYOUTS_PATH environment variable); the samples work-setup, dual-monitor and focus-mode are added there on first run.")]
     public IReadOnlyList<LayoutSummaryDto> ListLayouts()
     {
+        ThrowIfStorageUnavailable();
+
         var presets = _layoutService.GetAllPresets();
         return presets.Select(p => new LayoutSummaryDto(
             Name: p.Name,
@@ -30,14 +33,16 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "get_layout")]
-    [Description("Get the full definition of a layout preset including all window placements.")]
-    public LayoutDetailDto? GetLayout(
+    [Description("Get the full definition of a layout preset including all window placements. Returns a tool error if the preset does not exist.")]
+    public LayoutDetailDto GetLayout(
         [Description("Name of the layout preset")]
         string name)
     {
-        var preset = _layoutService.GetPreset(name);
-        if (preset == null)
-            return null;
+        ThrowIfStorageUnavailable();
+
+        var preset = _layoutService.GetPreset(name)
+            ?? throw new McpException(
+                $"[{nameof(LayoutErrorCode.PresetNotFound)}] Layout preset '{name}' was not found. Call list_layouts to see the available presets.");
 
         return new LayoutDetailDto(
             Name: preset.Name,
@@ -57,7 +62,7 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "save_layout")]
-    [Description("Save the current window arrangement as a named preset. Captures positions of visible windows relative to their monitors.")]
+    [Description("Save the current window arrangement as a named preset. Captures positions of visible windows relative to their monitors. Saving under an existing name replaces that preset (replaced=true). Fails with NoWindowsCaptured, without touching an existing preset, when no window matches the filters.")]
     public async Task<SaveLayoutResultDto> SaveLayout(
         [Description("Name for the layout preset")]
         string name,
@@ -77,18 +82,21 @@ public class LayoutPresetTools
             ? null
             : excludeProcesses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var preset = await _layoutService.CaptureCurrentLayoutAsync(
+        var result = await _layoutService.CaptureCurrentLayoutAsync(
             name, description, include, exclude, cancellationToken);
 
         return new SaveLayoutResultDto(
-            Success: true,
-            LayoutName: preset.Name,
-            WindowCount: preset.Placements.Count
+            Success: result.Success,
+            LayoutName: result.Preset?.Name ?? name,
+            WindowCount: result.Preset?.Placements.Count ?? 0,
+            Error: result.ErrorMessage,
+            ErrorCode: result.ErrorCode,
+            Replaced: result.Replaced
         );
     }
 
     [McpServerTool(Name = "apply_layout")]
-    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions.")]
+    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged; otherwise errorCode and errors say which placements were not found, launched or arranged.")]
     public async Task<ApplyLayoutResultDto> ApplyLayout(
         [Description("Name of the layout preset to apply")]
         string name,
@@ -106,23 +114,35 @@ public class LayoutPresetTools
             WindowsArranged: result.WindowsArranged,
             WindowsNotFound: result.WindowsNotFound,
             WindowsLaunched: result.WindowsLaunched,
-            Errors: result.Errors
+            Errors: result.Errors,
+            ErrorCode: result.ErrorCode
         );
     }
 
     [McpServerTool(Name = "delete_layout")]
-    [Description("Delete a layout preset.")]
+    [Description("Delete a layout preset. Fails with PresetNotFound if no preset has that name.")]
     public async Task<DeleteLayoutResultDto> DeleteLayout(
         [Description("Name of the preset to delete")]
         string name,
         CancellationToken cancellationToken = default)
     {
-        var success = await _layoutService.DeletePresetAsync(name, cancellationToken);
+        var result = await _layoutService.DeletePresetAsync(name, cancellationToken);
         return new DeleteLayoutResultDto(
-            Success: success,
-            Error: success ? null : "Failed to delete layout preset",
-            ErrorCode: success ? null : nameof(LayoutErrorCode.DeleteFailed)
+            Success: result.Success,
+            Error: result.ErrorMessage,
+            ErrorCode: result.ErrorCode
         );
+    }
+
+    /// <summary>
+    /// list_layouts and get_layout return plain data, so an unusable storage folder is reported as a
+    /// tool error (the SDK turns McpException into an isError result carrying this message).
+    /// </summary>
+    private void ThrowIfStorageUnavailable()
+    {
+        var storageError = _layoutService.GetStorageError();
+        if (storageError != null)
+            throw new McpException($"[{nameof(LayoutErrorCode.StorageUnavailable)}] {storageError}");
     }
 }
 
@@ -159,7 +179,8 @@ public record SaveLayoutResultDto(
     string LayoutName,
     int WindowCount,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    bool Replaced = false
 );
 
 public record ApplyLayoutResultDto(

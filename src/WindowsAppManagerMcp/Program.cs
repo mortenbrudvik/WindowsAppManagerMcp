@@ -48,8 +48,8 @@ builder.Services.AddSingleton<ILayoutService>(sp =>
     var windowService = sp.GetRequiredService<IWindowService>();
     var monitorService = sp.GetRequiredService<IMonitorService>();
     var processService = sp.GetRequiredService<IProcessService>();
-    var layoutsPath = Path.Combine(AppContext.BaseDirectory, "layouts");
-    return new LayoutService(windowService, monitorService, processService, layoutsPath);
+    // %LOCALAPPDATA%\WindowsAppManagerMcp\layouts or WAM_LAYOUTS_PATH, outside the versioned plugin folder
+    return new LayoutService(windowService, monitorService, processService, LayoutStorageOptions.FromEnvironment());
 });
 
 // Register MCP tools
