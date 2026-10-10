@@ -12,6 +12,17 @@ public interface IProcessService
         bool waitForWindow = false,
         int waitTimeoutMs = 5000);
 
+    /// <summary>
+    /// Lists running processes, optionally filtered by name.
+    /// </summary>
+    /// <param name="nameFilter">Part of the process name, case-insensitive.</param>
+    /// <param name="includeWindowless">
+    /// False (default): only processes that have a visible, titled top-level window, wherever it is:
+    /// windows on other virtual desktops, tool windows and the desktop shell's windows count, so a
+    /// process is never hidden only because its window is not on the current desktop. WindowCount
+    /// counts those windows; a UWP app's window counts for the app's process and for its
+    /// ApplicationFrameHost. True: every process, with WindowCount 0 (see M6.6).
+    /// </param>
     IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false);
 
     string? GetProcessName(int processId);

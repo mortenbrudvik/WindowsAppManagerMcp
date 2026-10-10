@@ -90,6 +90,15 @@ public class ToolDescriptionTests
         ServerToolCatalog.Description("launch_browser_with_debug").Should().Contain("no authentication");
     }
 
+    [Fact]
+    public void LaunchBrowserWithDebugDescription_CleanupFindsWindowsOnOtherDesktopsAndChecksEveryProcess()
+    {
+        // A window on another virtual desktop is cloaked: find_windows leaves it out unless asked, and
+        // list_processes without includeWindowless lists only processes with a window
+        ServerToolCatalog.Description("launch_browser_with_debug").Should()
+            .Contain("includeCloaked=true").And.Contain("includeWindowless=true");
+    }
+
     [Theory]
     [InlineData("get_ui_elements", "controlTypes")]
     [InlineData("get_ui_elements", "interactableOnly")]

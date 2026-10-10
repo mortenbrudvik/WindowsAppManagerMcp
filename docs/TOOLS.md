@@ -1845,7 +1845,7 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 
 Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, so that get_browser_content and get_browser_url can use `cdpPort`.
 
-> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId`, then `close_window` for each handle) and check with `list_processes` that the process has exited; closing one window is not enough if the page opened others.
+> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId` and `includeCloaked: true`, so a window the user moved to another virtual desktop is found too, then `close_window` for each handle) and check with `list_processes` and `includeWindowless: true` that the process has exited; closing one window is not enough if the page opened others.
 
 By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port.
 
@@ -2368,7 +2368,9 @@ List running processes with optional filtering.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | nameFilter | string | No | - | Filter by process name (partial match) |
-| includeWindowless | bool | No | false | Include processes without windows |
+| includeWindowless | bool | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+
+By default only processes with at least one visible, titled top-level window are listed. Unlike [get_all_windows](#get_all_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
 
 **Example:**
 > "Show all Chrome processes"

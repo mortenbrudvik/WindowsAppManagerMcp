@@ -198,24 +198,37 @@ public class ProcessService : IProcessService
         return $"{warning1}; {warning2}";
     }
 
+    /// <summary>
+    /// Counts each process's visible, titled top-level windows. Unlike the user-facing window listings,
+    /// this also counts cloaked windows (on another virtual desktop), tool windows and the desktop
+    /// shell's windows: a process that has such a window is running with a window, and hiding it from
+    /// list_processes would let "has it exited?" checks pass too early. A UWP window counts for the
+    /// app's process and for its ApplicationFrameHost frame host.
+    /// </summary>
+    private Dictionary<int, int> CountWindowsPerProcess()
+    {
+        var counts = new Dictionary<int, int>();
+        void Count(int processId) => counts[processId] = counts.GetValueOrDefault(processId) + 1;
+
+        foreach (var window in _windowService.FindWindows(new WindowQuery { IncludeShell = true }))
+        {
+            if (string.IsNullOrEmpty(window.Title))
+                continue;
+
+            Count(window.ProcessId);
+            if (window.HostProcessId is { } hostProcessId && hostProcessId != window.ProcessId)
+                Count(hostProcessId);
+        }
+
+        return counts;
+    }
+
     public IReadOnlyList<ProcessInfo> GetRunningProcesses(string? nameFilter = null, bool includeWindowless = false)
     {
         var result = new List<ProcessInfo>();
         var processes = Process.GetProcesses();
 
-        // Count windows per process
-        var windowCounts = new Dictionary<int, int>();
-        if (!includeWindowless)
-        {
-            var windows = _windowService.GetAllWindows(includeMinimized: true);
-            foreach (var window in windows)
-            {
-                if (windowCounts.TryGetValue(window.ProcessId, out var count))
-                    windowCounts[window.ProcessId] = count + 1;
-                else
-                    windowCounts[window.ProcessId] = 1;
-            }
-        }
+        var windowCounts = includeWindowless ? new Dictionary<int, int>() : CountWindowsPerProcess();
 
         foreach (var process in processes)
         {
