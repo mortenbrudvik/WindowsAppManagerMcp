@@ -12,6 +12,8 @@ public class ProcessIntegrityTests
 
     private static readonly ProcessIntegrity LikelyElevated = new(100, IntegrityLevel.LikelyElevated, null, null, "access denied");
 
+    private static readonly ProcessIntegrity Restricted = new(100, IntegrityLevel.Restricted, null, null, "access denied");
+
     [Theory]
     [InlineData(0x3000, 0x2000, true)]  // elevated target, medium server
     [InlineData(0x4000, 0x3000, true)]  // system target, elevated server
@@ -40,6 +42,16 @@ public class ProcessIntegrityTests
         Unknown.IsMorePrivilegedThan(Known(0x2000)).Should().BeFalse();
         Known(0x3000).IsMorePrivilegedThan(Unknown).Should().BeFalse();
         LikelyElevated.IsMorePrivilegedThan(Unknown).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0x1000)]
+    [InlineData(0x2000)]
+    [InlineData(0x3000)]
+    public void IsMorePrivilegedThan_Restricted_IsFalse(int serverRid)
+    {
+        // Its level is unknown: it may be SYSTEM, or another user's ordinary process that UIPI does not block
+        Restricted.IsMorePrivilegedThan(Known(serverRid)).Should().BeFalse();
     }
 
     [Theory]

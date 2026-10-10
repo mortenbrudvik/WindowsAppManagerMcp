@@ -69,14 +69,12 @@ public class ProcessSecurityProbeTests
         integrity.IsMorePrivilegedThan(sut.ServerIntegrity).Should().BeTrue();
     }
 
-    [Theory]
-    [InlineData(TokenQueryStatus.TokenAccessDenied)]
-    [InlineData(TokenQueryStatus.ProcessAccessDenied)]
-    public void GetIntegrity_AccessDeniedFromAMediumServer_IsLikelyElevated(TokenQueryStatus status)
+    [Fact]
+    public void GetIntegrity_TokenDeniedFromAMediumServer_IsLikelyElevated()
     {
-        // Arrange
+        // Arrange - the process opens, its token does not
         var sut = CreateSut(ProcessIntegrity.MediumRid);
-        SetupTarget(status == TokenQueryStatus.TokenAccessDenied ? T0 : null, new ProcessTokenQuery(status, Win32Error: 5));
+        SetupTarget(T0, new ProcessTokenQuery(TokenQueryStatus.TokenAccessDenied, T0, Win32Error: 5));
 
         // Act
         var integrity = sut.GetIntegrity(TargetPid);
@@ -84,8 +82,28 @@ public class ProcessSecurityProbeTests
         // Assert
         integrity.Level.Should().Be(IntegrityLevel.LikelyElevated);
         integrity.IntegrityRid.Should().BeNull();
-        integrity.Reason.Should().Contain("access denied");
+        integrity.Reason.Should().Contain("access denied").And.Contain("elevated");
         integrity.IsMorePrivilegedThan(sut.ServerIntegrity).Should().BeTrue("UIPI would block input to it");
+    }
+
+    [Theory]
+    [InlineData(ProcessIntegrity.MediumRid)]
+    [InlineData(ProcessIntegrity.HighRid)]
+    public void GetIntegrity_ProcessDenied_IsRestrictedNotLikelyElevated(int serverRid)
+    {
+        // Arrange - OpenProcess itself is denied: SYSTEM or a service account, but just as well another
+        // user's medium process ("Run as different user") or a hardened DACL, which UIPI does not block
+        var sut = CreateSut(serverRid);
+        SetupTarget(null, new ProcessTokenQuery(TokenQueryStatus.ProcessAccessDenied, Win32Error: 5));
+
+        // Act
+        var integrity = sut.GetIntegrity(TargetPid);
+
+        // Assert
+        integrity.Level.Should().Be(IntegrityLevel.Restricted);
+        integrity.IntegrityRid.Should().BeNull();
+        integrity.Reason.Should().Contain("access denied").And.Contain("another account");
+        integrity.IsMorePrivilegedThan(sut.ServerIntegrity).Should().BeFalse("a guard must not refuse input on this alone");
     }
 
     [Fact]
@@ -100,7 +118,7 @@ public class ProcessSecurityProbeTests
     }
 
     [Fact]
-    public void GetIntegrity_AccessDeniedFromAnElevatedServer_IsUnknown()
+    public void GetIntegrity_TokenDeniedFromAnElevatedServer_IsRestricted()
     {
         // Arrange - an elevated server is denied only by system or protected processes; it cannot tell which
         var sut = CreateSut(ProcessIntegrity.HighRid);
@@ -110,7 +128,7 @@ public class ProcessSecurityProbeTests
         var integrity = sut.GetIntegrity(TargetPid);
 
         // Assert
-        integrity.Level.Should().Be(IntegrityLevel.Unknown);
+        integrity.Level.Should().Be(IntegrityLevel.Restricted);
         integrity.Reason.Should().Contain("access denied");
         integrity.IsMorePrivilegedThan(sut.ServerIntegrity).Should().BeFalse();
     }
@@ -181,16 +199,18 @@ public class ProcessSecurityProbeTests
     }
 
     [Fact]
-    public void ServerIntegrity_OwnTokenUnreadable_IsUnknown_AndAccessDeniedTargetsStayUnknown()
+    public void ServerIntegrity_OwnTokenUnreadable_IsUnknown_AndAccessDeniedTargetsAreNotLikelyElevated()
     {
-        // Arrange - without the server's own level, access denied says nothing about the target
+        // Arrange - without the server's own level, access denied says nothing about elevation
         _native.Setup(n => n.QueryProcessToken(ServerPid)).Returns(new ProcessTokenQuery(TokenQueryStatus.Failed, Win32Error: 1));
         var sut = new ProcessSecurityProbe(_native.Object);
         SetupTarget(T0, new ProcessTokenQuery(TokenQueryStatus.TokenAccessDenied, T0, Win32Error: 5));
 
         // Act & Assert
         sut.ServerIntegrity.Level.Should().Be(IntegrityLevel.Unknown);
-        sut.GetIntegrity(TargetPid).Level.Should().Be(IntegrityLevel.Unknown);
+        var target = sut.GetIntegrity(TargetPid);
+        target.Level.Should().Be(IntegrityLevel.Restricted);
+        target.IsMorePrivilegedThan(sut.ServerIntegrity).Should().BeFalse();
     }
 
     #endregion
@@ -208,10 +228,24 @@ public class ProcessSecurityProbeTests
         var first = sut.GetIntegrity(TargetPid);
         var second = sut.GetIntegrity(TargetPid);
 
-        // Assert
+        // Assert - the creation time is read only to check the cached entry, not before the first read
         second.Should().BeSameAs(first);
         _native.Verify(n => n.QueryProcessToken(TargetPid), Times.Once);
-        _native.Verify(n => n.GetProcessCreationTime(TargetPid), Times.Exactly(2));
+        _native.Verify(n => n.GetProcessCreationTime(TargetPid), Times.Once);
+    }
+
+    [Fact]
+    public void GetIntegrity_NothingCached_DoesNotOpenTheProcessForItsCreationTime()
+    {
+        // Arrange - M1.5 calls this before every input batch; the first read opens the process once
+        var sut = CreateSut();
+        SetupTarget(T0, Token(ProcessIntegrity.MediumRid));
+
+        // Act
+        sut.GetIntegrity(TargetPid);
+
+        // Assert
+        _native.Verify(n => n.GetProcessCreationTime(TargetPid), Times.Never);
     }
 
     [Fact]

@@ -45,6 +45,12 @@ public sealed class NativeSecurityWrapper : INativeSecurityWrapper
 
     public ProcessTokenQuery QueryProcessToken(int processId)
     {
+        if (processId <= 0)
+        {
+            // Not a process ID; no call was made, so there is no last error to read
+            return new ProcessTokenQuery(TokenQueryStatus.ProcessNotFound, Win32Error: ErrorInvalidParameter);
+        }
+
         var process = OpenForQuery(processId);
         if (process == nint.Zero)
         {

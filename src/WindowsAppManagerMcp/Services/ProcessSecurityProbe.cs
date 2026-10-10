@@ -50,8 +50,9 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
             return new ProcessIntegrity(processId, IntegrityLevel.Unknown, null, null, "not a valid process ID");
         }
 
-        if (_native.GetProcessCreationTime(processId) is { } creationTime &&
-            _cache.TryGetValue(processId, out var cached) &&
+        // The creation time is read only when there is an entry to check it against
+        if (_cache.TryGetValue(processId, out var cached) &&
+            _native.GetProcessCreationTime(processId) is { } creationTime &&
             cached.CreationTime == creationTime)
         {
             return cached.Integrity;
@@ -113,17 +114,21 @@ public sealed class ProcessSecurityProbe : IProcessSecurityProbe
             case TokenQueryStatus.ProcessNotFound:
                 return new ProcessIntegrity(processId, IntegrityLevel.Unknown, null, null, "no process with this ID is running");
 
-            case TokenQueryStatus.ProcessAccessDenied or TokenQueryStatus.TokenAccessDenied:
-                var what = token.Status == TokenQueryStatus.ProcessAccessDenied ? "the process" : "the process token";
+            case TokenQueryStatus.TokenAccessDenied when server?.IntegrityRid is < ProcessIntegrity.HighRid:
+                // The process lets the server in, but its token keeps a lower-integrity caller out
+                return new ProcessIntegrity(processId, IntegrityLevel.LikelyElevated, null, token.IsElevated,
+                    "the process can be opened but its token cannot (access denied), so it most likely runs elevated");
 
-                // Below high integrity the server is denied by elevated, system and protected
-                // processes; an elevated server only by system and protected ones, and it cannot
-                // tell which from the denial alone.
-                return server?.IntegrityRid is < ProcessIntegrity.HighRid
-                    ? new ProcessIntegrity(processId, IntegrityLevel.LikelyElevated, null, token.IsElevated,
-                        $"{what} cannot be opened (access denied), so the process most likely runs elevated, as SYSTEM or protected")
-                    : new ProcessIntegrity(processId, IntegrityLevel.Unknown, null, token.IsElevated,
-                        $"{what} cannot be opened (access denied)");
+            case TokenQueryStatus.TokenAccessDenied:
+                return new ProcessIntegrity(processId, IntegrityLevel.Restricted, null, token.IsElevated,
+                    "the process token cannot be opened (access denied)");
+
+            case TokenQueryStatus.ProcessAccessDenied:
+                // The process DACL: another account (SYSTEM, a service, another user) or a hardened
+                // process. That says nothing reliable about its integrity level.
+                return new ProcessIntegrity(processId, IntegrityLevel.Restricted, null, token.IsElevated,
+                    "the process cannot be opened (access denied): it runs as SYSTEM or under another account, " +
+                    "or restricts access to its process, so its integrity level is unknown");
 
             default:
                 return new ProcessIntegrity(processId, IntegrityLevel.Unknown, null, token.IsElevated,

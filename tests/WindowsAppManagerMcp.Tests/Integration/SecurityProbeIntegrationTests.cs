@@ -121,7 +121,7 @@ public class SecurityProbeIntegrationTests
     }
 
     [Fact]
-    public void Probe_SystemProcess_IsMorePrivilegedThanANonElevatedServer()
+    public void Probe_SystemProcess_IsSystemOrRestricted()
     {
         // Arrange - PID 4 is the System process
         var probe = new ProcessSecurityProbe(_native);
@@ -129,16 +129,27 @@ public class SecurityProbeIntegrationTests
         // Act
         var system = probe.GetIntegrity(4);
 
-        // Assert - a medium server is denied its token (LikelyElevated) or reads System
-        if (probe.ServerIntegrity.IntegrityRid < ProcessIntegrity.HighRid)
-        {
-            system.Level.Should().BeOneOf(IntegrityLevel.System, IntegrityLevel.LikelyElevated);
-            system.IsMorePrivilegedThan(probe.ServerIntegrity).Should().BeTrue();
-        }
-        else
-        {
-            system.Level.Should().BeOneOf(IntegrityLevel.System, IntegrityLevel.Unknown);
-        }
+        // Assert - a medium server is denied OpenProcess, as it is for every other account's process,
+        // so the level is unknown (Restricted) rather than inferred; an elevated server may read it
+        system.Level.Should().BeOneOf(IntegrityLevel.System, IntegrityLevel.Restricted);
+        system.IsMorePrivilegedThan(probe.ServerIntegrity).Should().Be(
+            system.Level == IntegrityLevel.System && probe.ServerIntegrity.IntegrityRid < ProcessIntegrity.SystemRid);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-4)]
+    public void QueryProcessToken_NotAProcessId_IsProcessNotFoundWithoutAStaleError(int processId)
+    {
+        // Arrange - leave a different last error on this thread first
+        _native.QueryProcessToken(4);
+
+        // Act
+        var token = _native.QueryProcessToken(processId);
+
+        // Assert
+        token.Status.Should().Be(TokenQueryStatus.ProcessNotFound);
+        token.Win32Error.Should().Be(87);
     }
 
     [Fact]

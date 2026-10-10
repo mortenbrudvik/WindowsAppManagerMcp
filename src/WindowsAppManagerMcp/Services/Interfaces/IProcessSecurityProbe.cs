@@ -23,9 +23,11 @@ public interface IProcessSecurityProbe
 
     /// <summary>
     /// Returns the integrity level and elevation of a process. Results are cached per process ID and
-    /// creation time, so a reused process ID is read again. When the token cannot be opened because
-    /// access is denied and the server runs below high integrity, the level is
-    /// <see cref="IntegrityLevel.LikelyElevated"/>. Never throws.
+    /// creation time, so a reused process ID is read again. When the process can be opened but its
+    /// token cannot (access denied) and the server runs below high integrity, the level is
+    /// <see cref="IntegrityLevel.LikelyElevated"/>; when the process itself cannot be opened, it is
+    /// <see cref="IntegrityLevel.Restricted"/>, which does not count as more privileged (it may be
+    /// SYSTEM, but also another user's ordinary process). Never throws.
     /// </summary>
     ProcessIntegrity GetIntegrity(int processId);
 
