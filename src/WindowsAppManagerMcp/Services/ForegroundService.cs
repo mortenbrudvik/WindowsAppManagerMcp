@@ -53,7 +53,13 @@ public sealed class ForegroundService : IForegroundService
     private readonly IForegroundThread _activationThread;
     private readonly ForegroundTiming _timing;
     private readonly ILogger<ForegroundService>? _logger;
+    private readonly IInputSession? _session;
 
+    /// <param name="session">
+    /// The input session (roadmap M1.10). With it, activation is refused while the user has paused input
+    /// (PausedByUser), and the input unlock and the Esc go through it, so a pause also stops them. The server
+    /// always passes it; without it (tests of the activation steps) input goes straight to <paramref name="input"/>.
+    /// </param>
     public ForegroundService(
         INativeWindowWrapper windows,
         INativeThreadInputWrapper threads,
@@ -62,7 +68,8 @@ public sealed class ForegroundService : IForegroundService
         IWindowService windowService,
         IForegroundThread activationThread,
         ForegroundTiming? timing = null,
-        ILogger<ForegroundService>? logger = null)
+        ILogger<ForegroundService>? logger = null,
+        IInputSession? session = null)
     {
         _windows = windows;
         _threads = threads;
@@ -72,6 +79,7 @@ public sealed class ForegroundService : IForegroundService
         _activationThread = activationThread;
         _timing = timing ?? ForegroundTiming.Default;
         _logger = logger;
+        _session = session;
     }
 
     /// <inheritdoc />
@@ -81,6 +89,12 @@ public sealed class ForegroundService : IForegroundService
         {
             return Describe(handle, Activation.Failed(
                 root: nint.Zero, _windows.GetForegroundWindow(), WindowErrorCode.InvalidHandle, "Invalid window handle"));
+        }
+
+        // Activating takes the keyboard focus from the user and can send input: not while the user has paused input
+        if (_session?.IsPaused == true)
+        {
+            return Describe(handle, Paused(RootOf(handle), _windows.GetForegroundWindow()));
         }
 
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, 0, MaxTimeoutMs));
@@ -219,7 +233,11 @@ public sealed class ForegroundService : IForegroundService
         }
         else
         {
-            var sent = _input.SendInput([InputEvent.Mouse(NativeEnums.MOUSEEVENTF_MOVE)]);
+            if (Inject([InputEvent.Mouse(NativeEnums.MOUSEEVENTF_MOVE)]) is not { } sent)
+            {
+                return Paused(root, foreground);
+            }
+
             _windows.SetForegroundWindow(activate);
             if (WaitUntilInFront(root, Timeout.InfiniteTimeSpan, deadline, token, out foreground))
             {
@@ -248,11 +266,16 @@ public sealed class ForegroundService : IForegroundService
             foreground = _windows.GetForegroundWindow();
             if (IsInFront(root, foreground))
             {
-                escapeSent = _input.SendInput(
-                [
-                    InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYDOWN),
-                    InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYUP)
-                ]) != 0;
+                if (Inject(
+                    [
+                        InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYDOWN),
+                        InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYUP)
+                    ]) is not { } escape)
+                {
+                    return Paused(root, foreground);
+                }
+
+                escapeSent = escape != 0;
                 if (escapeSent)
                 {
                     var menuWindow = foreground;
@@ -290,6 +313,26 @@ public sealed class ForegroundService : IForegroundService
             currentThread, foregroundThread);
         _activationThread.RetireCurrentThread();
     }
+
+    /// <summary>
+    /// Sends activation input (the zero-distance move, the Esc) through the input session, so the user's pause
+    /// stops it and an interrupted batch is released. The number of events inserted, or null when input is paused.
+    /// </summary>
+    private uint? Inject(IReadOnlyList<InputEvent> events)
+    {
+        if (_session == null)
+        {
+            return _input.SendInput(events);
+        }
+
+        var outcome = _session.Send(events);
+        return outcome.PausedByUser ? null : (uint)outcome.Inserted;
+    }
+
+    private static Activation Paused(nint root, nint foreground) =>
+        Activation.Failed(root, foreground, WindowErrorCode.PausedByUser,
+            "Input is paused: the user pressed the pause hotkey, so the window was not activated (activating takes the keyboard focus " +
+            "from the user). Stop and ask the user how to continue; only the user can resume.");
 
     /// <summary>Why the attach step must be skipped, or null when it may run.</summary>
     private string? AttachSkipReason(nint foreground, out uint foregroundThread)

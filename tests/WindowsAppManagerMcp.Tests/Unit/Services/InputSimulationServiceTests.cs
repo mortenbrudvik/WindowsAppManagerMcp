@@ -38,7 +38,7 @@ public class InputSimulationServiceTests
     }
 
     private InputSimulationService CreateSut() =>
-        new InputSimulationService(_mockMonitorService.Object, _mockInputWrapper.Object, _guard.Object);
+        new InputSimulationService(_mockMonitorService.Object, _mockInputWrapper.Object, _guard.Object, new InputSession(_mockInputWrapper.Object));
 
     private void SetupSingleMonitor()
     {
@@ -580,13 +580,13 @@ public class InputSimulationServiceTests
     #region TypeText Tests
 
     [Fact]
-    public void TypeText_WithEmptyText_ReturnsError()
+    public async Task TypeText_WithEmptyText_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText("");
+        var result = await sut.TypeTextAsync("");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -597,13 +597,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void TypeText_WithNullText_ReturnsError()
+    public async Task TypeText_WithNullText_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText(null!);
+        var result = await sut.TypeTextAsync(null!);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -612,13 +612,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void TypeText_WithValidText_SendsUnicodeKeyDownAndUpPerCharacter()
+    public async Task TypeText_WithValidText_SendsUnicodeKeyDownAndUpPerCharacter()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText("Hi!");
+        var result = await sut.TypeTextAsync("Hi!");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -631,14 +631,14 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void TypeText_WhenSendInputFailsMidway_ReportsCharactersTyped()
+    public async Task TypeText_WhenSendInputFailsMidway_ReportsCharactersTyped()
     {
         // Arrange - the batch is cut short: SendInput inserts 5 of its 8 events (two whole characters)
         _mockInputWrapper.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(5u);
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText("abcd");
+        var result = await sut.TypeTextAsync("abcd");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -652,13 +652,13 @@ public class InputSimulationServiceTests
     [InlineData(50)]
     [InlineData(100)]
     [InlineData(200)]
-    public void TypeText_WithVariousDelays_Succeeds(int inputDelay)
+    public async Task TypeText_WithVariousDelays_Succeeds(int inputDelay)
     {
         // Arrange
         var sut = CreateSut();
 
         // Act - The service clamps the delay internally
-        var result = sut.TypeText("a", inputDelay);
+        var result = await sut.TypeTextAsync("a", inputDelay);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -670,13 +670,13 @@ public class InputSimulationServiceTests
     #region SendKeys Tests
 
     [Fact]
-    public void SendKeys_WithEmptyKeys_ReturnsError()
+    public async Task SendKeys_WithEmptyKeys_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("");
+        var result = await sut.SendKeysAsync("");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -686,13 +686,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithNullKeys_ReturnsError()
+    public async Task SendKeys_WithNullKeys_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys(null!);
+        var result = await sut.SendKeysAsync(null!);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -701,13 +701,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithEnter_SendsReturnKeyDownAndUp()
+    public async Task SendKeys_WithEnter_SendsReturnKeyDownAndUp()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{ENTER}");
+        var result = await sut.SendKeysAsync("{ENTER}");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -716,13 +716,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithExtendedKey_SetsExtendedKeyFlag()
+    public async Task SendKeys_WithExtendedKey_SetsExtendedKeyFlag()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{UP}");
+        var result = await sut.SendKeysAsync("{UP}");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -732,13 +732,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithAltF4_WrapsKeyInAltPressAndRelease()
+    public async Task SendKeys_WithAltF4_WrapsKeyInAltPressAndRelease()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("%{F4}");
+        var result = await sut.SendKeysAsync("%{F4}");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -750,13 +750,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithCtrlC_WrapsLetterInCtrlPressAndRelease()
+    public async Task SendKeys_WithCtrlC_WrapsLetterInCtrlPressAndRelease()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("^c");
+        var result = await sut.SendKeysAsync("^c");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -768,13 +768,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithPunctuation_SendsUnicodeCharacter()
+    public async Task SendKeys_WithPunctuation_SendsUnicodeCharacter()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("!");
+        var result = await sut.SendKeysAsync("!");
 
         // Assert
         result.Success.Should().BeTrue();
@@ -782,13 +782,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithUnclosedBrace_ReturnsError()
+    public async Task SendKeys_WithUnclosedBrace_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{ENTER");
+        var result = await sut.SendKeysAsync("{ENTER");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -798,13 +798,13 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WithUnknownKey_ReturnsError()
+    public async Task SendKeys_WithUnknownKey_ReturnsError()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{UNKNOWNKEY}");
+        var result = await sut.SendKeysAsync("{UNKNOWNKEY}");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -814,14 +814,14 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void SendKeys_WhenSendInputFails_ReturnsSendInputFailed()
+    public async Task SendKeys_WhenSendInputFails_ReturnsSendInputFailed()
     {
         // Arrange
         SetupSendInputFailure();
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{ENTER}");
+        var result = await sut.SendKeysAsync("{ENTER}");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -850,13 +850,13 @@ public class InputSimulationServiceTests
     [InlineData("{F1}")]
     [InlineData("{F12}")]
     [InlineData("{SPACE}")]
-    public void SendKeys_WithSpecialKey_SendsKeyDownAndUp(string keys)
+    public async Task SendKeys_WithSpecialKey_SendsKeyDownAndUp(string keys)
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys(keys);
+        var result = await sut.SendKeysAsync(keys);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -874,13 +874,13 @@ public class InputSimulationServiceTests
     [InlineData("%{F4}", 4)]
     [InlineData("+{HOME}", 4)]
     [InlineData("^+{END}", 6)]
-    public void SendKeys_WithModifiers_ReleasesEveryKeyPressed(string keys, int expectedEventCount)
+    public async Task SendKeys_WithModifiers_ReleasesEveryKeyPressed(string keys, int expectedEventCount)
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys(keys);
+        var result = await sut.SendKeysAsync(keys);
 
         // Assert
         result.Success.Should().BeTrue();

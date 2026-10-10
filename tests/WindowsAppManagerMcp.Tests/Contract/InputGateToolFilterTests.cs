@@ -25,10 +25,11 @@ public class InputGateToolFilterTests
             {
                 InputGateToolFilter.InputTools.Contains(tool),
                 InputGateToolFilter.WindowChangingTools.Contains(tool),
-                InputGateToolFilter.ReadOnlyTools.Contains(tool)
+                InputGateToolFilter.ReadOnlyTools.Contains(tool),
+                InputGateToolFilter.ControlTools.Contains(tool)
             };
             lists.Count(inList => inList).Should().Be(1,
-                $"'{tool}' must be classified as an input tool, a window-changing tool or a read-only tool");
+                $"'{tool}' must be classified as an input tool, a window-changing tool, a read-only tool or a control tool");
         }
     }
 
@@ -38,6 +39,7 @@ public class InputGateToolFilterTests
         InputGateToolFilter.InputTools
             .Concat(InputGateToolFilter.WindowChangingTools)
             .Concat(InputGateToolFilter.ReadOnlyTools)
+            .Concat(InputGateToolFilter.ControlTools)
             .Should().BeSubsetOf(ServerToolCatalog.ServedToolNames);
     }
 
@@ -76,6 +78,9 @@ public class InputGateToolFilterTests
     [InlineData("get_ui_elements")]
     [InlineData("type_text")] // takes the gate itself; taking it here too would deadlock
     [InlineData("click")]
+    [InlineData("get_control_status")]
+    [InlineData("resume_input")] // waits for the user's answer, and must not hold up other tools meanwhile
+    [InlineData("release_all_input")] // a release must never be queued behind a long input call
     public async Task ReadOnlyAndInputTools_DoNotWaitForTheGate(string tool)
     {
         // Arrange

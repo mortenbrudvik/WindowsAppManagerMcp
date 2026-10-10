@@ -20,7 +20,7 @@ public class FixtureTypingTests
     }
 
     [DesktopFact]
-    public void FocusWindow_ThenTypeText_TypesIntoTheFixtureEditBox()
+    public async Task FocusWindow_ThenTypeText_TypesIntoTheFixtureEditBox()
     {
         // Arrange - the fixture starts without activation; the server has to bring it to the front
         using var e2e = E2ESession.Start(DesktopTier.Input, _output);
@@ -42,7 +42,7 @@ public class FixtureTypingTests
             UiaReads.FocusedAutomationId(processId) + "'. Nothing was typed");
 
         // Act 2 - type_text without a target; the input guard checks the foreground window before every batch
-        var typed = e2e.Server.Input.TypeText(Text, 0, InputTarget.None);
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.None, releaseHeldModifiers: false, CancellationToken.None);
 
         // Assert 2 - the server's result, the fixture's own record and the edit box all agree
         typed.Success.Should().BeTrue(typed.Error);

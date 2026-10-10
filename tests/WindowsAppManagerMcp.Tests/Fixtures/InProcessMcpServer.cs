@@ -23,17 +23,28 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     public static readonly TimeSpan DefaultCallTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IHost _host;
+    private readonly PipeWriter _serverInput;
 
-    private InProcessMcpServer(IHost host, McpClient client, CapturingLoggerProvider logs)
+    private InProcessMcpServer(IHost host, McpClient client, CapturingLoggerProvider logs, PipeWriter serverInput)
     {
         _host = host;
         Client = client;
         Logs = logs;
+        _serverInput = serverInput;
     }
 
     public McpClient Client { get; }
 
     public CapturingLoggerProvider Logs { get; }
+
+    /// <summary>The server's services, for checking what it did.</summary>
+    public IServiceProvider Services => _host.Services;
+
+    /// <summary>
+    /// Ends the server's input stream, as an MCP client does when it closes the server's stdin. The SDK then
+    /// ends the session and stops the application.
+    /// </summary>
+    public Task CloseServerInputAsync() => _serverInput.CompleteAsync().AsTask();
 
     /// <summary>
     /// Starts the server with <paramref name="tools"/> and connects a client to it.
@@ -43,10 +54,17 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     /// <param name="configureLogging">
     /// Log filters to apply. By default every category is captured from Information up.
     /// </param>
+    /// <param name="clientOptions">
+    /// The client's options, for example an elicitation handler that answers for the user. By default the
+    /// client declares no capabilities.
+    /// </param>
+    /// <param name="configureServices">Further service registrations, for example hosted services under test.</param>
     public static async Task<InProcessMcpServer> StartAsync(
         IEnumerable<McpServerTool> tools,
         Action<IMcpServerBuilder>? configure = null,
-        Action<ILoggingBuilder>? configureLogging = null)
+        Action<ILoggingBuilder>? configureLogging = null,
+        McpClientOptions? clientOptions = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var clientToServer = new Pipe();
         var serverToClient = new Pipe();
@@ -62,6 +80,7 @@ public sealed class InProcessMcpServer : IAsyncDisposable
             .WithStreamServerTransport(clientToServer.Reader.AsStream(), serverToClient.Writer.AsStream())
             .WithTools(tools);
         configure?.Invoke(mcp);
+        configureServices?.Invoke(builder.Services);
 
         var host = builder.Build();
         try
@@ -74,9 +93,10 @@ public sealed class InProcessMcpServer : IAsyncDisposable
             using var connectTimeout = new CancellationTokenSource(StepTimeout);
             var client = await McpClient.CreateAsync(
                 new StreamClientTransport(clientToServer.Writer.AsStream(), serverToClient.Reader.AsStream()),
+                clientOptions,
                 cancellationToken: connectTimeout.Token);
 
-            return new InProcessMcpServer(host, client, logs);
+            return new InProcessMcpServer(host, client, logs, clientToServer.Writer);
         }
         catch
         {

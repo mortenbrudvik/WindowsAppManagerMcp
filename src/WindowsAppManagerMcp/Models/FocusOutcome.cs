@@ -85,7 +85,7 @@ public sealed record FocusOutcome
 
     /// <summary>
     /// <see cref="WindowErrorCode.None"/> when the target is in front; otherwise InvalidHandle,
-    /// NotResponding, Cloaked or FocusFailed.
+    /// NotResponding, Cloaked, FocusFailed or PausedByUser (the user paused input, roadmap M1.10).
     /// </summary>
     public WindowErrorCode ErrorCode { get; init; }
 

@@ -15,7 +15,7 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// <param name="MenuClosed">True when the window was in menu mode and Esc closed the menu; null otherwise.</param>
 /// <param name="InMenuMode">True when a menu or the menu bar of the window in front is still active, so typed keys would pick menu items; null otherwise.</param>
 /// <param name="Error">Why the window is not in front.</param>
-/// <param name="ErrorCode">InvalidHandle, NotResponding, Cloaked or FocusFailed; null on success.</param>
+/// <param name="ErrorCode">InvalidHandle, NotResponding, Cloaked, FocusFailed or PausedByUser; null on success.</param>
 public sealed record FocusResult(
     bool Success,
     long Handle,

@@ -34,9 +34,18 @@ public static class ServerToolCatalog
     public static string Description(string toolName) =>
         Tools[toolName].GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
 
-    /// <summary>Parameters the client supplies; the SDK binds CancellationToken itself.</summary>
+    /// <summary>
+    /// Parameters the client supplies. The SDK binds CancellationToken and the request's own services itself
+    /// (McpServer, RequestContext, the progress reporter) and leaves them out of the input schema.
+    /// </summary>
     public static IEnumerable<ParameterInfo> ClientParameters(MethodInfo method) =>
-        method.GetParameters().Where(p => p.ParameterType != typeof(CancellationToken));
+        method.GetParameters().Where(p => !IsBoundBySdk(p.ParameterType));
+
+    private static bool IsBoundBySdk(Type type) =>
+        type == typeof(CancellationToken) ||
+        type == typeof(McpServer) ||
+        type == typeof(RequestContext<ModelContextProtocol.Protocol.CallToolRequestParams>) ||
+        type == typeof(IProgress<ModelContextProtocol.ProgressNotificationValue>);
 
     /// <summary>Every tool and parameter [Description], labelled "tool" or "tool.parameter".</summary>
     public static IEnumerable<(string Source, string Text)> AllDescriptions()

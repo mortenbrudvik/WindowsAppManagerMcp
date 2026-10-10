@@ -21,7 +21,7 @@ public class FixtureInputGuardTests
     }
 
     [DesktopNoInputFact]
-    public void ClickAndTypeText_TargetDisabledByTheModal_AreBlockedByModal_WithTheDialog()
+    public async Task ClickAndTypeText_TargetDisabledByTheModal_AreBlockedByModal_WithTheDialog()
     {
         // Arrange - ShowDialog disables the main window; the WPF dialog is owned through GW_OWNER only
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, new FixtureLaunchOptions { OpenModal = true });
@@ -30,8 +30,8 @@ public class FixtureInputGuardTests
         var editBox = e2e.Fixture.Ready.Element(FixtureContract.Ids.EditBox);
 
         // Act
-        var click = e2e.Server.Input.Click(editBox.CenterX, editBox.CenterY, InputTarget.Window(main));
-        var typed = e2e.Server.Input.TypeText(Text, 0, InputTarget.Window(main));
+        var click = e2e.Server.Input.Click(editBox.CenterX, editBox.CenterY, InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
         _output.WriteLine($"click: {click.ErrorCode} {click.Error}");
         _output.WriteLine($"type_text: {typed.ErrorCode} {typed.Error}");
 
@@ -45,13 +45,13 @@ public class FixtureInputGuardTests
     }
 
     [DesktopNoInputFact]
-    public void SendKeys_DestructiveChordWithoutWindowHandle_IsRefused_WhateverIsInFront()
+    public async Task SendKeys_DestructiveChordWithoutWindowHandle_IsRefused_WhateverIsInFront()
     {
         // Arrange - the chord that closed the user's terminal in M0
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
         // Act
-        var result = e2e.Server.Input.SendKeys("%{F4}", InputTarget.None);
+        var result = await e2e.Server.Input.SendKeysAsync("%{F4}", InputTarget.None, releaseHeldModifiers: false, CancellationToken.None);
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.DestructiveChordNeedsTarget, result.Error);
@@ -59,7 +59,7 @@ public class FixtureInputGuardTests
     }
 
     [DesktopNoInputFact]
-    public void TypeText_WithoutWindowHandle_WhileTheAgentHostIsInFront_IsTargetIsAgentHost()
+    public async Task TypeText_WithoutWindowHandle_WhileTheAgentHostIsInFront_IsTargetIsAgentHost()
     {
         // Arrange - the terminal or IDE that runs the tests is usually in front; it is the host here
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
@@ -72,7 +72,7 @@ public class FixtureInputGuardTests
         }
 
         // Act
-        var typed = e2e.Server.Input.TypeText("exit", 0, InputTarget.None);
+        var typed = await e2e.Server.Input.TypeTextAsync("exit", 0, InputTarget.None, releaseHeldModifiers: false, CancellationToken.None);
 
         // Assert
         typed.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost, typed.Error);
@@ -81,7 +81,7 @@ public class FixtureInputGuardTests
     }
 
     [DesktopFact]
-    public void TypeText_WithWindowHandle_BringsTheFixtureBackToTheFrontAndTypesIntoIt()
+    public async Task TypeText_WithWindowHandle_BringsTheFixtureBackToTheFrontAndTypesIntoIt()
     {
         // Arrange - put the caret in the edit box, then bring the document window (another window of the
         // fixture) in front of it
@@ -99,7 +99,7 @@ public class FixtureInputGuardTests
         var documentText = UiaReads.ReadValue(document, FixtureContract.Ids.DocumentTextBox);
 
         // Act - type_text names the main window: the guard brings it back to the front before typing
-        var typed = e2e.Server.Input.TypeText(Text, 0, InputTarget.Window(main));
+        var typed = await e2e.Server.Input.TypeTextAsync(Text, 0, InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
         _output.WriteLine($"type_text: {typed.ErrorCode} {typed.Error}; receiving {typed.ReceivingWindow}; after {typed.ForegroundAfter}");
 
         // Assert - the server's result, the fixture's own record and both text boxes agree
@@ -134,7 +134,7 @@ public class FixtureInputGuardTests
         E2ENative.GetCursorPos(out var before);
 
         // Act
-        var click = e2e.Server.Input.Click(checkBox.CenterX, checkBox.CenterY, InputTarget.Window(main));
+        var click = e2e.Server.Input.Click(checkBox.CenterX, checkBox.CenterY, InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
         _output.WriteLine($"click: {click.ErrorCode} {click.Error}");
 
         // Assert - refused before the cursor moved
