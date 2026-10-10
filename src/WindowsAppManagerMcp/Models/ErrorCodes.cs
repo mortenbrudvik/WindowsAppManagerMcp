@@ -187,6 +187,45 @@ public enum LayoutErrorCode
 }
 
 /// <summary>
+/// Error codes for the capture tools (take_screenshot, capture_region, capture_window, capture_with_elements).
+/// </summary>
+public enum ScreenshotErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>The format is not auto, png, jpeg or jpg.</summary>
+    InvalidFormat = 1,
+
+    /// <summary>maxDimension or maxWidth is out of range, or would scale the image to zero pixels.</summary>
+    InvalidImageSize = 2,
+
+    /// <summary>The output mode is unknown, or outputPath was given without a file output.</summary>
+    InvalidOutputMode = 3,
+
+    /// <summary>outputPath is not absolute, has the wrong extension, or its folder does not exist.</summary>
+    InvalidOutputPath = 4,
+
+    /// <summary>outputPath names an existing file and overwrite was not true.</summary>
+    FileExists = 5,
+
+    /// <summary>The image file could not be written.</summary>
+    FileWriteFailed = 6,
+
+    /// <summary>The monitor index is out of range.</summary>
+    InvalidMonitorIndex = 7,
+
+    /// <summary>The region's width or height is not positive.</summary>
+    InvalidRegion = 8,
+
+    /// <summary>The window handle is invalid or the window no longer exists.</summary>
+    InvalidHandle = 9,
+
+    /// <summary>Windows could not capture the pixels (for example the window is minimized).</summary>
+    CaptureFailed = 10
+}
+
+/// <summary>
 /// Error codes for browser reading operations.
 /// </summary>
 public enum BrowserErrorCode

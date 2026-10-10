@@ -78,6 +78,7 @@ public class NativeCallGuardTests
         ["User32.ReleaseDC"] = "releases a device context the server got",
         ["User32.PrintWindow"] = "asks a window to draw itself into a memory DC of the server",
         ["User32.GetClientRect"] = "reads the client size of a window",
+        ["User32.ClientToScreen"] = "converts a client point to screen coordinates (the capture origin without the frame)",
         ["User32.GetWindowRect"] = "reads the bounds of a window",
         ["User32.IsWindow"] = "checks that a handle is a window",
         ["User32.GetSystemMetrics"] = "reads the virtual screen size",

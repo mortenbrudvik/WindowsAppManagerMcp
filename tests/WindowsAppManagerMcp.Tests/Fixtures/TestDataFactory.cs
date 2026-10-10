@@ -351,26 +351,55 @@ public static class TestDataFactory
 
     public static ScreenshotResult CreateScreenshotResult(
         bool success = true,
-        string? imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-        string imageFormat = "png",
+        string imageFormat = "jpeg",
         int width = 1920,
         int height = 1080,
         int regionX = 0,
         int regionY = 0,
         int? monitorIndex = 0,
         double scaleFactor = 1.0,
-        string? error = null)
+        string? error = null,
+        string? errorCode = null)
     {
+        if (!success)
+        {
+            return new ScreenshotResult(
+                Success: false,
+                ImageFormat: null,
+                MimeType: null,
+                Width: 0,
+                Height: 0,
+                CapturedRegion: null,
+                ImageToScreen: null,
+                MonitorIndex: null,
+                ScaleFactor: null,
+                Error: error,
+                ErrorCode: errorCode);
+        }
+
         return new ScreenshotResult(
-            Success: success,
-            ImageData: success ? imageData : null,
+            Success: true,
             ImageFormat: imageFormat,
+            MimeType: imageFormat == "png" ? "image/png" : "image/jpeg",
             Width: width,
             Height: height,
             CapturedRegion: new CapturedRegion(regionX, regionY, width, height),
+            ImageToScreen: new ImageToScreenTransform(regionX, regionY, 1, 1),
             MonitorIndex: monitorIndex,
             ScaleFactor: scaleFactor,
-            Error: error);
+            ByteSize: 4,
+            CaptureMethod: "BitBlt",
+            CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen);
+    }
+
+    /// <summary>A tiny stand-in for encoded image bytes; tool-layer tests only pass them on.</summary>
+    public static EncodedImage CreateEncodedImage(string mimeType = "image/jpeg") =>
+        new(new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 }, mimeType);
+
+    public static ScreenCapture<ScreenshotResult> CreateScreenCapture(ScreenshotResult? metadata = null)
+    {
+        metadata ??= CreateScreenshotResult();
+        return new ScreenCapture<ScreenshotResult>(metadata, metadata.Success ? CreateEncodedImage(metadata.MimeType!) : null);
     }
 
     public static ScreenListResult CreateScreenListResult(
@@ -422,10 +451,17 @@ public static class TestDataFactory
             ScaleFactor: scaleFactor);
     }
 
+    /// <summary>
+    /// A capture wrapper that returns blank pixels: screen regions at the requested origin and size,
+    /// windows at (<paramref name="windowOriginX"/>, <paramref name="windowOriginY"/>) with
+    /// <paramref name="captureWidth"/> x <paramref name="captureHeight"/> pixels.
+    /// </summary>
     public static Mock<IScreenCaptureWrapper> CreateMockScreenCaptureWrapper(
         byte[]? pixelData = null,
         int captureWidth = 1920,
-        int captureHeight = 1080)
+        int captureHeight = 1080,
+        int windowOriginX = 0,
+        int windowOriginY = 0)
     {
         var mock = new Mock<IScreenCaptureWrapper>();
 
@@ -433,15 +469,12 @@ public static class TestDataFactory
         mock.Setup(s => s.CaptureScreenRegion(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
             .Returns((int x, int y, int w, int h) =>
-            {
-                // Return pixel data sized for the actual requested dimensions (4 bytes per pixel BGRA)
-                return pixelData ?? new byte[w * h * 4];
-            });
+                new CaptureResult(pixelData ?? new byte[w * h * 4], w, h, x, y, "BitBlt"));
 
         // CaptureWindow - return pixel data with specified default dimensions
         var windowPixelData = pixelData ?? new byte[captureWidth * captureHeight * 4];
         mock.Setup(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()))
-            .Returns((windowPixelData, captureWidth, captureHeight));
+            .Returns(new CaptureResult(windowPixelData, captureWidth, captureHeight, windowOriginX, windowOriginY, "PrintWindow"));
 
         mock.Setup(s => s.GetVirtualScreenBounds())
             .Returns((0, 0, 1920, 1080));
@@ -463,45 +496,34 @@ public static class TestDataFactory
         var screenListResult = CreateScreenListResult();
         mock.Setup(s => s.ListScreens()).Returns(screenListResult);
 
-        var screenshotResult = CreateScreenshotResult(success: success, error: error);
+        var capture = CreateScreenCapture(CreateScreenshotResult(success: success, error: error));
 
-        mock.Setup(s => s.CaptureMonitor(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(screenshotResult);
+        mock.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>()))
+            .Returns(capture);
 
         mock.Setup(s => s.CaptureRegion(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(screenshotResult);
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CaptureOptions>()))
+            .Returns(capture);
 
-        mock.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(screenshotResult);
+        mock.Setup(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()))
+            .Returns(capture);
 
-        var annotatedResult = CreateAnnotatedScreenshotResult(success: success, error: error);
+        var annotated = CreateAnnotatedScreenshotResult(success: success, error: error);
         mock.Setup(s => s.CaptureWindowWithElements(
                 It.IsAny<nint>(),
-                It.IsAny<IReadOnlyList<UIElementInfo>>(),
-                It.IsAny<(int, int, int, int)>(),
-                It.IsAny<bool>(),
-                It.IsAny<string>(),
-                It.IsAny<int>(),
-                It.IsAny<bool>(),
-                It.IsAny<bool>(),
                 It.IsAny<string?>(),
-                It.IsAny<int?>()))
-            .Returns(annotatedResult);
+                It.IsAny<IReadOnlyList<UIElementInfo>>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<AnnotatedScreenshotResult>(annotated, success ? CreateEncodedImage() : null));
 
         return mock;
     }
 
     public static AnnotatedScreenshotResult CreateAnnotatedScreenshotResult(
         bool success = true,
-        string? imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-        string imageFormat = "png",
+        string imageFormat = "jpeg",
         int width = 800,
         int height = 600,
         long windowHandle = 12345,
@@ -511,7 +533,8 @@ public static class TestDataFactory
         double captureMs = 25.0,
         double annotationMs = 15.0,
         double? scaleFactor = 1.0,
-        string? error = null)
+        string? error = null,
+        string? errorCode = null)
     {
         if (success && elements == null)
         {
@@ -529,18 +552,22 @@ public static class TestDataFactory
 
         return new AnnotatedScreenshotResult(
             Success: success,
-            ImageData: success ? imageData : null,
-            ImageFormat: imageFormat,
-            Width: width,
-            Height: height,
+            ImageFormat: success ? imageFormat : null,
+            MimeType: success ? (imageFormat == "png" ? "image/png" : "image/jpeg") : null,
+            Width: success ? width : 0,
+            Height: success ? height : 0,
             WindowHandle: windowHandle,
             WindowTitle: success ? windowTitle : null,
+            CapturedRegion: success ? new CapturedRegion(100, 100, width, height) : null,
+            ImageToScreen: success ? new ImageToScreenTransform(100, 100, 1, 1) : null,
             Elements: success ? elements : null,
             ElementCount: success ? elementCount : 0,
             CaptureElapsedMs: captureMs,
             AnnotationElapsedMs: annotationMs,
             MonitorScaleFactor: scaleFactor,
-            Error: error);
+            Error: error,
+            ErrorCode: errorCode,
+            CoordinateSpace: success ? CoordinateSpaces.PhysicalVirtualScreen : null);
     }
 
     #endregion
