@@ -1,0 +1,190 @@
+namespace WindowsAppManagerMcp.Tests.Unit.Services;
+
+/// <summary>
+/// Unit tests that concurrent input calls are serialized, so one call's input never
+/// lands in the middle of another's. The native input wrapper is faked, so no real
+/// mouse or keyboard input reaches the desktop.
+/// </summary>
+public class InputSimulationServiceConcurrencyTests
+{
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
+
+    private readonly Mock<IMonitorService> _mockMonitorService;
+
+    public InputSimulationServiceConcurrencyTests()
+    {
+        _mockMonitorService = TestDataFactory.CreateMockMonitorService(new List<MonitorInfo>
+        {
+            TestDataFactory.CreateMonitorInfo(boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080)
+        });
+    }
+
+    private InputSimulationService CreateSut(INativeInputWrapper wrapper) =>
+        new(_mockMonitorService.Object, wrapper);
+
+    /// <summary>
+    /// Starts the first call, waits until it is inside the native layer, then starts the second call.
+    /// The fake holds the first call's first native operation open until the second call sends input
+    /// (or a short timeout passes), so any interleaving shows up in the recorded operations.
+    /// </summary>
+    private static async Task RunOverlapping(HoldingInputWrapper wrapper, Action first, Action second)
+    {
+        var firstTask = Task.Run(first);
+        wrapper.FirstOperationStarted.Wait(TestTimeout).Should().BeTrue("the first call should reach the native layer");
+
+        var secondTask = Task.Run(second);
+        await Task.WhenAll(firstTask, secondTask).WaitAsync(TestTimeout);
+    }
+
+    [Fact]
+    public async Task TypeText_ConcurrentCalls_DoNotInterleaveCharacters()
+    {
+        // Arrange
+        var wrapper = new HoldingInputWrapper();
+        var sut = CreateSut(wrapper);
+
+        // Act
+        await RunOverlapping(wrapper, () => sut.TypeText("aaaa"), () => sut.TypeText("bbbb"));
+
+        // Assert
+        string.Concat(wrapper.Operations).Should().Be("aaaabbbb");
+    }
+
+    [Fact]
+    public async Task SendKeys_DuringTypeText_WaitsUntilTypingFinishes()
+    {
+        // Arrange
+        var wrapper = new HoldingInputWrapper();
+        var sut = CreateSut(wrapper);
+
+        // Act
+        await RunOverlapping(wrapper, () => sut.TypeText("aaaa"), () => sut.SendKeys("^c"));
+
+        // Assert
+        wrapper.Operations.Should().Equal("a", "a", "a", "a", "keys");
+    }
+
+    [Fact]
+    public async Task MoveMouse_DuringClick_DoesNotMoveCursorBetweenClickMoveAndPress()
+    {
+        // Arrange
+        var wrapper = new HoldingInputWrapper();
+        var sut = CreateSut(wrapper);
+
+        // Act
+        await RunOverlapping(wrapper, () => sut.Click(100, 100), () => sut.MoveMouse(500, 500));
+
+        // Assert - the click lands where it was aimed
+        wrapper.Operations.Should().Equal("move 100,100", "mouse", "move 500,500");
+    }
+
+    [Fact]
+    public async Task Calls_OnSeparateServiceInstances_AreSerializedProcessWide()
+    {
+        // Arrange
+        var wrapper = new HoldingInputWrapper();
+        var first = CreateSut(wrapper);
+        var second = CreateSut(wrapper);
+
+        // Act
+        await RunOverlapping(wrapper, () => first.TypeText("aaaa"), () => second.TypeText("bbbb"));
+
+        // Assert
+        string.Concat(wrapper.Operations).Should().Be("aaaabbbb");
+    }
+
+    [Fact]
+    public async Task TypeText_WhenNativeLayerThrows_ReleasesGateForLaterCalls()
+    {
+        // Arrange
+        var failing = new Mock<INativeInputWrapper>();
+        failing.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
+            .Throws(new InvalidOperationException("native failure"));
+        var wrapper = new HoldingInputWrapper();
+
+        // Act
+        var failingCall = () => CreateSut(failing.Object).TypeText("x");
+        failingCall.Should().Throw<InvalidOperationException>();
+
+        var laterCall = Task.Run(() => CreateSut(wrapper).TypeText("ok"));
+
+        // Assert
+        var result = await laterCall.WaitAsync(TestTimeout);
+        result.Success.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Records native input operations in order. The first operation is held open until
+    /// another thread sends input or a short timeout passes.
+    /// </summary>
+    private sealed class HoldingInputWrapper : INativeInputWrapper
+    {
+        private static readonly TimeSpan HoldFirstOperation = TimeSpan.FromMilliseconds(300);
+
+        private readonly object _lock = new();
+        private readonly List<string> _operations = new();
+        private readonly ManualResetEventSlim _otherThreadSentInput = new();
+        private int _firstThreadId = -1;
+
+        public ManualResetEventSlim FirstOperationStarted { get; } = new();
+
+        public IReadOnlyList<string> Operations
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _operations.ToList();
+                }
+            }
+        }
+
+        public bool SetCursorPos(int x, int y)
+        {
+            Record($"move {x},{y}");
+            return true;
+        }
+
+        public (int X, int Y)? GetCursorPos() => (0, 0);
+
+        public uint SendInput(IReadOnlyList<InputEvent> events)
+        {
+            Record(Describe(events));
+            return (uint)events.Count;
+        }
+
+        private static string Describe(IReadOnlyList<InputEvent> events)
+        {
+            if (events.All(e => e.Kind == InputEventKind.Unicode))
+            {
+                return ((char)events[0].Code).ToString();
+            }
+
+            return events.All(e => e.Kind == InputEventKind.Mouse) ? "mouse" : "keys";
+        }
+
+        private void Record(string operation)
+        {
+            bool isFirstOperation;
+            lock (_lock)
+            {
+                _operations.Add(operation);
+                isFirstOperation = _firstThreadId == -1;
+                if (isFirstOperation)
+                {
+                    _firstThreadId = Environment.CurrentManagedThreadId;
+                }
+                else if (Environment.CurrentManagedThreadId != _firstThreadId)
+                {
+                    _otherThreadSentInput.Set();
+                }
+            }
+
+            if (isFirstOperation)
+            {
+                FirstOperationStarted.Set();
+                _otherThreadSentInput.Wait(HoldFirstOperation);
+            }
+        }
+    }
+}

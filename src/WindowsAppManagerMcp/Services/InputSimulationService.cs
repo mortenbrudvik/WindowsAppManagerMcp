@@ -10,6 +10,13 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 public class InputSimulationService : IInputSimulationService
 {
+    /// <summary>
+    /// Serializes input across the whole process. The MCP SDK runs tool calls concurrently, so
+    /// without this gate two type_text calls would interleave their characters, and a mouse move
+    /// could land between a click's cursor move and its button press.
+    /// </summary>
+    private static readonly object InputGate = new();
+
     private readonly IMonitorService _monitorService;
     private readonly INativeInputWrapper _inputWrapper;
 
@@ -31,6 +38,8 @@ public class InputSimulationService : IInputSimulationService
                 Error: "Coordinates are outside screen bounds",
                 ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
         }
+
+        using var gate = EnterInputGate();
 
         if (!SetCursorAndClick(x, y, leftButton: true))
         {
@@ -63,6 +72,8 @@ public class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
         }
 
+        using var gate = EnterInputGate();
+
         if (!SetCursorAndClick(x, y, leftButton: false))
         {
             return new ClickResult(
@@ -93,6 +104,8 @@ public class InputSimulationService : IInputSimulationService
                 Error: "Coordinates are outside screen bounds",
                 ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
         }
+
+        using var gate = EnterInputGate();
 
         // Move cursor to position first
         if (!_inputWrapper.SetCursorPos(x, y))
@@ -155,6 +168,8 @@ public class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
         }
 
+        using var gate = EnterInputGate();
+
         if (!_inputWrapper.SetCursorPos(x, y))
         {
             return new MouseMoveResult(
@@ -182,6 +197,21 @@ public class InputSimulationService : IInputSimulationService
         return monitors.Any(m =>
             x >= m.Bounds.X && x < m.Bounds.X + m.Bounds.Width &&
             y >= m.Bounds.Y && y < m.Bounds.Y + m.Bounds.Height);
+    }
+
+    /// <summary>
+    /// Holds the process-wide input gate until the returned scope is disposed, so the input one
+    /// call sends is never interleaved with input from a concurrent call.
+    /// </summary>
+    private static InputGateScope EnterInputGate()
+    {
+        Monitor.Enter(InputGate);
+        return new InputGateScope();
+    }
+
+    private readonly struct InputGateScope : IDisposable
+    {
+        public void Dispose() => Monitor.Exit(InputGate);
     }
 
     private bool SetCursorAndClick(int x, int y, bool leftButton)
@@ -227,6 +257,8 @@ public class InputSimulationService : IInputSimulationService
 
         delayBetweenKeysMs = Math.Clamp(delayBetweenKeysMs, 0, 100);
         var charactersTyped = 0;
+
+        using var gate = EnterInputGate();
 
         foreach (var character in text)
         {
@@ -284,6 +316,7 @@ public class InputSimulationService : IInputSimulationService
                     ErrorCode: InputErrorCode.InvalidKeySpecification);
             }
 
+            using var gate = EnterInputGate();
             var result = _inputWrapper.SendInput(inputs);
 
             if (result != inputs.Count)
