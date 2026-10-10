@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -72,6 +73,9 @@ builder.Services.AddMcpServer(options =>
     };
 })
 .WithStdioServerTransport()
+// Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
+// instead of the SDK's opaque "An error occurred invoking '<tool>'."
+.AddToolErrorReporting()
 .WithTools<WindowFinderTools>()
 .WithTools<WindowManagerTools>()
 .WithTools<MonitorInfoTools>()

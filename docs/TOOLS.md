@@ -2109,8 +2109,29 @@ send_keys { "keys": "{ENTER}" }
 
 ## Error Codes
 
+### Unexpected tool errors
+
+If a tool throws an unexpected exception, or its result cannot be serialized, the call returns
+`isError: true` with a JSON body that names the exception, and the server logs the exception with
+its stack trace to stderr:
+
+```json
+{
+  "success": false,
+  "error": "Tool 'get_primary_monitor' failed. InvalidOperationException: No monitors found",
+  "errorCode": "UnhandledException",
+  "exceptionType": "System.InvalidOperationException",
+  "tool": "get_primary_monitor"
+}
+```
+
+An unknown tool name is still reported as a JSON-RPC protocol error, not as a tool result.
+
+### Error code reference
+
 | Code | Description |
 |------|-------------|
+| `UnhandledException` | The tool threw an unexpected exception (see above) |
 | `WindowNotFound` | Window handle is invalid or window closed |
 | `InvalidHandle` | Handle parameter is missing or invalid |
 | `OperationFailed` | Window operation failed (permission denied, etc.) |
