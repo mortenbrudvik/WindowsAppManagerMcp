@@ -273,22 +273,27 @@ public class WindowService : IWindowService
     /// when it cannot. The shell rule checks the window, the top-level window it is part of and that
     /// window's root owner: DefWindowProc destroys any window that gets WM_CLOSE, so a child or an owned
     /// helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the taskbar itself.
-    /// The host rule is <see cref="IHostGuard.IsHostWindow"/>, which is root-owner aware on its own.
+    /// A shell window is the shell's desktop window, or a window of a shell class that belongs to the
+    /// shell's process (<see cref="WindowClassification.IsShellWindow"/>), so another app's WorkerW
+    /// helper is not one. A dialog that the user can see is checked alone, without its owners: WM_CLOSE
+    /// on a dialog works like its Cancel button (DefDlgProc turns it into IDCANCEL), and an owned window
+    /// that closes leaves its owner alone, so a dialog of the shell such as Shut Down Windows can be
+    /// dismissed. The host rule is <see cref="IHostGuard.IsHostWindow"/>, which is root-owner aware on its own.
     /// </summary>
     private string? FindCloseProtection(nint handle)
     {
         var shellWindow = _nativeWrapper.GetShellWindow();
-        nint[] windows =
-        [
-            handle,
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.Root),
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.RootOwner)
-        ];
+        var shellProcessId = shellWindow == nint.Zero ? 0u : _nativeWrapper.GetWindowThreadProcessId(shellWindow);
+        var root = _nativeWrapper.GetAncestor(handle, WindowAncestor.Root);
+        nint[] windows = IsVisibleTopLevelDialog(handle, root)
+            ? [handle]
+            : [handle, root, _nativeWrapper.GetAncestor(handle, WindowAncestor.RootOwner)];
 
         foreach (var window in windows.Where(w => w != nint.Zero).Distinct())
         {
             var className = _nativeWrapper.GetClassName(window);
-            if (WindowClassification.IsShellWindowClass(className) || (shellWindow != nint.Zero && window == shellWindow))
+            if (WindowClassification.IsShellWindow(
+                    window, className, _nativeWrapper.GetWindowThreadProcessId(window), shellWindow, shellProcessId))
             {
                 var part = window == handle ? "is" : $"belongs to {window}, which is";
                 return $"Window {handle} {part} part of the desktop shell ({className}): the desktop or a taskbar. " +
@@ -306,6 +311,15 @@ public class WindowService : IWindowService
 
         return null;
     }
+
+    /// <summary>
+    /// A dialog box (#32770) that the user can see and dismiss: visible and top-level, not a child
+    /// dialog (a property page) inside another window. A hidden one is a helper window, not a prompt.
+    /// </summary>
+    private bool IsVisibleTopLevelDialog(nint handle, nint root) =>
+        root == handle &&
+        WindowClassification.IsDialogClass(_nativeWrapper.GetClassName(handle)) &&
+        _nativeWrapper.IsWindowVisible(handle);
 
     /// <summary>Maps the Win32 error of a PostMessage(WM_CLOSE) that Windows refused.</summary>
     private static WindowCloseResult CloseNotPosted(nint handle, int win32Error) => win32Error switch

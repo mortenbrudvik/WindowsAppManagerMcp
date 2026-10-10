@@ -62,8 +62,10 @@ public interface IWindowService
     /// Asks the window to close by posting WM_CLOSE; the application can still prompt to save or refuse.
     /// Unless <paramref name="force"/> is true, nothing is posted to a protected window
     /// (<see cref="WindowErrorCode.ProtectedWindow"/>): the desktop shell (the window, the top-level window
-    /// it is part of, or its root owner is Progman, WorkerW, Shell_TrayWnd, Shell_SecondaryTrayWnd or the
-    /// shell window) and the agent's host (<see cref="IHostGuard.IsHostWindow"/>). A refused message is
+    /// it is part of, or its root owner is the shell window, or a Progman, WorkerW, Shell_TrayWnd or
+    /// Shell_SecondaryTrayWnd window of the shell's process; a visible top-level dialog is checked without
+    /// its owners, since WM_CLOSE only cancels a dialog) and the agent's host
+    /// (<see cref="IHostGuard.IsHostWindow"/>). A refused message is
     /// reported with its Win32 error: 5 is <see cref="WindowErrorCode.AccessDenied"/>.
     /// </summary>
     WindowCloseResult CloseWindow(nint handle, bool force);

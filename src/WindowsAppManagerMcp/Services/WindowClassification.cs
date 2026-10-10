@@ -21,9 +21,33 @@ public static class WindowClassification
     public static IReadOnlySet<string> ShellWindowClasses { get; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
 
+    /// <summary>The class of standard dialog boxes and message boxes.</summary>
+    public const string DialogClass = "#32770";
+
     /// <summary>Whether the class is the desktop or a taskbar (see <see cref="ShellWindowClasses"/>).</summary>
     public static bool IsShellWindowClass(string? className) =>
         !string.IsNullOrEmpty(className) && ShellWindowClasses.Contains(className);
+
+    /// <summary>
+    /// Whether a window is part of the desktop shell: the shell's desktop window (GetShellWindow())
+    /// whatever its class, or a window of a <see cref="ShellWindowClasses"/> class that belongs to the
+    /// shell's process. The class alone is not enough: WorkerW is also the class of the helper windows
+    /// that SHCreateWorkerWindow makes in any process. While the shell's process is not known
+    /// (<paramref name="shellProcessId"/> is 0: no shell window, for example while explorer.exe
+    /// restarts), the class alone counts, to stay on the safe side.
+    /// </summary>
+    /// <param name="window">The window.</param>
+    /// <param name="className">Its class name.</param>
+    /// <param name="processId">The process that owns it (GetWindowThreadProcessId).</param>
+    /// <param name="shellWindow">GetShellWindow(), or 0 when no shell is running.</param>
+    /// <param name="shellProcessId">The process that owns <paramref name="shellWindow"/>, or 0 when not known.</param>
+    public static bool IsShellWindow(nint window, string? className, uint processId, nint shellWindow, uint shellProcessId) =>
+        (shellWindow != nint.Zero && window == shellWindow) ||
+        (IsShellWindowClass(className) && (shellProcessId == 0 || processId == shellProcessId));
+
+    /// <summary>Whether the class is that of a standard dialog box or message box (#32770).</summary>
+    public static bool IsDialogClass(string? className) =>
+        string.Equals(className, DialogClass, StringComparison.Ordinal);
 
     /// <summary>
     /// Whether the extended style (GWL_EXSTYLE) marks a tool window that is kept out of the taskbar

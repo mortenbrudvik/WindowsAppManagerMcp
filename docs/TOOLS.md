@@ -549,10 +549,10 @@ Close a window gracefully (sends WM_CLOSE message). Protected windows are refuse
 ```
 
 **Protected windows.** Without `force: true`, close_window sends nothing to these windows and returns `ProtectedWindow`:
-- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor), or the shell's desktop window whatever its class. Child windows and owned popups of these count too: a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
+- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor) that belongs to the shell's process (normally explorer.exe), or the shell's desktop window whatever its class. Another app's window of one of those classes (apps create `WorkerW` helper windows too) is not protected; while no shell is running, the class alone counts. Child windows and owned popups of shell windows count too: a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
 - The agent's own host: the terminal, editor or chat app this server was started from (its ancestor processes, the window that shows its console, and the window that was in front when the server started), and every window owned by one of those. Closing it can end the agent's session.
 
-File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar.
+File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar. A visible dialog box (class `#32770`) that the shell owns, such as Shut Down Windows, is not protected either: WM_CLOSE on a dialog works like its Cancel button, so close_window cancels the dialog, and the shell window that owns it stays.
 
 ```json
 {

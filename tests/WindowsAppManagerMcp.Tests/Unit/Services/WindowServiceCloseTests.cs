@@ -172,6 +172,235 @@ public class WindowServiceCloseTests
 
     #endregion
 
+    #region Only the shell's own windows
+
+    private const uint ShellPid = 300;
+    private const uint OtherAppPid = 500;
+
+    /// <summary>Makes a Progman window of <see cref="ShellPid"/> the shell's desktop window (GetShellWindow).</summary>
+    private nint UseShell()
+    {
+        var desktop = AddWindow("Progman", processId: ShellPid);
+        _native.Setup(n => n.GetShellWindow()).Returns(desktop);
+        return desktop;
+    }
+
+    [Theory]
+    [InlineData("Progman")]
+    [InlineData("WorkerW")]
+    [InlineData("Shell_TrayWnd")]
+    [InlineData("Shell_SecondaryTrayWnd")]
+    public void CloseWindow_ShellClassInTheShellsProcess_IsRefused(string className)
+    {
+        // Arrange
+        UseShell();
+        var window = AddWindow(className, processId: ShellPid);
+
+        // Act
+        var result = CreateSut().CloseWindow(window, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        result.Error.Should().Contain(className);
+        VerifyNothingPosted();
+    }
+
+    [Theory]
+    [InlineData("WorkerW")]
+    [InlineData("Progman")]
+    [InlineData("Shell_TrayWnd")]
+    [InlineData("Shell_SecondaryTrayWnd")]
+    public void CloseWindow_ShellClassInAnotherProcess_IsNotProtected(string className)
+    {
+        // Arrange - WorkerW is also the class of SHCreateWorkerWindow, which any app that uses shlwapi can create
+        UseShell();
+        var helper = AddWindow(className, processId: OtherAppPid);
+
+        // Act
+        var result = CreateSut().CloseWindow(helper, force: false);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyPosted(helper);
+    }
+
+    [Fact]
+    public void CloseWindow_WindowInsideAWorkerWOfAnotherProcess_IsNotProtected()
+    {
+        // Arrange
+        UseShell();
+        var worker = AddWindow("WorkerW", processId: OtherAppPid);
+        var child = AddWindow("AppPane", root: worker, processId: OtherAppPid);
+
+        // Act
+        var result = CreateSut().CloseWindow(child, force: false);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyPosted(child);
+    }
+
+    [Fact]
+    public void CloseWindow_ChildOfTheShellsWorkerW_IsRefused()
+    {
+        // Arrange - the desktop icons sit in a WorkerW layer of the shell
+        UseShell();
+        var worker = AddWindow("WorkerW", processId: ShellPid);
+        var icons = AddWindow("SHELLDLL_DefView", root: worker, processId: ShellPid);
+
+        // Act
+        var result = CreateSut().CloseWindow(icons, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        result.Error.Should().Contain("WorkerW");
+        VerifyNothingPosted();
+    }
+
+    [Fact]
+    public void CloseWindow_ShellClassWhileNoShellWindowExists_IsRefusedByItsClassAlone()
+    {
+        // Arrange - explorer.exe is restarting (GetShellWindow is zero), so its process is not known: stay on the safe side
+        var taskbar = AddWindow("Shell_TrayWnd", processId: OtherAppPid);
+        _native.Setup(n => n.GetShellWindow()).Returns(nint.Zero);
+
+        // Act
+        var result = CreateSut().CloseWindow(taskbar, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        VerifyNothingPosted();
+    }
+
+    #endregion
+
+    #region Dialogs that the shell owns
+
+    /// <summary>Adds a visible, top-level dialog (class #32770) owned by <paramref name="owner"/>.</summary>
+    private nint AddDialog(nint owner, uint processId = ShellPid, bool visible = true)
+    {
+        var dialog = AddWindow("#32770", rootOwner: owner, processId: processId);
+        _native.Setup(n => n.IsWindowVisible(dialog)).Returns(visible);
+        return dialog;
+    }
+
+    [Fact]
+    public void CloseWindow_ShutDownWindowsDialogOfTheDesktop_IsClosed()
+    {
+        // Arrange - closing Program Manager opens Shut Down Windows; WM_CLOSE on a dialog works like its
+        // Cancel button (DefDlgProc turns it into IDCANCEL), so it cancels the dialog and leaves its owner alone
+        var desktop = UseShell();
+        var shutDown = AddDialog(owner: desktop);
+
+        // Act
+        var result = CreateSut().CloseWindow(shutDown, force: false);
+
+        // Assert
+        result.Should().Be(new WindowCloseResult(shutDown, Success: true));
+        VerifyPosted(shutDown);
+        _hostGuard.Verify(g => g.IsHostWindow(shutDown), Times.Once, "the host rule still applies to dialogs");
+    }
+
+    [Fact]
+    public void CloseWindow_DialogOwnedByTheTaskbar_IsClosed()
+    {
+        // Arrange
+        UseShell();
+        var taskbar = AddWindow("Shell_TrayWnd", processId: ShellPid);
+        var dialog = AddDialog(owner: taskbar);
+
+        // Act
+        var result = CreateSut().CloseWindow(dialog, force: false);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyPosted(dialog);
+    }
+
+    [Fact]
+    public void CloseWindow_DialogOwnedByTheShellWhileNoShellWindowExists_IsClosed()
+    {
+        // Arrange - the dialog itself is not a shell window, whatever is known about the shell's process
+        var taskbar = AddWindow("Shell_TrayWnd", processId: ShellPid);
+        var dialog = AddDialog(owner: taskbar);
+
+        // Act
+        var result = CreateSut().CloseWindow(dialog, force: false);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyPosted(dialog);
+    }
+
+    [Fact]
+    public void CloseWindow_HiddenDialogOwnedByTheShell_IsRefused()
+    {
+        // Arrange - a hidden dialog is a helper window of the shell, not one the user can see and dismiss
+        var desktop = UseShell();
+        var helper = AddDialog(owner: desktop, visible: false);
+
+        // Act
+        var result = CreateSut().CloseWindow(helper, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        VerifyNothingPosted();
+    }
+
+    [Fact]
+    public void CloseWindow_DialogInsideAShellWindow_IsRefused()
+    {
+        // Arrange - a child dialog (for example a page) is part of the shell window that contains it
+        UseShell();
+        var taskbar = AddWindow("Shell_TrayWnd", processId: ShellPid);
+        var page = AddWindow("#32770", root: taskbar, processId: ShellPid);
+        _native.Setup(n => n.IsWindowVisible(page)).Returns(true);
+
+        // Act
+        var result = CreateSut().CloseWindow(page, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        VerifyNothingPosted();
+    }
+
+    [Fact]
+    public void CloseWindow_VisiblePopupOfTheShellThatIsNotADialog_IsStillRefused()
+    {
+        // Arrange - only dialogs turn WM_CLOSE into Cancel; DefWindowProc destroys any other popup
+        UseShell();
+        var taskbar = AddWindow("Shell_TrayWnd", processId: ShellPid);
+        var flyout = AddWindow("Xaml_WindowedPopupClass", rootOwner: taskbar, processId: ShellPid);
+        _native.Setup(n => n.IsWindowVisible(flyout)).Returns(true);
+
+        // Act
+        var result = CreateSut().CloseWindow(flyout, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        result.Error.Should().Contain("Shell_TrayWnd");
+        VerifyNothingPosted();
+    }
+
+    [Fact]
+    public void CloseWindow_DialogOfTheAgentsHost_IsStillRefused()
+    {
+        // Arrange
+        var terminal = AddWindow("CASCADIA_HOSTING_WINDOW_CLASS", processId: OtherAppPid);
+        var dialog = AddDialog(owner: terminal, processId: OtherAppPid);
+        _hostGuard.Setup(g => g.IsHostWindow(dialog)).Returns(true);
+
+        // Act
+        var result = CreateSut().CloseWindow(dialog, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        result.Error.Should().Contain("agent's host");
+        VerifyNothingPosted();
+    }
+
+    #endregion
+
     #region The agent's host
 
     [Fact]
