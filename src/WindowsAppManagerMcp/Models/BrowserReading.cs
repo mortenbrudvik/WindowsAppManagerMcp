@@ -1,20 +1,38 @@
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
+/// Where browser data came from: the Chrome DevTools Protocol or Windows UI Automation.
+/// </summary>
+public static class BrowserReadSource
+{
+    public const string Cdp = "cdp";
+    public const string Uia = "uia";
+}
+
+/// <summary>
 /// Result of getting a browser URL.
 /// </summary>
+/// <param name="Source">"cdp" or "uia": the method that produced (or failed to produce) the result.</param>
+/// <param name="TargetId">The CDP target (tab) ID when the result came from CDP.</param>
+/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
 public record BrowserUrlResult(
     bool Success,
     string? Url,
     string? BrowserType,
     string? PageTitle,
     string? Error,
-    BrowserErrorCode ErrorCode
+    BrowserErrorCode ErrorCode,
+    string? Source = null,
+    string? TargetId = null,
+    string? CdpError = null
 );
 
 /// <summary>
 /// Result of getting browser page content.
 /// </summary>
+/// <param name="Source">"cdp" or "uia": the method that produced (or failed to produce) the result.</param>
+/// <param name="TargetId">The CDP target (tab) ID when the result came from CDP.</param>
+/// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
 public record BrowserContentResult(
     bool Success,
     string? Content,
@@ -23,7 +41,10 @@ public record BrowserContentResult(
     string? PageTitle,
     int? ContentLength,
     string? Error,
-    BrowserErrorCode ErrorCode
+    BrowserErrorCode ErrorCode,
+    string? Source = null,
+    string? TargetId = null,
+    string? CdpError = null
 );
 
 /// <summary>
@@ -33,6 +54,25 @@ public record BrowserContentOptions(
     int? MaxLength = null,
     bool TextOnly = true
 );
+
+/// <summary>
+/// Options for reading a browser window via CDP (Chrome DevTools Protocol).
+/// </summary>
+/// <param name="Port">The browser's debug port, or null to use UI Automation only.</param>
+/// <param name="Required">If true, a CDP failure is returned as an error instead of falling back to UI Automation.</param>
+/// <param name="TimeoutMs">Time budget for all CDP requests of one call. Clamped to [MinTimeoutMs, MaxTimeoutMs].</param>
+public record CdpOptions(
+    int? Port = null,
+    bool Required = false,
+    int TimeoutMs = CdpOptions.DefaultTimeoutMs)
+{
+    public const int DefaultTimeoutMs = 10000;
+    public const int MinTimeoutMs = 1000;
+    public const int MaxTimeoutMs = 30000;
+
+    /// <summary>The time budget after clamping.</summary>
+    public TimeSpan EffectiveTimeout => TimeSpan.FromMilliseconds(Math.Clamp(TimeoutMs, MinTimeoutMs, MaxTimeoutMs));
+}
 
 /// <summary>
 /// Result of launching a browser with debug mode enabled.

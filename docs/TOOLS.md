@@ -15,6 +15,7 @@ A comprehensive guide to all 38 MCP tools for managing Windows applications, win
 | [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move, type_text, send_keys | 6 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
+| [Browser Reading](#browser-reading) | get_browser_url, get_browser_content, get_active_browser_url | 3 |
 
 ---
 
@@ -2147,6 +2148,149 @@ Delete a layout preset. If no preset has that name, the call fails with `PresetN
   "errorCode": "PresetNotFound"
 }
 ```
+
+---
+
+## Browser Reading
+
+Tools for reading the URL and page content of browser windows. By default they use Windows UI Automation. When you pass `cdpPort` (the `--remote-debugging-port` of a Chromium browser, for example one started with `launch_browser_with_debug`), they read the page through the Chrome DevTools Protocol (CDP) first, which sees JavaScript-rendered content and can return HTML.
+
+**How CDP reading works:**
+- **Never hangs.** Every CDP request (target list, WebSocket connect, send and receive) is bounded by `timeoutMs` (default 10000, clamped to 1000-30000), and MCP request cancellation is honored. A page with an open JavaScript dialog (alert, confirm, prompt, beforeunload) never answers CDP, so the call returns `CdpDialogOpen` or `CdpTimeout` instead of blocking.
+- **Right browser.** The process listening on `cdpPort` must be the process that owns the window. If it is not (for example the handle is your normal Chrome window but the port belongs to a separate debug Chrome), the result is `CdpPortOwnerMismatch`.
+- **Right tab.** The tab is the one whose whole title starts the window title, followed only by the browser's own decorations (`Inbox - Google Chrome`, or Edge's `Inbox and 2 more pages - Personal - Microsoft Edge`). Substrings, empty titles and URL hosts never match. If no tab matches, the result is `CdpTargetNotFound`; if several tabs have the same title, it is `CdpTargetAmbiguous`. The tool never guesses.
+- **No silent fallback.** If CDP cannot be used, the tool falls back to UI Automation and explains why in `cdpError` (`"Code: message"`). With `requireCdp: true`, the CDP error is returned instead of falling back.
+- **Visible source.** `source` is `"cdp"` or `"uia"` and says which method produced the result; `targetId` is the CDP tab ID when `source` is `"cdp"`.
+- **HTML needs CDP.** `textOnly: false` returns HTML only through CDP. Without a usable CDP connection the result is `HtmlRequiresCdp` instead of plain text.
+
+### get_browser_url
+
+Get the current URL from a browser window: from the address bar with UI Automation, or from the matched tab with CDP.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser from find_windows or get_foreground_window |
+| cdpPort | int | No | - | CDP debug port of the browser that owns the window |
+| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+
+**Example:**
+> "What page is the debug Chrome window showing?"
+
+```json
+{
+  "name": "get_browser_url",
+  "arguments": {
+    "handle": 12345,
+    "cdpPort": 9222
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "url": "https://github.com/pulls",
+  "browserType": "chrome",
+  "pageTitle": "Pull requests",
+  "error": null,
+  "errorCode": "None",
+  "source": "cdp",
+  "targetId": "8C1F0A6E2B7D4F3A9E5C1B2D3F4A5B6C",
+  "cdpError": null
+}
+```
+
+**Response after a fallback to UI Automation:**
+```json
+{
+  "success": true,
+  "url": "https://github.com/pulls",
+  "browserType": "chrome",
+  "pageTitle": "Pull requests - Google Chrome",
+  "error": null,
+  "errorCode": "None",
+  "source": "uia",
+  "targetId": null,
+  "cdpError": "CdpPortOwnerMismatch: CDP port 9222 belongs to process 4242 (chrome), but the window belongs to process 1337 (chrome). ..."
+}
+```
+
+### get_browser_content
+
+Extract the content of the page shown in a browser window. UI Automation returns visible text; CDP returns `document.body.innerText` (text) or `document.documentElement.outerHTML` (HTML).
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser |
+| maxLength | int | No | - | Maximum content length in characters |
+| textOnly | bool | No | true | true for text; false for full HTML (requires CDP) |
+| cdpPort | int | No | - | CDP debug port of the browser that owns the window |
+| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+
+**Example:**
+> "Read the HTML of the page in the debug browser, but fail rather than fall back"
+
+```json
+{
+  "name": "get_browser_content",
+  "arguments": {
+    "handle": 12345,
+    "textOnly": false,
+    "cdpPort": 9222,
+    "requireCdp": true
+  }
+}
+```
+
+**Response when the page has an alert open:**
+```json
+{
+  "success": false,
+  "content": null,
+  "url": null,
+  "browserType": "chrome",
+  "pageTitle": "Checkout - Google Chrome",
+  "contentLength": null,
+  "error": "The page has a JavaScript alert dialog open ('Are you sure?'), so it cannot be read via CDP. Dismiss the dialog (for example press Enter or Escape in the browser window) and retry.",
+  "errorCode": "CdpDialogOpen",
+  "source": "cdp",
+  "targetId": "8C1F0A6E2B7D4F3A9E5C1B2D3F4A5B6C",
+  "cdpError": "CdpDialogOpen: The page has a JavaScript alert dialog open ('Are you sure?'), ..."
+}
+```
+
+### get_active_browser_url
+
+Get the URL from the foreground browser window. Same parameters (except `handle`), CDP behavior and response fields as `get_browser_url`.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| cdpPort | int | No | - | CDP debug port of the browser that owns the window |
+| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+
+**Error Codes (browser reading tools):**
+| Code | Description |
+|------|-------------|
+| `InvalidHandle` | Window handle is invalid |
+| `NotABrowser` / `NoBrowserInForeground` | The window is not a recognized browser |
+| `UrlBarNotFound` / `ContentExtractionFailed` | UI Automation could not read the address bar or page |
+| `AutomationUnavailable` | UI Automation is not available |
+| `CdpUnavailable` | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
+| `CdpTimeout` | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
+| `CdpDialogOpen` | The page has a JavaScript dialog open; dismiss it and retry |
+| `CdpPortOwnerMismatch` | The CDP port belongs to a different process than the window |
+| `CdpTargetNotFound` | No tab's title matches the window title |
+| `CdpTargetAmbiguous` | Several tabs have the window's title; the tool will not guess |
+| `CdpEvaluationFailed` | The page threw, or the browser rejected the script |
+| `CdpProtocolError` | The CDP connection closed early or returned an unreadable response |
+| `HtmlRequiresCdp` | `textOnly: false` was requested but CDP could not be used |
 
 ---
 

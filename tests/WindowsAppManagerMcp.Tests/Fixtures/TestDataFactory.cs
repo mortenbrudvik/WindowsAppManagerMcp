@@ -334,9 +334,9 @@ public static class TestDataFactory
             Error: success ? null : "Test error",
             ErrorCode: success ? BrowserErrorCode.None : BrowserErrorCode.ContentExtractionFailed);
 
-        mock.Setup(s => s.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<int?>())).Returns(urlResult);
-        mock.Setup(s => s.GetBrowserContent(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<int?>())).Returns(contentResult);
-        mock.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>())).Returns(urlResult);
+        mock.Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(urlResult);
+        mock.Setup(s => s.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(contentResult);
+        mock.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(urlResult);
         mock.Setup(s => s.IsBrowserWindow(It.Is<nint>(h => h != nint.Zero))).Returns(true);
         mock.Setup(s => s.IsBrowserWindow(nint.Zero)).Returns(false);
         mock.Setup(s => s.GetBrowserType(It.IsAny<nint>(), It.IsAny<string>())).Returns(browserType);
