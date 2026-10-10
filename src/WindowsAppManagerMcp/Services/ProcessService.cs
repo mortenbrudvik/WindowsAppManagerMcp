@@ -8,18 +8,27 @@ namespace WindowsAppManagerMcp.Services;
 
 public class ProcessService : IProcessService
 {
+    // Characters cmd.exe interprets in a command line, even inside quotes for % and !.
+    // Control characters (line breaks in particular) are rejected as well.
+    private static readonly char[] CmdMetacharacters = ['&', '|', '<', '>', '^', '%', '!', '"'];
+
+    private const int MaxArgumentLengthInMessages = 80;
+
     private readonly IWindowService _windowService;
     private readonly IInputValidationService _validationService;
     private readonly IBrowserDetectionService _browserDetection;
+    private readonly IExecutableResolver _executableResolver;
 
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
-        IBrowserDetectionService browserDetection)
+        IBrowserDetectionService browserDetection,
+        IExecutableResolver? executableResolver = null)
     {
         _windowService = windowService;
         _validationService = validationService;
         _browserDetection = browserDetection;
+        _executableResolver = executableResolver ?? new ExecutableResolver();
     }
 
     public LaunchResult LaunchApplication(
@@ -29,48 +38,17 @@ public class ProcessService : IProcessService
         bool waitForWindow = false,
         int waitTimeoutMs = 5000)
     {
-        // Validate executable path
-        var executableValidation = _validationService.ValidateExecutable(executable);
-        if (!executableValidation.IsValid)
+        var plan = PlanLaunch(executable, arguments, workingDirectory);
+        if (!plan.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: executableValidation.Error, ErrorCode: executableValidation.ErrorCode);
+            return new LaunchResult(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
         }
 
-        // Validate working directory
-        var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
-        if (!workingDirValidation.IsValid)
-        {
-            return new LaunchResult(false, ErrorMessage: workingDirValidation.Error, ErrorCode: workingDirValidation.ErrorCode);
-        }
-
-        // Combine warnings
-        var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
-
-        // Auto-inject --new-window for browsers opening URLs
-        if (_browserDetection.IsBrowser(executable) && _browserDetection.ContainsUrl(arguments))
-        {
-            var newWindowFlag = _browserDetection.GetNewWindowFlag(executable);
-            if (newWindowFlag != null && (arguments?.All(a => a != newWindowFlag) ?? true))
-            {
-                arguments = new[] { newWindowFlag }.Concat(arguments ?? []).ToArray();
-            }
-        }
+        var warning = plan.Warning;
 
         try
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = executableValidation.SanitizedExecutable ?? executable,
-                UseShellExecute = true,
-                WorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory
-            };
-
-            if (arguments?.Length > 0)
-            {
-                startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments);
-            }
-
-            var process = Process.Start(startInfo);
+            var process = Process.Start(plan.StartInfo!);
             if (process == null)
             {
                 return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
@@ -94,6 +72,119 @@ public class ProcessService : IProcessService
         {
             return new LaunchResult(false, ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: warning);
         }
+    }
+
+    /// <summary>
+    /// Validates and resolves a launch request and builds the start info, without starting anything.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>Bare names are resolved to an absolute path by <see cref="IExecutableResolver"/>, never from
+    /// the working directory, and the resolved path is what gets started.</item>
+    /// <item>Arguments are quoted with the Windows command-line rules (<see cref="CommandLineBuilder"/>).</item>
+    /// <item>When the target is a batch file (ShellExecute runs it through cmd.exe) or cannot be verified to
+    /// be a native executable, arguments containing cmd.exe metacharacters are rejected, because cmd.exe
+    /// ignores \" escaping and expands %VAR% even inside quotes.</item>
+    /// </list>
+    /// </remarks>
+    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null)
+    {
+        // Validate executable path
+        var executableValidation = _validationService.ValidateExecutable(executable);
+        if (!executableValidation.IsValid)
+        {
+            return LaunchPlan.Rejected(executableValidation.Error, executableValidation.ErrorCode);
+        }
+
+        // Validate working directory
+        var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
+        if (!workingDirValidation.IsValid)
+        {
+            return LaunchPlan.Rejected(workingDirValidation.Error, workingDirValidation.ErrorCode);
+        }
+
+        // Combine warnings
+        var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
+
+        if (arguments != null && arguments.Any(a => a is null || a.Contains('\0')))
+        {
+            return LaunchPlan.Rejected(
+                "Arguments must not be null or contain NUL characters.",
+                nameof(LaunchErrorCode.InvalidArguments),
+                warning);
+        }
+
+        // Auto-inject --new-window for browsers opening URLs
+        if (_browserDetection.IsBrowser(executable) && _browserDetection.ContainsUrl(arguments))
+        {
+            var newWindowFlag = _browserDetection.GetNewWindowFlag(executable);
+            if (newWindowFlag != null && (arguments?.All(a => a != newWindowFlag) ?? true))
+            {
+                arguments = new[] { newWindowFlag }.Concat(arguments ?? []).ToArray();
+            }
+        }
+
+        var effectiveWorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory;
+        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, effectiveWorkingDirectory);
+
+        if (target.FoundOnlyInWorkingDirectory != null)
+        {
+            return LaunchPlan.Rejected(
+                $"'{executable}' was not found in the Windows directory, System32, PATH or App Paths, but " +
+                $"'{target.FoundOnlyInWorkingDirectory}' exists in the current or working directory. Bare names are " +
+                "never resolved from the working directory, to avoid running a planted program. Pass the full path " +
+                "if you intend to run that file.",
+                nameof(LaunchErrorCode.ExecutableInWorkingDirectory),
+                warning);
+        }
+
+        var isNativeExecutable = target.Kind == LaunchTargetKind.NativeExecutable;
+        if (!isNativeExecutable && arguments?.Length > 0)
+        {
+            var unsafeArgument = arguments.FirstOrDefault(ContainsCmdMetacharacters);
+            if (unsafeArgument != null)
+            {
+                return LaunchPlan.Rejected(
+                    BuildUnsafeBatchArgumentMessage(executable, target, unsafeArgument),
+                    nameof(LaunchErrorCode.UnsafeBatchArguments),
+                    warning);
+            }
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = target.FileName,
+            UseShellExecute = true,
+            WorkingDirectory = effectiveWorkingDirectory
+        };
+
+        if (arguments?.Length > 0)
+        {
+            startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
+        }
+
+        return new LaunchPlan(startInfo, target.Kind, warning);
+    }
+
+    private static bool ContainsCmdMetacharacters(string argument)
+    {
+        return argument.IndexOfAny(CmdMetacharacters) >= 0 || argument.Any(char.IsControl);
+    }
+
+    private static string BuildUnsafeBatchArgumentMessage(string executable, ResolvedLaunchTarget target, string argument)
+    {
+        var shownArgument = argument.Length > MaxArgumentLengthInMessages
+            ? argument[..MaxArgumentLengthInMessages] + "..."
+            : argument;
+
+        var reason = target.Kind == LaunchTargetKind.BatchFile
+            ? $"'{executable}' resolves to the batch file '{target.FileName}'. Windows runs batch files through cmd.exe"
+            : $"'{executable}' could not be verified to be a native .exe (it is a URI, document, shortcut, script or an " +
+              "unresolved name), so it may be run through cmd.exe";
+
+        return $"{reason}, which would interpret characters in the argument '{shownArgument}' " +
+               "(& | < > ^ % ! \" or control characters) as commands or variables. Remove those characters, " +
+               "or launch the program's .exe directly by its full path.";
     }
 
     private static string? CombineWarnings(string? warning1, string? warning2)

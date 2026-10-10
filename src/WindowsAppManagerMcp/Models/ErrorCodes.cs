@@ -72,7 +72,22 @@ public enum LaunchErrorCode
     ProcessStartFailed = 9,
 
     /// <summary>An exception occurred during launch.</summary>
-    LaunchException = 10
+    LaunchException = 10,
+
+    /// <summary>
+    /// An argument contains characters that cmd.exe would interpret (&amp; | &lt; &gt; ^ % ! " or control characters),
+    /// and the target is a batch file (.bat/.cmd) or could not be verified to be a native executable.
+    /// </summary>
+    UnsafeBatchArguments = 11,
+
+    /// <summary>An argument is null or contains a NUL character.</summary>
+    InvalidArguments = 12,
+
+    /// <summary>
+    /// A bare executable name was found only in the working directory. Bare names are never resolved
+    /// from the working directory, to avoid running a planted program.
+    /// </summary>
+    ExecutableInWorkingDirectory = 13
 }
 
 /// <summary>
