@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Contract;
@@ -14,7 +15,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// for tool results (<see cref="McpJsonUtilities.DefaultOptions"/>, the default of
 /// McpServerToolCreateOptions.SerializerOptions). A result that cannot be serialized fails
 /// after the tool's side effects already happened (window moved, browser launched), and the
-/// agent loses the whole result.
+/// agent loses the whole result. A tool that builds its own <see cref="CallToolResult"/> (the
+/// capture tools, which return image content) names the DTO of its text block with
+/// <see cref="ToolResultPayloadAttribute"/>, and that DTO is checked instead.
 /// </summary>
 public class ToolResultSerializationTests
 {
@@ -39,6 +42,19 @@ public class ToolResultSerializationTests
         ServerToolCatalog.ServedToolNames.Should().Contain("launch_browser_with_debug").And.Contain("move_window");
         ToolMethods.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
             "every tool the server serves must have its result type checked");
+    }
+
+    [Fact]
+    public void ToolsReturningCallToolResult_NameTheirTextBlockPayload()
+    {
+        // Without the attribute, the theories below would have nothing to check for these tools.
+        var undeclared = ToolMethods
+            .Where(t => UnwrapTask(t.Value.ReturnType) == typeof(CallToolResult))
+            .Where(t => t.Value.GetCustomAttribute<ToolResultPayloadAttribute>() == null)
+            .Select(t => t.Key);
+
+        undeclared.Should().BeEmpty(
+            "a tool that returns CallToolResult must name the DTO it serializes into its text block with [ToolResultPayload]");
     }
 
     [Theory]
@@ -119,9 +135,24 @@ public class ToolResultSerializationTests
         json.GetProperty("userDataDir").GetString().Should().Be(userDataDir);
     }
 
+    /// <summary>
+    /// The type the SDK serializes for the tool: its return type, unwrapped from Task, or for a tool
+    /// that returns <see cref="CallToolResult"/> the payload type of its text block. Null when there
+    /// is nothing to serialize.
+    /// </summary>
     private static Type? GetResultType(MethodInfo method)
     {
-        var type = method.ReturnType;
+        var type = UnwrapTask(method.ReturnType);
+        if (type == typeof(CallToolResult))
+        {
+            return method.GetCustomAttribute<ToolResultPayloadAttribute>()?.PayloadType;
+        }
+
+        return type;
+    }
+
+    private static Type? UnwrapTask(Type type)
+    {
         if (type == typeof(void) || type == typeof(Task) || type == typeof(ValueTask))
         {
             return null;
