@@ -176,15 +176,30 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 The project includes comprehensive tests:
 
 ```bash
-# Run all tests
+# Run all tests (safe on your desktop: desktop tests are skipped by default)
 dotnet test
 
+# Run what CI runs: leave desktop tests out of the run entirely
+dotnet test --filter "Category!=Desktop"
+
 # Run with coverage
-dotnet test --collect:"XPlat Code Coverage"
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
-- **780 tests** covering unit and integration scenarios
-- ~70% code coverage
+- **830+ tests** covering unit and integration scenarios, about 60% line coverage
+- By default a test run sends no keyboard or mouse input, launches or kills no
+  processes, and does not move, focus or close your windows (some tests only read
+  system state, such as the window, monitor and process lists)
+- **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) launch
+  real applications such as Notepad. They are skipped unless you opt in:
+
+```powershell
+$env:WAM_ALLOW_DESKTOP_TESTS = "1"
+dotnet test --filter "Category=Desktop"
+Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
+```
+
+See [TESTING.md](TESTING.md#desktop-tests) for details.
 
 ## Project Structure
 
