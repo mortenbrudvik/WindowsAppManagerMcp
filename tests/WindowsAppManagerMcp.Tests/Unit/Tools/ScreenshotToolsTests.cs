@@ -348,6 +348,25 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
+    public void CaptureWithElements_OfAMinimizedWindow_ReturnsCaptureFailedWithoutWalkingTheTree()
+    {
+        // Arrange - every element of a minimized window is offscreen, and its pixels cannot be captured
+        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(4242)))
+            .Returns(TestDataFactory.CreateWindowInfo(handleValue: 4242, title: "Notepad", state: WindowState.Minimized));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 4242);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var json = Metadata(result);
+        json.GetProperty("errorCode").GetString().Should().Be("CaptureFailed");
+        json.GetProperty("error").GetString().Should().Contain("minimized").And.Contain("set_window_state");
+        VerifyNoWalk();
+    }
+
+    [Fact]
     public void CaptureWithElements_ForAnUntitledWindow_StillCaptures()
     {
         // Arrange - popups and menus have no title, so GetWindowInfo reports nothing for them

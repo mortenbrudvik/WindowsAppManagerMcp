@@ -20,7 +20,7 @@ public class ScreenshotScalingTests
     }
 
     private ScreenshotService CreateSut() =>
-        new(_mockCaptureWrapper.Object, _mockMonitorService.Object);
+        new(_mockCaptureWrapper.Object, _mockMonitorService.Object, Mock.Of<INativeWindowWrapper>());
 
     #region Size limits
 

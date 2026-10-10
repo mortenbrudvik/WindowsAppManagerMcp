@@ -10,6 +10,7 @@ public class ScreenshotServiceTests
 
     private readonly Mock<IScreenCaptureWrapper> _mockCaptureWrapper;
     private readonly Mock<IMonitorService> _mockMonitorService;
+    private readonly Mock<INativeWindowWrapper> _windows = new();
 
     public ScreenshotServiceTests()
     {
@@ -18,7 +19,7 @@ public class ScreenshotServiceTests
     }
 
     private ScreenshotService CreateSut() =>
-        new ScreenshotService(_mockCaptureWrapper.Object, _mockMonitorService.Object);
+        new ScreenshotService(_mockCaptureWrapper.Object, _mockMonitorService.Object, _windows.Object);
 
     #region T9.2.1-T9.2.2: ListScreens Tests
 
@@ -442,6 +443,61 @@ public class ScreenshotServiceTests
         capture.Metadata.Success.Should().BeFalse();
         capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
         capture.Metadata.Error.Should().Contain("minimized");
+    }
+
+    [Fact]
+    public void CaptureWindow_WhenTheWindowIsMinimized_ReturnsCaptureFailed_AndCapturesNothing()
+    {
+        // Arrange - a minimized window's rectangle is the icon's at (-32000, -32000): the capture would succeed
+        // with a tiny or black image
+        var handle = new nint(12345);
+        _windows.Setup(w => w.IsIconic(handle)).Returns(true);
+        var sut = CreateSut();
+
+        // Act
+        var capture = sut.CaptureWindow(handle, includeFrame: true, Defaults);
+
+        // Assert
+        capture.Metadata.Success.Should().BeFalse();
+        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        capture.Metadata.Error.Should().Contain("minimized").And.Contain("set_window_state");
+        capture.Image.Should().BeNull();
+        _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void CaptureWindow_OfAChildOfAMinimizedWindow_ReturnsCaptureFailed()
+    {
+        // Arrange - a control inside a minimized window is offscreen with it, though it is not iconic itself
+        var child = new nint(0x2001);
+        var root = new nint(0x2000);
+        _windows.Setup(w => w.GetAncestor(child, WindowAncestor.Root)).Returns(root);
+        _windows.Setup(w => w.IsIconic(root)).Returns(true);
+
+        // Act
+        var capture = CreateSut().CaptureWindow(child, includeFrame: false, Defaults);
+
+        // Assert
+        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void CaptureWindowWithElements_WhenTheWindowIsMinimized_ReturnsCaptureFailed()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _windows.Setup(w => w.IsIconic(handle)).Returns(true);
+
+        // Act
+        var capture = CreateSut().CaptureWindowWithElements(handle, "Notepad", [], includeFrame: true,
+            highlightInteractable: true, Defaults);
+
+        // Assert
+        capture.Metadata.Success.Should().BeFalse();
+        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        capture.Metadata.Error.Should().Contain("minimized");
+        _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
