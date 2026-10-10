@@ -27,7 +27,7 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 
 - **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_move`, `type_text` and `send_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
 - Input never reaches the agent's own host (the terminal, editor or chat app the server was started from) unless the call names that window as `windowHandle` and passes `allowHostTarget: true`. Do that only when the user explicitly asked for it.
-- Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
+- Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key of a `send_keys` call (`KeysAfterFocusChange`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window. Closing more than 3 windows in one batch needs `confirm: true`.
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
@@ -2032,27 +2032,29 @@ Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to fin
 
 > **Warning:** Pass `windowHandle` with the window you mean. Without it, keyboard input goes to whatever window is in the foreground and clicks to whatever window is at the point; the guard then only keeps the input off the agent's own host, elevated and denied windows. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
-Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time.
+Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time.
 
 ### Input guard
 
-Before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
+Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
-1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)).
+1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
 2. **The desktop.** The session is locked (`SessionLocked`), or the input desktop cannot be reached because a UAC prompt or the Ctrl+Alt+Del screen is shown or the session is disconnected (`DesktopUnavailable`).
 3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
-4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`). For the mouse, the top-level window at the point: with a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a process the target started, such as a WebView2 dropdown (`TargetOccluded`). Another main window of the same process counts as covering the target. Then the window checks below.
+4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`); a modal dialog of a window the target owns is `BlockedByModal`, so keys never answer a modal prompt. For the mouse, the top-level window at the point (no window there: `TargetOccluded`). With a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a program the target started itself (a direct child process, such as the WebView2 process that shows an app's dropdowns), otherwise `TargetOccluded`. Another main window of the same process counts as covering the target, and so do the desktop and the taskbar. The child-process rule does not apply to File Explorer windows and the desktop shell (explorer.exe), which start almost every program. Then the window checks below.
 5. **`type_text` only.** A menu is active in the receiving window, so letters would select menu items (`TargetInMenuMode`). Close it with `send_keys` `{ESC}`, or click into the field.
 
-The window checks, in order: the window's process runs at a higher integrity level than the server, for example as administrator, so Windows would silently drop the input (`TargetElevated`); the server's [target policy](#target-policy) refuses the process (`TargetDeniedByPolicy`); the window is the agent's own host or a window it owns (`TargetIsAgentHost`), unless the call names it as `windowHandle` with `allowHostTarget: true`.
+The window checks, in order: the window's process runs at a higher integrity level than the server, for example as administrator, so Windows would silently drop the input (`TargetElevated`); the server's [target policy](#target-policy) refuses the process (`TargetDeniedByPolicy`); the window is the agent's own host or a window it owns (`TargetIsAgentHost`), unless the call names that host window as `windowHandle` with `allowHostTarget: true`. `allowHostTarget` lifts this check only for the `windowHandle` window and the windows it owns, never for a popup that is accepted because of its process.
 
-Before every later batch the guard checks again. `type_text` sends at most 32 characters per batch (one character per batch with `delayMs`), and stops with `TargetLostFocus` when a window outside the target comes to the front; `charactersTyped` says how much was typed. A click checks the point again after the cursor moved and before each button press.
+Right before every batch the guard checks the foreground window or the point again. `type_text` sends at most 32 characters per batch (one character per batch with `delayMs`), and stops with `TargetLostFocus` when a window outside the target comes to the front, or with `BlockedByModal` when a modal dialog of the target opens (a "Save changes?" prompt, whose buttons letters and Enter could press); `charactersTyped` says how much was typed. A click checks the point again after the cursor moved and before each button press. Each press is sent together with a move to the checked point, in one batch that no other input can interrupt, so a user moving the mouse cannot make it land elsewhere. If the pointer does not stay at the point (it is confined to a window, for example by a game or a remote session, or the user keeps moving the mouse), nothing (more) is clicked (`CursorNotAtPoint`).
+
+What the guard cannot rule out: the user or another program can still change the foreground window between the last check and the moment Windows delivers the input (a few milliseconds), and an application can react to a key by opening or activating another window (Enter in File Explorer opens a file, Alt+F then X picks File, Exit); keys after such a key go to that window. Send keys that may open, close or switch windows as the last key of a call, and check `foregroundAfter`. A popup-like window (no title bar) of a program the target started itself, such as a borderless game started by a launcher, counts as part of the target.
 
 Every input result reports:
 
 | Field | Meaning |
 |-------|---------|
-| `receivingWindow` | `{handle, title, processName, processId}` of the window the input went to, or would have gone to when it was refused: the foreground window for keys (possibly a dialog of the target), the top-level window at the point for the mouse. Left out when nothing was checked (empty text, coordinates outside the screen) |
+| `receivingWindow` | `{handle, title, processName, processId}` of the window the input went to, or would have gone to when it was refused: the foreground window for keys (possibly a dialog of the target), the top-level window at the point for the mouse. When the request itself or the `windowHandle` target is refused (`DestructiveChordNeedsTarget`, `KeysAfterFocusChange`, or the target's `TargetElevated`, `TargetDeniedByPolicy`, `TargetIsAgentHost`, `BlockedByModal`), it names the window in front for the request, and the target for the target. Left out when nothing was checked (empty text, coordinates outside the screen) |
 | `foregroundAfter` | The foreground window right after the call, in the same shape. The application may still be processing the input |
 | `actualX`, `actualY` | Mouse tools: where the cursor is after the call |
 | `blockingWindow` | With `BlockedByModal`: the dialog that disables the target. Deal with it first (pass its handle as `windowHandle`), or ask the user |
@@ -2063,10 +2065,12 @@ Every input result reports:
 |------|---------|------------|
 | `TargetIsAgentHost` | The input would reach the agent's own terminal, editor or chat app | Pass `windowHandle` with the window you mean. For the host window itself, and only when the user asked: its handle as `windowHandle` with `allowHostTarget: true` |
 | `TargetNotForeground` | Keys: the target could not be brought to the front, or no window is in the foreground | Check `receivingWindow` (what is in front instead); call [focus_window](#focus_window) for details, or ask the user |
-| `TargetOccluded` | Mouse: another window is at the point | Bring the target to the front, or take fresh coordinates from `get_ui_elements` |
-| `BlockedByModal` | A modal dialog disables the target | Deal with `blockingWindow` first, or ask the user |
-| `TargetLostFocus` | `type_text`: another window came to the front while typing; `charactersTyped` characters were typed | Check the field, then type the rest |
+| `TargetOccluded` | Mouse: another window, or no window, is at the point | Bring the target to the front, or take fresh coordinates from `get_ui_elements` |
+| `BlockedByModal` | A modal dialog disables the target, or opened while typing | Deal with `blockingWindow` first, or ask the user |
+| `TargetLostFocus` | Keys: another window came to the front before or while the keys were sent; `charactersTyped` characters were typed | Check the field, then type the rest |
 | `DestructiveChordNeedsTarget` | `send_keys`: a closing, quitting or locking chord without `windowHandle` | Pass `windowHandle`; to close a window, use [close_window](#close_window) |
+| `KeysAfterFocusChange` | `send_keys`: keys after a chord that hands the keyboard to another window | Make that chord the last key; send the rest in a new call |
+| `CursorNotAtPoint` | Mouse: the pointer does not stay at the point | Try again; if it repeats, ask the user (a game or remote session may hold the mouse) |
 | `TargetElevated` | The window runs with higher privileges than the server; Windows would drop the input | Ask the user to do the step, or to run the server elevated |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the window's app | Ask the user to do the step; no tool argument changes it |
 | `DesktopUnavailable`, `SessionLocked` | Input cannot reach the desktop | Wait for the user, then retry |
@@ -2130,7 +2134,7 @@ Perform a left mouse click at the specified screen coordinates. Pass `windowHand
 }
 ```
 
-Coordinates outside every monitor return `CoordinatesOutOfBounds` without `receivingWindow`. The guard's codes are listed under [Input guard](#input-guard).
+Coordinates outside every monitor return `CoordinatesOutOfBounds` without `receivingWindow`. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (`CursorNotAtPoint`). The guard's codes are listed under [Input guard](#input-guard).
 
 ---
 
@@ -2219,7 +2223,7 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 |-----------|------|----------|---------|-------------|
 | x | int | Yes | - | X coordinate (screen position) |
 | y | int | Yes | - | Y coordinate (screen position) |
-| windowHandle | long | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| windowHandle | long | No | none | The window the input is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
 | allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 
 **Example:**
@@ -2250,7 +2254,7 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 }
 ```
 
-The same [Input guard](#input-guard) checks as for clicks apply: a move over the agent's own terminal without it as `windowHandle` is refused with `TargetIsAgentHost`.
+The same [Input guard](#input-guard) checks as for clicks apply: a move over the agent's own terminal without it as `windowHandle` is refused with `TargetIsAgentHost`, and a pointer that cannot be placed at the point (it is confined to a window) is `CursorNotAtPoint`, with `actualX` and `actualY` where it is.
 
 ---
 
@@ -2318,13 +2322,13 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 }
 ```
 
-When another window comes to the front while typing, the call stops with `TargetLostFocus`; `charactersTyped` says how many characters were typed (into `receivingWindow`) before it stopped. An empty `text` returns `EmptyText`.
+When another window comes to the front while typing, the call stops with `TargetLostFocus`; when a modal dialog of the target opens (such as a "Save changes?" prompt), it stops with `BlockedByModal` and the dialog in `blockingWindow`. `charactersTyped` says how many characters were typed (into the window that was in front) before it stopped. An empty `text` returns `EmptyText`.
 
 ---
 
 ### send_keys
 
-Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`: the server brings that window to the front first and sends the keys only while it, or a dialog it owns, is in front ([Input guard](#input-guard)). Without `windowHandle` the keys go to whatever window is in the foreground; confirm it with `get_foreground_window` first. Chords that close, quit or lock (such as Alt+F4) are refused without `windowHandle` (`DestructiveChordNeedsTarget`).
+Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`: the server brings that window to the front first and sends the keys only while it, or a dialog it owns, is in front ([Input guard](#input-guard)). Without `windowHandle` the keys go to whatever window is in the foreground; confirm it with `get_foreground_window` first. Chords that close, quit or lock (such as Alt+F4) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space, or a closing chord) must be the last key of the call (`KeysAfterFocusChange`).
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -2412,6 +2416,8 @@ This deletes everything in the focused control. Pass `windowHandle`, and check w
 ```
 
 > **Closing a window:** do not send Alt+F4 (`%{F4}`). Without `windowHandle` it is refused with `DestructiveChordNeedsTarget`; with it, it still closes whatever the window does on Alt+F4. Use [close_window](#close_window) with the window's handle instead.
+
+> **Switching windows:** keys after Alt+Tab (`%{TAB}`), Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space or a closing chord would go to whatever window comes to the front, so `send_keys` refuses them (`KeysAfterFocusChange`): `"%{TAB}{ENTER}"` is refused, `"%{TAB}"` alone is sent. To work in another window, pass that window's handle as `windowHandle` in the next call instead of switching with keys.
 
 **Example 4:** Select to beginning (Shift+Home)
 > "Select text from cursor to beginning of line"
@@ -3224,7 +3230,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window: Windows blocked the close message (Win32 error 5), because the window belongs to a more privileged app |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
-| `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, named in `blockingWindow`; nothing was sent |
+| `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
@@ -3304,9 +3310,9 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
-| `TargetLostFocus` | [type_text](#type_text) | Another window came to the front while typing; `charactersTyped` says how much was typed before typing stopped |
+| `TargetLostFocus` | [type_text](#type_text), [send_keys](#send_keys) | Another window came to the front after the check and before or while the keys were sent; `charactersTyped` says how much was typed before typing stopped |
 | `TargetNotForeground` | [type_text](#type_text), [send_keys](#send_keys) | The target window could not be brought to the foreground, or no window is in the foreground; nothing was sent |
-| `TargetOccluded` | [click](#click), right_click, double_click, mouse_move | Another window, not the target or a popup of it, is at the point; nothing was sent (double_click: the result says when the first click was sent) |
+| `TargetOccluded` | [click](#click), right_click, double_click, mouse_move | Another window, not the target or a popup of it, is at the point, or no window can be found there; nothing was sent (double_click: the result says when the first click was sent) |
 | `TerminationException` | [kill_process](#kill_process) | Unexpected error |
 | `TerminationNotConfirmed` | [kill_process](#kill_process) | Force mode: the process had not exited when the wait ended |
 | `ToolError` | any tool (`isError: true`) | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |

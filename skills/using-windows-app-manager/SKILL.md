@@ -30,10 +30,12 @@ The mouse and keyboard tools send real input to the user's desktop.
 - **What a refusal means and what to do:**
   - `TargetIsAgentHost`: the input would have reached your own terminal or chat window. Pass `windowHandle` with the window you mean.
   - `TargetNotForeground`: the target could not be brought to the front (`receivingWindow` is what is in front instead). Call `focus_window` to see why, or ask the user.
-  - `TargetOccluded`: another window covers the point. Bring the target to the front with `focus_window`, or take fresh coordinates from `get_ui_elements`.
-  - `BlockedByModal`: a modal dialog (`blockingWindow`) disables the target. Look at the dialog and decide deliberately, or ask the user; pass the dialog's handle as `windowHandle` to act on it.
-  - `TargetLostFocus`: another window came to the front while typing; `charactersTyped` says how much was typed. Check the field before typing the rest.
-  - `DestructiveChordNeedsTarget`: `send_keys` with a chord that closes, quits or locks (Alt+F4 `%{F4}`, `^w`, `^q`, `^+{ESC}`) needs `windowHandle`. To close a window, use `close_window`.
+  - `TargetOccluded`: another window covers the point (or no window is there). Bring the target to the front with `focus_window`, or take fresh coordinates from `get_ui_elements`.
+  - `BlockedByModal`: a modal dialog (`blockingWindow`) disables the target, or opened while typing (`charactersTyped` says how much was typed). Look at the dialog and decide deliberately, or ask the user; pass the dialog's handle as `windowHandle` to act on it.
+  - `TargetLostFocus`: another window came to the front before or while the keys were sent; `charactersTyped` says how much was typed. Check the field before typing the rest.
+  - `DestructiveChordNeedsTarget`: `send_keys` with a chord that closes, quits or locks (Alt+F4 `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}`) needs `windowHandle`. To close a window, use `close_window`.
+  - `KeysAfterFocusChange`: `send_keys` had more keys after a chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space, or a closing chord). Make that chord the last key and send the rest in a new call; better, pass the other window's handle as `windowHandle` instead of switching with Alt+Tab.
+  - `CursorNotAtPoint`: the mouse pointer did not stay at the point (a game or remote session holds it, or the user is moving the mouse), so nothing was clicked. Try once more; if it repeats, ask the user.
   - `TargetInMenuMode`: a menu is open, so `type_text` would pick menu items. Close it with `send_keys` `{ESC}` (with `windowHandle`) or click into the field.
   - `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step.
   - `TargetDeniedByPolicy`: the user does not allow the agent to act on that app (password managers and credential prompts by default). No argument changes it, not even `force` or `forceKill`: ask the user to do the step. `close_window`, `close_windows_batch`, `kill_process`, `capture_window` and `capture_with_elements` refuse such apps the same way.
