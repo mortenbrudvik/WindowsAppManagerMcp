@@ -95,7 +95,7 @@ public class BrowserReadingTools
     private static DebugBrowserLaunchResultDto ToDto(DebugBrowserLaunchResult result) => new(
         Success: result.Success,
         ProcessId: result.ProcessId,
-        WindowHandle: result.WindowHandle,
+        WindowHandle: result.WindowHandle?.ToInt64(),
         CdpPort: result.CdpPort,
         UserDataDir: result.UserDataDir,
         Error: result.Error,
@@ -135,7 +135,7 @@ public record BrowserContentResultDto(
 public record DebugBrowserLaunchResultDto(
     bool Success,
     int? ProcessId,
-    nint? WindowHandle,
+    long? WindowHandle,
     int? CdpPort,
     string? UserDataDir,
     string? Error,

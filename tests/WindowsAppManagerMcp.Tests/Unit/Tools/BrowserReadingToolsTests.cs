@@ -419,7 +419,7 @@ public class BrowserReadingToolsTests
         // Assert
         result.Success.Should().BeTrue();
         result.ProcessId.Should().Be(processId);
-        result.WindowHandle.Should().Be(windowHandle);
+        result.WindowHandle.Should().Be(windowHandle.ToInt64());
         result.CdpPort.Should().Be(cdpPort);
         result.UserDataDir.Should().Be(userDataDir);
         result.Error.Should().BeNull();
