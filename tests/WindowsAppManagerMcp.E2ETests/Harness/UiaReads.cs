@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
+using WindowsAppManagerMcp.Native;
 
 namespace WindowsAppManagerMcp.E2ETests.Harness;
 
@@ -18,6 +19,8 @@ public static class UiaReads
     {
         try
         {
+            // The client's first call in a process fails when another thread makes one at the same time
+            UiaClientStartup.Shared.EnsureStarted();
             var focused = AutomationElement.FocusedElement;
             if (focused == null)
             {
@@ -41,6 +44,7 @@ public static class UiaReads
     /// <summary>The ValuePattern value of the element with <paramref name="automationId"/> in window <paramref name="window"/>.</summary>
     public static string? ReadValue(nint window, string automationId)
     {
+        UiaClientStartup.Shared.EnsureStarted();
         var element = AutomationElement.FromHandle(window)?.FindFirst(
             TreeScope.Descendants,
             new PropertyCondition(AutomationElement.AutomationIdProperty, automationId));

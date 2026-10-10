@@ -16,6 +16,7 @@ public class UIAutomationWrapper : IUIAutomationWrapper
         try
         {
             // Try to access the root element to verify UI Automation is working
+            UiaClientStartup.Shared.EnsureStarted();
             var root = AutomationElement.RootElement;
             return root != null;
         }
@@ -31,6 +32,7 @@ public class UIAutomationWrapper : IUIAutomationWrapper
         element = null;
         try
         {
+            UiaClientStartup.Shared.EnsureStarted();
             element = AutomationElement.FromHandle(hwnd);
             return element != null;
         }
@@ -45,6 +47,7 @@ public class UIAutomationWrapper : IUIAutomationWrapper
     {
         try
         {
+            UiaClientStartup.Shared.EnsureStarted();
             var element = AutomationElement.FromHandle(hwnd);
             return element?.Current.Name;
         }
@@ -59,6 +62,7 @@ public class UIAutomationWrapper : IUIAutomationWrapper
     {
         try
         {
+            UiaClientStartup.Shared.EnsureStarted();
             var browserElement = AutomationElement.FromHandle(browserHandle);
             if (browserElement == null)
                 return null;
@@ -81,6 +85,7 @@ public class UIAutomationWrapper : IUIAutomationWrapper
     {
         try
         {
+            UiaClientStartup.Shared.EnsureStarted();
             var browserElement = AutomationElement.FromHandle(browserHandle);
             if (browserElement == null)
                 return null;

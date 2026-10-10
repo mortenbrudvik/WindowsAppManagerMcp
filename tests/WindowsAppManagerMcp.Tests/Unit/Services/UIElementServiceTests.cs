@@ -396,8 +396,9 @@ public class UIElementServiceTests
         // Act
         CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: ["Button"], InteractableOnly: true));
 
-        // Assert - each extra read is a cross-process call per element
-        _tree.Reads.Where(r => r.StartsWith("Interaction:")).Should().Equal("Interaction:Go");
+        // Assert - each extra read is a cross-process call per element; focus itself is never read
+        _tree.Reads.Where(r => r.StartsWith("Interactable:")).Should().Equal("Interactable:Go");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Interaction:"));
     }
 
     [Fact]
@@ -528,11 +529,31 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenInteractionPropertiesCannotBeRead_SkipsTheElement()
+    public void GetUIElements_WhenInteractionPropertiesCannotBeRead_LeavesOutOnlyThatElement()
     {
-        // Arrange
+        // Arrange - a container whose provider fails a pattern query
         Window(
-            new FakeUiaNode("Button", "Bad") { InteractionException = FakeUiaTree.Vanished() },
+            new FakeUiaNode("Pane", "Bad") { InteractionException = new System.Runtime.InteropServices.COMException("pattern query failed") }.With(
+                new FakeUiaNode("Button", "Inside") { ActionPatterns = ["Invoke"] }),
+            new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
+
+        // Act
+        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(InteractableOnly: true));
+
+        // Assert - the filters decide about the element itself, so its interactable children stay
+        Shape(result.Elements).Should().Be("Inside,Good");
+        result.SkippedElementCount.Should().Be(1);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(UIElementTruncationReason.ElementsSkipped);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenAnElementVanishesWhileItsInteractionIsRead_SkipsItsSubtree()
+    {
+        // Arrange - the element is gone, and the elements inside it with it
+        Window(
+            new FakeUiaNode("Pane", "Gone") { InteractionException = FakeUiaTree.Vanished() }.With(
+                new FakeUiaNode("Button", "Inside") { ActionPatterns = ["Invoke"] }),
             new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
 
         // Act
@@ -541,6 +562,7 @@ public class UIElementServiceTests
         // Assert
         Shape(result.Elements).Should().Be("Good");
         result.SkippedElementCount.Should().Be(1);
+        _tree.ReadNodes.Should().NotContain("Inside");
     }
 
     [Fact]
@@ -644,7 +666,28 @@ public class UIElementServiceTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("before any element was read");
         result.Elements.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheTimeoutPassesBeforeAnElementMatches_SaysHowManyWereRead()
+    {
+        // Arrange - two elements are read, neither is a Button, then the timeout passes
+        using var cts = new CancellationTokenSource();
+        Window(
+            Node("Text", "A"),
+            new FakeUiaNode("Pane", "B") { OnRead = cts.Cancel }.With(Node("Button", "B1")),
+            Node("Button", "C"));
+
+        // Act
+        var result = CreateSut().GetUIElements(
+            Handle, filter: new UIElementFilter(ControlTypes: ["Button"]), cancellationToken: cts.Token);
+
+        // Assert - elements were read, so "before any element was read" would be wrong
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("before any element matching the filters was found (2 elements were read)");
     }
 
     [Fact]
@@ -664,12 +707,61 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public void GetUIElements_CountsTheWalkAgainstTheProcessThatOwnsTheWindow()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(4242u);
+
+        // Act
+        new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+
+        // Assert - a hung application then blocks only walks of its own windows
+        _worker.LastTargetProcessId.Should().Be(4242);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Throws(new InvalidOperationException("gone"));
+
+        // Act
+        var result = new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _worker.LastTargetProcessId.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetUIElements_WhileEarlierWalksOfTheApplicationAreStuck_ReturnsOperationTimedOut()
+    {
+        // Arrange - the worker refuses to start another read of the hung application
+        BuildToolbarWindow();
+        var worker = new Mock<IUiaWorker>();
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .Throws(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
+
+        // Act
+        var result = new UIElementService(_tree, worker.Object).GetUIElements(Handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("process 4242");
+    }
+
+    [Fact]
     public void GetUIElements_WhenUiAutomationDoesNotAnswerByTheDeadline_ReturnsOperationTimedOut()
     {
         // Arrange - the worker gave up on a read stuck in a hung application
         BuildToolbarWindow();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
             .Throws(new TimeoutException("UI Automation did not answer in time."));
         var sut = new UIElementService(_tree, worker.Object);
 

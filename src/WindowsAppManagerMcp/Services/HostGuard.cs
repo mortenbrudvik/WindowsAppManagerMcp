@@ -15,7 +15,10 @@ public sealed class HostGuard : IHostGuard
     private readonly INativeProcessWrapper _processes;
     private readonly ILogger<HostGuard>? _logger;
 
-    /// <summary>The processes <see cref="IsHostProcess"/> recognizes besides the server: ancestors and the console host.</summary>
+    /// <summary>
+    /// The processes, besides the server, all of whose windows are host windows: the ancestors and the
+    /// console host. <see cref="IsHostProcess"/> also counts the startup foreground window's process.
+    /// </summary>
     private readonly IReadOnlyList<HostProcess> _hostProcesses;
 
     /// <summary>The windows recorded by identity: the console host window and the startup foreground window.</summary>
@@ -35,16 +38,41 @@ public sealed class HostGuard : IHostGuard
             .OfType<HostWindow>()
             .ToList();
 
-        _logger?.LogDebug(
-            "Agent host recorded: ancestors {Ancestors}, console host window {ConsoleHost}, startup foreground window {Foreground}",
+        // Information, so the record behind a later refusal shows in the server log (it is enabled for
+        // this category, see ServiceRegistration.AddWindowsAppManagerLogLevels)
+        _logger?.LogInformation(
+            "Agent host recorded: ancestors {Ancestors}, console host window {ConsoleHost} (process {ConsoleHostProcess}), " +
+            "startup foreground window {Foreground} (process {ForegroundProcess}), shell process {ShellProcess}",
             string.Join(", ", Host.Ancestors.Select(a => a.ProcessId)),
             Host.ConsoleHostWindow?.Handle,
-            Host.StartupForegroundWindow?.Handle);
+            Host.ConsoleHostWindow?.Process.ProcessId,
+            Host.StartupForegroundWindow?.Handle,
+            Host.StartupForegroundWindow?.Process.ProcessId,
+            Host.ShellProcessId);
     }
 
     public HostSnapshot Host { get; }
 
     public bool IsHostProcess(int processId)
+    {
+        if (IsSessionProcess(processId))
+        {
+            return true;
+        }
+
+        // Ending the process that owned the startup foreground window closes that window, which is
+        // where a delegated terminal shows the agent
+        return processId > 0 &&
+               Host.StartupForegroundWindow is { } foreground &&
+               foreground.Process.ProcessId == processId &&
+               IsStillRunningAs(foreground.Process);
+    }
+
+    /// <summary>
+    /// The server, a recorded ancestor or the console host's process: every window of these reaches
+    /// the agent's session.
+    /// </summary>
+    private bool IsSessionProcess(int processId)
     {
         if (processId <= 0)
         {
@@ -75,11 +103,12 @@ public sealed class HostGuard : IHostGuard
             return true;
         }
 
-        // Windows of host processes, except the desktop shell's
+        // Windows of the server, its ancestors and the console host, except the desktop shell's. The
+        // startup foreground window's process is left out here: only its recorded window counts.
         return candidates.Any(candidate =>
         {
             var processId = (int)_windows.GetWindowThreadProcessId(candidate);
-            return processId != 0 && processId != Host.ShellProcessId && IsHostProcess(processId);
+            return processId != 0 && processId != Host.ShellProcessId && IsSessionProcess(processId);
         });
     }
 

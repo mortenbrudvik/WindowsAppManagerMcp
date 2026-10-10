@@ -186,19 +186,20 @@ public class ScreenshotScalingTests
     }
 
     [Fact]
-    public void CaptureRegion_WhenScaledHeightCollapses_ReturnsInvalidImageSize()
+    public void CaptureRegion_WhenScaledHeightCollapses_KeepsOnePixelAndMapsEachAxisOnItsOwn()
     {
         // Arrange
         var sut = CreateSut();
 
-        // Act
+        // Act - 1920 x 2 at a width of 100 would be 0.1 pixels high
         var capture = sut.CaptureRegion(0, 0, 1920, 2, new CaptureOptions { MaxWidth = 100 });
 
         // Assert
-        capture.Metadata.Success.Should().BeFalse();
-        capture.Image.Should().BeNull();
-        capture.Metadata.ErrorCode.Should().Be("InvalidImageSize");
-        capture.Metadata.Error.Should().Contain("1920x2");
+        capture.Metadata.Success.Should().BeTrue();
+        capture.Metadata.Width.Should().Be(100);
+        capture.Metadata.Height.Should().Be(1);
+        capture.Metadata.ImageToScreen!.ScaleX.Should().Be(19.2);
+        capture.Metadata.ImageToScreen.ScaleY.Should().Be(2);
     }
 
     #endregion

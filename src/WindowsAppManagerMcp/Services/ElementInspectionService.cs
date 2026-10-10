@@ -51,7 +51,12 @@ public class ElementInspectionService : IElementInspectionService
         FocusedElementResult Failure(string error, UIElementErrorCode code) =>
             new(false, null, null, null, null, null, Elapsed(stopwatch), error, code);
 
+        // Keyboard focus is in the foreground window, so a hung foreground application is the one
+        // that can block this read
+        var targetProcessId = ProcessOf(SafeRead(_windows.GetForegroundWindow));
+
         return Read(
+            targetProcessId,
             () =>
             {
                 if (!_tree.IsAvailable())
@@ -106,15 +111,19 @@ public class ElementInspectionService : IElementInspectionService
 
         var ancestorCount = Math.Clamp(ancestors, 0, MaxAncestors);
 
+        // The top-level window hit-tested at the point. WindowFromPoint and GetAncestor do not wait
+        // for the window's application, so this runs before the read, and the application that owns
+        // the window is the one that can block it.
+        var hitWindow = SafeRead(() => _hitTest.GetRootWindow(_hitTest.WindowFromPoint(x, y)));
+
         return Read(
+            ProcessOf(hitWindow),
             () =>
             {
                 if (!_tree.IsAvailable())
                 {
                     return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
                 }
-
-                var hitWindow = _hitTest.GetRootWindow(_hitTest.WindowFromPoint(x, y));
 
                 var node = _tree.FromPoint(x, y);
                 if (node == null)
@@ -125,8 +134,9 @@ public class ElementInspectionService : IElementInspectionService
                 var (details, identity) = ReadDetails(node);
                 var chain = ReadAncestors(node, ancestorCount);
 
-                // WindowFromPoint skips hidden and disabled windows (such as the owner of a modal
-                // dialog); fall back to the window the element belongs to
+                // WindowFromPoint skips hidden windows and disabled child windows. It practically
+                // always hits a window (the desktop is under everything); the element's own window is
+                // only a fallback for when it hit none
                 var window = hitWindow != nint.Zero ? hitWindow : FindOwningWindow(node, identity);
                 var (processId, processName) = DescribeProcess(identity, window);
 
@@ -153,6 +163,7 @@ public class ElementInspectionService : IElementInspectionService
     /// turns its failures into results.
     /// </summary>
     private T Read<T>(
+        int targetProcessId,
         Func<T> read,
         Func<string, UIElementErrorCode, T> failure,
         string subject,
@@ -164,12 +175,17 @@ public class ElementInspectionService : IElementInspectionService
 
         try
         {
-            return _worker.Run(_ => read(), deadline.Token, TimeSpan.Zero);
+            return _worker.Run(targetProcessId, _ => read(), deadline.Token, TimeSpan.Zero);
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
             // The request was cancelled, not timed out: let the SDK report it
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (UiaReadRefusedException ex)
+        {
+            // Earlier reads of the same application are still stuck; nothing was waited for
+            return failure(ex.Message, UIElementErrorCode.OperationTimedOut);
         }
         catch (TimeoutException ex)
         {
@@ -188,6 +204,26 @@ public class ElementInspectionService : IElementInspectionService
         catch (Exception ex)
         {
             return failure($"Error reading UI Automation: {ex.Message}", UIElementErrorCode.OperationException);
+        }
+    }
+
+    /// <summary>The process that owns <paramref name="window"/>, or 0 when there is none or it cannot be read.</summary>
+    private int ProcessOf(nint window) =>
+        window == nint.Zero ? 0 : (int)SafeRead(() => _windows.GetWindowThreadProcessId(window));
+
+    /// <summary>
+    /// A Win32 read made before the UI Automation read. A failure only means "unknown": the worker then
+    /// counts the read for an unknown target, and get_element_at_point uses the element's own window.
+    /// </summary>
+    private static TValue SafeRead<TValue>(Func<TValue> read) where TValue : struct
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception)
+        {
+            return default;
         }
     }
 

@@ -18,7 +18,9 @@ namespace WindowsAppManagerMcp.Services;
 /// returned. An element that fails one is left out, and the elements inside it that pass take its
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
 /// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
-/// siblings. A timeout ends the walk and returns what was read so far.</item>
+/// siblings. An element whose interaction properties cannot be read (interactableOnly) is left out
+/// and counted too, but the elements inside it are still walked. A timeout ends the walk and returns
+/// what was read so far.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -34,11 +36,17 @@ public class UIElementService : IUIElementService
 
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
+    private readonly INativeWindowWrapper? _windows;
 
-    public UIElementService(IUiaTree tree, IUiaWorker worker)
+    /// <param name="tree">The UI Automation tree.</param>
+    /// <param name="worker">Runs the walk under a deadline.</param>
+    /// <param name="windows">Identifies the process that owns the window, so a hung application blocks
+    /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count.</param>
+    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null)
     {
         _tree = tree;
         _worker = worker;
+        _windows = windows;
     }
 
     /// <inheritdoc />
@@ -72,6 +80,7 @@ public class UIElementService : IUIElementService
         try
         {
             return _worker.Run(
+                TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, token),
                 cancellationToken,
                 StopGrace);
@@ -80,6 +89,20 @@ public class UIElementService : IUIElementService
         {
             // The worker gave up on a read stuck in an application that does not answer
             return CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+    }
+
+    /// <summary>The process that owns the window, or 0 when it is not known.</summary>
+    private int TargetProcessId(nint windowHandle)
+    {
+        try
+        {
+            return (int)(_windows?.GetWindowThreadProcessId(windowHandle) ?? 0);
+        }
+        catch (Exception)
+        {
+            // Only the stuck-read count depends on it
+            return 0;
         }
     }
 
@@ -157,13 +180,13 @@ public class UIElementService : IUIElementService
 
             if (walk.TimedOut && walk.ElementCount == 0)
             {
-                return CreateErrorResult(
-                    windowHandle,
-                    stopwatch,
-                    "The timeout passed before any element was read. Try again with a larger timeoutMs; " +
-                    "if it keeps happening, the application may not be responding.",
-                    UIElementErrorCode.OperationTimedOut,
-                    windowTitle);
+                var message = walk.ReadCount == 0
+                    ? "The timeout passed before any element was read. Try again with a larger timeoutMs; " +
+                      "if it keeps happening, the application may not be responding."
+                    : $"The timeout passed before any element matching the filters was found ({walk.ReadCount} " +
+                      $"element{(walk.ReadCount == 1 ? " was" : "s were")} read). Try again with a larger timeoutMs, " +
+                      "a smaller maxDepth or looser filters.";
+                return CreateErrorResult(windowHandle, stopwatch, message, UIElementErrorCode.OperationTimedOut, windowTitle);
             }
 
             var truncationReason = walk.TimedOut
@@ -236,6 +259,9 @@ public class UIElementService : IUIElementService
         /// <summary>Elements, or lists of children, that could not be read.</summary>
         public int SkippedElementCount { get; private set; }
 
+        /// <summary>Elements whose properties were read, returned or not.</summary>
+        public int ReadCount { get; private set; }
+
         /// <summary>The deepest level an element was read at (the window's children are level 1).</summary>
         public int DepthReached { get; private set; }
 
@@ -295,6 +321,7 @@ public class UIElementService : IUIElementService
             try
             {
                 properties = tree.Read(node);
+                ReadCount++;
                 DepthReached = Math.Max(DepthReached, level);
 
                 if (filter?.VisibleOnly == true && properties.IsOffscreen)
@@ -336,7 +363,8 @@ public class UIElementService : IUIElementService
 
         /// <summary>
         /// The controlTypes, size and interactable filters, cheapest first: the interactable check
-        /// reads more properties, so it runs only for elements that pass the others.
+        /// reads more properties, so it runs only for elements that pass the others. Throws only when
+        /// the element disappeared.
         /// </summary>
         private bool PassesFilters(IUiaNode node, UiaNodeProperties properties)
         {
@@ -364,8 +392,18 @@ public class UIElementService : IUIElementService
                     return false;
                 }
 
-                var interaction = tree.ReadInteraction(node);
-                return interaction.IsKeyboardFocusable || interaction.ActionPatterns.Count > 0;
+                try
+                {
+                    return tree.IsInteractable(node);
+                }
+                catch (Exception ex) when (ex is not UiaElementUnavailableException)
+                {
+                    // Only this element's own properties failed (a provider that rejects a pattern
+                    // query, for example): leave the element out, but keep walking the elements
+                    // inside it. A vanished element is skipped with its subtree, which is gone too.
+                    SkippedElementCount++;
+                    return false;
+                }
             }
 
             return true;

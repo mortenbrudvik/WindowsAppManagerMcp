@@ -308,6 +308,69 @@ public class ProcessServiceTests
         result.Should().Contain(p => p.ProcessId == currentPid);
     }
 
+    [Fact]
+    public void GetRunningProcesses_CountsWindowsOnOtherDesktopsToolAndShellWindowsButNotUntitledOnes()
+    {
+        // Arrange - the test host stands in for a debug browser whose window the user moved to
+        // another virtual desktop: the user-facing listings leave that cloaked window out
+        using var self = Process.GetCurrentProcess();
+        WindowQuery? query = null;
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Callback<WindowQuery>(q => query = q)
+            .Returns(
+            [
+                TestDataFactory.CreateWindowInfo(1, "Debug browser", self.ProcessName, self.Id) with { IsCloaked = true },
+                TestDataFactory.CreateWindowInfo(2, "Find", self.ProcessName, self.Id),
+                TestDataFactory.CreateWindowInfo(3, "", self.ProcessName, self.Id),
+            ]);
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+
+        // Assert
+        query.Should().NotBeNull();
+        query!.IncludeShell.Should().BeTrue("cloaked, tool and shell windows mean the process still has a window");
+        result.Should().ContainSingle(p => p.ProcessId == self.Id).Which.WindowCount.Should().Be(2);
+        _mockWindowService.Verify(w => w.GetAllWindows(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_CountsAUwpWindowForTheAppAndForItsFrameHost()
+    {
+        // Arrange - the test host plays the ApplicationFrameHost of a UWP app's window
+        using var self = Process.GetCurrentProcess();
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns(
+            [
+                TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp", processId: int.MaxValue) with
+                {
+                    HostProcessName = self.ProcessName,
+                    HostProcessId = self.Id
+                },
+            ]);
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+
+        // Assert - the frame window belongs to ApplicationFrameHost, so the host still counts it
+        result.Should().ContainSingle(p => p.ProcessId == self.Id).Which.WindowCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void GetRunningProcesses_ByDefault_LeavesOutProcessesWithoutATitledWindow()
+    {
+        // Arrange
+        using var self = Process.GetCurrentProcess();
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>()))
+            .Returns([TestDataFactory.CreateWindowInfo(1, "", self.ProcessName, self.Id)]);
+
+        // Act
+        var result = CreateSut().GetRunningProcesses(nameFilter: self.ProcessName);
+
+        // Assert
+        result.Should().NotContain(p => p.ProcessId == self.Id);
+    }
+
     #endregion
 
     #region T4.3: GetProcessName Tests

@@ -71,17 +71,46 @@ public class CaptureRequestTests
         CaptureRequest.Resolve(new CaptureOptions()).OutputSize(width, height).Should().Be((expectedWidth, expectedHeight));
     }
 
-    [Fact]
-    public void OutputSize_ThatWouldRoundAnEdgeToZero_ThrowsInvalidImageSize()
+    [Theory]
+    [InlineData(1, 5000, 1, 1568)]
+    [InlineData(4000, 1, 1568, 1)]
+    public void OutputSize_ThatWouldRoundAnEdgeToZero_KeepsOnePixel(int width, int height, int expectedWidth, int expectedHeight)
     {
-        // Arrange - 1 x 5000 scaled to a 1568 long edge is 0.31 pixels wide
+        // Arrange - 4000 x 1 scaled to a 1568 long edge would be 0.39 pixels high; the caller only
+        // asked for the defaults, so a thin strip (a ruler, a sampled line) must not fail
         var request = CaptureRequest.Resolve(new CaptureOptions());
 
-        // Act
-        var act = () => request.OutputSize(1, 5000);
+        // Act & Assert - the transform scales each axis on its own, so points still map exactly
+        request.OutputSize(width, height).Should().Be((expectedWidth, expectedHeight));
+    }
 
-        // Assert
-        act.Should().Throw<CaptureException>().Which.Code.Should().Be(ScreenshotErrorCode.InvalidImageSize);
+    [Theory]
+    [InlineData(@"\\server\share\shot.png")]
+    [InlineData("//server/share/shot.png")]
+    [InlineData(@"\\?\C:\captures\shot.png")]
+    [InlineData(@"\\.\C:\captures\shot.png")]
+    [InlineData(@"\\?\UNC\server\share\shot.png")]
+    [InlineData(@"\??\C:\captures\shot.png")]
+    public void Resolve_NetworkOrDeviceOutputPath_IsRejectedBeforeTheFileSystemIsTouched(string outputPath)
+    {
+        // A capture written to \\attacker\share would leak the screen and the user's NTLM hash
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath });
+
+        failure.Should().NotBeNull();
+        failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
+        failure.Message.Should().Contain("drive letter");
+    }
+
+    [Theory]
+    [InlineData("C:/captures/shot.png")]
+    [InlineData(@"c:\captures\shot.png")]
+    public void Resolve_DriveLetterOutputPath_PassesTheNetworkCheck(string outputPath)
+    {
+        // The folder does not exist, so it fails later, on the folder check, not as a network path
+        var failure = CaptureRequest.Validate(new CaptureOptions { Output = "file", OutputPath = outputPath.Replace("captures", $"no-such-folder-{Guid.NewGuid():N}") });
+
+        failure!.Code.Should().Be(ScreenshotErrorCode.InvalidOutputPath);
+        failure.Message.Should().NotContain("drive letter").And.Contain("does not exist");
     }
 
     [Theory]

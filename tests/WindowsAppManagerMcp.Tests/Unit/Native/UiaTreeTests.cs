@@ -23,6 +23,34 @@ public class UiaTreeTests
     }
 
     [Fact]
+    public void IsAvailable_WhenTheClientCannotStart_IsFalse()
+    {
+        // Arrange - the start gate fails before any UI Automation call is made
+        var sut = new UiaTree(new UiaClientStartup(() => throw new System.Runtime.InteropServices.COMException("E_FAIL")));
+
+        // Act & Assert
+        sut.IsAvailable().Should().BeFalse();
+    }
+
+    [Fact]
+    public void EntryPoints_PassTheStartGateFirst()
+    {
+        // Arrange - a gate that refuses to start, so no UI Automation call follows it
+        var startAttempts = 0;
+        var sut = new UiaTree(new UiaClientStartup(() =>
+        {
+            startAttempts++;
+            throw new InvalidOperationException("not started");
+        }));
+
+        // Act & Assert
+        sut.Invoking(t => t.FromHandle(NotAWindow)).Should().Throw<InvalidOperationException>();
+        sut.Invoking(t => t.FromPoint(0, 0)).Should().Throw<InvalidOperationException>();
+        sut.Invoking(t => t.GetFocusedElement()).Should().Throw<InvalidOperationException>();
+        startAttempts.Should().Be(3);
+    }
+
+    [Fact]
     public void Reads_RejectNodesFromAnotherTree()
     {
         // Arrange

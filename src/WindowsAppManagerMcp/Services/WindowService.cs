@@ -83,7 +83,11 @@ public class WindowService : IWindowService
 
     public bool IsUserFacingAppWindow(nint handle) =>
         IsValidWindow(handle) &&
+        // Listings only enumerate top-level windows; a child control is never an app window
+        _nativeWrapper.GetAncestor(handle, WindowAncestor.Root) == handle &&
         _nativeWrapper.IsWindowVisible(handle) &&
+        // Listings leave out the server's own windows (see Match)
+        _nativeWrapper.GetWindowThreadProcessId(handle) != _nativeWrapper.GetCurrentProcessId() &&
         PassesUserFacingRules(
             handle,
             _nativeWrapper.GetClassName(handle) ?? string.Empty,

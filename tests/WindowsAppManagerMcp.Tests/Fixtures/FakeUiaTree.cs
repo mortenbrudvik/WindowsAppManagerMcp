@@ -27,7 +27,7 @@ public sealed class FakeUiaTree : IUiaTree
     /// <summary>Thrown by <see cref="FromHandle"/> when set.</summary>
     public Exception? FromHandleException { get; set; }
 
-    /// <summary>Every property read, as "Read:Name", "Interaction:Name", ... in call order.</summary>
+    /// <summary>Every property read, as "Read:Name", "Interaction:Name", "Interactable:Name", ... in call order.</summary>
     public IReadOnlyList<string> Reads => _reads.ToList();
 
     /// <summary>The names of the nodes whose basic properties were read.</summary>
@@ -94,6 +94,14 @@ public sealed class FakeUiaTree : IUiaTree
         _reads.Enqueue($"Interaction:{fake.Name}");
         ThrowIfSet(fake.InteractionException);
         return new UiaNodeInteraction(fake.IsKeyboardFocusable, fake.HasKeyboardFocus, fake.ActionPatterns);
+    }
+
+    public bool IsInteractable(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"Interactable:{fake.Name}");
+        ThrowIfSet(fake.InteractionException);
+        return fake.IsKeyboardFocusable || fake.ActionPatterns.Count > 0;
     }
 
     public UiaNodeIdentity ReadIdentity(IUiaNode node)

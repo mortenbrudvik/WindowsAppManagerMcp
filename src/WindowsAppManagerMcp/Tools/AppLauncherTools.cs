@@ -47,11 +47,13 @@ public class AppLauncherTools
     }
 
     [McpServerTool(Name = "list_processes")]
-    [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage.")]
+    [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. " +
+                 "By default only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows; " +
+                 "pass includeWindowless=true to list every process, for example to confirm that a process has exited.")]
     public IReadOnlyList<ProcessInfoDto> ListProcesses(
         [Description("Filter processes by name (partial match, case-insensitive)")]
         string? nameFilter = null,
-        [Description("Include processes without visible windows (default: false)")]
+        [Description("Also list processes without a visible, titled window (default: false). windowCount is then 0 for every process.")]
         bool includeWindowless = false)
     {
         var processes = _processService.GetRunningProcesses(nameFilter, includeWindowless);

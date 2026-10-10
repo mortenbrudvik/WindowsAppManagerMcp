@@ -49,6 +49,14 @@ public interface IUiaTree
     /// <summary>Keyboard focus and the action patterns a node supports.</summary>
     UiaNodeInteraction ReadInteraction(IUiaNode node);
 
+    /// <summary>
+    /// True when the node is keyboard-focusable or supports an action pattern (those listed in
+    /// <see cref="UiaNodeInteraction.ActionPatterns"/>). It stops at the first property that answers
+    /// the question, so it usually costs fewer cross-process calls than <see cref="ReadInteraction"/>,
+    /// and it never reads keyboard focus.
+    /// </summary>
+    bool IsInteractable(IUiaNode node);
+
     /// <summary>Who provides a node: class, framework, process, window handle, password flag.</summary>
     UiaNodeIdentity ReadIdentity(IUiaNode node);
 

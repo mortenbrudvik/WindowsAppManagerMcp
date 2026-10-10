@@ -37,9 +37,10 @@ public interface IWindowService
     WindowInfo? GetWindowInfo(nint handle);
 
     /// <summary>
-    /// The listing predicate: the window is visible, not cloaked, not a tool window (unless it also has
-    /// WS_EX_APPWINDOW), not the desktop or a taskbar, and has a title. Owned windows such as dialogs
-    /// count as user-facing.
+    /// The listing predicate: the window is a top-level window (not a child control), visible, not
+    /// cloaked, not a tool window (unless it also has WS_EX_APPWINDOW), not the desktop or a taskbar,
+    /// has a title, and does not belong to the server itself. Owned windows such as dialogs count as
+    /// user-facing. It answers for one window exactly what the default listings decide for it.
     /// </summary>
     bool IsUserFacingAppWindow(nint handle);
 

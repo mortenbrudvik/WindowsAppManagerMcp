@@ -17,7 +17,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// (Invoke, SetValue, Toggle, SetFocus, ...) therefore fails until it is moved behind a mockable
 /// wrapper or reviewed onto a list.</item>
 /// <item>The NativeWindowWrapper queries that read-only tests run against the real desktop (through
-/// ReadOnlyNativeWindowWrapper) may call only the read-only APIs.</item>
+/// ReadOnlyNativeWindowWrapper) may reach only the read-only APIs and the window reads of
+/// <see cref="WindowQueryNativeApis"/>, followed through their lambdas and helpers.</item>
 /// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, attaching thread
 /// input, and starting or stopping processes.</item>
 /// </list>
@@ -79,7 +80,7 @@ public class NativeCallGuardTests
         ["User32.ReleaseDC"] = "releases a device context the server got",
         ["User32.PrintWindow"] = "asks a window to draw itself into a memory DC of the server",
         ["User32.GetClientRect"] = "reads the client size of a window",
-        ["User32.ClientToScreen"] = "converts a client point to screen coordinates (the capture origin without the frame)",
+        ["User32.MapWindowPoints"] = "converts the client rectangle to screen coordinates (the capture origin without the frame)",
         ["User32.GetWindowRect"] = "reads the bounds of a window",
         ["User32.IsWindow"] = "checks that a handle is a window",
         ["User32.GetSystemMetrics"] = "reads the virtual screen size",
@@ -108,8 +109,16 @@ public class NativeCallGuardTests
         ["User32.GetUserObjectInformationW"] = "reads the name of a desktop",
         ["Wtsapi32.WTSQuerySessionInformationW"] = "reads whether the server's session is locked or disconnected",
         ["Wtsapi32.WTSFreeMemory"] = "frees memory that WTSQuerySessionInformationW returned",
-        // Window reads: the NativeWindowWrapper queries that ReadOnlyNativeWindowWrapper forwards
-        // (see NativeWindowWrapperQueries_CallOnlyReadOnlyNativeApis)
+    };
+
+    /// <summary>
+    /// Window reads that only the NativeWindowWrapper queries may call (ReadOnlyNativeWindowWrapper
+    /// forwards them; see NativeWindowWrapperQueries_CallOnlyReadOnlyNativeApis). They only read, but
+    /// they are kept off <see cref="ReadOnlyNativeApis"/> so services and tools read windows through
+    /// the mockable INativeWindowWrapper instead of calling them directly.
+    /// </summary>
+    private static readonly Dictionary<string, string> WindowQueryNativeApis = new(StringComparer.Ordinal)
+    {
         ["User32.EnumWindows"] = "lists the top-level windows",
         ["User32.EnumChildWindows"] = "lists the child windows of a window",
         ["User32.IsWindowVisible"] = "reads whether a window has WS_VISIBLE",
@@ -201,30 +210,79 @@ public class NativeCallGuardTests
         var queries = typeof(INativeWindowWrapper).GetMethods()
             .Select(m => m.Name)
             .Where(name => !windowChanges.Contains(name))
+            .ToHashSet(StringComparer.Ordinal);
+        var queryMethods = typeof(NativeWindowWrapper).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(m => queries.Contains(m.Name))
             .ToList();
 
-        // Act - native calls made by each query and by the lambdas it declares ("<Query>b__0")
-        var queryCalls = FindCalls(IsNativeMethodsApi)
-            .Where(c => c.Owner == typeof(NativeWindowWrapper))
-            .Where(c => queries.Any(q => IsCallFrom(c, q)))
+        // Act - native calls made by each query and by everything it reaches in the Native wrappers:
+        // its lambdas, private helpers and other wrapper methods, transitively
+        var queryCalls = queryMethods
+            .SelectMany(query => ReachableNativeCalls(query).Select(api => (Query: query.Name, Api: api)))
+            .Distinct()
             .ToList();
 
         // Assert
         queries.Should().Contain(nameof(INativeWindowWrapper.IsCloaked)).And.NotContain(nameof(INativeWindowWrapper.SetWindowPos));
+        queryMethods.Select(m => m.Name).Should().BeEquivalentTo(queries, "every query must be found on NativeWindowWrapper");
         queryCalls.Should().Contain(c => c.Api == "Dwmapi.DwmGetWindowAttribute",
             "the scan must see the queries' own native calls");
+        queryCalls.Should().Contain(c => c.Query == nameof(INativeWindowWrapper.EnumWindows) && c.Api == "User32.EnumWindows",
+            "the scan must follow a query into the lambdas it passes on");
         queryCalls
-            .Where(c => !ReadOnlyNativeApis.ContainsKey(c.Api))
-            .Select(c => c.Description)
+            .Where(c => !ReadOnlyNativeApis.ContainsKey(c.Api) && !WindowQueryNativeApis.ContainsKey(c.Api))
+            .Select(c => $"{c.Query} reaches {c.Api}")
             .Should().BeEmpty(
-                "a NativeWindowWrapper query must only read; put a new read API on ReadOnlyNativeApis after review, " +
+                "a NativeWindowWrapper query must only read; put a new read API on WindowQueryNativeApis after review, " +
                 "and make a method that changes a window throw in ReadOnlyNativeWindowWrapper");
+    }
 
-        static bool IsCallFrom(Call call, string method)
+    [Fact]
+    public void ReachableNativeCalls_FollowsPrivateHelpersTransitively()
+    {
+        // QueryProcessToken opens the process only through its private OpenForQuery helper, and reads
+        // the integrity RID through ReadIntegrityRid; a scan that stopped at the method's own body
+        // would miss both
+        var calls = ReachableNativeCalls(typeof(NativeSecurityWrapper).GetMethod(nameof(NativeSecurityWrapper.QueryProcessToken))!);
+
+        calls.Should().Contain(["Kernel32.OpenProcess", "Advapi32.GetSidSubAuthority", "Advapi32.OpenProcessToken"]);
+    }
+
+    /// <summary>
+    /// The NativeMethods APIs ("Class.Method") that <paramref name="start"/> calls, directly or through
+    /// methods it reaches in the server's Native namespace or in its own declaring type (lambdas,
+    /// private helpers, other wrapper methods). Calls into other server code are not followed.
+    /// </summary>
+    private static HashSet<string> ReachableNativeCalls(MethodBase start)
+    {
+        var apis = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<MethodBase>();
+        var pending = new Queue<MethodBase>([start]);
+        var startOwner = OutermostType(start.DeclaringType!);
+
+        while (pending.Count > 0)
         {
-            var caller = call.Caller[(call.Caller.LastIndexOf('.') + 1)..];
-            return caller == method || caller.StartsWith($"<{method}>", StringComparison.Ordinal);
+            var method = pending.Dequeue();
+            if (!visited.Add(method))
+                continue;
+
+            foreach (var callee in GetCalledMethods(method))
+            {
+                if (IsNativeMethodsApi(callee))
+                {
+                    apis.Add($"{callee.DeclaringType!.Name}.{callee.Name}");
+                }
+                else if (callee.DeclaringType is { } declaring &&
+                         (OutermostType(declaring) == startOwner ||
+                          (declaring.Assembly == ServerAssembly && declaring.Namespace == NativeMethodsType.Namespace &&
+                           OutermostType(declaring) != NativeMethodsType)))
+                {
+                    pending.Enqueue(callee);
+                }
+            }
         }
+
+        return apis;
     }
 
     [Fact]
@@ -235,7 +293,7 @@ public class NativeCallGuardTests
             .SelectMany(type => type.GetMethods(DeclaredMembers).Select(m => $"{type.Name}.{m.Name}"))
             .ToHashSet(StringComparer.Ordinal);
 
-        ReadOnlyNativeApis.Keys.Concat(SanctionedNativeCalls.Keys.Select(k => k.Api))
+        ReadOnlyNativeApis.Keys.Concat(WindowQueryNativeApis.Keys).Concat(SanctionedNativeCalls.Keys.Select(k => k.Api))
             .Where(api => !existing.Contains(api))
             .Should().BeEmpty();
     }

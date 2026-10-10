@@ -7,16 +7,26 @@ namespace WindowsAppManagerMcp.Tests.Integration;
 /// <summary>
 /// The safety probes are registered by <see cref="ServiceRegistration"/>, the same method
 /// Program.cs uses, and the host guard is created when the server starts. Resolving the services
-/// only reads (the process list, the console and foreground windows); nothing is changed.
+/// only reads (the process list, the console and foreground windows); nothing is changed. The window
+/// wrapper is the read-only one, as in every test that reads the real desktop, so a future change to
+/// HostGuard's constructor that changes a window fails instead of acting.
 /// </summary>
 public sealed class SecurityServiceRegistrationTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection()
         .AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(
             Path.Combine(Path.GetTempPath(), $"SecurityRegistrationTests_{Guid.NewGuid()}")))
+        .AddSingleton<INativeWindowWrapper>(new ReadOnlyNativeWindowWrapper())
         .BuildServiceProvider();
 
     public void Dispose() => _provider.Dispose();
+
+    [Fact]
+    public void TheHostGuardReadsThroughTheReadOnlyWindowWrapper()
+    {
+        // The last registration wins, so the guard built below is given the read-only wrapper
+        _provider.GetRequiredService<INativeWindowWrapper>().Should().BeOfType<ReadOnlyNativeWindowWrapper>();
+    }
 
     [Theory]
     [InlineData(typeof(INativeSecurityWrapper), typeof(NativeSecurityWrapper))]

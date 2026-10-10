@@ -88,7 +88,8 @@ public class BrowserReadingTools
 
     [McpServerTool(Name = "launch_browser_with_debug")]
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
-                 " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done.")]
+                 " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
+                 " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited.")]
     public DebugBrowserLaunchResultDto LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome, edge, or brave")]
         string browser = "chrome",

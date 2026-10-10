@@ -116,9 +116,10 @@ public sealed record CaptureRequest(
     /// <summary>
     /// The output size of a <paramref name="width"/> x <paramref name="height"/> capture: as large as
     /// possible within <see cref="MaxDimension"/> and <see cref="MaxWidth"/>, keeping the aspect ratio.
-    /// A capture that already fits keeps its size; nothing is scaled up.
+    /// A capture that already fits keeps its size; nothing is scaled up. An edge that would round to
+    /// zero pixels (a long, thin strip) keeps one pixel: the image to screen transform has a scale per
+    /// axis, so points still map exactly.
     /// </summary>
-    /// <exception cref="CaptureException">The limits would scale an edge to zero pixels.</exception>
     public (int Width, int Height) OutputSize(int width, int height)
     {
         var scale = 1.0;
@@ -139,15 +140,8 @@ public sealed record CaptureRequest(
         }
 
         // Rounding (not truncation) keeps the limiting edge exactly at its limit despite floating-point error.
-        var scaledWidth = (int)Math.Round(width * scale);
-        var scaledHeight = (int)Math.Round(height * scale);
-        if (scaledWidth < 1 || scaledHeight < 1)
-        {
-            throw new CaptureException(ScreenshotErrorCode.InvalidImageSize,
-                $"The size limit (maxDimension {Describe(MaxDimension)}, maxWidth {Describe(MaxWidth)}) would scale " +
-                $"a {width}x{height} image to {scaledWidth}x{scaledHeight} pixels. Use a larger limit.");
-        }
-
+        var scaledWidth = Math.Max(1, (int)Math.Round(width * scale));
+        var scaledHeight = Math.Max(1, (int)Math.Round(height * scale));
         return (scaledWidth, scaledHeight);
     }
 
@@ -224,6 +218,16 @@ public sealed record CaptureRequest(
                     $"outputPath must be an absolute path such as C:\\captures\\shot.png, not '{outputPath}'.");
             }
 
+            // Before anything touches the file system: checking or writing \\server\share\x.png opens an
+            // SMB or WebDAV connection, which can leak the user's NTLM hash and copies the screen off
+            // the computer. A prompt-injected agent could be told to do exactly that.
+            if (!IsOnADriveLetter(outputPath))
+            {
+                throw new CaptureException(ScreenshotErrorCode.InvalidOutputPath,
+                    $"outputPath must be on a drive letter, such as C:\\captures\\shot.png, not '{outputPath}'. " +
+                    "Network paths (\\\\server\\share) and device paths (\\\\?\\, \\\\.\\) are not accepted.");
+            }
+
             fullPath = Path.GetFullPath(outputPath);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -276,12 +280,22 @@ public sealed record CaptureRequest(
         return (fullPath, pathFormat);
     }
 
+    /// <summary>
+    /// True for a path rooted at a drive letter ("C:\" or "C:/"). Every other fully qualified path
+    /// starts with two separators or "\?": a UNC path (\\server\share, //server/share) or a device
+    /// path (\\?\, \\.\, \??\), which can reach another computer or a raw device.
+    /// </summary>
+    /// <remarks>
+    /// A drive letter the user mapped to a network share is accepted: it names a destination the
+    /// user set up, not one an agent can introduce. A configurable write root (R55) is the follow-up.
+    /// </remarks>
+    private static bool IsOnADriveLetter(string path) =>
+        path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/';
+
     /// <summary>The failure for an existing file that may not be replaced.</summary>
     internal static CaptureException FileExists(string path) =>
         new(ScreenshotErrorCode.FileExists,
             $"'{path}' already exists. Pass overwrite: true to replace it, or choose a new file name.");
 
     private static string Name(CaptureOutputMode mode) => mode.ToString().ToLowerInvariant();
-
-    private static string Describe(int? limit) => limit?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
 }

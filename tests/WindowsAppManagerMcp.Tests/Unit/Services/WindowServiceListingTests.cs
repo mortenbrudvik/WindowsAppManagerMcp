@@ -18,6 +18,9 @@ public class WindowServiceListingTests
     private const uint FrameHostProcessId = 500;
     private const uint CalculatorProcessId = 600;
 
+    /// <summary>What GetAncestor(GA_ROOT) returns for the fake child windows: some other, top-level window.</summary>
+    private static readonly nint ChildWindowRoot = 0x0FFF;
+
     private readonly FakeDesktop _desktop = new();
 
     private WindowService CreateSut() =>
@@ -95,7 +98,23 @@ public class WindowServiceListingTests
         var sut = CreateSut();
 
         sut.GetAllWindows().Should().BeEmpty();
+        sut.IsUserFacingAppWindow(own).Should().BeFalse("the predicate decides what the listing decides");
         sut.GetWindowInfo(own).Should().NotBeNull("single-window reads have no listing filter");
+    }
+
+    [Fact]
+    public void IsUserFacingAppWindow_ChildControl_IsFalse()
+    {
+        // Arrange - a visible, titled, uncloaked button inside an app window; listings never see it,
+        // because they enumerate only top-level windows
+        var main = _desktop.Add("Untitled - Notepad", "Notepad");
+        var button = _desktop.Add("OK", "Button", topLevel: false);
+        _desktop.SetChildren(main, button);
+        var sut = CreateSut();
+
+        // Act & Assert
+        sut.IsUserFacingAppWindow(main).Should().BeTrue();
+        sut.IsUserFacingAppWindow(button).Should().BeFalse();
     }
 
     [Fact]
@@ -432,6 +451,7 @@ public class WindowServiceListingTests
             Native.Setup(n => n.GetProcessName(processId)).Returns(processName);
             Native.Setup(n => n.GetWindowRect(hWnd)).Returns((0, 0, 800, 600));
             Native.Setup(n => n.IsIconic(hWnd)).Returns(minimized);
+            Native.Setup(n => n.GetAncestor(hWnd, WindowAncestor.Root)).Returns(topLevel ? hWnd : ChildWindowRoot);
             return hWnd;
         }
 

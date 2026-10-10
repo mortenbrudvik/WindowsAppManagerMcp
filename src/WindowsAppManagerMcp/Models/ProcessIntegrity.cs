@@ -29,11 +29,32 @@ public enum IntegrityLevel
     System,
 
     /// <summary>
-    /// The token could not be opened because access was denied, while the server itself runs below
-    /// high integrity. The process is most likely elevated, a system process or a protected process,
-    /// so treat it as more privileged than the server.
+    /// The process could be opened but its token could not (access denied), while the server itself
+    /// runs below high integrity: the token keeps a lower-integrity caller out, which points to an
+    /// elevated process. Treated as more privileged than the server.
     /// </summary>
-    LikelyElevated
+    /// <remarks>
+    /// Not every elevated process shows up this way. On Windows 11 a medium-integrity process can read
+    /// the token of a same-user high-integrity process started by the Task Scheduler, so that process
+    /// is reported as <see cref="High"/> directly.
+    /// </remarks>
+    LikelyElevated,
+
+    /// <summary>
+    /// Access was denied and nothing points to elevation: the process itself cannot be opened, or the
+    /// server cannot compare (it is elevated, or its own level is unknown). OpenProcess for
+    /// PROCESS_QUERY_LIMITED_INFORMATION fails when the process runs under another account (SYSTEM, a
+    /// service account, DWM, or another user in the same session through "Run as different user") or
+    /// has a hardened DACL (some anti-cheat, DRM and security software). Protected processes allow this
+    /// access, so a denial is about the DACL, not about protection. The level is unknown: UIPI blocks
+    /// input to such a process only when it runs above the server (a SYSTEM process with a window on the
+    /// user's desktop), not to another user's ordinary process.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ProcessIntegrity.IsMorePrivilegedThan"/> is false for it, so a guard does not refuse
+    /// input on this alone; input that has no effect can name it as a possible cause.
+    /// </remarks>
+    Restricted
 }
 
 /// <summary>
@@ -43,7 +64,8 @@ public enum IntegrityLevel
 /// <param name="Level">The integrity level.</param>
 /// <param name="IntegrityRid">The raw integrity RID (0x2000 is medium), or null when it was not read.</param>
 /// <param name="IsElevated">Whether the token is elevated (TokenElevation), or null when it was not read.</param>
-/// <param name="Reason">Why the level is <see cref="IntegrityLevel.Unknown"/> or <see cref="IntegrityLevel.LikelyElevated"/>; null otherwise.</param>
+/// <param name="Reason">Why the level is <see cref="IntegrityLevel.Unknown"/>, <see cref="IntegrityLevel.LikelyElevated"/> or
+/// <see cref="IntegrityLevel.Restricted"/>; null otherwise.</param>
 public sealed record ProcessIntegrity(
     int ProcessId,
     IntegrityLevel Level,
@@ -85,7 +107,7 @@ public sealed record ProcessIntegrity(
     /// <paramref name="other"/>, so UIPI blocks input and UI Automation from <paramref name="other"/>
     /// to its windows. Compares raw RIDs, as Windows does. A <see cref="IntegrityLevel.LikelyElevated"/>
     /// process counts as higher than any process below high integrity. Returns false when either
-    /// level is unknown.
+    /// level is unknown, including <see cref="IntegrityLevel.Restricted"/>.
     /// </summary>
     public bool IsMorePrivilegedThan(ProcessIntegrity other)
     {

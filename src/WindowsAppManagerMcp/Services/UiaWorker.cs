@@ -6,52 +6,78 @@ namespace WindowsAppManagerMcp.Services;
 /// Runs each UI Automation read on a new background MTA thread and waits for it until the
 /// deadline. A read that misses the deadline is abandoned, not cancelled: a thread blocked in a
 /// cross-process UI Automation call cannot be interrupted, and it must never be reused for the next
-/// read. Abandoned reads are counted until they return; while <see cref="MaxStuckCalls"/> of them
-/// are outstanding, new reads fail at once instead of piling up more blocked threads.
+/// read. Abandoned reads are counted until they return, per target process: while
+/// <see cref="MaxStuckCallsPerTarget"/> reads of one application are outstanding, new reads of that
+/// application fail at once instead of piling up more blocked threads, and reads of other
+/// applications go on. <see cref="MaxStuckCalls"/> bounds the abandoned threads over all targets.
 /// </summary>
 /// <remarks>
-/// A thread per read costs far less than the cross-process calls it makes. M3.1 may replace this
-/// with a long-lived worker and a bounded queue behind the same interface.
+/// <para>A thread per read costs far less than the cross-process calls it makes. M3.1 may replace this
+/// with a long-lived worker and a bounded queue behind the same interface.</para>
+/// <para>Reads with an unknown target (process 0) share one count.</para>
 /// </remarks>
 public sealed class UiaWorker : IUiaWorker
 {
-    /// <summary>The default limit on abandoned reads that have not returned yet.</summary>
-    public const int DefaultMaxStuckCalls = 4;
+    /// <summary>The default limit on abandoned reads of one target that have not returned yet.</summary>
+    public const int DefaultMaxStuckCallsPerTarget = 2;
 
+    /// <summary>The default limit on abandoned reads of all targets together.</summary>
+    public const int DefaultMaxStuckCalls = 16;
+
+    private readonly object _lock = new();
+    private readonly Dictionary<int, int> _stuckByTarget = [];
     private int _stuckCalls;
 
     public UiaWorker()
-        : this(DefaultMaxStuckCalls)
+        : this(DefaultMaxStuckCallsPerTarget, DefaultMaxStuckCalls)
     {
     }
 
-    public UiaWorker(int maxStuckCalls)
+    public UiaWorker(int maxStuckCallsPerTarget, int maxStuckCalls)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxStuckCalls, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxStuckCallsPerTarget, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxStuckCalls, maxStuckCallsPerTarget);
+        MaxStuckCallsPerTarget = maxStuckCallsPerTarget;
         MaxStuckCalls = maxStuckCalls;
     }
 
-    /// <summary>While this many abandoned reads have not returned, new reads fail at once.</summary>
+    /// <summary>While this many abandoned reads of one target have not returned, new reads of it fail at once.</summary>
+    public int MaxStuckCallsPerTarget { get; }
+
+    /// <summary>While this many abandoned reads of any targets have not returned, every new read fails at once.</summary>
     public int MaxStuckCalls { get; }
 
-    /// <summary>Reads that missed their deadline and have not returned yet.</summary>
-    public int StuckCalls => Volatile.Read(ref _stuckCalls);
+    /// <summary>Reads that missed their deadline and have not returned yet, over all targets.</summary>
+    public int StuckCalls
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _stuckCalls;
+            }
+        }
+    }
+
+    /// <summary>Reads of <paramref name="targetProcessId"/> that missed their deadline and have not returned yet.</summary>
+    public int StuckCallsFor(int targetProcessId)
+    {
+        lock (_lock)
+        {
+            return _stuckByTarget.GetValueOrDefault(Key(targetProcessId));
+        }
+    }
 
     /// <inheritdoc />
-    public T Run<T>(Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+    public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
     {
         ArgumentNullException.ThrowIfNull(read);
         ArgumentOutOfRangeException.ThrowIfLessThan(grace, TimeSpan.Zero);
 
-        var stuck = StuckCalls;
-        if (stuck >= MaxStuckCalls)
-        {
-            throw new TimeoutException(
-                $"UI Automation is not responding: {stuck} earlier reads have not returned yet. " +
-                "An application is probably hung; try again later.");
-        }
+        var target = Key(targetProcessId);
+        ThrowIfTooManyStuck(target);
 
-        var call = new Call<T>(read, cancellationToken, onAbandonedReadReturned: () => Interlocked.Decrement(ref _stuckCalls));
+        var call = new Call<T>(read, cancellationToken, onAbandonedReadReturned: () => RemoveStuck(target));
         var thread = new Thread(call.Execute)
         {
             IsBackground = true,
@@ -67,15 +93,67 @@ public sealed class UiaWorker : IUiaWorker
         }
 
         // Count the read as stuck first, so the count never dips below zero if it returns right now
-        Interlocked.Increment(ref _stuckCalls);
+        AddStuck(target);
         if (!call.TryAbandon())
         {
             // It returned at the last moment after all
-            Interlocked.Decrement(ref _stuckCalls);
+            RemoveStuck(target);
             return call.GetResult();
         }
 
         throw new TimeoutException("UI Automation did not answer in time. The application may not be responding.");
+    }
+
+    private static int Key(int targetProcessId) => targetProcessId > 0 ? targetProcessId : 0;
+
+    private void ThrowIfTooManyStuck(int target)
+    {
+        lock (_lock)
+        {
+            var stuckForTarget = _stuckByTarget.GetValueOrDefault(target);
+            if (stuckForTarget >= MaxStuckCallsPerTarget)
+            {
+                var application = target == 0 ? "an application the server could not identify" : $"the application (process {target})";
+                throw new UiaReadRefusedException(
+                    $"UI Automation is not responding for {application}: {stuckForTarget} earlier reads of it have not " +
+                    "returned yet, so this read was not started. The application is probably hung; try again later. " +
+                    "Other applications can still be read.");
+            }
+
+            if (_stuckCalls >= MaxStuckCalls)
+            {
+                throw new UiaReadRefusedException(
+                    $"UI Automation is not responding: {_stuckCalls} earlier reads in {_stuckByTarget.Count} applications " +
+                    "have not returned yet, so this read was not started. Some applications are probably hung; try again later.");
+            }
+        }
+    }
+
+    private void AddStuck(int target)
+    {
+        lock (_lock)
+        {
+            _stuckByTarget[target] = _stuckByTarget.GetValueOrDefault(target) + 1;
+            _stuckCalls++;
+        }
+    }
+
+    private void RemoveStuck(int target)
+    {
+        lock (_lock)
+        {
+            var remaining = _stuckByTarget.GetValueOrDefault(target) - 1;
+            if (remaining > 0)
+            {
+                _stuckByTarget[target] = remaining;
+            }
+            else
+            {
+                _stuckByTarget.Remove(target);
+            }
+
+            _stuckCalls--;
+        }
     }
 
     /// <summary>One read and its outcome, shared by the waiting caller and the worker thread.</summary>

@@ -7,8 +7,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 public interface INativeHitTestWrapper
 {
     /// <summary>
-    /// The deepest visible, enabled window at the point (WindowFromPoint), or 0 when there is none.
-    /// Hidden and disabled windows are skipped.
+    /// The deepest window at the point (WindowFromPoint), or 0 when there is none. Hidden windows and
+    /// disabled child windows are skipped; a disabled top-level window (the owner of a modal dialog)
+    /// is still returned. On a monitor some window is practically always hit, since the desktop is
+    /// under everything. It does not wait for the window's application.
     /// </summary>
     nint WindowFromPoint(int x, int y);
 

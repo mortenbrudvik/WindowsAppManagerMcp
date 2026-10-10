@@ -12,9 +12,12 @@ public sealed class InlineUiaWorker : IUiaWorker
 
     public TimeSpan LastGrace { get; private set; }
 
-    public T Run<T>(Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+    public int LastTargetProcessId { get; private set; }
+
+    public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
     {
         Calls++;
+        LastTargetProcessId = targetProcessId;
         LastToken = cancellationToken;
         LastGrace = grace;
         return read(cancellationToken);

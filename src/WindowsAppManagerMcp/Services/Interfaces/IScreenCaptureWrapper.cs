@@ -37,7 +37,8 @@ public interface IScreenCaptureWrapper
     /// <param name="includeFrame">Whether to include the window frame/decoration</param>
     /// <returns>
     /// The pixels and the screen position of the top-left pixel: the window rectangle's corner
-    /// (GetWindowRect) with the frame, or the client area's corner (ClientToScreen of 0,0) without it.
+    /// (GetWindowRect) with the frame, or the client area's top-left corner on screen without it
+    /// (MapWindowPoints of the client rectangle, which is also right for mirrored right-to-left windows).
     /// </returns>
     CaptureResult CaptureWindow(nint windowHandle, bool includeFrame);
 

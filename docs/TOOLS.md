@@ -275,7 +275,6 @@ Get information about the currently focused window. Any window is reported, with
 
 ---
 
-
 ## Window Control
 
 Tools for manipulating window position, size, and state.
@@ -1044,10 +1043,10 @@ Tools for capturing screenshots of screens, regions, and windows.
 
 The **Response** examples below show the metadata text, formatted.
 
-- **Size:** the image is scaled down to at most 1568 pixels on its long edge by default (`maxDimension`), the size vision models work at. `maxDimension: 0` keeps full resolution. `width` and `height` are the returned image size; `originalWidth` and `originalHeight` are set only when the image was scaled down.
+- **Size:** the image is scaled down to at most 1568 pixels on its long edge by default (`maxDimension`), the size vision models work at. `maxDimension: 0` keeps full resolution. `width` and `height` are the returned image size; `originalWidth` and `originalHeight` are set only when the image was scaled down. An edge that would scale below one pixel (a long, thin strip) keeps one pixel; `imageToScreen` has a scale per axis, so points still map exactly. A full-resolution image of a large monitor, especially as PNG, can be several megabytes, more than many clients and models accept as inline image content: for full detail use `output: "file"`, or capture a smaller region.
 - **Format:** `format: "auto"` (default) returns JPEG at quality 80, or PNG when the image's long edge is at most 512 pixels (small regions and dialogs, where text must stay crisp). Pass `"png"` or `"jpeg"` (`"jpg"` also works) to choose. Any other value fails with `InvalidFormat` instead of falling back. PNG images are always opaque.
 - **Output:** `output: "image"` (default) returns the image and the metadata. `"file"` writes the image to a file and returns only the metadata, with `filePath`. `"both"` does both, and `"metadata"` returns only the metadata (`byteSize` still tells how large the image would be).
-- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
+- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)).
 - Image pixels are not screen coordinates. `capturedRegion` is the captured screen rectangle with its real origin, and `imageToScreen` converts image points to screen points; see [Image coordinates](#image-coordinates).
@@ -1126,7 +1125,7 @@ Capture a screenshot of a specific monitor.
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1217,7 +1216,7 @@ Capture a screenshot of an arbitrary screen region.
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1270,7 +1269,7 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1337,7 +1336,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | includeFrame | bool | No | true | Include window frame/decoration |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | int | No | 80 | JPEG quality (1-100) |
-| maxDepth | int | No | 5 | Max depth to traverse UI tree (1-10) |
+| maxDepth | int | No | 5 | How many levels below the window to read (1-10). 1 reads only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit"); matches inside other containers are kept. Unknown names fail |
 | interactableOnly | bool | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | visibleOnly | bool | No | true | Only include visible elements |
@@ -1345,7 +1344,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms (1000-30000) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1552,7 +1551,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
 - `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
-- `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. Errors reading the window itself still fail the call.
+- `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
 **Error Codes:**
 | Code | Description |
@@ -1562,7 +1561,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 | `AutomationUnavailable` | UI Automation not available |
 | `ElementAccessFailed` | The window's elements disappeared while they were read |
 | `InvalidControlType` | A `controlTypes` name is not a known control type; `error` lists the valid names |
-| `OperationTimedOut` | The timeout passed before any element was read, or UI Automation stopped answering (the application may be hung) |
+| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
 
 ---
@@ -1627,7 +1626,7 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 | `ElementNotFound` | No element has keyboard focus |
 | `ElementAccessFailed` | The focused element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
-| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application that has focus may be hung |
+| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application that has focus may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
 ---
@@ -1697,7 +1696,7 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 
 - `element` has the same fields as in [get_focused_element](#get_focused_element), including the value rules for password fields.
 - `ancestors` never goes above the top-level window, so it can be shorter than requested.
-- `windowHandle` is the top-level window at the point (WindowFromPoint, then its root window). Hidden and disabled windows are skipped by that lookup, so for a point on a window disabled by a modal dialog it falls back to the window the element belongs to.
+- `windowHandle` is the root of the window hit-tested at the point (WindowFromPoint, then its root window). That lookup skips hidden windows and disabled child windows, but not a disabled top-level window such as the owner of a modal dialog. The window the element belongs to is used only when no window is hit, which practically never happens on a monitor.
 - Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
 **Error Codes:**
@@ -1707,7 +1706,7 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 | `ElementNotFound` | UI Automation found no element at the point |
 | `ElementAccessFailed` | The element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
-| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung |
+| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
 ---
@@ -1950,7 +1949,7 @@ An open dialog is not something to clear out of the way. On a confirm, prompt or
 
 Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, so that get_browser_content and get_browser_url can use `cdpPort`.
 
-> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId`, then `close_window` for each handle) and check with `list_processes` that the process has exited; closing one window is not enough if the page opened others.
+> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId` and `includeCloaked: true`, so a window the user moved to another virtual desktop is found too, then `close_window` for each handle) and check with `list_processes` and `includeWindowless: true` that the process has exited; closing one window is not enough if the page opened others.
 
 By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port.
 
@@ -2473,7 +2472,9 @@ List running processes with optional filtering.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | nameFilter | string | No | - | Filter by process name (partial match) |
-| includeWindowless | bool | No | false | Include processes without windows |
+| includeWindowless | bool | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+
+By default only processes with at least one visible, titled top-level window are listed. Unlike [get_all_windows](#get_all_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
 
 **Example:**
 > "Show all Chrome processes"
@@ -2757,6 +2758,8 @@ If no visible window matches the filters, nothing is saved (an existing preset w
 | includeProcesses | string | No | - | Only save these processes (comma-separated) |
 | excludeProcesses | string | No | - | Exclude these processes (comma-separated) |
 
+The process filters match part of the process name, case-insensitive. As in [find_windows](#find_windows), a Store (UWP) app's window matches both its own process name and `ApplicationFrameHost`. Each saved placement stores the app's own process name (for example `CalculatorApp`).
+
 **Example 1:** Save all windows
 > "Save my current layout as 'morning-routine'"
 
@@ -2823,6 +2826,8 @@ Apply a saved layout preset.
 - `process_and_title` - Match by process name AND window title
 - `process_only` - Match by process name only
 - `title_only` - Match by window title only
+
+A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows.
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
@@ -3136,7 +3141,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window: Windows blocked the close message (Win32 error 5), because the window belongs to a more privileged app |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
-| `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | UI Automation is not available |
+| `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
@@ -3157,7 +3162,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
-| `ElementAccessFailed` | [UI Automation](#ui-automation) tools | An element that was being read is no longer available |
+| `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | An element that was being read is no longer available |
 | `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | No element has keyboard focus, or there is no element at the point |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
@@ -3170,15 +3175,15 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
-| `InvalidControlType` | [get_ui_elements](#get_ui_elements), capture_with_elements (in `error`) | A `controlTypes` name is not a known control type; `error` lists the valid names |
+| `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools | `format` is not auto, png, jpeg or jpg |
 | `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window handle is zero or invalid, or the window no longer exists |
-| `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative, `maxWidth` is not positive, or the limit would scale an edge of the image to zero pixels |
+| `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The key specification is malformed |
 | `InvalidMonitorIndex` | [take_screenshot](#take_screenshot) | `monitorIndex` is out of range; see [list_screens](#list_screens) |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata, or `outputPath` was given without a file output |
-| `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not absolute, does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
+| `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
 | `InvalidRegion` | [capture_region](#capture_region) | `width` or `height` is not positive |
@@ -3194,8 +3199,8 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
 | `NotResponding` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is not responding, or a call to it did not return in time, so it was not activated |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
-| `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | Unexpected error while reading; see `error` |
-| `OperationTimedOut` | [UI Automation](#ui-automation) tools | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements |
+| `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | Unexpected error while reading; see `error` |
+| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
@@ -3216,4 +3221,4 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
-| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements) | apply_layout: no open window matched a placement. get_ui_elements: the window no longer exists |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

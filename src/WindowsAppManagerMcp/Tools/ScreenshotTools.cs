@@ -35,7 +35,7 @@ public class ScreenshotTools
         "'both' (image, file and metadata) or 'metadata' (only the metadata, no image).";
 
     internal const string OutputPathDescription =
-        "Absolute path of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
+        "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
         "The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.";
 
     internal const string OverwriteDescription =
@@ -178,11 +178,11 @@ public class ScreenshotTools
         string format = "auto",
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
-        [Description("Max depth to traverse UI tree (1-10). Default: 5")]
+        [Description("How many levels below the window to read (1-10). 1 reads only the window's direct children. Default: 5")]
         int maxDepth = 5,
         [Description(UIElementTools.ControlTypesDescription)]
         string? controlTypes = null,
-        [Description("Only include enabled elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
+        [Description("Only include interactable elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
         bool interactableOnly = false,
         [Description("Only include elements that are not offscreen. Default: true. " + UIElementTools.VisibleOnlyCaution)]
         bool visibleOnly = true,

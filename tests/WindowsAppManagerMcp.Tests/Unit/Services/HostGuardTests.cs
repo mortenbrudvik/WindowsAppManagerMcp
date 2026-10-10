@@ -11,12 +11,14 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </remarks>
 public class HostGuardTests
 {
-    private const int AgentPid = 4000;     // claude.exe
-    private const int ShellPid = 3000;     // pwsh.exe
-    private const int TerminalPid = 2000;  // WindowsTerminal.exe
-    private const int ExplorerPid = 1000;  // explorer.exe, the desktop shell
-    private const int ConPtyPid = 2500;    // OpenConsole.exe, owns the hidden console pseudo-window
-    private const int OtherPid = 9000;     // an unrelated application
+    // Not multiples of 4, so none of them can be the test host's own PID (ServerPid), which Windows
+    // always makes a multiple of 4
+    private const int AgentPid = 4001;     // claude.exe
+    private const int ShellPid = 3001;     // pwsh.exe
+    private const int TerminalPid = 2001;  // WindowsTerminal.exe
+    private const int ExplorerPid = 1001;  // explorer.exe, the desktop shell
+    private const int ConPtyPid = 2501;    // OpenConsole.exe, owns the hidden console pseudo-window
+    private const int OtherPid = 9001;     // an unrelated application
 
     private static readonly int ServerPid = Environment.ProcessId;
     private static readonly DateTime T0 = new(2026, 10, 1, 8, 0, 0, DateTimeKind.Utc);
@@ -256,10 +258,34 @@ public class HostGuardTests
     }
 
     [Fact]
-    public void IsHostProcess_OwnerOfTheStartupForegroundWindowOnly_IsFalse()
+    public void IsHostProcess_DelegatedTerminalThatOwnedTheStartupForegroundWindow_IsTrue()
     {
-        // Arrange - the startup foreground protects that one window, not every window of its process
+        // Arrange - Windows Terminal as the default terminal and a server without a console window:
+        // the terminal is neither an ancestor nor the console host, but killing it ends the session
         UseDelegatedTerminalWithoutConsole();
+
+        // Act & Assert
+        CreateSut().IsHostProcess(TerminalPid).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsHostProcess_StartupForegroundProcessIdReusedByANewerProcess_IsFalse()
+    {
+        // Arrange - the terminal exited and an unrelated process got its PID
+        UseDelegatedTerminalWithoutConsole();
+        var sut = CreateSut();
+        _startTimes[TerminalPid] = T0.AddHours(2);
+
+        // Act & Assert
+        sut.IsHostProcess(TerminalPid).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsHostProcess_NothingRecordedInTheForeground_DoesNotAddAProcess()
+    {
+        // Arrange
+        UseDelegatedTerminalWithoutConsole();
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(nint.Zero);
 
         // Act & Assert
         CreateSut().IsHostProcess(TerminalPid).Should().BeFalse();
@@ -272,6 +298,13 @@ public class HostGuardTests
     public void IsHostProcess_AnyOtherProcess_IsFalse(int processId)
     {
         CreateSut().IsHostProcess(processId).Should().BeFalse();
+    }
+
+    [Fact]
+    public void TestProcessIds_CannotBeTheTestHostsOwn()
+    {
+        // ServerPid always counts as the host, so a fake PID equal to it would flip the tests above
+        new[] { AgentPid, ShellPid, TerminalPid, ExplorerPid, ConPtyPid, OtherPid }.Should().NotContain(ServerPid);
     }
 
     #endregion
@@ -329,10 +362,24 @@ public class HostGuardTests
         UseDelegatedTerminalWithoutConsole();
         var sut = CreateSut();
 
-        // Act & Assert
+        // Act & Assert - although the process is a host process (killing it closes the recorded window)
         sut.IsHostWindow(TerminalWindow).Should().BeTrue();
         sut.IsHostWindow(TerminalDialog).Should().BeTrue();
         sut.IsHostWindow(SecondTerminalWindow).Should().BeFalse("only the recorded window is known to host the agent");
+        sut.IsHostProcess(TerminalPid).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsHostWindow_UnrelatedAppInFrontAtStartup_ProtectsOnlyThatWindow()
+    {
+        // Arrange - the server started while another application was in front
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(OtherWindow);
+        var sut = CreateSut();
+
+        // Act & Assert - fail-safe for the process; input still reaches its other windows
+        sut.IsHostWindow(OtherWindow).Should().BeTrue();
+        sut.IsHostWindow(OtherDialog).Should().BeTrue("the dialog is owned by the recorded window");
+        sut.IsHostProcess(OtherPid).Should().BeTrue();
     }
 
     [Fact]
