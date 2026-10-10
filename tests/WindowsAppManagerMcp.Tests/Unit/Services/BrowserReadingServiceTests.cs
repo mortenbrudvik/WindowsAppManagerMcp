@@ -829,11 +829,13 @@ public class BrowserReadingServiceTests
         SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Ok(new CdpPageSnapshot("t", "u", "c")));
         var sut = CreateSut();
 
-        await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort, TimeoutMs: 2000));
+        // The largest budget, so a loaded test machine cannot use it up before the page read (a 2 s
+        // budget once ran out under a full-solution run); the 300 ms of matching must still be taken off
+        await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort, TimeoutMs: CdpOptions.MaxTimeoutMs));
 
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
             It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(),
-            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(1800)),
+            It.Is<TimeSpan>(t => t > TimeSpan.Zero && t <= TimeSpan.FromMilliseconds(CdpOptions.MaxTimeoutMs - 300)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
