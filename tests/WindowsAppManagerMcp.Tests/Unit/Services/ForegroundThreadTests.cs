@@ -113,13 +113,13 @@ public class ForegroundThreadTests
     }
 
     [Fact]
-    public void Run_TheWaitForAnEarlierCall_DoesNotCountAgainstTheWorksOwnTime()
+    public async Task Run_TheWaitForAnEarlierCall_DoesNotCountAgainstTheWorksOwnTime()
     {
         // Arrange - an earlier call holds the thread for 800 ms after this call starts waiting; this call allows
-        // 2400 ms and its work takes 1800 ms. The calls run on threads of their own and the release is timed on this
-        // one, not on the thread pool, which other tests can keep busy for longer than any margin here; what is
-        // left is the time a ready thread waits for a processor, far below the margins (1600 ms for the wait, 600 ms
-        // for the work).
+        // 2400 ms and its work takes 1800 ms. The calls run on threads of their own and the release is timed on the
+        // test's thread before its first await, not on the thread pool, which other tests can keep busy for longer
+        // than any margin here; what is left is the time a ready thread waits for a processor, far below the
+        // margins (1600 ms for the wait, 600 ms for the work).
         using var sut = new ForegroundThread();
         using var started = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -147,10 +147,8 @@ public class ForegroundThreadTests
         release.Set();
 
         // Assert - neither was abandoned, so no thread was counted as blocked
-        earlier.Wait(Long).Should().BeTrue();
-        earlier.Result.Should().Be(1);
-        queued.Wait(Long).Should().BeTrue();
-        queued.Result.Should().Be(2);
+        (await earlier.WaitAsync(Long)).Should().Be(1);
+        (await queued.WaitAsync(Long)).Should().Be(2);
         sut.StuckThreads.Should().Be(0);
     }
 
