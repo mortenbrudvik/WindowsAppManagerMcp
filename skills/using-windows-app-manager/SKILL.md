@@ -272,7 +272,7 @@ The `snap_window` tool supports 14 positions:
 ### Get UI Elements for Programmatic Interaction
 1. Use `find_windows` to locate the target window
 2. Use `get_ui_elements` to get the element tree with bounding boxes
-3. Trim the result with `interactableOnly`, `minWidth` and `minHeight` if needed
+3. Pick the elements you need from the result yourself. The filters (`controlTypes`, `interactableOnly`, `minWidth`, `minHeight`) currently drop whole subtrees, so they can hide the control you want (see Tips)
 4. Use element `bounds` to plan click automation
 
 ### Visual Element Discovery
@@ -317,7 +317,8 @@ To close a window, use `close_window`, not a key chord.
 - `capture_window` works on occluded windows but not minimized ones
 - `capture_with_elements` provides visual overlays - great for debugging UI automation
 - `get_ui_elements` is lightweight when only coordinates are needed (no image data)
-- The `controlTypes` filter currently drops matching elements that sit inside non-matching containers (for example a Button inside a Pane). If a filtered call returns fewer elements than expected, call again without `controlTypes` and filter the result yourself
+- The `get_ui_elements` filters currently drop whole subtrees: when an element fails a filter, everything inside it is left out too. `controlTypes` drops a Button inside a Pane unless `Pane` is listed, `interactableOnly` drops everything inside a disabled container, `minWidth`/`minHeight` drop everything inside a small container, and `visibleOnly` (on by default) drops everything inside an offscreen element. If a call returns fewer elements than expected, call again with only `handle` (and `maxDepth`) and filter the result yourself
+- Prefer full paths in `launch_application` for programs that might not be installed: a bare name that is not found in the Windows directory, System32, `PATH` or App Paths is handed to Windows, which may then start a file of that name from the current directory
 - For click automation, always use `get_ui_elements` first to get accurate screen coordinates
 - Calculate click center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
 - Coordinates are validated against monitor bounds before clicking
