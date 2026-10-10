@@ -1835,7 +1835,9 @@ process tokens, the input desktop, the session state and the agent's host chain 
 `SecurityProbeIntegrationTests`) but change nothing. Test classes that reach the real UI Automation
 client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomationCollection.Name)]`),
 which runs them one at a time: the client's first call in a process fails with E_FAIL when two
-threads make it at once.
+threads make it at once. `RealUiAutomationCollectionTests` scans the test assembly and fails for a
+class that calls the real client (the production `UiaTree` or `UIAutomationWrapper`,
+`UiaClientStartup.Shared` or `AutomationElement`) outside that collection.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked with a

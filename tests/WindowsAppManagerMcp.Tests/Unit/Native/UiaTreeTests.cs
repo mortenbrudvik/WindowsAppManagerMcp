@@ -2,8 +2,11 @@ namespace WindowsAppManagerMcp.Tests.Unit.Native;
 
 /// <summary>
 /// Tests for the UI Automation adapter that need no window: they read only the UI Automation root
-/// and look up a handle that is not a window. No window is read, focused or changed.
+/// and look up a handle that is not a window. No window is read, focused or changed. They reach the
+/// real client, so they run in the serial <see cref="RealUiAutomationCollection"/>; the tests with a
+/// fake start gate are harmless there.
 /// </summary>
+[Collection(RealUiAutomationCollection.Name)]
 public class UiaTreeTests
 {
     // A handle that is extremely unlikely to be a real window
