@@ -26,6 +26,7 @@ public class ForegroundServicePauseTests
     {
         _session = new InputSession(_input);
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
+        _windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns(true);
         _windows.Setup(w => w.GetForegroundWindow()).Returns(() => _foreground);
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), It.IsAny<WindowAncestor>())).Returns<nint, WindowAncestor>((h, _) => h);
         _windows.Setup(w => w.GetWindow(It.IsAny<nint>(), It.IsAny<uint>())).Returns(nint.Zero);

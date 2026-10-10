@@ -74,7 +74,14 @@ public enum WindowErrorCode
     /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
     /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
     /// </summary>
-    PausedByUser = 26
+    PausedByUser = 26,
+
+    /// <summary>
+    /// The window (its top-level window) is hidden: it does not have WS_VISIBLE, for example an app that hid
+    /// its window in the notification area. It was not activated, because keyboard input would then go to a
+    /// window the user cannot see.
+    /// </summary>
+    WindowHidden = 27
 }
 
 /// <summary>

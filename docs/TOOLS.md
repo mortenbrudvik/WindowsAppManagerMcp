@@ -547,6 +547,7 @@ The window counts as in front when the foreground window is the window itself or
 | `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later. Also returned, with nothing tried, when another focus call was still running |
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
+| `WindowHidden` | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area); it was not activated, because keys would go to a window the user cannot see. Show it from the app first, or ask the user |
 | `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done; a pause during the activation stops it at the next step. While paused, `focus_window` itself is refused before it runs (`isError`, see [Pause hotkey](#pause-hotkey)). Stop and ask the user |
 | `InvalidHandle` | The handle is not a window |
 
@@ -3494,4 +3495,5 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
+| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
 | `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

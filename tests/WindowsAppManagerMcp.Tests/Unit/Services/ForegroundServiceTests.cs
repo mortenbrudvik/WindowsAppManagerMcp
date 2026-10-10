@@ -55,6 +55,7 @@ public class ForegroundServiceTests
     {
         var windows = new[] { Target, Terminal, Dialog, OtherDialog, WpfDialog, WpfNestedDialog };
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns<nint>(h => windows.Contains(h));
+        _windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns<nint>(h => windows.Contains(h));
         _windows.Setup(w => w.GetForegroundWindow()).Returns(() => _foreground);
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Root)).Returns<nint, WindowAncestor>((h, _) => h);
         // The Win32 dialogs (WS_POPUP) are owned by the target: their root owner is the target. The WPF
@@ -288,6 +289,46 @@ public class ForegroundServiceTests
         // Assert
         outcome.IsForeground.Should().BeFalse();
         outcome.ErrorCode.Should().Be(WindowErrorCode.Cloaked);
+        _calls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EnsureForeground_WhenTheTargetIsHidden_RefusesWithWindowHidden(bool alreadyInFront)
+    {
+        // Arrange - an app that hid its window in the notification area; SetForegroundWindow can still make
+        // it the foreground window, and keys would then go to a window the user cannot see
+        _windows.Setup(w => w.IsWindowVisible(Target)).Returns(false);
+        _foreground = alreadyInFront ? Target : Terminal;
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.WindowHidden);
+        outcome.Error.Should().Contain("hidden");
+        _calls.Should().BeEmpty();
+        _sentInput.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsAChildOfAHiddenWindow_RefusesWithWindowHidden()
+    {
+        // Arrange - the window that would be activated is the target's top-level window
+        nint child = 0x110;
+        _windows.Setup(w => w.IsWindow(child)).Returns(true);
+        _windows.Setup(w => w.GetAncestor(child, WindowAncestor.Root)).Returns(Target);
+        _windows.Setup(w => w.IsWindowVisible(Target)).Returns(false);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(child, timeoutMs: 0);
+
+        // Assert
+        outcome.ErrorCode.Should().Be(WindowErrorCode.WindowHidden);
         _calls.Should().BeEmpty();
     }
 

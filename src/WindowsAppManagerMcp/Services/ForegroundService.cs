@@ -125,6 +125,15 @@ public sealed class ForegroundService : IForegroundService
 
         // The first USER call on this thread also gives it the message queue AttachThreadInput needs
         var foreground = _windows.GetForegroundWindow();
+
+        // SetForegroundWindow can activate a hidden window, and keys would then go to a window the user cannot see
+        if (!_windows.IsWindowVisible(root))
+        {
+            return Activation.Failed(root, foreground, WindowErrorCode.WindowHidden,
+                "The window is hidden (an app that hid it in the notification area, for example), so it was not activated: " +
+                "keys would go to a window the user cannot see. Show it from the app or its notification icon first, or ask the user.");
+        }
+
         if (IsInFront(root, foreground) && !_windows.IsIconic(root))
         {
             // A menu open in a window that was already in front is the user's: report it, leave it open
