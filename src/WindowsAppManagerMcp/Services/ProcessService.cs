@@ -114,7 +114,7 @@ public class ProcessService : IProcessService
         {
             return LaunchPlan.Rejected(
                 "Arguments must not be null or contain NUL characters.",
-                nameof(LaunchErrorCode.InvalidArguments),
+                nameof(LaunchErrorCode.InvalidArgumentValue),
                 warning);
         }
 

@@ -80,8 +80,11 @@ public enum LaunchErrorCode
     /// </summary>
     UnsafeBatchArguments = 11,
 
-    /// <summary>An argument is null or contains a NUL character.</summary>
-    InvalidArguments = 12,
+    /// <summary>
+    /// An element of the arguments array is null or contains a NUL character. Not to be confused with the
+    /// InvalidArguments tool error (ToolErrorReporting), which means the call's arguments could not be bound.
+    /// </summary>
+    InvalidArgumentValue = 12,
 
     /// <summary>
     /// A bare executable name was found only in the working directory. Bare names are never resolved

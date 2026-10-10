@@ -2081,7 +2081,7 @@ Launch an application by path, name, or protocol URI.
 | `PathTraversal` | Path contains `..` |
 | `BlockedProtocol` / `UnknownProtocol` / `InvalidUri` | URI not allowed or malformed |
 | `InvalidWorkingDirectory` | Working directory contains invalid characters |
-| `InvalidArguments` | An argument is null or contains a NUL character |
+| `InvalidArgumentValue` | An element of `arguments` is null or contains a NUL character |
 | `UnsafeBatchArguments` | Argument would be interpreted by `cmd.exe` (see above) |
 | `ExecutableInWorkingDirectory` | Bare name found only in the current or working directory |
 | `ProcessStartFailed` / `LaunchException` | Windows failed to start the target |
@@ -2733,10 +2733,13 @@ An unknown tool name is still reported as a JSON-RPC protocol error, not as a to
 
 ### Error code reference
 
+Common codes. Each tool's section lists the codes that tool returns.
+
 | Code | Description |
 |------|-------------|
 | `UnhandledException` | The tool threw an unexpected exception (see [Tool errors](#tool-errors)) |
-| `InvalidArguments` | A required argument is missing or has the wrong type (see [Tool errors](#tool-errors)) |
+| `InvalidArguments` | Tool error (`isError: true`): a required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
+| `InvalidArgumentValue` | launch_application / launch_applications_batch (`success: false`): an element of `arguments` is null or contains a NUL character (see [launch_application](#launch_application)) |
 | `ToolError` | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
 | `WindowNotFound` | Window handle is invalid or window closed |
 | `InvalidHandle` | Handle parameter is missing or invalid |
