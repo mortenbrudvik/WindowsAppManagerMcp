@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
@@ -9,14 +10,39 @@ namespace WindowsAppManagerMcp.Services;
 /// state, every SendInput and SetCursorPos call and the held-input bookkeeping, so a pause takes effect
 /// between two batches and never inside one.
 /// </summary>
-public sealed class InputSession : IInputSession
+/// <remarks>
+/// Until the server starts, the pause is this session's own. Then it is shared through a flag every server on the
+/// desktop opens (<see cref="IDesktopPauseFlag"/>), and this session's state follows the flag's changes: every
+/// operation under the lock looks at the flag first, so a pause another server made is in force before this
+/// server's next batch, and a watcher thread waits on the flag, so running calls stop at once (their pause
+/// token is cancelled) and held input is released. A change this session makes itself is written to the flag
+/// and takes effect here even when the flag cannot be written.
+/// </remarks>
+public sealed class InputSession : IInputSession, IDisposable
 {
+    /// <summary>
+    /// A hotkey press within this time of the pause is ignored: the user gets no feedback from the hotkey, and
+    /// pressing it twice to be sure must not resume.
+    /// </summary>
+    public static readonly TimeSpan HotkeyResumeDelay = TimeSpan.FromSeconds(2);
+
+    /// <summary>While the shared pause is on, how often the watcher looks whether another server resumed.</summary>
+    public static readonly TimeSpan SharedResumePoll = TimeSpan.FromMilliseconds(250);
+
+    private static readonly TimeSpan WatcherStopTimeout = TimeSpan.FromSeconds(2);
+
     private readonly INativeInputWrapper _input;
     private readonly PauseHotkeyOptions _hotkey;
     private readonly TimeProvider _time;
     private readonly ILogger<InputSession>? _logger;
     private readonly object _lock = new();
     private readonly HeldInputTracker _held = new();
+    private readonly CancellationTokenSource _watcherStop = new();
+    private IDesktopPauseFlag? _flag;
+    private bool _flagSeen;
+    private bool _shared;
+    private Thread? _watcher;
+    private long _pauses;
     private CancellationTokenSource _pauseSource = new();
     private InputPauseState _state = InputPauseState.Running;
     private InputReleaseRecord? _lastRelease;
@@ -40,6 +66,7 @@ public sealed class InputSession : IInputSession
         {
             lock (_lock)
             {
+                SyncLocked();
                 return _state.Paused;
             }
         }
@@ -52,6 +79,7 @@ public sealed class InputSession : IInputSession
         {
             lock (_lock)
             {
+                SyncLocked();
                 return _state;
             }
         }
@@ -64,6 +92,7 @@ public sealed class InputSession : IInputSession
         {
             lock (_lock)
             {
+                SyncLocked();
                 return _pauseSource.Token;
             }
         }
@@ -71,6 +100,18 @@ public sealed class InputSession : IInputSession
 
     /// <inheritdoc />
     public string? PauseChord => _hotkey.Chord?.Text;
+
+    /// <inheritdoc />
+    public bool SharesDesktopPause
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _shared;
+            }
+        }
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<HeldInput> ServerHeld
@@ -99,55 +140,102 @@ public sealed class InputSession : IInputSession
     /// <inheritdoc />
     public bool Pause(string source)
     {
-        CancellationTokenSource running;
         lock (_lock)
         {
+            SyncLocked();
             if (_state.Paused)
             {
                 return false;
             }
 
-            _state = _state with { Paused = true, PausedBy = source, PausedAt = _time.GetUtcNow() };
-            running = _pauseSource;
+            WriteFlagLocked(paused: true);
+            ApplyPauseLocked(source);
+            return true;
         }
-
-        // Running calls stop at their next check. CancelAsync runs their callbacks on the thread pool, not on
-        // the caller (the hotkey thread); no batch can start meanwhile, because Send checks the state above.
-        _ = running.CancelAsync();
-        _logger?.LogWarning("Input paused by the user ({Source}); input tools return PausedByUser until the user resumes", source);
-
-        ReleaseHeldInput("input was paused");
-        return true;
     }
 
     /// <inheritdoc />
-    public bool Resume(string source)
+    public bool Resume(string source, long? pauseNumber = null)
     {
         lock (_lock)
         {
-            if (!_state.Paused)
+            SyncLocked();
+            if (!_state.Paused || (pauseNumber is { } number && number != _state.PauseNumber))
             {
                 return false;
             }
 
-            _state = _state with { Paused = false, ResumedBy = source, ResumedAt = _time.GetUtcNow() };
-
-            // The cancelled source stays cancelled for the calls that linked it; new calls get a new one. It is
-            // not disposed, because a call may still be reading its token.
-            _pauseSource = new CancellationTokenSource();
+            WriteFlagLocked(paused: false);
+            ApplyResumeLocked(source);
+            return true;
         }
-
-        _logger?.LogWarning("Input resumed ({Source})", source);
-        return true;
     }
 
     /// <inheritdoc />
     public void TogglePauseByHotkey()
     {
-        if (!Pause(InputControlSources.Hotkey))
+        lock (_lock)
         {
-            Resume(InputControlSources.Hotkey);
+            SyncLocked();
+            if (!_state.Paused)
+            {
+                WriteFlagLocked(paused: true);
+                ApplyPauseLocked(InputControlSources.Hotkey);
+                return;
+            }
+
+            if (_state.PausedAt is { } pausedAt && _time.GetUtcNow() - pausedAt < HotkeyResumeDelay)
+            {
+                _logger?.LogWarning("The pause hotkey was pressed again within {Delay} s of the pause; input stays paused",
+                    HotkeyResumeDelay.TotalSeconds);
+                return;
+            }
+
+            WriteFlagLocked(paused: false);
+            ApplyResumeLocked(InputControlSources.Hotkey);
         }
+    }
+
+    /// <inheritdoc />
+    public void ShareDesktopPause(IDesktopPauseFlag flag)
+    {
+        ArgumentNullException.ThrowIfNull(flag);
+        lock (_lock)
+        {
+            if (_shared)
+            {
+                throw new InvalidOperationException("The pause is already shared.");
+            }
+
+            _flag = flag;
+            _shared = true;
+            _flagSeen = false;
+
+            // A pause made before carries over to the other servers; a pause they have already made applies here
+            if (_state.Paused)
+            {
+                WriteFlagLocked(paused: true);
+            }
+
+            SyncLocked();
+            _watcher = new Thread(() => Watch(flag, _watcherStop.Token)) { IsBackground = true, Name = "WAM shared pause" };
+            _watcher.Start();
+        }
+    }
+
+    /// <inheritdoc />
+    public bool IsPauseChordHeld(IReadOnlyList<HeldInput> modifiersDown)
+    {
+        ArgumentNullException.ThrowIfNull(modifiersDown);
+        if (_hotkey.Chord is not { Modifiers: not KeyModifiers.None } chord)
+        {
+            return false;
+        }
+
+        var held = modifiersDown
+            .Where(k => k.Kind == InputEventKind.VirtualKey)
+            .Aggregate(KeyModifiers.None, (all, key) => all | ModifierOf(key.Code));
+        return (held & chord.Modifiers) == chord.Modifiers;
     }
 
     /// <inheritdoc />
@@ -163,6 +251,7 @@ public sealed class InputSession : IInputSession
         ArgumentNullException.ThrowIfNull(events);
         lock (_lock)
         {
+            SyncLocked();
             if (_state.Paused)
             {
                 return new InputSendOutcome(PausedByUser: true, Inserted: 0, Requested: events.Count);
@@ -203,6 +292,7 @@ public sealed class InputSession : IInputSession
     {
         lock (_lock)
         {
+            SyncLocked();
             return _state.Paused ? null : _input.SetCursorPos(x, y);
         }
     }
@@ -229,12 +319,161 @@ public sealed class InputSession : IInputSession
         ArgumentNullException.ThrowIfNull(keys);
         lock (_lock)
         {
+            SyncLocked();
             if (_state.Paused)
             {
                 return InputReleaseOutcome.Paused;
             }
 
             return keys.Count == 0 ? InputReleaseOutcome.Nothing : ReleaseLocked(keys, reason);
+        }
+    }
+
+    /// <summary>Stops the watcher thread and closes the shared pause.</summary>
+    public void Dispose()
+    {
+        Thread? watcher;
+        lock (_lock)
+        {
+            watcher = _watcher;
+        }
+
+        _watcherStop.Cancel();
+        if (watcher != null && !watcher.Join(WatcherStopTimeout))
+        {
+            _logger?.LogWarning("The shared pause's watcher thread did not stop within {Timeout} s", WatcherStopTimeout.TotalSeconds);
+            return;
+        }
+
+        (_flag as IDisposable)?.Dispose();
+    }
+
+    /// <summary>
+    /// Takes over a change of the flag made by another server: a pause pauses this server too, a resume resumes
+    /// it. Only changes count, so a flag that could not be written does not undo this server's own change.
+    /// </summary>
+    private void SyncLocked()
+    {
+        if (_flag == null)
+        {
+            return;
+        }
+
+        bool paused;
+        try
+        {
+            paused = _flag.IsSet;
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        if (paused == _flagSeen)
+        {
+            return;
+        }
+
+        _flagSeen = paused;
+        if (paused && !_state.Paused)
+        {
+            // Only the pause hotkey pauses, in whichever server registered it
+            ApplyPauseLocked(InputControlSources.Hotkey);
+        }
+        else if (!paused && _state.Paused)
+        {
+            ApplyResumeLocked(InputControlSources.OtherServer);
+        }
+    }
+
+    private void WriteFlagLocked(bool paused)
+    {
+        if (_flag == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (paused)
+            {
+                _flag.Set();
+            }
+            else
+            {
+                _flag.Reset();
+            }
+
+            _flagSeen = paused;
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogError(ex, "The shared pause could not be {Change}; only this server is {State}",
+                paused ? "set" : "reset", paused ? "paused" : "resumed");
+        }
+    }
+
+    private void ApplyPauseLocked(string source)
+    {
+        _state = _state with { Paused = true, PausedBy = source, PausedAt = _time.GetUtcNow(), PauseNumber = ++_pauses };
+
+        // Running calls stop at their next check. CancelAsync runs their callbacks on the thread pool, not on this
+        // thread (the hotkey's or the watcher's); no batch can start meanwhile, because Send checks the state first.
+        _ = _pauseSource.CancelAsync();
+        _logger?.LogWarning("Input paused by the user ({Source}); input tools return PausedByUser until the user resumes", source);
+
+        if (!_held.IsEmpty)
+        {
+            ReleaseLocked(_held.Held, "input was paused");
+        }
+    }
+
+    private void ApplyResumeLocked(string source)
+    {
+        _state = _state with { Paused = false, ResumedBy = source, ResumedAt = _time.GetUtcNow() };
+
+        // The cancelled source stays cancelled for the calls that linked it; new calls get a new one. It is not
+        // disposed, because a call may still be reading its token.
+        _pauseSource = new CancellationTokenSource();
+        _logger?.LogWarning("Input resumed ({Source})", source);
+    }
+
+    /// <summary>
+    /// The watcher thread: waits until the shared pause is set, takes it over (which cancels running calls),
+    /// then looks every <see cref="SharedResumePoll"/> whether it was reset.
+    /// </summary>
+    private void Watch(IDesktopPauseFlag flag, CancellationToken stop)
+    {
+        try
+        {
+            var handles = new[] { flag.WaitHandle, stop.WaitHandle };
+            while (!stop.IsCancellationRequested)
+            {
+                if (!flag.IsSet)
+                {
+                    if (WaitHandle.WaitAny(handles) == 1)
+                    {
+                        return;
+                    }
+                }
+                else if (stop.WaitHandle.WaitOne(SharedResumePoll))
+                {
+                    return;
+                }
+
+                lock (_lock)
+                {
+                    SyncLocked();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Never let an exception end the process from this thread: the pause still takes effect before every batch
+            if (!stop.IsCancellationRequested)
+            {
+                _logger?.LogError(ex, "The shared pause's watcher failed; a pause made by another server now takes effect at this server's next input");
+            }
         }
     }
 
@@ -284,6 +523,15 @@ public sealed class InputSession : IInputSession
     private static bool Releases(InputEvent e, HeldInput key) => key.Kind switch
     {
         InputEventKind.Mouse => e.Kind == InputEventKind.Mouse && (e.Flags & ((uint)key.Code << 1)) != 0,
-        _ => e.Kind == key.Kind && e.Code == key.Code && (e.Flags & Native.NativeEnums.KEYEVENTF_KEYUP) != 0
+        _ => e.Kind == key.Kind && e.Code == key.Code && (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0
+    };
+
+    private static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch
+    {
+        NativeEnums.VK_CONTROL or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL => KeyModifiers.Control,
+        NativeEnums.VK_MENU or NativeEnums.VK_LMENU or NativeEnums.VK_RMENU => KeyModifiers.Alt,
+        NativeEnums.VK_SHIFT or NativeEnums.VK_LSHIFT or NativeEnums.VK_RSHIFT => KeyModifiers.Shift,
+        NativeEnums.VK_LWIN or NativeEnums.VK_RWIN => KeyModifiers.Windows,
+        _ => KeyModifiers.None
     };
 }

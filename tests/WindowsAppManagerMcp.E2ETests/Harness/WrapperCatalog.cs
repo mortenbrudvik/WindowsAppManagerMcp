@@ -30,8 +30,10 @@ public enum WrapperCallKind
 
     /// <summary>
     /// Registers or frees a system-wide hotkey for the calling thread, or runs or stops that thread's message
-    /// loop (the user's pause hotkey). It sends no input and changes no window, but while it is registered
-    /// the chord no longer reaches any other application, so no E2E tier allows it.
+    /// loop (the user's pause hotkey), or opens or marks the named objects every server on the desktop shares
+    /// (the shared pause, the mark of the server that holds the chord). It sends no input and changes no
+    /// window, but while it is registered the chord no longer reaches any other application, and the shared
+    /// pause pauses the servers the user runs, so no E2E tier allows it.
     /// </summary>
     GlobalHotkey
 }
@@ -122,7 +124,21 @@ public static class WrapperCatalog
                 [nameof(INativeHotkeyWrapper.RegisterHotKey)] = WrapperMember.GlobalHotkey,
                 [nameof(INativeHotkeyWrapper.UnregisterHotKey)] = WrapperMember.GlobalHotkey,
                 [nameof(INativeHotkeyWrapper.WaitForMessage)] = WrapperMember.GlobalHotkey,
-                [nameof(INativeHotkeyWrapper.PostStopMessage)] = WrapperMember.GlobalHotkey
+                [nameof(INativeHotkeyWrapper.PostStopMessage)] = WrapperMember.GlobalHotkey,
+                // The shared pause is the one the user's own servers follow: setting it would pause them
+                [nameof(INativeHotkeyWrapper.OpenDesktopPause)] = WrapperMember.GlobalHotkey,
+                [nameof(INativeHotkeyWrapper.MarkChordHolder)] = WrapperMember.GlobalHotkey,
+                // Opens the mark only to see whether it exists, and closes it again
+                [nameof(INativeHotkeyWrapper.IsChordHeldByAServer)] = WrapperMember.Read
+            },
+            [typeof(IDesktopPauseFlag)] = new Dictionary<string, WrapperMember>
+            {
+                // The shared pause that OpenDesktopPause hands out: reading it and waiting on it change nothing, but
+                // setting or resetting it pauses or resumes every server the user runs on the desktop
+                ["get_" + nameof(IDesktopPauseFlag.IsSet)] = WrapperMember.Read,
+                ["get_" + nameof(IDesktopPauseFlag.WaitHandle)] = WrapperMember.Read,
+                [nameof(IDesktopPauseFlag.Set)] = WrapperMember.GlobalHotkey,
+                [nameof(IDesktopPauseFlag.Reset)] = WrapperMember.GlobalHotkey
             },
             [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
             {

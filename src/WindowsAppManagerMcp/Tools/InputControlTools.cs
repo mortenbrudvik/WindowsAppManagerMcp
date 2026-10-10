@@ -25,6 +25,7 @@ public class InputControlTools
     private readonly IInputSession _session;
     private readonly IPauseHotkey _hotkey;
     private readonly TimeSpan _answerTimeout;
+    private int _asking;
 
     /// <param name="session">The input session.</param>
     /// <param name="hotkey">The pause hotkey.</param>
@@ -39,22 +40,31 @@ public class InputControlTools
     [McpServerTool(Name = "get_control_status")]
     [Description("Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey " +
                  "is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool " +
-                 "(click, type_text, send_keys, ...) and focus_window return PausedByUser: stop, tell the user, and wait for them. " +
-                 "Never try to resume input yourself.")]
+                 "(click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return " +
+                 "PausedByUser: stop, tell the user, and wait for them. Never try to resume input yourself.")]
     public ControlStatusResult GetControlStatus()
     {
         var state = _session.PauseState;
         var hotkey = _hotkey.Status;
+        var shared = _session.SharesDesktopPause;
         var serverHeld = _session.ServerHeld.Select(h => h.Name).ToList();
         var modifiersDown = _session.ReadModifiersDown().Select(k => k.Name).ToList();
 
         var message = state.Paused
-            ? $"Input is paused by the user ({state.PausedBy}{Since(state.PausedAt)}). Every input tool returns PausedByUser. Stop and ask the " +
-              $"user how to continue. Only the user can resume: {(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by " +
-              "confirming resume_input when you call it at the user's request."
-            : hotkey.State == PauseHotkeyState.Registered
-                ? $"Input is running. The user can pause it at any time with {hotkey.Chord}."
-                : $"Input is running. The pause hotkey is not available ({hotkey.State}){(hotkey.Error is { } error ? $": {error}" : ".")}";
+            ? $"Input is paused by the user ({state.PausedBy}{Since(state.PausedAt)}). Every input tool and every tool that changes windows " +
+              "or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: " +
+              $"{(hotkey.Chord is { } chord ? $"{chord} again, or " : string.Empty)}by confirming resume_input when you call it at the user's request."
+            : hotkey.State switch
+            {
+                PauseHotkeyState.Registered => $"Input is running. The user can pause it at any time with {hotkey.Chord}.",
+                PauseHotkeyState.OtherServer when shared =>
+                    $"Input is running. The user can pause it at any time with {hotkey.Chord}, which another Windows App Manager server on this " +
+                    "desktop has registered; it pauses every server.",
+                PauseHotkeyState.OtherServer =>
+                    $"Input is running. Another Windows App Manager server has registered {hotkey.Chord}, and this server could not share its " +
+                    "pause, so the hotkey does not pause this server. Tell the user.",
+                _ => $"Input is running. The pause hotkey is not available ({hotkey.State}){(hotkey.Error is { } error ? $": {error}" : ".")}"
+            };
         if (serverHeld.Count > 0)
         {
             message += $" The server could not release {string.Join(", ", serverHeld)}; call release_all_input.";
@@ -73,6 +83,7 @@ public class InputControlTools
             state.ResumedBy,
             state.ResumedAt,
             hotkey,
+            shared,
             new HeldInputStatus(serverHeld, modifiersDown, _session.LastRelease),
             message);
     }
@@ -80,9 +91,10 @@ public class InputControlTools
     [McpServerTool(Name = "resume_input")]
     [Description("Resume the server's input after the user paused it with the pause hotkey, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
-                 "the user has asked you to continue. ResumeNeedsUser: this client cannot ask the user, so only the user can resume, with " +
-                 "the hotkey. ResumeDeclined: the user said no or did not answer; input stays paused. Never try to resume any other way, " +
-                 "and never send the pause hotkey's keys.")]
+                 "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
+                 "the user can resume, with the hotkey. ResumeDeclined: the user said no or did not answer, paused again meanwhile, or " +
+                 "another resume_input is already waiting for the answer; input stays paused. Never try to resume any other way, and " +
+                 "never send the pause hotkey's keys.")]
     public async Task<ResumeInputResult> ResumeInput(McpServer server, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(server);
@@ -93,6 +105,25 @@ public class InputControlTools
             return new ResumeInputResult(Success: true, WasPaused: false);
         }
 
+        // One question at a time: several open questions would give a careless "yes" several chances
+        if (Interlocked.CompareExchange(ref _asking, 1, 0) != 0)
+        {
+            return Declined("Another resume_input call is already waiting for the user's answer. Input stays paused; wait for that " +
+                            "answer instead of asking again.");
+        }
+
+        try
+        {
+            return await AskToResumeAsync(server, state, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _asking, 0);
+        }
+    }
+
+    private async Task<ResumeInputResult> AskToResumeAsync(McpServer server, InputPauseState state, CancellationToken cancellationToken)
+    {
         var chord = _session.PauseChord;
         var hotkeyHint = chord == null ? "the pause hotkey" : chord;
         if (server.ClientCapabilities?.Elicitation?.Form == null)
@@ -103,10 +134,13 @@ public class InputControlTools
                 ErrorCode: InputErrorCode.ResumeNeedsUser);
         }
 
+        var everyServer = _session.SharesDesktopPause
+            ? " The pause is shared: resuming lets every Windows App Manager server on this desktop send input again."
+            : string.Empty;
         var question = new ElicitRequestParams
         {
             Message = $"The AI agent asks to resume keyboard and mouse input. You paused it{(chord == null ? string.Empty : $" with {chord}")}" +
-                      $"{Since(state.PausedAt)}. Resume only if you want the agent to send input to your desktop again.",
+                      $"{Since(state.PausedAt)}.{everyServer} Resume only if you want the agent to send input to your desktop again.",
             RequestedSchema = new ElicitRequestParams.RequestSchema
             {
                 Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
@@ -142,10 +176,17 @@ public class InputControlTools
             }
         }
 
-        // The user may have pressed the hotkey meanwhile
-        if (!_session.IsPaused)
+        // The user may have pressed the hotkey meanwhile: to resume, or to resume and pause again
+        var now = _session.PauseState;
+        if (!now.Paused)
         {
-            return new ResumeInputResult(true, WasPaused: true, ResumedBy: _session.PauseState.ResumedBy);
+            return new ResumeInputResult(true, WasPaused: true, ResumedBy: now.ResumedBy);
+        }
+
+        if (now.PauseNumber != state.PauseNumber)
+        {
+            return Declined("The user paused input again while the question was open, so the answer does not apply to this pause. Input " +
+                            "stays paused; ask the user what to do.");
         }
 
         if (!Confirmed(answer))
@@ -155,7 +196,15 @@ public class InputControlTools
                 : $"The user {(answer.Action == "decline" ? "declined" : "dismissed")} the resume. Input stays paused; ask the user what to do.");
         }
 
-        _session.Resume(InputControlSources.ResumeInput);
+        // Only the pause the user was asked about; a newer one stays
+        if (!_session.Resume(InputControlSources.ResumeInput, state.PauseNumber))
+        {
+            var after = _session.PauseState;
+            return after.Paused
+                ? Declined("The user paused input again while the question was answered. Input stays paused; ask the user what to do.")
+                : new ResumeInputResult(true, WasPaused: true, ResumedBy: after.ResumedBy);
+        }
+
         return new ResumeInputResult(true, WasPaused: true, ResumedBy: InputControlSources.ResumeInput);
     }
 
@@ -164,7 +213,8 @@ public class InputControlTools
                  "could not release (normally none; every input call releases its own). With releaseHeldModifiers: true it also " +
                  "releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it; use that " +
                  "only when an input tool returned ModifiersHeld and nobody is pressing the key, or the user asked. Works while input is " +
-                 "paused, except for releaseHeldModifiers.")]
+                 "paused, except for releaseHeldModifiers. Modifiers that make up the pause hotkey's chord are never released: the user " +
+                 "may be pressing it.")]
     public ReleaseInputResult ReleaseAllInput(
         [Description("Also release modifier keys that are down although the server did not press them (the user's, or stuck). Default: false")]
         bool releaseHeldModifiers = false)
@@ -178,8 +228,16 @@ public class InputControlTools
         if (releaseHeldModifiers)
         {
             var down = _session.ReadModifiersDown();
-            var modifiers = _session.ReleaseModifiers(down, "release_all_input with releaseHeldModifiers");
-            if (modifiers.PausedByUser)
+            var modifiers = _session.IsPauseChordHeld(down)
+                ? null
+                : _session.ReleaseModifiers(down, "release_all_input with releaseHeldModifiers");
+            if (modifiers == null)
+            {
+                errorCode = errorCode == InputErrorCode.None ? InputErrorCode.ModifiersHeld : errorCode;
+                error = Join(error, $"{string.Join(", ", down.Select(k => k.Name))} are down: the modifiers of the pause hotkey " +
+                                    $"({_session.PauseChord}). The user may be pressing it, so they were left alone. Ask the user.");
+            }
+            else if (modifiers.PausedByUser)
             {
                 errorCode = errorCode == InputErrorCode.None ? InputErrorCode.PausedByUser : errorCode;
                 error = Join(error, "Input is paused by the user, so modifier keys the server did not press were left alone.");

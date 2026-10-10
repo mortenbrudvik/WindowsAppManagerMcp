@@ -227,15 +227,22 @@ public sealed record InputReleaseRecord(
 /// <summary>Whether the user paused the server's input, and since when.</summary>
 /// <param name="Paused">True while input is paused.</param>
 /// <param name="PausedBy">How it was paused ("hotkey"); null while running.</param>
-/// <param name="PausedAt">When it was paused; null while running.</param>
-/// <param name="ResumedBy">How it was last resumed ("hotkey", or "resume_input" after the user confirmed); null if never.</param>
+/// <param name="PausedAt">When this server paused; null while running.</param>
+/// <param name="ResumedBy">
+/// How it was last resumed ("hotkey", "resume_input" after the user confirmed, or "another_server"); null if never.
+/// </param>
 /// <param name="ResumedAt">When it was last resumed; null if never.</param>
+/// <param name="PauseNumber">
+/// How many times this server has paused since it started: resume_input resumes only the pause it asked the user
+/// about, not one the user made while the question was open.
+/// </param>
 public sealed record InputPauseState(
     bool Paused,
     string? PausedBy = null,
     DateTimeOffset? PausedAt = null,
     string? ResumedBy = null,
-    DateTimeOffset? ResumedAt = null)
+    DateTimeOffset? ResumedAt = null,
+    long PauseNumber = 0)
 {
     /// <summary>Input is running and was never paused.</summary>
     public static InputPauseState Running { get; } = new(false);
@@ -249,6 +256,12 @@ public static class InputControlSources
 
     /// <summary>resume_input, after the user confirmed it.</summary>
     public const string ResumeInput = "resume_input";
+
+    /// <summary>
+    /// Another server on this desktop resumed the shared pause: its pause hotkey, or its resume_input after the
+    /// user confirmed.
+    /// </summary>
+    public const string OtherServer = "another_server";
 }
 
 /// <summary>Whether the pause hotkey is registered.</summary>
@@ -264,7 +277,14 @@ public enum PauseHotkeyState
     Failed,
 
     /// <summary>Turned off by the user (WAM_PAUSE_HOTKEY=none).</summary>
-    Disabled
+    Disabled,
+
+    /// <summary>
+    /// Another Windows App Manager server on this desktop has registered the chord. Its presses pause and resume
+    /// this server too, since every server shares the pause; this server registers the chord itself once that
+    /// server stops.
+    /// </summary>
+    OtherServer
 }
 
 /// <summary>The pause hotkey and whether it works.</summary>
@@ -290,6 +310,10 @@ public sealed record HeldInputStatus(
 /// <param name="ResumedBy">How it was last resumed; null if never.</param>
 /// <param name="ResumedAt">When it was last resumed; null if never.</param>
 /// <param name="Hotkey">The pause hotkey and whether it is registered.</param>
+/// <param name="SharedPause">
+/// True when the pause is shared by every Windows App Manager server on this desktop: the hotkey pauses and resumes
+/// all of them, and so does resume_input.
+/// </param>
 /// <param name="HeldInput">Keys and buttons that are down.</param>
 /// <param name="Message">What this means for the agent.</param>
 public sealed record ControlStatusResult(
@@ -299,13 +323,16 @@ public sealed record ControlStatusResult(
     string? ResumedBy,
     DateTimeOffset? ResumedAt,
     PauseHotkeyStatus Hotkey,
+    bool SharedPause,
     HeldInputStatus HeldInput,
     string Message);
 
 /// <summary>Result of resume_input.</summary>
 /// <param name="Success">True when input is running after the call.</param>
 /// <param name="WasPaused">True when input was paused when the call started.</param>
-/// <param name="ResumedBy">How it was resumed ("resume_input" or "hotkey"); null when it was not paused or stays paused.</param>
+/// <param name="ResumedBy">
+/// How it was resumed ("resume_input", "hotkey" or "another_server"); null when it was not paused or stays paused.
+/// </param>
 /// <param name="Error">Why input stays paused.</param>
 /// <param name="ErrorCode">ResumeNeedsUser or ResumeDeclined; None on success.</param>
 public sealed record ResumeInputResult(
@@ -321,7 +348,10 @@ public sealed record ResumeInputResult(
 /// <param name="StillHeld">The keys and buttons that could not be released.</param>
 /// <param name="ModifiersDown">Modifier keys Windows still reports down after the call (not released unless releaseHeldModifiers).</param>
 /// <param name="Error">What went wrong.</param>
-/// <param name="ErrorCode">SendInputFailed, or PausedByUser when the user's modifiers were not released because input is paused.</param>
+/// <param name="ErrorCode">
+/// SendInputFailed; PausedByUser when the user's modifiers were not released because input is paused; ModifiersHeld when
+/// they were not released because they make up the pause hotkey's chord.
+/// </param>
 public sealed record ReleaseInputResult(
     bool Success,
     IReadOnlyList<string> Released,

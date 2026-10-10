@@ -2,8 +2,9 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
 /// The pause hotkey's thread (roadmap M1.10): it registers the chord on its own message-loop thread, calls
-/// the action on every press, reports a refused registration, and frees the hotkey when stopped. The native
-/// side is <see cref="FakeHotkeyWrapper"/>: no real hotkey is registered.
+/// the action on every press, reports a refused registration (telling a chord another server holds from one
+/// another program holds), tries again while the chord is taken, and frees the hotkey when stopped. The native
+/// side is <see cref="FakeHotkeyWrapper"/>: no real hotkey is registered and no named object opened.
 /// </summary>
 public class PauseHotkeyListenerTests
 {
@@ -13,8 +14,12 @@ public class PauseHotkeyListenerTests
 
     private readonly FakeHotkeyWrapper _native = new();
 
-    private PauseHotkeyListener CreateSut(PauseHotkeyOptions? options = null) =>
-        new(_native, options ?? PauseHotkeyOptions.Default);
+    private static readonly TimeSpan Retry = TimeSpan.FromMilliseconds(20);
+
+    private PauseHotkeyListener CreateSut(PauseHotkeyOptions? options = null, FakeHotkeyWrapper? native = null) =>
+        new(native ?? _native, options ?? PauseHotkeyOptions.Default, retryInterval: Retry);
+
+    private static string DefaultChordId => PauseHotkeyListener.ChordId(PauseHotkeyOptions.Default.Chord!);
 
     [Fact]
     public void Start_RegistersTheChordOnItsOwnThread_ForPauseAndBreak()
@@ -81,8 +86,90 @@ public class PauseHotkeyListenerTests
         sut.Start(() => { });
 
         sut.Status.State.Should().Be(PauseHotkeyState.Failed);
-        sut.Status.Error.Should().Contain("another program already uses this chord").And.Contain("WAM_PAUSE_HOTKEY");
+        sut.Status.Error.Should().Contain("another program already uses this chord").And.Contain("tries again").And.Contain("WAM_PAUSE_HOTKEY");
         _native.Registered.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AChordAnotherServerHolds_IsReportedAsOtherServer()
+    {
+        // Arrange - the first server on the desktop registered the chord and marked itself as its holder
+        var desktop = new FakeNamedObjects();
+        using var holder = desktop.Mark(DefaultChordId);
+        var native = new FakeHotkeyWrapper(desktop) { OnRegister = (_, _, _) => Win32CallResult.Failure(1409) };
+        using var sut = CreateSut(native: native);
+
+        // Act
+        sut.Start(() => { });
+
+        // Assert
+        sut.Status.State.Should().Be(PauseHotkeyState.OtherServer);
+        sut.Status.Error.Should().Contain("Another Windows App Manager server").And.Contain("pauses and resumes this server too");
+    }
+
+    [Fact]
+    public void AChordThatIsTaken_IsRegisteredOnceItIsFree()
+    {
+        // Arrange - another server holds the chord, then stops
+        var free = false;
+        _native.OnRegister = (_, _, _) => Volatile.Read(ref free) ? Win32CallResult.Ok : Win32CallResult.Failure(1409);
+        using var sut = CreateSut();
+        var pressed = new ManualResetEventSlim();
+        sut.Start(pressed.Set);
+        var whileTaken = sut.Status.State;
+
+        // Act
+        Volatile.Write(ref free, true);
+
+        // Assert - the next attempt registers it, marks this server as its holder, and the hotkey works
+        SpinWait.SpinUntil(() => sut.Status.State == PauseHotkeyState.Registered, Timeout).Should().BeTrue();
+        whileTaken.Should().Be(PauseHotkeyState.Failed);
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeTrue();
+        _native.Press();
+        pressed.Wait(Timeout).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ARefusalForAnotherReason_IsNotRetried()
+    {
+        _native.OnRegister = (_, _, _) => Win32CallResult.Failure(87); // ERROR_INVALID_PARAMETER
+        using var sut = CreateSut();
+
+        sut.Start(() => { });
+        Thread.Sleep(Retry * 10);
+
+        sut.Status.State.Should().Be(PauseHotkeyState.Failed);
+        sut.Status.Error.Should().Contain("Windows error 87").And.NotContain("tries again");
+        _native.RegisterCalls.Should().Be(2, "one attempt per key of the chord, and no retry");
+    }
+
+    [Fact]
+    public void Stop_WhileWaitingToTryAgain_EndsTheThread()
+    {
+        _native.OnRegister = (_, _, _) => Win32CallResult.Failure(1409);
+        var sut = CreateSut();
+        sut.Start(() => { });
+        var thread = (Thread)typeof(PauseHotkeyListener)
+            .GetField("_thread", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(sut)!;
+
+        sut.Stop();
+
+        thread.IsAlive.Should().BeFalse();
+        _native.Registered.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Registering_MarksThisServerAsTheHolder_AndStopRemovesTheMark()
+    {
+        var sut = CreateSut();
+        sut.Start(() => { });
+        var markedWhileRunning = _native.Desktop.IsMarked(DefaultChordId);
+
+        sut.Stop();
+
+        markedWhileRunning.Should().BeTrue();
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
     }
 
     [Fact]

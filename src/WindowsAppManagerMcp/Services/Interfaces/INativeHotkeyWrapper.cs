@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// </summary>
 /// <remarks>
 /// A registered hotkey sends no input and changes no window, but it takes its chord from every other
-/// application while it is registered.
+/// application while it is registered. The shared pause (<see cref="OpenDesktopPause"/>) and the chord mark
+/// are named kernel objects every server on the desktop sees, so tests never open the real ones either.
 /// </remarks>
 public interface INativeHotkeyWrapper
 {
@@ -38,6 +39,23 @@ public interface INativeHotkeyWrapper
 
     /// <summary>Posts the stop message to thread <paramref name="threadId"/> (PostThreadMessage).</summary>
     bool PostStopMessage(uint threadId);
+
+    /// <summary>
+    /// Opens the pause that every server on this desktop shares: a named manual-reset event in the session's
+    /// Local\ namespace, created unset by the first server. Throws when it cannot be opened, for example when
+    /// a server running as administrator created it and this one is not (UnauthorizedAccessException).
+    /// </summary>
+    IDesktopPauseFlag OpenDesktopPause();
+
+    /// <summary>
+    /// Marks this server as the one that registered the chord <paramref name="chordId"/>, so other servers can
+    /// tell that a server holds it (and its presses pause them too) rather than another program. Disposing the
+    /// mark removes it; so does the end of the process.
+    /// </summary>
+    IDisposable MarkChordHolder(string chordId);
+
+    /// <summary>True when a server on this desktop has marked itself as the holder of <paramref name="chordId"/>.</summary>
+    bool IsChordHeldByAServer(string chordId);
 }
 
 /// <summary>What <see cref="INativeHotkeyWrapper.WaitForMessage"/> got.</summary>

@@ -5,13 +5,32 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// <summary>
 /// A fake of the pause hotkey's native side: registering records the chord instead of taking it from the
 /// desktop, and the message loop reads from an in-memory queue, so a test "presses" the hotkey by posting
-/// WM_HOTKEY to it. No real hotkey is ever registered.
+/// WM_HOTKEY to it. The shared pause is a <see cref="FakeDesktopPauseFlag"/> and the chord marks live in a set
+/// the test can share between two fakes, as two servers on one desktop share the named objects. No real hotkey
+/// is ever registered and no named object is opened.
 /// </summary>
 public sealed class FakeHotkeyWrapper : INativeHotkeyWrapper
 {
     private readonly BlockingCollection<HotkeyMessage> _queue = new();
     private readonly ConcurrentDictionary<int, (uint Modifiers, uint VirtualKey)> _registered = new();
     private readonly ConcurrentQueue<int> _unregistered = new();
+
+    /// <summary>The fake of the desktop: the shared pause and the chord marks, the same object for every server on it.</summary>
+    public FakeHotkeyWrapper(FakeNamedObjects? desktop = null)
+    {
+        Desktop = desktop ?? new FakeNamedObjects();
+    }
+
+    /// <summary>The desktop this fake server runs on.</summary>
+    public FakeNamedObjects Desktop { get; }
+
+    /// <summary>Makes <see cref="OpenDesktopPause"/> throw, as when the shared pause cannot be opened.</summary>
+    public Exception? OpenFails { get; set; }
+
+    /// <summary>How many times RegisterHotKey was called.</summary>
+    public int RegisterCalls => Volatile.Read(ref _registerCalls);
+
+    private int _registerCalls;
 
     /// <summary>What RegisterHotKey returns for a key; null succeeds.</summary>
     public Func<int, uint, uint, Win32CallResult>? OnRegister { get; set; }
@@ -43,6 +62,7 @@ public sealed class FakeHotkeyWrapper : INativeHotkeyWrapper
 
     public Win32CallResult RegisterHotKey(int id, uint modifiers, uint virtualKey)
     {
+        Interlocked.Increment(ref _registerCalls);
         RegisteringThread = Environment.CurrentManagedThreadId;
         var result = OnRegister?.Invoke(id, modifiers, virtualKey) ?? Win32CallResult.Ok;
         if (result.Succeeded)
@@ -69,5 +89,42 @@ public sealed class FakeHotkeyWrapper : INativeHotkeyWrapper
         StopPostedTo = threadId;
         _queue.Add(new HotkeyMessage(HotkeyMessageKind.Stop));
         return true;
+    }
+
+    public IDesktopPauseFlag OpenDesktopPause() => OpenFails is { } failure ? throw failure : Desktop.Pause;
+
+    public IDisposable MarkChordHolder(string chordId) => Desktop.Mark(chordId);
+
+    public bool IsChordHeldByAServer(string chordId) => Desktop.IsMarked(chordId);
+}
+
+/// <summary>The named objects every fake server on one desktop shares: the pause and the chord marks.</summary>
+public sealed class FakeNamedObjects
+{
+    private readonly ConcurrentDictionary<string, int> _marks = new();
+
+    /// <summary>The shared pause.</summary>
+    public FakeDesktopPauseFlag Pause { get; } = new();
+
+    /// <summary>True when a server marked itself as the holder of <paramref name="chordId"/>.</summary>
+    public bool IsMarked(string chordId) => _marks.TryGetValue(chordId, out var count) && count > 0;
+
+    public IDisposable Mark(string chordId)
+    {
+        _marks.AddOrUpdate(chordId, 1, (_, count) => count + 1);
+        return new Unmark(() => _marks.AddOrUpdate(chordId, 0, (_, count) => count - 1));
+    }
+
+    private sealed class Unmark(Action undo) : IDisposable
+    {
+        private int _done;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _done, 1) == 0)
+            {
+                undo();
+            }
+        }
     }
 }

@@ -10,10 +10,20 @@ namespace WindowsAppManagerMcp.Services;
 /// messages until it is stopped. Everything native goes through <see cref="INativeHotkeyWrapper"/>, which the
 /// tests replace with a fake.
 /// </summary>
+/// <remarks>
+/// Every MCP client session starts its own server, and only one process can register a chord. A server that
+/// registered it marks itself as the chord's holder; one that finds the chord taken reports whether a server
+/// holds it (<see cref="PauseHotkeyState.OtherServer"/>: its presses pause every server, since they share the
+/// pause) or another program does (<see cref="PauseHotkeyState.Failed"/>), and tries again every
+/// <see cref="DefaultRetryInterval"/>, so the chord keeps working after the server that held it stops.
+/// </remarks>
 public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
 {
     /// <summary>The ID of the first registered key; a chord with Ctrl and Pause registers a second one.</summary>
     public const int FirstHotkeyId = 0x5741;
+
+    /// <summary>How often a server whose chord is taken tries to register it again.</summary>
+    public static readonly TimeSpan DefaultRetryInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>ERROR_HOTKEY_ALREADY_REGISTERED.</summary>
     private const int HotkeyAlreadyRegistered = 1409;
@@ -24,18 +34,29 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
     private readonly INativeHotkeyWrapper _native;
     private readonly PauseHotkeyOptions _options;
     private readonly ILogger<PauseHotkeyListener>? _logger;
+    private readonly TimeSpan _retryInterval;
     private readonly object _lock = new();
     private readonly ManualResetEventSlim _ready = new();
+    private readonly ManualResetEventSlim _stopping = new();
     private Thread? _thread;
     private volatile uint _threadId;
     private Action? _pressed;
     private volatile PauseHotkeyStatus _status;
 
-    public PauseHotkeyListener(INativeHotkeyWrapper native, PauseHotkeyOptions options, ILogger<PauseHotkeyListener>? logger = null)
+    /// <param name="native">The native hotkey calls.</param>
+    /// <param name="options">The chord.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="retryInterval">How often to try again while the chord is taken; default <see cref="DefaultRetryInterval"/>.</param>
+    public PauseHotkeyListener(
+        INativeHotkeyWrapper native,
+        PauseHotkeyOptions options,
+        ILogger<PauseHotkeyListener>? logger = null,
+        TimeSpan? retryInterval = null)
     {
         _native = native ?? throw new ArgumentNullException(nameof(native));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger;
+        _retryInterval = retryInterval ?? DefaultRetryInterval;
         _status = options.Chord == null
             ? new PauseHotkeyStatus(null, PauseHotkeyState.Disabled, options.Source)
             : new PauseHotkeyStatus(options.Chord.Text, PauseHotkeyState.NotStarted, options.Source, options.Warning);
@@ -85,6 +106,8 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
             return;
         }
 
+        // The flag ends the wait between registration attempts; the message ends the message loop
+        _stopping.Set();
         _native.PostStopMessage(_threadId);
         if (!thread.Join(StopTimeout))
         {
@@ -94,60 +117,50 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
 
     public void Dispose() => Stop();
 
-    /// <summary>The hotkey thread: register, then wait for messages until the stop message.</summary>
+    /// <summary>
+    /// The hotkey thread: register, or try again every retry interval while the chord is taken; then wait for
+    /// messages until the stop message.
+    /// </summary>
     private void Run()
     {
         var chord = _options.Chord!;
         var registered = new List<int>();
+        IDisposable? holderMark = null;
         try
         {
-            _threadId = _native.GetCurrentThreadId();
-            _native.CreateMessageQueue();
-
-            var failures = new List<string>();
-            for (var i = 0; i < chord.VirtualKeys.Count; i++)
+            bool retry;
+            try
             {
-                var id = FirstHotkeyId + i;
-                var result = _native.RegisterHotKey(id, chord.RegisterModifiers, chord.VirtualKeys[i]);
-                if (result.Succeeded)
-                {
-                    registered.Add(id);
-                }
-                else
-                {
-                    failures.Add($"{KeyNames.Of(chord.VirtualKeys[i])}: {Describe(result.Win32Error)}");
-                }
+                _threadId = _native.GetCurrentThreadId();
+                _native.CreateMessageQueue();
+                retry = !TryRegister(chord, registered);
+            }
+            catch (Exception ex)
+            {
+                _status = _status with { State = PauseHotkeyState.Failed, Error = $"The hotkey could not be registered: {ex.GetType().Name}: {ex.Message}" };
+                retry = false;
+            }
+            finally
+            {
+                _ready.Set();
             }
 
-            _status = registered.Count > 0
-                ? _status with
+            while (retry && registered.Count == 0)
+            {
+                if (_stopping.Wait(_retryInterval))
                 {
-                    State = PauseHotkeyState.Registered,
-                    Error = Join(_options.Warning, failures.Count == 0 ? null : $"Registered, but not for every key the chord can send ({string.Join("; ", failures)}).")
+                    return;
                 }
-                : _status with
-                {
-                    State = PauseHotkeyState.Failed,
-                    Error = Join(_options.Warning,
-                        $"Windows refused to register {chord.Text}: {string.Join("; ", failures)}. Set {PauseHotkeyOptions.EnvironmentVariable} to another chord and restart the server.")
-                };
-        }
-        catch (Exception ex)
-        {
-            _status = _status with { State = PauseHotkeyState.Failed, Error = $"The hotkey could not be registered: {ex.GetType().Name}: {ex.Message}" };
-        }
-        finally
-        {
-            _ready.Set();
-        }
 
-        if (registered.Count == 0)
-        {
-            return;
-        }
+                retry = !TryRegister(chord, registered);
+            }
 
-        try
-        {
+            if (registered.Count == 0)
+            {
+                return;
+            }
+
+            holderMark = MarkHolder(chord);
             Listen(registered);
         }
         catch (Exception ex)
@@ -161,7 +174,104 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
             {
                 _native.UnregisterHotKey(id);
             }
+
+            holderMark?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Registers the keys of the chord and updates the status. False only when nothing was registered because
+    /// someone else has the chord, so trying again later can help.
+    /// </summary>
+    private bool TryRegister(PauseHotkeyChord chord, List<int> registered)
+    {
+        var failures = new List<string>();
+        var taken = 0;
+        for (var i = 0; i < chord.VirtualKeys.Count; i++)
+        {
+            var id = FirstHotkeyId + i;
+            var result = _native.RegisterHotKey(id, chord.RegisterModifiers, chord.VirtualKeys[i]);
+            if (result.Succeeded)
+            {
+                registered.Add(id);
+            }
+            else
+            {
+                taken += result.Win32Error == HotkeyAlreadyRegistered ? 1 : 0;
+                failures.Add($"{KeyNames.Of(chord.VirtualKeys[i])}: {Describe(result.Win32Error)}");
+            }
+        }
+
+        var allTaken = taken == chord.VirtualKeys.Count;
+        if (registered.Count > 0)
+        {
+            if (_status.State is PauseHotkeyState.OtherServer or PauseHotkeyState.Failed)
+            {
+                _logger?.LogWarning("The pause hotkey {Chord} is free again and is now registered by this server", chord.Text);
+            }
+
+            _status = _status with
+            {
+                State = PauseHotkeyState.Registered,
+                Error = Join(_options.Warning, failures.Count == 0 ? null : $"Registered, but not for every key the chord can send ({string.Join("; ", failures)}).")
+            };
+            return true;
+        }
+
+        if (allTaken && IsHeldByAServer(chord))
+        {
+            _status = _status with
+            {
+                State = PauseHotkeyState.OtherServer,
+                Error = Join(_options.Warning,
+                    $"Another Windows App Manager server on this desktop has registered {chord.Text}. Pressing it pauses and resumes " +
+                    "this server too, because the servers share the pause; this server registers the chord itself once that server stops.")
+            };
+            return false;
+        }
+
+        _status = _status with
+        {
+            State = PauseHotkeyState.Failed,
+            Error = Join(_options.Warning,
+                $"Windows refused to register {chord.Text}: {string.Join("; ", failures)}. " + (allTaken
+                    ? $"The server tries again every {_retryInterval.TotalSeconds:0.#} s. To use another chord, set {PauseHotkeyOptions.EnvironmentVariable} and restart the server."
+                    : $"Set {PauseHotkeyOptions.EnvironmentVariable} to another chord and restart the server."))
+        };
+        return !allTaken;
+    }
+
+    private bool IsHeldByAServer(PauseHotkeyChord chord)
+    {
+        try
+        {
+            return _native.IsChordHeldByAServer(ChordId(chord));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Marks this server as the chord's holder, so other servers report that a server has it.</summary>
+    private IDisposable? MarkHolder(PauseHotkeyChord chord)
+    {
+        try
+        {
+            return _native.MarkChordHolder(ChordId(chord));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException)
+        {
+            _logger?.LogWarning(ex, "The pause hotkey is registered, but other servers cannot see that this server holds it");
+            return null;
+        }
+    }
+
+    /// <summary>The chord as a name part: its RegisterHotKey modifiers and key, such as "4007-13".</summary>
+    public static string ChordId(PauseHotkeyChord chord)
+    {
+        ArgumentNullException.ThrowIfNull(chord);
+        return $"{chord.RegisterModifiers:X4}-{chord.Key:X2}";
     }
 
     private void Listen(List<int> registered)

@@ -534,9 +534,11 @@ public class WrapperGuardTests
 
         var register = () => guarded.RegisterHotKey(1, 0x4007, 0x13);
         var wait = () => guarded.WaitForMessage();
+        var openSharedPause = () => guarded.OpenDesktopPause();
 
         register.Should().Throw<E2EGuardException>().WithMessage("*RegisterHotKey*");
         wait.Should().Throw<E2EGuardException>().WithMessage("*WaitForMessage*");
+        openSharedPause.Should().Throw<E2EGuardException>().WithMessage("*OpenDesktopPause*");
         inner.VerifyNoOtherCalls();
     }
 

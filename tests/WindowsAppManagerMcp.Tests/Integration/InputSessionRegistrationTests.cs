@@ -67,6 +67,9 @@ public sealed class InputSessionRegistrationTests : IDisposable
         // Assert
         Field(startup, "_session").Should().BeSameAs(_provider.GetRequiredService<IInputSession>());
         Field(startup, "_hotkey").Should().BeSameAs(_provider.GetRequiredService<IPauseHotkey>());
+        Field(startup, "_desktop").Should().BeSameAs(_provider.GetRequiredService<INativeHotkeyWrapper>(),
+            "the hosted service shares the pause with the other servers on the desktop when it starts");
         _provider.GetRequiredService<IPauseHotkey>().Status.State.Should().BeOneOf(PauseHotkeyState.NotStarted, PauseHotkeyState.Disabled);
+        _provider.GetRequiredService<IInputSession>().SharesDesktopPause.Should().BeFalse("resolving opens no shared pause");
     }
 }

@@ -27,6 +27,7 @@ public class WrapperCatalogTests
             typeof(INativeSecurityWrapper),
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
+            typeof(IDesktopPauseFlag),
             typeof(IUiaTree)
         });
     }
@@ -162,6 +163,10 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.IsKeyDown), WrapperCallKind.Read)]
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.RegisterHotKey), WrapperCallKind.GlobalHotkey)]
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.WaitForMessage), WrapperCallKind.GlobalHotkey)]
+    [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.OpenDesktopPause), WrapperCallKind.GlobalHotkey)]
+    [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.MarkChordHolder), WrapperCallKind.GlobalHotkey)]
+    [InlineData(typeof(IDesktopPauseFlag), nameof(IDesktopPauseFlag.Set), WrapperCallKind.GlobalHotkey)]
+    [InlineData(typeof(IDesktopPauseFlag), "get_" + nameof(IDesktopPauseFlag.IsSet), WrapperCallKind.Read)]
     [InlineData(typeof(IUIAutomationWrapper), nameof(IUIAutomationWrapper.TryGetElementFromHandle), WrapperCallKind.Read)]
     [InlineData(typeof(IScreenCaptureWrapper), nameof(IScreenCaptureWrapper.CaptureWindow), WrapperCallKind.Read)]
     [InlineData(typeof(INativeMonitorWrapper), nameof(INativeMonitorWrapper.MonitorFromWindow), WrapperCallKind.Read)]

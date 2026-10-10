@@ -13,6 +13,11 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <see cref="Send"/>, <see cref="SetCursorPos"/>, the releases and <see cref="Pause"/> share one lock, so
 /// once <see cref="Pause"/> has returned no further batch is sent until input is resumed. Releases are
 /// never refused: they only send key-ups and button-ups for what the server itself pressed.
+/// <para>
+/// Once the server has started (<see cref="ShareDesktopPause"/>), the pause is shared by every server on the
+/// desktop: a pause or resume in one of them reaches the others before their next batch, and a watcher thread
+/// stops their running calls at once.
+/// </para>
 /// </remarks>
 public interface IInputSession
 {
@@ -37,11 +42,34 @@ public interface IInputSession
     /// </summary>
     bool Pause(string source);
 
-    /// <summary>Resumes input. False when it was not paused.</summary>
-    bool Resume(string source);
+    /// <summary>
+    /// Resumes input (for every server that shares the pause). False when it was not paused, or when
+    /// <paramref name="pauseNumber"/> is given and input was paused again since (another
+    /// <see cref="InputPauseState.PauseNumber"/>).
+    /// </summary>
+    bool Resume(string source, long? pauseNumber = null);
 
-    /// <summary>The pause hotkey's action: pauses running input, resumes paused input.</summary>
+    /// <summary>
+    /// The pause hotkey's action: pauses running input, resumes paused input. A press within
+    /// <c>InputSession.HotkeyResumeDelay</c> of the pause is ignored, so pressing twice to be sure does not resume.
+    /// </summary>
     void TogglePauseByHotkey();
+
+    /// <summary>
+    /// From now on the pause is <paramref name="flag"/>, which every server on the desktop shares: a pause made by
+    /// another server pauses this one (its running calls stop at once), and a resume resumes it. Called once,
+    /// when the server starts; before that the pause is this server's own.
+    /// </summary>
+    void ShareDesktopPause(IDesktopPauseFlag flag);
+
+    /// <summary>True once the pause is shared with the other servers on the desktop.</summary>
+    bool SharesDesktopPause { get; }
+
+    /// <summary>
+    /// True when <paramref name="modifiersDown"/> hold every modifier of the pause hotkey's chord: the user may be
+    /// about to press it. Releasing them would make the chord miss, so they are never released for the agent.
+    /// </summary>
+    bool IsPauseChordHeld(IReadOnlyList<HeldInput> modifiersDown);
 
     /// <summary>
     /// The pause hotkey's chord if <paramref name="events"/> press it (the same key with at least its
