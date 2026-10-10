@@ -309,8 +309,8 @@ public enum InputErrorCode
 
     /// <summary>
     /// Mouse input: a mouse button is held down (the user is dragging or selecting), or a window other than the one
-    /// at the point has captured the mouse, so the click or move could go to that window instead. Nothing (more)
-    /// was sent.
+    /// at the point has captured the mouse, so the click or move could go to that window instead, or the capture
+    /// could not be read, so where it would go is not known. Nothing (more) was sent.
     /// </summary>
     MouseInUse = 40
 }

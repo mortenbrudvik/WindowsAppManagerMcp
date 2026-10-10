@@ -52,4 +52,16 @@ public class InputSessionDescriptionTests
     {
         ServerToolCatalog.Description("release_all_input").Should().Contain("nobody is pressing the key");
     }
+
+    [Fact]
+    public void ReleaseAllInputDescription_SaysThePauseChordRuleKeepsOnlyTheUsersModifiersDown()
+    {
+        // While a modifier of the pause chord is down, the modifiers the server did not press stay down; the keys the
+        // server itself pressed are still released, so "none is released" would read as releasing nothing at all
+        var description = ServerToolCatalog.Description("release_all_input");
+
+        description.Should().Contain("no modifier the server did not press is released")
+            .And.Contain("the keys and buttons the server pressed are still released")
+            .And.NotContain("none is released");
+    }
 }

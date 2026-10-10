@@ -249,7 +249,9 @@ public sealed class InputTargetGuard : IInputTargetGuard
     /// thread's windows. A capture by the window at the point is fine; so is one by another window of its thread
     /// that the input may reach by the same rules (a menu runs on its owner's thread and captures the mouse for
     /// it). A held mouse button, which also routes the mouse to the window it went down on, is refused by the
-    /// input tools.
+    /// input tools. Fails closed, as the guard does on its other unknowns: when the thread of the window at the
+    /// point or of the foreground window, or its GUI state (GetGUIThreadInfo), cannot be read, it is not known where
+    /// the input would go, so it is MouseInUse too.
     /// </summary>
     private InputGuardResult WithCaptureCheck(int x, int y, InputGuardResult result)
     {
@@ -261,12 +263,20 @@ public sealed class InputTargetGuard : IInputTargetGuard
         var hit = result.Receiving;
         var hitThread = _threads.GetWindowThreadId(hit);
         var foreground = _windows.GetForegroundWindow();
-        var threads = new[] { foreground == nint.Zero ? 0u : _threads.GetWindowThreadId(foreground), hitThread }
-            .Where(thread => thread != 0)
-            .Distinct();
-        foreach (var thread in threads)
+
+        // No foreground window: no foreground thread whose capture could take the input
+        var windows = foreground == nint.Zero
+            ? new[] { (Window: hit, Thread: hitThread) }
+            : new[] { (Window: foreground, Thread: _threads.GetWindowThreadId(foreground)), (Window: hit, Thread: hitThread) };
+        foreach (var (window, thread) in windows.DistinctBy(w => w.Thread))
         {
-            if (_threads.GetGuiThreadInfo(thread) is not { CaptureWindow: var capture } || capture == nint.Zero)
+            if (thread == 0 || _threads.GetGuiThreadInfo(thread) is not { } state)
+            {
+                return CaptureUnknown(x, y, window, result);
+            }
+
+            var capture = state.CaptureWindow;
+            if (capture == nint.Zero)
             {
                 continue;
             }
@@ -286,6 +296,17 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         return result;
+    }
+
+    /// <summary>The refusal when the mouse capture of <paramref name="window"/>'s thread cannot be read.</summary>
+    private InputGuardResult CaptureUnknown(int x, int y, nint window, InputGuardResult result)
+    {
+        var unread = Describe(window);
+        return InputGuardResult.Refuse(InputErrorCode.MouseInUse,
+            $"Whether a window has captured the mouse could not be read for the thread of {Name(unread)} (the window may just " +
+            $"have closed), so it is not known whether input at ({x}, {y}) would go to {Name(result.ReceivingWindow)}. Nothing was " +
+            "sent. Try again.",
+            result.Target, unread);
     }
 
     /// <summary>

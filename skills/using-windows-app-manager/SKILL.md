@@ -38,7 +38,7 @@ The mouse and keyboard tools send real input to the user's desktop.
   - `DestructiveChordNeedsTarget`: `send_keys` with a chord that closes, quits or locks (Alt+F4 `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}`) needs `windowHandle`. To close a window, use `close_window`.
   - `KeysAfterFocusChange`: `send_keys` had more keys after a chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space, or a closing chord). Make that chord the last key and send the rest in a new call; better, pass the other window's handle as `windowHandle` instead of switching with Alt+Tab.
   - `CursorNotAtPoint`: the mouse pointer did not stay at the point (a game or remote session holds it, or the user is moving the mouse), so nothing was clicked. Try once more; if it repeats, ask the user.
-  - `MouseInUse`: a mouse button is held down, or another window has captured the mouse (the user is dragging or selecting, or a menu is open), so a click or move would go to that window. Wait until the user has finished, or close the menu, then retry. A button that stays down although nobody is pressing it (stuck) keeps every click and move refused, and `release_all_input` releases only buttons the server pressed: ask the user to press and release that mouse button.
+  - `MouseInUse`: a mouse button is held down, or another window has captured the mouse (the user is dragging or selecting, or a menu is open), so a click or move would go to that window (or the capture could not be read, for example because a window just closed). Wait until the user has finished, or close the menu, then retry. A button that stays down although nobody is pressing it (stuck) keeps every click and move refused, and `release_all_input` releases only buttons the server pressed: ask the user to press and release that mouse button.
   - `TargetInMenuMode`: a menu is open, so `type_text` would pick menu items. Close it with `send_keys` `{ESC}` (with `windowHandle`) or click into the field.
   - `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step.
   - `TargetDeniedByPolicy`: the user does not allow the agent to act on that app (password managers and credential prompts by default). No argument changes it, not even `force` or `forceKill`: ask the user to do the step. `close_window`, `close_windows_batch`, `kill_process`, `capture_window`, `capture_with_elements`, `focus_window` and the other window tools (move, resize, state, snap, the batches, `apply_layout`) refuse such apps the same way.
@@ -288,7 +288,7 @@ The `snap_window` tool supports 14 positions:
 ### Save and Restore Workspace
 1. Arrange windows as desired
 2. Use `save_layout` with a descriptive name
-3. Later, use `apply_layout` to restore. `success: false` lists every placement that was not found, launched, arranged or focused in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error. Check `get_foreground_window` before typing
+3. Later, use `apply_layout` to restore. `success: false` lists every placement that was not found, launched, arranged or focused in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result. Check `get_foreground_window` before typing
 
 ### Multi-Monitor Setup
 1. Use `get_monitors` to see available displays and `primaryIndex`

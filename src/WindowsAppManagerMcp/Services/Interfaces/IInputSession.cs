@@ -68,7 +68,8 @@ public interface IInputSession
     /// <summary>
     /// True when <paramref name="modifiersDown"/> hold any modifier of the pause hotkey's chord: the user may be
     /// pressing it, and presses its modifiers one after another, so any of them can be the start of the chord.
-    /// Releasing one would make the chord miss, so none is released for the agent while one of them is down.
+    /// Releasing one would make the chord miss, so while one of them is down no modifier the server did not press
+    /// is released for the agent, not even one outside the chord.
     /// </summary>
     bool IsPauseChordHeld(IReadOnlyList<HeldInput> modifiersDown);
 

@@ -25,7 +25,7 @@ internal static partial class NativeMethods
 
 /// <summary>
 /// PROCESSENTRY32W. The executable name is declared as UTF-16 code units (ushort) to keep the
-/// struct blittable for source-generated P/Invoke; it is not read.
+/// struct blittable for source-generated P/Invoke.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct PROCESSENTRY32W

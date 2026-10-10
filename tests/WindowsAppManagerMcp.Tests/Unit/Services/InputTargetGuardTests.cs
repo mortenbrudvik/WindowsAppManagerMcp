@@ -67,6 +67,9 @@ public class InputTargetGuardTests
 
     public InputTargetGuardTests()
     {
+        // Every thread's GUI state reads as idle (no capture, no menu) unless a test says otherwise
+        _threads.Setup(t => t.GetGuiThreadInfo(It.IsAny<uint>())).Returns(new GuiThreadInfo(0, 0, 0, 0, 0));
+
         Window(Terminal, TerminalPid, "WindowsTerminal", "pwsh");
         Window(Notepad, NotepadPid, "notepad", "Untitled - Notepad");
         _windows.Setup(w => w.IsWindow(NotepadEdit)).Returns(true);
@@ -1292,6 +1295,86 @@ public class InputTargetGuardTests
         // which the input tools refuse on their own)
         _inFront = Notepad;
         Captured(Calculator);
+        At(Notepad);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, To(Notepad)).Allowed.Should().BeTrue();
+    }
+
+    /// <summary>GetGUIThreadInfo fails for <paramref name="window"/>'s thread (for example the thread just exited).</summary>
+    private void GuiStateUnreadable(nint window)
+    {
+        var threadId = _threads.Object.GetWindowThreadId(window);
+        _threads.Setup(t => t.GetGuiThreadInfo(threadId)).Returns((GuiThreadInfo?)null);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Mouse_TheCaptureOfTheThreadAtThePointCannotBeRead_IsMouseInUse(bool withTarget)
+    {
+        // Arrange - whether another window of that thread captured the mouse is unknown, so where a click goes is too
+        _inFront = Notepad;
+        At(Notepad);
+        GuiStateUnreadable(Notepad);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, withTarget ? To(Notepad) : InputTarget.None);
+
+        // Assert - fails closed, as the guard does on its other unknowns
+        result.Allowed.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("could not be read").And.Contain("Untitled - Notepad").And.Contain("Nothing was sent");
+    }
+
+    [Fact]
+    public void Mouse_TheCaptureOfTheForegroundThreadCannotBeRead_IsMouseInUse()
+    {
+        // Arrange - the foreground thread's capture would take the click wherever the pointer is
+        _inFront = Terminal;
+        GuiStateUnreadable(Terminal);
+        At(Notepad);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, To(Notepad));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("could not be read").And.Contain("pwsh");
+    }
+
+    [Fact]
+    public void Mouse_TheThreadOfTheWindowAtThePointCannotBeRead_IsMouseInUse()
+    {
+        // Arrange - the window closed between the hit test and the capture check: it has no thread any more
+        _inFront = Calculator;
+        At(Notepad);
+        _threads.Setup(t => t.GetWindowThreadId(Notepad)).Returns(0u);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, InputTarget.None).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void RecheckMouse_ACaptureThatCanNoLongerBeRead_IsMouseInUse()
+    {
+        // Arrange - checked fine, then the thread's GUI state became unreadable before the press
+        _inFront = Notepad;
+        At(Notepad);
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, To(Notepad));
+        approved.Allowed.Should().BeTrue();
+        GuiStateUnreadable(Notepad);
+
+        // Act & Assert
+        sut.RecheckMouse(500, 300, approved).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void Mouse_NoWindowInFront_ChecksTheCaptureOfTheThreadAtThePointOnly()
+    {
+        // Arrange - with no foreground window there is no foreground thread whose capture could take the click
+        _inFront = 0;
         At(Notepad);
 
         // Act & Assert

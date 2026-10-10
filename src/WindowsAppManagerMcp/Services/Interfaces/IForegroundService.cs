@@ -18,8 +18,11 @@ public interface IForegroundService
     /// <item>Already in front (the window or a dialog it owns, by the owner chain): done, nothing is
     /// changed.</item>
     /// <item>A window that is not responding or is cloaked is refused (NotResponding, Cloaked).</item>
-    /// <item>A minimized window is restored. A window that a modal dialog disables is activated through
-    /// that dialog, unless the policy denies the dialog's app (TargetDeniedByPolicy).</item>
+    /// <item>Before anything changes, the policy is checked for the windows the window owns that the call would put
+    /// on screen: the modal dialog that disables it, and for a minimized window every window it owns, which the
+    /// restore shows again (TargetDeniedByPolicy; nothing is restored or activated). Then a minimized window is
+    /// restored, and a window that a modal dialog disables is activated through that dialog. A denied dialog that
+    /// appears only after the restore is refused too, and the error says that the window was restored.</item>
     /// <item>SetForegroundWindow.</item>
     /// <item>If the foreground lock refused it: attach the activation thread's input to the foreground
     /// thread, BringWindowToTop and SetForegroundWindow, and detach again. Skipped when the foreground

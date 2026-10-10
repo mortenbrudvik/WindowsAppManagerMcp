@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// <param name="ErrorCode">The <see cref="LayoutErrorCode"/> of the first problem; <paramref name="Errors"/> lists all of them.</param>
 /// <param name="Focus">
 /// One entry for each placement with focus set whose window was arranged, in order: what the verified
-/// activation found (the same fields as focus_window). Null when no placement asked for focus.
+/// activation found (the same fields as focus_window). Null when there is none: no placement asked for focus, or
+/// no window of such a placement was arranged. apply_layout returns it as focus.
 /// </param>
 public record LayoutApplyResult(
     bool Success,

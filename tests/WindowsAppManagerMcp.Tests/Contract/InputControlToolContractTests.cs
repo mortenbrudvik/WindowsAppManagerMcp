@@ -417,8 +417,28 @@ public sealed class InputControlToolContractTests : IDisposable
             new Dictionary<string, object?> { ["releaseHeldModifiers"] = true }));
 
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ModifiersHeld));
+        result.GetProperty("error").GetString().Should().Contain("LeftCtrl is down")
+            .And.Contain("the pause hotkey (Ctrl+Alt+Shift+Pause) uses it");
         _input.Batches.Should().BeEmpty();
         _input.IsKeyDown(VkLControl).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ReleaseAllInput_AStuckKeyBesideOneOfThePauseChordsModifiers_IsLeftDownToo()
+    {
+        // One modifier of the chord is enough to release nothing; the Windows key, which is not part of the chord, is
+        // left down too, so the error must not call every key down a modifier of the hotkey
+        _input.Press(VkLControl);
+        _input.Press(VkLWin);
+        var tools = new InputControlTools(_session, _hotkey);
+
+        var result = tools.ReleaseAllInput(releaseHeldModifiers: true);
+
+        result.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Error.Should().Contain("LeftCtrl, LeftWin are down").And.Contain("uses at least one of them")
+            .And.NotContain("the modifiers of the pause hotkey");
+        _input.Batches.Should().BeEmpty();
+        new[] { VkLControl, VkLWin }.Should().OnlyContain(key => _input.IsKeyDown(key));
     }
 
     [Fact]

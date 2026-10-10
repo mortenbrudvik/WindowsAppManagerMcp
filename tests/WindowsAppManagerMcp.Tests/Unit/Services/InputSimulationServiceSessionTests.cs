@@ -400,6 +400,23 @@ public class InputSimulationServiceSessionTests
     }
 
     [Fact]
+    public async Task ThePauseChordMessage_AgreesWithTheNumberOfKeysDown()
+    {
+        // Arrange & Act - first one modifier of the chord, then three
+        _input.Press(VkLControl);
+        var one = await CreateSut().SendKeysAsync("a", releaseHeldModifiers: true);
+        _input.Press(VkLMenu);
+        _input.Press(VkLShift);
+        var three = await CreateSut().SendKeysAsync("a", releaseHeldModifiers: true);
+
+        // Assert
+        one.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        one.Error.Should().Contain("LeftCtrl is held down").And.Contain("so it is not released");
+        three.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        three.Error.Should().Contain("are held down").And.Contain("so they are not released").And.NotContain("them are");
+    }
+
+    [Fact]
     public async Task AStuckModifierOutsideThePauseChord_IsStillReleasedWhenAsked()
     {
         // Arrange - the default chord is Ctrl+Alt+Shift+Pause; a stuck Windows key is not part of it

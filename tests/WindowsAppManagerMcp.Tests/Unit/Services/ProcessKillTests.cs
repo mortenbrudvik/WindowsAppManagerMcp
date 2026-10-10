@@ -474,7 +474,8 @@ public class ProcessKillTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
-        result.ErrorMessage.Should().Contain("child processes").And.Contain("without forceKill");
+        result.ErrorMessage.Should().Contain("child processes").And.Contain("without forceKill")
+            .And.Contain("did not list the process", "the snapshot can also miss a process that was just found running");
         _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
         VerifyNeverForceKilled();
     }

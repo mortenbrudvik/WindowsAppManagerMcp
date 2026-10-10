@@ -130,12 +130,97 @@ public class ProcessAncestryTests
     }
 
     [Fact]
-    public void GetDescendantsOf_RealSnapshot_FindsNoChildOfAProcessThatHasNone()
+    public void GetDescendantsOf_RealSnapshot_ReadsTheTreeOfARunningProcess()
     {
-        // Act - reads the process list only; the test host has started no child process of its own
+        // Act - reads the process list only
+        var descendants = new NativeProcessWrapper().GetDescendantsOf(Environment.ProcessId);
+
+        // Assert - the test host is in the snapshot, so its children are known (whatever they are)
+        descendants.Should().NotBeNull().And.NotContain(d => d.ProcessId == Environment.ProcessId);
+    }
+
+    [Fact]
+    public void GetDescendantsOf_RealSnapshot_AProcessThatIsNotRunningHasUnknownChildren()
+    {
+        // Act - no process has this ID (Windows process IDs are multiples of 4)
         var descendants = new NativeProcessWrapper().GetDescendantsOf(int.MaxValue - 1);
 
+        // Assert - not an empty list: a forced kill must not read it as "no children"
+        descendants.Should().BeNull();
+    }
+
+    // Odd IDs, so that the start-time reads (the PID reuse check) never find a real process
+    private const int Cmd = 2_000_000_001, Conhost = 2_000_000_003, KeePass = 2_000_000_005, Explorer = 2_000_000_007;
+
+    [Fact]
+    public void ReadProcessList_ReadsEveryEntry()
+    {
+        // Arrange - a snapshot with three processes, read the way Process32FirstW and Process32NextW return them
+        var entries = new Queue<ProcessSnapshotEntry>([new(Explorer, 4, "explorer.exe"), new(Cmd, Explorer, "cmd.exe"), new(Conhost, Cmd, "conhost.exe")]);
+        var firsts = new List<bool>();
+
+        // Act
+        var processes = NativeProcessWrapper.ReadProcessList(first =>
+        {
+            firsts.Add(first);
+            return entries.Count > 0 ? entries.Dequeue() : null;
+        });
+
         // Assert
-        descendants.Should().BeEmpty();
+        processes.Should().NotBeNull();
+        processes!.Keys.Should().BeEquivalentTo([Explorer, Cmd, Conhost]);
+        processes[Conhost].Should().Be((Cmd, "conhost.exe"));
+        firsts.Should().Equal(true, false, false, false);
+    }
+
+    [Fact]
+    public void ReadProcessList_WhenTheFirstEntryCannotBeRead_IsUnknown()
+    {
+        // Act - Process32FirstW failed: a snapshot always lists at least the idle process and this one, so the
+        // process list was not read, and an empty list would read as "no processes, no children"
+        var processes = NativeProcessWrapper.ReadProcessList(_ => null);
+
+        // Assert
+        processes.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetDescendantsOf_WhenTheFirstSnapshotEntryCannotBeRead_IsUnknown()
+    {
+        // Arrange - the snapshot was taken, but Process32FirstW failed
+        var wrapper = new NativeProcessWrapper(() => NativeProcessWrapper.ReadProcessList(_ => null));
+
+        // Act & Assert - null, which kill_process refuses with ProcessTreeUnreadable
+        wrapper.GetDescendantsOf(Cmd).Should().BeNull();
+    }
+
+    [Fact]
+    public void GetDescendantsOf_WhenTheSnapshotDoesNotListTheProcess_IsUnknown()
+    {
+        // Arrange - kill_process found the process running, but the snapshot taken next does not list it
+        var wrapper = new NativeProcessWrapper(() => Snapshot(new(Explorer, 4, "explorer.exe"), new(Conhost, Cmd, "conhost.exe")));
+
+        // Act & Assert - its children are unknown, not absent: the tree kill would still find and end them
+        wrapper.GetDescendantsOf(Cmd).Should().BeNull();
+    }
+
+    [Fact]
+    public void GetDescendantsOf_ReadsTheTreeFromTheSnapshot()
+    {
+        // Arrange
+        var wrapper = new NativeProcessWrapper(() => Snapshot(
+            new(Explorer, 4, "explorer.exe"), new(Cmd, Explorer, "cmd.exe"), new(Conhost, Cmd, "conhost.exe"), new(KeePass, Conhost, "KeePass.exe")));
+
+        // Act
+        var descendants = wrapper.GetDescendantsOf(Cmd);
+
+        // Assert
+        descendants.Should().Equal((Conhost, "conhost.exe"), (KeePass, "KeePass.exe"));
+    }
+
+    private static Dictionary<int, (int ParentProcessId, string ImageName)>? Snapshot(params ProcessSnapshotEntry[] entries)
+    {
+        var pending = new Queue<ProcessSnapshotEntry>(entries);
+        return NativeProcessWrapper.ReadProcessList(_ => pending.Count > 0 ? pending.Dequeue() : null);
     }
 }

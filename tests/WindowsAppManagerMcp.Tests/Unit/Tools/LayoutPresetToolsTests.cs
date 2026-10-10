@@ -381,6 +381,34 @@ public class LayoutPresetToolsTests
         result.WindowsLaunched.Should().Be(2);
         result.Errors.Should().HaveCount(1);
         result.Errors![0].Should().Be("Warning: something");
+        result.Focus.Should().BeNull("no placement asked for focus");
+    }
+
+    [Fact]
+    public async Task ApplyLayout_MapsTheFocusResultOfEachFocusedPlacement()
+    {
+        // Arrange - two placements with focus: one came to the front, Windows kept the other one back
+        var inFront = new FocusResult(true, 0x100, true, Method: FocusMethod.SetForeground, ForegroundHandle: 0x100,
+            ForegroundTitle: "main.cs - Visual Studio Code", ForegroundProcess: "Code");
+        var refused = new FocusResult(false, 0x200, false, ForegroundHandle: 0x300, ForegroundTitle: "pwsh",
+            ForegroundProcess: "WindowsTerminal", Error: "SetForegroundWindow was refused (foreground lock)",
+            ErrorCode: nameof(WindowErrorCode.FocusFailed));
+        _mockLayoutService.Setup(l => l.ApplyPresetAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsArranged: 2,
+                Errors: ["Arranged window 'Terminal' for placement 2, but could not bring it to the foreground (FocusFailed): ..."],
+                ErrorCode: nameof(LayoutErrorCode.ArrangeFailed),
+                Focus: [inFront, refused]));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.ApplyLayout("work-setup");
+
+        // Assert - in placement order, with the same fields as focus_window
+        result.Focus.Should().Equal(inFront, refused);
     }
 
     #endregion
