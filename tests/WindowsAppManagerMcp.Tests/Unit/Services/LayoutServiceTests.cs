@@ -443,6 +443,33 @@ public class LayoutServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyPresetAsync_AWindowThePolicyDenies_IsNeitherArrangedNorFocused()
+    {
+        // Arrange - a layout that places (and focuses) a password manager the user denied to the agent
+        var keePass = TestDataFactory.CreateWindowInfo(processName: "KeePass");
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns([keePass]);
+        _mockWindowService.Setup(w => w.EvaluateTargetPolicy(keePass.Handle))
+            .Returns(TargetPolicyVerdict.Deny("KeePass", "KeePass is on the deny list"));
+
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "denied", placements: [TestDataFactory.CreateWindowPlacement(processName: "KeePass", focus: true)]));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("denied");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.TargetDeniedByPolicy));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("KeePass is on the deny list");
+        result.WindowsArranged.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
+            Times.Never);
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ApplyPresetAsync_PlacementSavedForTheUwpFrameHost_StillMatchesTheUwpWindow()
     {
         // Arrange - presets saved before UWP windows were attributed to the app name ApplicationFrameHost

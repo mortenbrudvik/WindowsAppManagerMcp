@@ -51,10 +51,11 @@ The policy applies to:
 
 - every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
 - [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
+- [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): a denied window is not moved, resized, restored, maximized, minimized, raised or activated, so the agent cannot bring it on screen;
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
 
-[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works. The UI Automation and browser reading tools are not covered yet.
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works (the Window Control tools cannot restore or raise them, but an app can still bring its own window forward, for example when it is started again). The UI Automation and browser reading tools are not covered yet.
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart.
 
@@ -311,6 +312,8 @@ Tools for manipulating window position, size, and state.
 
 `bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window).
 
+A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): the agent cannot restore, raise or move it onto the screen.
+
 Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
 
 ### move_window
@@ -468,8 +471,10 @@ Bring a window to the foreground, verify it, and report which window is actually
 
 Windows' foreground lock usually refuses a background process such as this server when it asks to bring a window to the front. `focus_window` works around that without sending keys, and checks the foreground window after every step (for about a second in total):
 
+A window that the user's [target policy](#target-policy) denies is refused before anything else (`TargetDeniedByPolicy`): it is neither restored nor activated. So is a hidden window (`WindowHidden`), one without the WS_VISIBLE style, such as an app's window hidden in the notification area: keys would go to a window the user cannot see.
+
 1. **already**: the window, or a dialog it owns, is already in front. Nothing is changed.
-2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead.
+2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead, unless the target policy denies the dialog's app (`TargetDeniedByPolicy`).
 3. **setForeground**: SetForegroundWindow.
 4. **attachThreadInput**: if the foreground lock refused, the server's activation thread attaches its input to the foreground window's thread, activates the window and detaches again. Skipped when the foreground window is not responding or runs at a higher integrity level (elevated), where Windows refuses the attach.
 5. **inputUnlock**: last resort, a mouse move of zero distance makes the server the process that received the last input, then SetForegroundWindow again. No key is sent: an Alt press would reach the window in front, often the agent's terminal.
@@ -548,6 +553,7 @@ The window counts as in front when the foreground window is the window itself or
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
 | `WindowHidden` | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area); it was not activated, because keys would go to a window the user cannot see. Show it from the app first, or ask the user |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app, or the app of the modal dialog that would be activated for it; nothing was restored or activated. Ask the user |
 | `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done; a pause during the activation stops it at the next step. While paused, `focus_window` itself is refused before it runs (`isError`, see [Pause hotkey](#pause-hotkey)). Stop and ask the user |
 | `InvalidHandle` | The handle is not a window |
 
@@ -3110,7 +3116,7 @@ Only the windows that [get_all_windows](#get_all_windows) lists are matched. A w
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
-A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error.
+A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error.
 
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
@@ -3479,7 +3485,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [close_window](#close_window), close_windows_batch (per window), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |

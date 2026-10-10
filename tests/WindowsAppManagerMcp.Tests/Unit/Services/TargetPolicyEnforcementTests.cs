@@ -38,8 +38,12 @@ public class TargetPolicyEnforcementTests
         return handle;
     }
 
-    private WindowService CreateWindowService(ITargetPolicy? policy) =>
-        new(TestDataFactory.CreateMockMonitorService().Object, _native.Object, Mock.Of<IHostGuard>(), policy);
+    private WindowService CreateWindowService(ITargetPolicy? policy)
+    {
+        var monitors = TestDataFactory.CreateMockMonitorService();
+        monitors.Setup(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>())).Returns(new MonitorRect(0, 0, 960, 1040));
+        return new(monitors.Object, _native.Object, Mock.Of<IHostGuard>(), policy);
+    }
 
     [Theory]
     [InlineData(false)]
@@ -113,6 +117,122 @@ public class TargetPolicyEnforcementTests
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
 
         CreateWindowService(policy: null).CloseWindow(keePass, force: false).Success.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Window changes: move, resize, bounds, state, snap, monitor and their batches
+
+    /// <summary>Every window change of WindowService that can restore, raise or move a window.</summary>
+    public static TheoryData<string> WindowChanges() =>
+        new() { "move", "resize", "bounds", "minimize", "restore", "maximize", "snap", "monitor" };
+
+    private static bool Change(WindowService sut, nint handle, string change) => change switch
+    {
+        "move" => sut.MoveWindow(handle, 10, 10),
+        "resize" => sut.ResizeWindow(handle, 400, 300),
+        "bounds" => sut.SetWindowBounds(handle, 10, 10, 400, 300),
+        "minimize" => sut.SetWindowState(handle, WindowState.Minimized),
+        "restore" => sut.SetWindowState(handle, WindowState.Normal),
+        "maximize" => sut.SetWindowState(handle, WindowState.Maximized),
+        "snap" => sut.SnapWindow(handle, SnapPosition.LeftHalf, monitorIndex: 0),
+        _ => sut.MoveWindowToMonitor(handle, 0, "restore")
+    };
+
+    private void VerifyWindowUntouched()
+    {
+        _native.Verify(n => n.SetWindowPos(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        _native.Verify(n => n.ShowWindow(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_DeniedProcess_IsRefused_AndTheWindowIsNotTouched(string change)
+    {
+        // Arrange - a minimized password manager: restoring or raising it would put it in a screenshot
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.IsIconic(keePass)).Returns(true);
+        _native.Setup(n => n.GetWindowRect(keePass)).Returns((0, 0, 800, 600));
+
+        // Act
+        var changed = Change(CreateWindowService(Policy()), keePass, change);
+
+        // Assert
+        changed.Should().BeFalse();
+        VerifyWindowUntouched();
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_AllowedProcess_IsDone(string change)
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        _native.Setup(n => n.GetWindowRect(notepad)).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
+        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+
+        // Act & Assert
+        Change(CreateWindowService(Policy()), notepad, change).Should().BeTrue();
+    }
+
+    [Fact]
+    public void WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
+    {
+        // Arrange
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.GetWindowRect(keePass)).Returns((0, 0, 800, 600));
+        var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
+
+        // Act
+        var results = new[]
+        {
+            tools.MoveWindow(keePass, 10, 10),
+            tools.ResizeWindow(keePass, 400, 300),
+            tools.SetWindowBounds(keePass, 10, 10, 400, 300),
+            tools.SetWindowState(keePass, "restore"),
+            tools.SnapWindow(keePass, "left_half"),
+            tools.MoveWindowToMonitor(keePass, 0)
+        };
+
+        // Assert
+        results.Should().OnlyContain(r => !r.Success && r.ErrorCode == nameof(WindowErrorCode.TargetDeniedByPolicy) &&
+                                          r.Error!.Contains("KeePass"));
+        VerifyWindowUntouched();
+    }
+
+    [Fact]
+    public void WindowBatchTools_RefuseTheDeniedWindow_AndChangeTheOthers()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
+        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
+
+        // Act
+        var bounds = tools.SetWindowsBoundsBatch(
+            [new WindowBoundsPlacement(notepad, 0, 0, 400, 300), new WindowBoundsPlacement(keePass, 0, 0, 400, 300)], delayBetweenMs: 0);
+        var snaps = tools.SnapWindowsBatch(
+            [new WindowSnapPlacement(keePass, "left_half", 0), new WindowSnapPlacement(notepad, "right_half", 0)], delayBetweenMs: 0);
+        var states = tools.SetWindowsStateBatch(
+            [new WindowStateChange(notepad, "maximize"), new WindowStateChange(keePass, "restore")], delayBetweenMs: 0);
+
+        // Assert
+        foreach (var batch in new[] { bounds, snaps, states })
+        {
+            batch.Succeeded.Should().Be(1);
+            var refused = batch.Results.Single(r => r.Handle == keePass);
+            refused.Success.Should().BeFalse();
+            refused.ErrorCode.Should().Be(nameof(WindowErrorCode.TargetDeniedByPolicy));
+            refused.Error.Should().Contain("KeePass");
+            batch.Results.Single(r => r.Handle == notepad).Success.Should().BeTrue();
+        }
+
+        _native.Verify(n => n.SetWindowPos(keePass, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        _native.Verify(n => n.ShowWindow(keePass, It.IsAny<int>()), Times.Never);
     }
 
     #endregion

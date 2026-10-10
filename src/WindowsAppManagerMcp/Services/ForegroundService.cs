@@ -94,6 +94,13 @@ public sealed class ForegroundService : IForegroundService
             return Describe(handle, Paused(RootOf(handle), _windows.GetForegroundWindow()));
         }
 
+        // The user's policy: a denied window is not restored or brought to the front, where a screenshot shows it
+        var targetRoot = RootOf(handle);
+        if (PolicyRefusal(targetRoot, targetRoot) is { } denied)
+        {
+            return Describe(handle, denied);
+        }
+
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, 0, MaxTimeoutMs));
         Activation activation;
         try
@@ -171,6 +178,12 @@ public sealed class ForegroundService : IForegroundService
         var activate = root;
         if (IsDisabled(root) && EnabledPopup(root) is var popup && popup != nint.Zero)
         {
+            // The dialog can belong to another app, such as a credential prompt
+            if (PolicyRefusal(root, popup) is { } deniedPopup)
+            {
+                return deniedPopup;
+            }
+
             activate = popup;
         }
 
@@ -354,6 +367,17 @@ public sealed class ForegroundService : IForegroundService
     /// </summary>
     private bool ModifiersDown() =>
         _session != null ? _session.ReadModifiersDown().Count > 0 : KeyNames.SidedModifiers.Any(_input.IsKeyDown);
+
+    /// <summary>
+    /// The refusal when the server's target policy denies <paramref name="window"/>, the window that would be
+    /// activated for <paramref name="root"/> (the root itself, or a modal dialog of it); null when it allows it.
+    /// </summary>
+    private Activation? PolicyRefusal(nint root, nint window) =>
+        _windowService.EvaluateTargetPolicy(window) is { Allowed: false } verdict
+            ? Activation.Failed(root, _windows.GetForegroundWindow(), WindowErrorCode.TargetDeniedByPolicy,
+                $"The window is refused by the server's target policy: {verdict.Reason}. It was not activated or restored. The policy " +
+                "is set by the user in the server's environment and no tool argument changes it; ask the user to do this step.")
+            : null;
 
     /// <summary>
     /// Why no further activation step may be taken: the caller stopped waiting, or the user paused input (the

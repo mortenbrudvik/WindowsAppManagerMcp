@@ -332,6 +332,44 @@ public class ForegroundServiceTests
         _calls.Should().BeEmpty();
     }
 
+    [Fact]
+    public void EnsureForeground_WhenThePolicyDeniesTheTarget_RefusesWithTargetDeniedByPolicy_BeforeAnyStep()
+    {
+        // Arrange - a minimized password manager: restoring and activating it would put it on screen
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Target)).Returns(TargetPolicyVerdict.Deny("KeePass", "KeePass is on the deny list"));
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("KeePass is on the deny list");
+        _calls.Should().BeEmpty();
+        _activationThread.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenThePolicyDeniesTheModalDialogItWouldActivate_RefusesWithTargetDeniedByPolicy()
+    {
+        // Arrange - the target is disabled by a credential prompt of another process
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(new nint(WsDisabled));
+        _windows.Setup(w => w.GetWindow(Target, GW_ENABLEDPOPUP)).Returns(Dialog);
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Dialog))
+            .Returns(TargetPolicyVerdict.Deny("CredentialUIBroker", "CredentialUIBroker is on the deny list"));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        _calls.Should().NotContain(call => call.StartsWith("SetForegroundWindow"));
+    }
+
     #endregion
 
     #region The steps: lock refusal, attach, unlock
