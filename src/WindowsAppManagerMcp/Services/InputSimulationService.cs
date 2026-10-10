@@ -118,10 +118,13 @@ public class InputSimulationService : IInputSimulationService
                         return held.Apply(Finish(new MouseMoveResult(false, x, y, "Failed to set cursor position", InputErrorCode.SendInputFailed), approved));
                 }
 
-                if (!PointerIsAt(x, y, out var actual))
+                switch (PointerIsAt(x, y, out var actual))
                 {
-                    return held.Apply(Finish(new MouseMoveResult(false, x, y, PointerMovedAway(x, y, actual), InputErrorCode.CursorNotAtPoint),
-                        approved));
+                    case PointerCheck.Paused:
+                        return held.Apply(Finish(new MouseMoveResult(false, x, y, PausedMessage("The pointer moved away from the point and was not placed there again."), InputErrorCode.PausedByUser), approved));
+                    case PointerCheck.Away:
+                        return held.Apply(Finish(new MouseMoveResult(false, x, y, PointerMovedAway(x, y, actual), InputErrorCode.CursorNotAtPoint),
+                            approved));
                 }
 
                 return held.Apply(Finish(new MouseMoveResult(Success: true, X: x, Y: y), approved));
@@ -228,13 +231,12 @@ public class InputSimulationService : IInputSimulationService
                     approved = recheck;
 
                     // A modifier going down now is the user taking the keyboard (or starting the pause chord)
-                    if (_session.ReadModifiersDown() is { Count: > 0 } downNow)
+                    if (ModifiersDownNow("typed") is { } downNow)
                     {
-                        var names = downNow.Select(k => k.Name).ToList();
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(text, charactersTyped, approved)} {ModifiersDownMessage(names, "typed")}", InputErrorCode.ModifiersHeld)
+                            $"{TypedSoFar(text, charactersTyped, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
                         {
-                            HeldModifiers = names
+                            HeldModifiers = downNow.Names
                         }, approved));
                     }
 
@@ -373,6 +375,17 @@ public class InputSimulationService : IInputSimulationService
                 }
 
                 approved = recheck;
+
+                // Again right before the keys: a modifier the user pressed while the guard activated the target would
+                // turn them into shortcuts, and the keys' own modifier key-ups would release it
+                if (ModifiersDownNow("sent") is { } downNow)
+                {
+                    return held.Apply(Finish(new SendKeysResult(false, keys, downNow.Error, InputErrorCode.ModifiersHeld)
+                    {
+                        HeldModifiers = downNow.Names
+                    }, approved));
+                }
+
                 var sent = _session.Send(inputs);
                 if (sent.PausedByUser)
                 {
@@ -491,10 +504,23 @@ public class InputSimulationService : IInputSimulationService
                     }
 
                     approved = recheck;
-                    if (!PointerIsAt(x, y, out var actual))
+                    switch (PointerIsAt(x, y, out var actual))
                     {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + PointerMovedAway(x, y, actual),
-                            InputErrorCode.CursorNotAtPoint), approved));
+                        case PointerCheck.Paused:
+                            return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage(sentSoFar.TrimEnd(' ', ':') + "."),
+                                InputErrorCode.PausedByUser), approved));
+                        case PointerCheck.Away:
+                            return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + PointerMovedAway(x, y, actual),
+                                InputErrorCode.CursorNotAtPoint), approved));
+                    }
+
+                    // Right before the press: a modifier the user pressed meanwhile would make it a Ctrl- or Shift-click
+                    if (ModifiersDownNow("clicked") is { } downNow)
+                    {
+                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + downNow.Error, InputErrorCode.ModifiersHeld)
+                        {
+                            HeldModifiers = downNow.Names
+                        }, approved));
                     }
 
                     var sent = SendClickInputs(leftButton, absolute);
@@ -548,22 +574,48 @@ public class InputSimulationService : IInputSimulationService
     }
 
     /// <summary>
-    /// True when the pointer is at (x, y), or its position cannot be read. Otherwise it places the pointer
-    /// there once more and looks again at once: a pointer the user moved is then back, but one confined to
-    /// a window (ClipCursor, as games and remote sessions do) is not, and a click would land where the guard
-    /// did not look.
+    /// At when the pointer is at (x, y), or its position cannot be read. Otherwise it places the pointer there
+    /// once more and looks again at once: a pointer the user moved is then back, but one confined to a window
+    /// (ClipCursor, as games and remote sessions do) is not (Away), and a click would land where the guard did
+    /// not look. Paused when the user paused input meanwhile, so the pointer was not placed again.
     /// </summary>
-    private bool PointerIsAt(int x, int y, out (int X, int Y)? actual)
+    private PointerCheck PointerIsAt(int x, int y, out (int X, int Y)? actual)
     {
         actual = _inputWrapper.GetCursorPos();
         if (actual is not { } first || first == (x, y))
         {
-            return true;
+            return PointerCheck.At;
         }
 
-        _session.SetCursorPos(x, y);
+        if (_session.SetCursorPos(x, y) == null)
+        {
+            return PointerCheck.Paused;
+        }
+
         actual = _inputWrapper.GetCursorPos();
-        return actual is not { } second || second == (x, y);
+        return actual is not { } second || second == (x, y) ? PointerCheck.At : PointerCheck.Away;
+    }
+
+    private enum PointerCheck
+    {
+        At,
+        Away,
+        Paused
+    }
+
+    /// <summary>
+    /// The modifier keys that are down right before a batch, with the ModifiersHeld message; null when none is.
+    /// </summary>
+    private (IReadOnlyList<string> Names, string Error)? ModifiersDownNow(string action)
+    {
+        var down = _session.ReadModifiersDown();
+        if (down.Count == 0)
+        {
+            return null;
+        }
+
+        var names = down.Select(k => k.Name).ToList();
+        return (names, ModifiersDownMessage(names, action, _session.IsPauseChordHeld(down)));
     }
 
     private static string PointerMovedAway(int x, int y, (int X, int Y)? actual) =>
@@ -618,9 +670,11 @@ public class InputSimulationService : IInputSimulationService
         }
 
         var names = down.Select(k => k.Name).ToList();
-        if (!releaseHeldModifiers)
+        var pauseChord = _session.IsPauseChordHeld(down);
+        if (!releaseHeldModifiers || pauseChord)
         {
-            return HeldCheck.Refuse(InputErrorCode.ModifiersHeld, ModifiersDownMessage(names, action), names);
+            // The modifiers of the pause hotkey are never released for the agent: the user may be about to press it
+            return HeldCheck.Refuse(InputErrorCode.ModifiersHeld, ModifiersDownMessage(names, action, pauseChord), names);
         }
 
         var release = _session.ReleaseModifiers(down, "releaseHeldModifiers");
@@ -636,13 +690,16 @@ public class InputSimulationService : IInputSimulationService
                 release.StillHeld);
     }
 
-    private static string ModifiersDownMessage(IReadOnlyList<string> names, string action)
+    private string ModifiersDownMessage(IReadOnlyList<string> names, string action, bool pauseChord)
     {
         var them = names.Count == 1 ? "it" : "them";
-        return $"{string.Join(", ", names)} {(names.Count == 1 ? "is" : "are")} held down, by the user or stuck, so nothing (more) was " +
-               $"{action}: with a modifier down, keys become shortcuts and clicks become Ctrl- or Shift-clicks. If the user is using the " +
-               $"keyboard, wait and try again. If nobody is pressing {them}, pass releaseHeldModifiers: true (or call release_all_input " +
-               $"with releaseHeldModifiers: true) to release {them}.";
+        var held = $"{string.Join(", ", names)} {(names.Count == 1 ? "is" : "are")} held down";
+        return pauseChord
+            ? $"{held}: the modifiers of the user's pause hotkey ({_session.PauseChord}), so nothing (more) was {action}. The user may be " +
+              "about to pause input, so they are not released, not even with releaseHeldModifiers. Wait, and ask the user if they stay down."
+            : $"{held}, by the user or stuck, so nothing (more) was {action}: with a modifier down, keys become shortcuts and clicks " +
+              $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, pass " +
+              $"releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release {them}.";
     }
 
     private string PausedMessage(string done) =>
@@ -775,16 +832,13 @@ public class InputSimulationService : IInputSimulationService
 
         public static HeldCheck Refuse(InputErrorCode code, string error, IReadOnlyList<string> held) => new(code, error, held, null);
 
-        public ClickResult Apply(ClickResult result) => result with { HeldModifiers = Held, ReleasedModifiers = Released };
+        // A result that found modifiers down later (right before a batch) keeps those
+        public ClickResult Apply(ClickResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
-        public MouseMoveResult Apply(MouseMoveResult result) => result with { HeldModifiers = Held, ReleasedModifiers = Released };
+        public MouseMoveResult Apply(MouseMoveResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
-        public TypeTextResult Apply(TypeTextResult result) => result with
-        {
-            HeldModifiers = result.HeldModifiers ?? Held,
-            ReleasedModifiers = Released
-        };
+        public TypeTextResult Apply(TypeTextResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
-        public SendKeysResult Apply(SendKeysResult result) => result with { HeldModifiers = Held, ReleasedModifiers = Released };
+        public SendKeysResult Apply(SendKeysResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
     }
 }

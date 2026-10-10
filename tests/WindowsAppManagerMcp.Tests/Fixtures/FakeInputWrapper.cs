@@ -69,6 +69,18 @@ public sealed class FakeInputWrapper : INativeInputWrapper
         }
     }
 
+    /// <summary>Runs after each SetCursorPos, on the calling thread (to move the mouse away, or to pause meanwhile).</summary>
+    public Action<int, int>? AfterSetCursorPos { get; set; }
+
+    /// <summary>Puts the pointer at (x, y), as the user moving the mouse would; not counted in <see cref="CursorMoves"/>.</summary>
+    public void MovePointer(int x, int y)
+    {
+        lock (_lock)
+        {
+            _cursor = (x, y);
+        }
+    }
+
     public bool SetCursorPos(int x, int y)
     {
         lock (_lock)
@@ -77,6 +89,7 @@ public sealed class FakeInputWrapper : INativeInputWrapper
             CursorMoves++;
         }
 
+        AfterSetCursorPos?.Invoke(x, y);
         return true;
     }
 

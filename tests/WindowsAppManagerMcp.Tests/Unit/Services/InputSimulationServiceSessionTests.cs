@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class InputSimulationServiceSessionTests
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
-    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1;
+    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeInputWrapper _input = new();
@@ -297,6 +297,101 @@ public class InputSimulationServiceSessionTests
         result.HeldModifiers.Should().Equal("RightShift");
         result.Error.Should().StartWith("Typing stopped after 32 of 40 characters");
         _input.Batches.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task SendKeys_AModifierPressedWhileTheGuardChecks_IsModifiersHeld_AndNothingIsSent()
+    {
+        // Arrange - the user presses Shift while the guard checks the target (and brings it to the front): Delete
+        // would become Shift+Delete, a permanent delete
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns((InputGuardResult approved) =>
+            {
+                _input.Press(VkLShift);
+                return approved;
+            });
+
+        // Act
+        var result = await CreateSut().SendKeysAsync("{DELETE}");
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.ModifiersHeld);
+        result.HeldModifiers.Should().Equal("LeftShift");
+        _input.Batches.Should().BeEmpty();
+        _input.IsKeyDown(VkLShift).Should().BeTrue("the user's key is left alone");
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("double_click")]
+    public async Task Click_AModifierPressedBeforeThePress_IsModifiersHeld_AndNothingIsClicked(string path)
+    {
+        // Arrange - the user presses Ctrl after the guard checked the point: the click would be a Ctrl+click
+        _guard.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) =>
+            {
+                _input.Press(VkLControl);
+                return approved;
+            });
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Held.Should().Equal("LeftCtrl");
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Theory]
+    [MemberData(nameof(InputPaths))]
+    public async Task ThePauseChordsModifiers_AreNotReleased_EvenWhenAsked(string path)
+    {
+        // Arrange - the user holds Ctrl+Alt+Shift and is about to press Pause: releasing them would make the chord miss
+        _input.Press(VkLControl);
+        _input.Press(VkLMenu);
+        _input.Press(VkLShift);
+
+        // Act
+        var result = await Call(CreateSut(), path, releaseHeldModifiers: true);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Error.Should().Contain("pause hotkey").And.Contain("not released");
+        result.Released.Should().BeNull();
+        VerifyNothingSentOrChecked();
+        new[] { VkLControl, VkLMenu, VkLShift }.Should().OnlyContain(key => _input.IsKeyDown(key));
+    }
+
+    #endregion
+
+    #region The pointer check and the pause
+
+    [Theory]
+    [InlineData("mouse_move")]
+    [InlineData("click")]
+    public async Task APauseWhileThePointerIsPlacedAgain_IsPausedByUser_NotCursorNotAtPoint(string path)
+    {
+        // Arrange - after the move, the user moves the mouse away and pauses (through another server's hotkey,
+        // without this session's lock); placing the pointer again is refused
+        var flag = new FakeDesktopPauseFlag();
+        using var session = new InputSession(_input);
+        session.ShareDesktopPause(flag);
+        _input.AfterSetCursorPos = (_, _) =>
+        {
+            _input.AfterSetCursorPos = null;
+            _input.MovePointer(500, 500);
+            flag.SetByAnotherServer();
+        };
+
+        // Act
+        var result = await Call(CreateSut(session: session), path);
+
+        // Assert - the agent is told to stop, not to try again
+        result.Code.Should().Be(InputErrorCode.PausedByUser);
+        result.Error.Should().Contain("Do not try to resume");
+        _input.CursorMoves.Should().Be(1);
+        _input.Batches.Should().BeEmpty();
     }
 
     #endregion
