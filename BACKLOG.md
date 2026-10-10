@@ -206,6 +206,10 @@
 | `capture_window` | Screenshot | Capture a window |
 | `capture_with_elements` | Screenshot | Capture window with UI element overlays |
 | `get_ui_elements` | UI Automation | Get UI element tree with bounding boxes |
+| `get_browser_url` | Browser Reading | Get the URL of a browser window (UI Automation or CDP) |
+| `get_browser_content` | Browser Reading | Get the text (or HTML via CDP) of a browser page |
+| `get_active_browser_url` | Browser Reading | Get the URL of the foreground browser window |
+| `launch_browser_with_debug` | Browser Reading | Launch Chrome/Edge/Brave with a CDP debug port and a temporary profile |
 | `click` | Input Simulation | Left click at screen coordinates |
 | `right_click` | Input Simulation | Right click at screen coordinates |
 | `double_click` | Input Simulation | Double left click at screen coordinates |

@@ -12,6 +12,7 @@ A comprehensive guide to all 38 MCP tools for managing Windows applications, win
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
 | [UI Automation](#ui-automation) | get_ui_elements | 1 |
+| [Browser Reading](#browser-reading) | get_browser_url, get_browser_content, get_active_browser_url, launch_browser_with_debug | 4 |
 | [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move, type_text, send_keys | 6 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
@@ -1235,6 +1236,202 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
 | `AutomationUnavailable` | UI Automation not available |
 | `ElementAccessFailed` | Could not access window elements |
 | `OperationTimedOut` | Traversal exceeded timeout |
+
+---
+
+## Browser Reading
+
+Tools for reading the URL and page text of a browser window without screenshots. They work with Chrome, Edge, Firefox, Brave, Opera, Vivaldi and other Chromium- or Firefox-based browsers.
+
+**How the browser is read:**
+
+- **UI Automation (default):** the URL is read from the address bar and the text from the page's accessibility tree. The URL is the text shown in the address bar, so the scheme (`https://`) can be missing.
+- **CDP (Chrome DevTools Protocol):** used when you pass `cdpPort` and a browser started with that remote debugging port is listening on localhost, for example one started by [launch_browser_with_debug](#launch_browser_with_debug). The server matches the window to a tab by title and reads the page with `document.body.innerText` (or the full HTML when `textOnly` is false), so JavaScript-rendered content is included. When CDP cannot be used, the tools fall back to UI Automation.
+
+For clicking, form filling and multi-step navigation inside web pages, a dedicated browser automation tool (such as Playwright MCP) is a better fit.
+
+### get_browser_url
+
+Get the current URL from a browser window's address bar.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port` (for example 9222) |
+
+**Example:**
+> "What page is open in Chrome?"
+
+```json
+{
+  "name": "get_browser_url",
+  "arguments": {
+    "handle": 2884384
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "browserType": "chrome",
+  "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Google Chrome",
+  "errorCode": "None"
+}
+```
+
+---
+
+### get_active_browser_url
+
+Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port` |
+
+**Example:**
+> "What URL am I looking at?"
+
+```json
+{
+  "name": "get_active_browser_url",
+  "arguments": {}
+}
+```
+
+**Response:** Same shape as [get_browser_url](#get_browser_url).
+
+**Error Response** (the foreground window is not a browser):
+```json
+{
+  "success": false,
+  "error": "Foreground window 'WindowsTerminal' is not a browser",
+  "errorCode": "NoBrowserInForeground"
+}
+```
+
+> **Note:** When an agent calls this tool, the foreground window is often the agent's own terminal or chat window. Prefer get_browser_url with a handle from find_windows.
+
+---
+
+### get_browser_content
+
+Extract the text (or, through CDP, the HTML) of the page shown in a browser window.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| maxLength | int | No | all | Maximum number of characters to return; longer content is cut off |
+| textOnly | bool | No | true | Return text only. With CDP, false returns the full HTML. UI Automation always returns text |
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port`; includes JavaScript-rendered content |
+
+**Example 1:** Read the visible text
+> "Read the page open in Edge"
+
+```json
+{
+  "name": "get_browser_content",
+  "arguments": {
+    "handle": 2884384,
+    "maxLength": 5000
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "content": "Skip to content\nmortenbrudvik / WindowsAppManagerMcp\n...",
+  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "browserType": "edge",
+  "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Microsoft Edge",
+  "contentLength": 5000,
+  "errorCode": "None"
+}
+```
+
+**Example 2:** Read the HTML of a page in a debug browser
+> "Get the HTML of the page in the debug browser"
+
+```json
+{
+  "name": "get_browser_content",
+  "arguments": {
+    "handle": 3342410,
+    "cdpPort": 9222,
+    "textOnly": false,
+    "maxLength": 20000
+  }
+}
+```
+
+**Error Codes** (get_browser_url, get_active_browser_url and get_browser_content):
+| Code | Description |
+|------|-------------|
+| `InvalidHandle` | Window handle is invalid |
+| `NotABrowser` | The window's process is not a recognized browser |
+| `UrlBarNotFound` | The address bar could not be found or read |
+| `ContentExtractionFailed` | No content could be extracted |
+| `AutomationUnavailable` | UI Automation is not available |
+| `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url) |
+| `OperationException` | Unexpected error; see `error` |
+
+---
+
+### launch_browser_with_debug
+
+Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, so that get_browser_content and get_browser_url can use `cdpPort`.
+
+> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser is closed. Launch it only when you need CDP, and close it with [close_window](#close_window) when you are done.
+
+By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| browser | string | No | "chrome" | Browser to launch: "chrome", "edge" or "brave" |
+| url | string | No | - | URL to open |
+| port | int | No | 9222 | CDP debug port. Pass the same value as `cdpPort` to the reading tools |
+| userDataDir | string | No | new temp folder | Profile folder for the browser instance |
+
+**Example:**
+> "Open example.com in a Chrome I can read with CDP"
+
+```json
+{
+  "name": "launch_browser_with_debug",
+  "arguments": {
+    "browser": "chrome",
+    "url": "https://example.com"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "processId": 18320,
+  "windowHandle": 3342410,
+  "cdpPort": 9222,
+  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\browser-debug-6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"
+}
+```
+
+**Error Codes:**
+| Code | Description |
+|------|-------------|
+| `UnsupportedBrowser` | `browser` is not chrome, edge or brave |
+| `BrowserNotFound` | The browser was not found in Program Files or on PATH |
+| `PortInUse` | The port is already in use; pick another port |
+| `DebugLaunchFailed` | The browser could not be started. A launch_application error code can also appear here |
 
 ---
 

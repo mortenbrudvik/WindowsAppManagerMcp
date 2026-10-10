@@ -10,6 +10,7 @@ description: |
   - Get UI elements or element coordinates from windows
   - Click, right-click, double-click, or move the mouse cursor
   - Type text or send keyboard shortcuts
+  - Read the URL or text of a web page open in a browser window
   - Launch applications or open programs
   - List or kill processes
   - Save, apply, restore, or manage window layouts
@@ -74,6 +75,11 @@ Use this skill when the user asks to:
 - "Press Ctrl+C to copy" / "Press Ctrl+V to paste"
 - "Press Enter" / "Press Tab"
 
+### Browser Reading
+- "What page is open in Chrome?" / "Get the URL of the current tab"
+- "Read the text of the page open in Edge"
+- "Get the full text of this JavaScript-heavy page"
+
 ### Layout Management
 - "Save my current window arrangement as [name]"
 - "Apply my [name] layout"
@@ -136,6 +142,15 @@ Use this skill when the user asks to:
 |------|-------------|----------------|
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, interactableOnly |
 
+### Browser Reading (4 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_browser_url` | URL of a browser window | handle, cdpPort |
+| `get_active_browser_url` | URL of the foreground browser window | cdpPort |
+| `get_browser_content` | Text of the page (or HTML through CDP) | handle, maxLength, textOnly, cdpPort |
+| `launch_browser_with_debug` | Start Chrome, Edge or Brave with a DevTools port | browser, url, port, userDataDir |
+
 ### Input Simulation (6 tools)
 
 | Tool | Description | Key Parameters |
@@ -172,6 +187,23 @@ Use this skill when the user asks to:
 - Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`.
 - Image pixels are not screen pixels once `maxWidth` scales a capture down (`originalWidth` is then set). To click something, use `screenBounds` from `capture_with_elements` or `bounds` from `get_ui_elements`. Do not use positions measured on the image.
 - Clicks outside every monitor are rejected with `CoordinatesOutOfBounds`.
+
+## Reading Browser Pages
+
+To get a page's URL or text, use these tools instead of screenshots:
+
+| Need | Use |
+|------|-----|
+| URL of a specific browser window | `get_browser_url` with the window `handle` |
+| URL of the browser in the foreground | `get_active_browser_url` (returns `NoBrowserInForeground` when another window, such as your terminal, is in front) |
+| Text of a page | `get_browser_content` with `handle` and, for long pages, `maxLength` |
+| Text of a JavaScript-heavy page, or its HTML | `launch_browser_with_debug`, then `get_browser_content` with `cdpPort` (and `textOnly: false` for HTML) |
+
+- Without `cdpPort`, the tools read the browser through UI Automation. The URL is the address bar text, so the scheme (`https://`) can be missing. The content is whatever UI Automation exposes for the page.
+- `cdpPort` works only for a browser started with a remote debugging port, for example by `launch_browser_with_debug`. When CDP cannot be used, the tools fall back to UI Automation.
+- `launch_browser_with_debug` supports `chrome`, `edge` and `brave`. Unless you pass `userDataDir`, it starts a separate browser instance with a new, empty temporary profile, so the user's logins, cookies and extensions are not there.
+- **Security:** the DevTools port it opens has no authentication. Any program on this computer can connect to it and fully control that browser (read pages and cookies, run JavaScript, navigate) until the browser is closed. Launch it only when you need CDP, close it with `close_window` when you are done, and never point `userDataDir` at the user's real browser profile.
+- For clicking, form filling and multi-step navigation inside web pages, prefer a dedicated browser automation tool (such as Playwright MCP) if one is available.
 
 ## Snap Positions
 
