@@ -9,6 +9,10 @@ public class InputSimulationServiceConcurrencyTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
 
+    // Longer than one type_text batch (32 characters), so each call sends several batches
+    private static readonly string As = new('a', 40);
+    private static readonly string Bs = new('b', 40);
+
     private readonly Mock<IMonitorService> _mockMonitorService;
 
     public InputSimulationServiceConcurrencyTests()
@@ -20,7 +24,7 @@ public class InputSimulationServiceConcurrencyTests
     }
 
     private InputSimulationService CreateSut(INativeInputWrapper wrapper) =>
-        new(_mockMonitorService.Object, wrapper);
+        new(_mockMonitorService.Object, wrapper, TestDataFactory.CreateAllowingInputGuard().Object);
 
     /// <summary>
     /// Starts the first call, waits until it is inside the native layer, then starts the second call.
@@ -44,10 +48,10 @@ public class InputSimulationServiceConcurrencyTests
         var sut = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => sut.TypeText("aaaa"), () => sut.TypeText("bbbb"));
+        await RunOverlapping(wrapper, () => sut.TypeText(As), () => sut.TypeText(Bs));
 
         // Assert
-        string.Concat(wrapper.Operations).Should().Be("aaaabbbb");
+        string.Concat(wrapper.Operations).Should().Be(As + Bs);
     }
 
     [Fact]
@@ -58,10 +62,10 @@ public class InputSimulationServiceConcurrencyTests
         var sut = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => sut.TypeText("aaaa"), () => sut.SendKeys("^c"));
+        await RunOverlapping(wrapper, () => sut.TypeText(As), () => sut.SendKeys("^c"));
 
-        // Assert
-        wrapper.Operations.Should().Equal("a", "a", "a", "a", "keys");
+        // Assert - the text goes in batches of up to 32 characters, and the keys come after all of them
+        wrapper.Operations.Should().Equal(As[..32], As[32..], "keys");
     }
 
     [Fact]
@@ -79,6 +83,32 @@ public class InputSimulationServiceConcurrencyTests
     }
 
     [Fact]
+    public async Task FocusWindow_DuringTypeText_WaitsUntilTypingFinishes()
+    {
+        // Arrange - focus_window as the server runs it: through the input gate filter
+        var wrapper = new HoldingInputWrapper();
+        var sut = CreateSut(wrapper);
+        var operationsWhenFocusRan = -1;
+        var focusWindow = WindowsAppManagerMcp.Infrastructure.InputGateToolFilter.Filter((_, _) =>
+        {
+            operationsWhenFocusRan = wrapper.Operations.Count;
+            return ValueTask.FromResult(new ModelContextProtocol.Protocol.CallToolResult());
+        });
+        var request = new ModelContextProtocol.Server.RequestContext<ModelContextProtocol.Protocol.CallToolRequestParams>(
+            new Mock<ModelContextProtocol.Server.McpServer>().Object,
+            new ModelContextProtocol.Protocol.JsonRpcRequest { Method = ModelContextProtocol.Protocol.RequestMethods.ToolsCall })
+        {
+            Params = new ModelContextProtocol.Protocol.CallToolRequestParams { Name = "focus_window" }
+        };
+
+        // Act - the agent races focus_window (its own terminal) against type_text
+        await RunOverlapping(wrapper, () => sut.TypeText(As), () => focusWindow(request, CancellationToken.None).AsTask().Wait());
+
+        // Assert - it could not change the foreground between the guard's check and the typed text
+        operationsWhenFocusRan.Should().Be(2, "both batches of the text were sent before focus_window ran");
+    }
+
+    [Fact]
     public async Task Calls_OnSeparateServiceInstances_AreSerializedProcessWide()
     {
         // Arrange
@@ -87,10 +117,10 @@ public class InputSimulationServiceConcurrencyTests
         var second = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => first.TypeText("aaaa"), () => second.TypeText("bbbb"));
+        await RunOverlapping(wrapper, () => first.TypeText(As), () => second.TypeText(Bs));
 
         // Assert
-        string.Concat(wrapper.Operations).Should().Be("aaaabbbb");
+        string.Concat(wrapper.Operations).Should().Be(As + Bs);
     }
 
     [Fact]
@@ -125,6 +155,7 @@ public class InputSimulationServiceConcurrencyTests
         private readonly List<string> _operations = new();
         private readonly ManualResetEventSlim _otherThreadSentInput = new();
         private int _firstThreadId = -1;
+        private (int X, int Y) _cursor;
 
         public ManualResetEventSlim FirstOperationStarted { get; } = new();
 
@@ -141,11 +172,22 @@ public class InputSimulationServiceConcurrencyTests
 
         public bool SetCursorPos(int x, int y)
         {
+            lock (_lock)
+            {
+                _cursor = (x, y);
+            }
+
             Record($"move {x},{y}");
             return true;
         }
 
-        public (int X, int Y)? GetCursorPos() => (0, 0);
+        public (int X, int Y)? GetCursorPos()
+        {
+            lock (_lock)
+            {
+                return _cursor;
+            }
+        }
 
         public uint SendInput(IReadOnlyList<InputEvent> events)
         {
@@ -157,7 +199,8 @@ public class InputSimulationServiceConcurrencyTests
         {
             if (events.All(e => e.Kind == InputEventKind.Unicode))
             {
-                return ((char)events[0].Code).ToString();
+                // The characters of the batch, once each (their key-down events)
+                return string.Concat(events.Where((_, i) => i % 2 == 0).Select(e => (char)e.Code));
             }
 
             return events.All(e => e.Kind == InputEventKind.Mouse) ? "mouse" : "keys";

@@ -77,6 +77,23 @@ public class WindowFinderToolContractTests
     }
 
     [Fact]
+    public async Task FindWindows_MarksTheAgentHostWindow_AndOmitsTheFlagForOtherWindows()
+    {
+        // Arrange
+        var terminal = TestDataFactory.CreateWindowInfo(1001, "pwsh", "WindowsTerminal", 100) with { IsAgentHost = true };
+        var notepad = TestDataFactory.CreateWindowInfo(1002, "Untitled - Notepad", "notepad", 200);
+        _windowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([terminal, notepad]);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var windows = ParsePayload(await server.CallToolAsync("find_windows")).EnumerateArray().ToList();
+
+        // Assert
+        windows[0].GetProperty("isAgentHost").GetBoolean().Should().BeTrue();
+        windows[1].TryGetProperty("isAgentHost", out _).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task GetForegroundWindow_ReportsAnUntitledWindowByClass()
     {
         // Arrange - a context menu is in the foreground

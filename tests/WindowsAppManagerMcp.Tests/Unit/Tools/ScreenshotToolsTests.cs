@@ -25,10 +25,13 @@ public class ScreenshotToolsTests
         _mockWindowService = TestDataFactory.CreateMockWindowService();
     }
 
+    private TargetPolicySettings _policy = TargetPolicySettings.Default;
+
     private ScreenshotTools CreateSut() => new ScreenshotTools(
         _mockScreenshotService.Object,
         _mockUIElementService.Object,
-        _mockWindowService.Object);
+        _mockWindowService.Object,
+        new TargetPolicy(_policy));
 
     #region T9.3.1: ListScreens Tests
 

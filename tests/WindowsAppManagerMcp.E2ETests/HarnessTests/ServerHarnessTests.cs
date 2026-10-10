@@ -171,6 +171,8 @@ public class ServerHarnessTests : IDisposable
         var processWrapper = Wrapper<INativeProcessWrapper>();
         processWrapper.Setup(w => w.OpenProcess(processId)).Returns(handle.Object);
         processWrapper.Setup(w => w.IsAncestorOfCurrentProcess(processId)).Returns(false);
+        // forceKill reads the process tree for the target policy first (a read the guard lets through)
+        processWrapper.Setup(w => w.GetDescendantsOf(processId)).Returns([]);
 
         // Act
         var result = processService.KillProcess(processId, confirm: true, forceKill: true);

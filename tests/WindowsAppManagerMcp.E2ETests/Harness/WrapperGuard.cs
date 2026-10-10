@@ -281,7 +281,8 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// <summary>
 /// The <see cref="DesktopTier.Input"/> policy: the server may act, but only on the fixture process.
 /// Keyboard input is sent only while a fixture window is in the foreground, mouse input only while the
-/// cursor is over a fixture window, window calls only when every window they name is a fixture window,
+/// cursor is over a fixture window and, when the batch moves the pointer (a click carries an absolute move
+/// to its point), only when the move ends over a fixture window; window calls only when every window they name is a fixture window,
 /// and process closes and kills only on the fixture process. The check runs before every SendInput
 /// batch, so a window that comes to the front mid-text stops the typing. No process may be started.
 /// Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
@@ -292,8 +293,14 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// </summary>
 public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
 {
-    /// <summary>MOUSEEVENTF_MOVE: a relative move. <see cref="InputEvent"/> carries no distance, so it moves by 0, 0.</summary>
+    /// <summary>MOUSEEVENTF_MOVE: a move, relative by <see cref="InputEvent.Dx"/>, <see cref="InputEvent.Dy"/> unless absolute.</summary>
     internal const uint MouseMoveFlag = 0x0001;
+
+    /// <summary>MOUSEEVENTF_ABSOLUTE: Dx and Dy are normalized coordinates (0..65535).</summary>
+    internal const uint MouseAbsoluteFlag = 0x8000;
+
+    /// <summary>MOUSEEVENTF_VIRTUALDESK: the normalized coordinates span the whole virtual desktop.</summary>
+    internal const uint MouseVirtualDeskFlag = 0x4000;
 
     private readonly IDesktopProbe _probe;
     private readonly int _fixtureProcessId;
@@ -357,6 +364,15 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
                             $"mouse input at ({cursor.X}, {cursor.Y}): the window under the cursor") is { } mouse)
                     {
                         return mouse;
+                    }
+
+                    // A click carries its own absolute move: the button goes down where that move puts the pointer
+                    foreach (var move in batch.Where(e => e.Kind == InputEventKind.Mouse && (e.Flags & MouseMoveFlag) != 0))
+                    {
+                        if (CheckMoveDestination(move) is { } destination)
+                        {
+                            return destination;
+                        }
                     }
                 }
                 return null;
@@ -425,7 +441,32 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
             : null;
     }
 
-    private static bool IsZeroDistanceMove(InputEvent e) => e.Kind == InputEventKind.Mouse && e.Flags == MouseMoveFlag;
+    private static bool IsZeroDistanceMove(InputEvent e) =>
+        e.Kind == InputEventKind.Mouse && e.Flags == MouseMoveFlag && e.Dx == 0 && e.Dy == 0;
+
+    /// <summary>
+    /// A mouse move in a batch: only a zero-distance move or an absolute move across the virtual desktop
+    /// (the server's click) is understood, and the absolute move must end over the fixture. Windows maps
+    /// the normalized coordinate n to the pixel left + n * width / 65536.
+    /// </summary>
+    private string? CheckMoveDestination(InputEvent move)
+    {
+        if (move.Flags == MouseMoveFlag && move.Dx == 0 && move.Dy == 0)
+        {
+            return null;
+        }
+
+        if ((move.Flags & (MouseAbsoluteFlag | MouseVirtualDeskFlag)) != (MouseAbsoluteFlag | MouseVirtualDeskFlag))
+        {
+            return $"a mouse move with flags 0x{move.Flags:X} and distance ({move.Dx}, {move.Dy}) has a destination the E2E " +
+                   $"guard cannot work out; teach {nameof(FixtureOnlyCallPolicy)} about it.";
+        }
+
+        var screen = _probe.GetVirtualScreen();
+        var x = screen.Left + (int)((long)move.Dx * screen.Width / 65536);
+        var y = screen.Top + (int)((long)move.Dy * screen.Height / 65536);
+        return RefuseUnlessFixture(_probe.WindowFromPoint(x, y), $"mouse input after the move to ({x}, {y}): the window there");
+    }
 
     private string? CheckProcess(WrapperCall call)
     {

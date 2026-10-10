@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -74,6 +75,14 @@ public static class ServiceRegistration
         services.AddSingleton<IHostGuard, HostGuard>();
         services.AddHostedService<HostGuardStartup>();
 
+        // The input guard (every input call, inside the input gate) and the target policy (input, close,
+        // kill and window captures), both configured by the user in the server's environment
+        services.AddSingleton<ITargetPolicy>(_ => new TargetPolicy(TargetPolicySettings.FromEnvironment()));
+        services.AddSingleton(_ => InputGuardOptions.FromEnvironment());
+        services.AddSingleton<IInputTargetGuard, InputTargetGuard>();
+        services.AddSingleton<IInputSafetyInfo, InputSafetyInfo>();
+        services.AddHostedService<InputSafetyStartup>(); // logs the settings in force at start
+
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();
         services.AddSingleton<WindowManagerTools>();
@@ -91,7 +100,8 @@ public static class ServiceRegistration
     /// <summary>
     /// The server's log levels: Warning and above for everything, plus the per-call lines of
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
-    /// and the agent host that <see cref="HostGuard"/> records once at start, at Information.
+    /// and the agent host that <see cref="HostGuard"/> records and the safety settings that
+    /// <see cref="InputSafetyStartup"/> reports once at start, at Information.
     /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
     public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
@@ -101,7 +111,8 @@ public static class ServiceRegistration
         return logging
             .SetMinimumLevel(LogLevel.Warning)
             .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information)
-            .AddFilter(typeof(HostGuard).FullName, LogLevel.Information);
+            .AddFilter(typeof(HostGuard).FullName, LogLevel.Information)
+            .AddFilter(typeof(InputSafetyStartup).FullName, LogLevel.Information);
     }
 
     /// <summary>
@@ -112,8 +123,12 @@ public static class ServiceRegistration
         ArgumentNullException.ThrowIfNull(builder);
 
         return builder
+            // Tools that can change which window is in front run inside the input gate, so they cannot
+            // change it between an input call's guard check and its input
+            .AddInputGateSerialization()
             // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
-            // instead of the SDK's opaque "An error occurred invoking '<tool>'."
+            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added last, so it is the
+            // outermost filter (see McpServerOptions.Filters): its call log includes the wait for the gate
             .AddToolErrorReporting()
             .WithTools<WindowFinderTools>()
             .WithTools<WindowManagerTools>()

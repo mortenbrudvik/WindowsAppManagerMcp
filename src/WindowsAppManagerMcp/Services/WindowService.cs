@@ -9,12 +9,22 @@ public class WindowService : IWindowService
     private readonly IMonitorService _monitorService;
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IHostGuard _hostGuard;
+    private readonly ITargetPolicy? _targetPolicy;
 
-    public WindowService(IMonitorService monitorService, INativeWindowWrapper nativeWrapper, IHostGuard hostGuard)
+    /// <param name="monitorService">Monitor lookups.</param>
+    /// <param name="nativeWrapper">The window calls.</param>
+    /// <param name="hostGuard">Recognizes the agent's host windows (close guard, WindowInfo.IsAgentHost).</param>
+    /// <param name="targetPolicy">
+    /// The server's target policy, which close_window and close_windows_batch enforce (roadmap M1.12).
+    /// The server always passes it; without it no window is refused by policy.
+    /// </param>
+    public WindowService(
+        IMonitorService monitorService, INativeWindowWrapper nativeWrapper, IHostGuard hostGuard, ITargetPolicy? targetPolicy = null)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
         _hostGuard = hostGuard ?? throw new ArgumentNullException(nameof(hostGuard));
+        _targetPolicy = targetPolicy;
     }
 
     public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true) =>
@@ -278,6 +288,10 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return WindowCloseResult.Failed(handle, WindowErrorCode.InvalidHandle, "Invalid window handle");
 
+        // The user's policy comes first: force is a tool argument and does not override it
+        if (FindPolicyRefusal(handle) is { } refusal)
+            return WindowCloseResult.Failed(handle, WindowErrorCode.TargetDeniedByPolicy, refusal);
+
         if (!force && FindCloseProtection(handle) is { } protection)
             return WindowCloseResult.Failed(handle, WindowErrorCode.ProtectedWindow, protection);
 
@@ -288,22 +302,18 @@ public class WindowService : IWindowService
 
     /// <summary>
     /// Why closing the window could take down the desktop shell or end the agent's own session, or null
-    /// when it cannot. The shell rule checks the window, the top-level window it is part of and that
-    /// window's root owner: DefWindowProc destroys any window that gets WM_CLOSE, so a child or an owned
-    /// helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the taskbar itself.
-    /// The host rule is <see cref="IHostGuard.IsHostWindow"/>, which is root-owner aware on its own.
+    /// when it cannot. The shell rule checks the window, the top-level window it is part of and every
+    /// window that owns it (<see cref="WindowOwnerChain"/>: GW_OWNER as well as GA_ROOTOWNER, so an owned
+    /// overlapped helper counts too): DefWindowProc destroys any window that gets WM_CLOSE, so a child or
+    /// an owned helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the
+    /// taskbar itself. The host rule is <see cref="IHostGuard.IsHostWindow"/>, which follows the same chain.
     /// </summary>
     private string? FindCloseProtection(nint handle)
     {
         var shellWindow = _nativeWrapper.GetShellWindow();
-        nint[] windows =
-        [
-            handle,
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.Root),
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.RootOwner)
-        ];
+        var windows = WindowOwnerChain.SelfAndOwners(_nativeWrapper, handle);
 
-        foreach (var window in windows.Where(w => w != nint.Zero).Distinct())
+        foreach (var window in windows)
         {
             var className = _nativeWrapper.GetClassName(window);
             if (WindowClassification.IsShellWindowClass(className) || (shellWindow != nint.Zero && window == shellWindow))
@@ -323,6 +333,28 @@ public class WindowService : IWindowService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Why the target policy refuses the window, or null when it allows it (or there is no policy). The
+    /// window is matched by its process, and a UWP frame also by the app it hosts, as the listings report it.
+    /// </summary>
+    private string? FindPolicyRefusal(nint handle)
+    {
+        if (_targetPolicy == null)
+            return null;
+
+        var session = new ReadSession(_nativeWrapper, topLevelWindows: null);
+        var className = _nativeWrapper.GetClassName(handle) ?? string.Empty;
+        var title = _nativeWrapper.GetWindowText(handle) ?? string.Empty;
+        var process = ResolveProcess(handle, className, title, _nativeWrapper.GetWindowThreadProcessId(handle), session);
+        var verdict = _targetPolicy.Evaluate(
+            [session.ProcessName(process.ProcessId), process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null]);
+
+        return verdict.Allowed
+            ? null
+            : $"Window {handle} is refused by the server's target policy: {verdict.Reason}. Nothing was sent. The policy is set by " +
+              "the user in the server's environment; force does not override it. Ask the user to close this window.";
     }
 
     /// <summary>Maps the Win32 error of a PostMessage(WM_CLOSE) that Windows refused.</summary>
@@ -603,7 +635,8 @@ public class WindowService : IWindowService
             IsCloaked = isCloaked,
             OwnerHandle = owner == nint.Zero ? null : owner,
             HostProcessName = process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null,
-            HostProcessId = process.HostProcessId is { } id ? (int)id : null
+            HostProcessId = process.HostProcessId is { } id ? (int)id : null,
+            IsAgentHost = _hostGuard.IsHostWindow(hWnd)
         };
     }
 

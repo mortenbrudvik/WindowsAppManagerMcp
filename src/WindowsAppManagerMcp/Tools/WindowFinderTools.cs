@@ -16,7 +16,7 @@ public class WindowFinderTools
     }
 
     [McpServerTool(Name = "find_windows")]
-    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'.")]
+    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window, which input and close tools refuse unless it is named explicitly.")]
     public IReadOnlyList<WindowInfoDto> FindWindows(
         [Description("Partial text to match in window title (case-insensitive)")]
         string? titleContains = null,
@@ -84,13 +84,16 @@ public class WindowFinderTools
         IsCloaked: info.IsCloaked,
         OwnerHandle: info.OwnerHandle?.ToInt64(),
         HostProcessName: info.HostProcessName,
-        HostProcessId: info.HostProcessId
+        HostProcessId: info.HostProcessId,
+        IsAgentHost: info.IsAgentHost ? true : null
     );
 }
 
 /// <summary>
 /// A window as the window tools return it. OwnerHandle, HostProcessName and HostProcessId are
-/// omitted when null: an unowned window, or a window that is not a UWP frame.
+/// omitted when null: an unowned window, or a window that is not a UWP frame. IsAgentHost is true for
+/// the agent's own host window (its terminal, editor or chat app, or a window it owns) and omitted
+/// for every other window.
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -105,5 +108,6 @@ public record WindowInfoDto(
     bool IsCloaked,
     long? OwnerHandle = null,
     string? HostProcessName = null,
-    int? HostProcessId = null
+    int? HostProcessId = null,
+    bool? IsAgentHost = null
 );

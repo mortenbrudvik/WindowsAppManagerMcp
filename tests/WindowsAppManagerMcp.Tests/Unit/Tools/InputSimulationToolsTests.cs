@@ -25,8 +25,8 @@ public class InputSimulationToolsTests
     {
         var mock = new Mock<IInputSimulationService>();
 
-        mock.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new ClickResult(
+        mock.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((int x, int y, InputTarget _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -34,8 +34,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new ClickResult(
+        mock.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((int x, int y, InputTarget _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -43,8 +43,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y, int delay) => new ClickResult(
+        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((int x, int y, int delay, InputTarget _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -52,8 +52,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new MouseMoveResult(
+        mock.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((int x, int y, InputTarget _) => new MouseMoveResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -66,16 +66,16 @@ public class InputSimulationToolsTests
         mock.Setup(s => s.GetCursorPosition())
             .Returns((500, 500));
 
-        mock.Setup(s => s.TypeText(It.IsAny<string>(), It.IsAny<int>()))
-            .Returns((string text, int delay) => new TypeTextResult(
+        mock.Setup(s => s.TypeText(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((string text, int delay, InputTarget _) => new TypeTextResult(
                 Success: success,
                 Text: text,
                 CharactersTyped: text?.Length ?? 0,
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.SendKeys(It.IsAny<string>()))
-            .Returns((string keys) => new SendKeysResult(
+        mock.Setup(s => s.SendKeys(It.IsAny<string>(), It.IsAny<InputTarget>()))
+            .Returns((string keys, InputTarget _) => new SendKeysResult(
                 Success: success,
                 Keys: keys,
                 Error: error,
@@ -96,7 +96,7 @@ public class InputSimulationToolsTests
         sut.Click(100, 200);
 
         // Assert
-        _mockInputService.Verify(s => s.Click(100, 200), Times.Once);
+        _mockInputService.Verify(s => s.Click(100, 200, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 100, 200, "left");
-        _mockInputService.Setup(s => s.Click(100, 200)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.Click(100, 200, InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -124,7 +124,7 @@ public class InputSimulationToolsTests
         sut.Click(-100, -200);
 
         // Assert
-        _mockInputService.Verify(s => s.Click(-100, -200), Times.Once);
+        _mockInputService.Verify(s => s.Click(-100, -200, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public class InputSimulationToolsTests
             ClickType: "left",
             Error: "Coordinates are outside screen bounds",
             ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        _mockInputService.Setup(s => s.Click(5000, 5000)).Returns(errorResult);
+        _mockInputService.Setup(s => s.Click(5000, 5000, InputTarget.None)).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -163,7 +163,7 @@ public class InputSimulationToolsTests
         sut.RightClick(300, 400);
 
         // Assert
-        _mockInputService.Verify(s => s.RightClick(300, 400), Times.Once);
+        _mockInputService.Verify(s => s.RightClick(300, 400, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 300, 400, "right");
-        _mockInputService.Setup(s => s.RightClick(300, 400)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -192,7 +192,7 @@ public class InputSimulationToolsTests
             ClickType: "right",
             Error: "SendInput failed",
             ErrorCode: InputErrorCode.SendInputFailed);
-        _mockInputService.Setup(s => s.RightClick(300, 400)).Returns(errorResult);
+        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None)).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -217,7 +217,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 50), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 50, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 100);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 100), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 100, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -243,7 +243,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 1);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 1000);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 500), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 500, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -269,7 +269,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: -50);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -277,7 +277,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 500, 600, "double");
-        _mockInputService.Setup(s => s.DoubleClick(500, 600, 50)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.DoubleClick(500, 600, 50, InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -301,7 +301,7 @@ public class InputSimulationToolsTests
         sut.MouseMove(700, 800);
 
         // Assert
-        _mockInputService.Verify(s => s.MoveMouse(700, 800), Times.Once);
+        _mockInputService.Verify(s => s.MoveMouse(700, 800, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -309,7 +309,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new MouseMoveResult(true, 700, 800);
-        _mockInputService.Setup(s => s.MoveMouse(700, 800)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.MoveMouse(700, 800, InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -329,7 +329,7 @@ public class InputSimulationToolsTests
             Y: 10000,
             Error: "Coordinates are outside screen bounds",
             ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        _mockInputService.Setup(s => s.MoveMouse(10000, 10000)).Returns(errorResult);
+        _mockInputService.Setup(s => s.MoveMouse(10000, 10000, InputTarget.None)).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -350,7 +350,7 @@ public class InputSimulationToolsTests
         sut.MouseMove(0, 0);
 
         // Assert
-        _mockInputService.Verify(s => s.MoveMouse(0, 0), Times.Once);
+        _mockInputService.Verify(s => s.MoveMouse(0, 0, InputTarget.None), Times.Once);
     }
 
     #endregion
@@ -406,7 +406,7 @@ public class InputSimulationToolsTests
         sut.TypeText("Hello World");
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello World", 0), Times.Once);
+        _mockInputService.Verify(s => s.TypeText("Hello World", 0, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -419,7 +419,7 @@ public class InputSimulationToolsTests
         sut.TypeText("Hello", delayMs: 50);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 50), Times.Once);
+        _mockInputService.Verify(s => s.TypeText("Hello", 50, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -432,7 +432,7 @@ public class InputSimulationToolsTests
         sut.TypeText("Hello", delayMs: -10);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 0), Times.Once);
+        _mockInputService.Verify(s => s.TypeText("Hello", 0, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -445,7 +445,7 @@ public class InputSimulationToolsTests
         sut.TypeText("Hello", delayMs: 500);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 100), Times.Once);
+        _mockInputService.Verify(s => s.TypeText("Hello", 100, InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -453,7 +453,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new TypeTextResult(true, "Hello", 5);
-        _mockInputService.Setup(s => s.TypeText("Hello", 0)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.TypeText("Hello", 0, InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -473,7 +473,7 @@ public class InputSimulationToolsTests
             CharactersTyped: 0,
             Error: "Text cannot be empty",
             ErrorCode: InputErrorCode.EmptyText);
-        _mockInputService.Setup(s => s.TypeText("", 0)).Returns(errorResult);
+        _mockInputService.Setup(s => s.TypeText("", 0, InputTarget.None)).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -498,7 +498,7 @@ public class InputSimulationToolsTests
         sut.SendKeys("{ENTER}");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys("{ENTER}"), Times.Once);
+        _mockInputService.Verify(s => s.SendKeys("{ENTER}", InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -511,7 +511,7 @@ public class InputSimulationToolsTests
         sut.SendKeys("^c");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys("^c"), Times.Once);
+        _mockInputService.Verify(s => s.SendKeys("^c", InputTarget.None), Times.Once);
     }
 
     [Fact]
@@ -519,7 +519,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new SendKeysResult(true, "{ENTER}");
-        _mockInputService.Setup(s => s.SendKeys("{ENTER}")).Returns(expectedResult);
+        _mockInputService.Setup(s => s.SendKeys("{ENTER}", InputTarget.None)).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -538,7 +538,7 @@ public class InputSimulationToolsTests
             Keys: "{UNKNOWNKEY}",
             Error: "Unknown key: UNKNOWNKEY",
             ErrorCode: InputErrorCode.UnknownKey);
-        _mockInputService.Setup(s => s.SendKeys("{UNKNOWNKEY}")).Returns(errorResult);
+        _mockInputService.Setup(s => s.SendKeys("{UNKNOWNKEY}", InputTarget.None)).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -564,7 +564,7 @@ public class InputSimulationToolsTests
         sut.SendKeys(keys);
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys(keys), Times.Once);
+        _mockInputService.Verify(s => s.SendKeys(keys, InputTarget.None), Times.Once);
     }
 
     #endregion

@@ -34,6 +34,10 @@ internal sealed class FakeDesktop : IDesktopProbe
     public string GetWindowTitle(nint hwnd) =>
         hwnd == FixtureWindow ? "Fixture window" : hwnd == OtherWindow ? "Other window" : "";
 
+    public (int Left, int Top, int Width, int Height) VirtualScreen { get; set; } = (0, 0, 1920, 1080);
+
+    public (int Left, int Top, int Width, int Height) GetVirtualScreen() => VirtualScreen;
+
     /// <summary>The thread the guarded calls come from.</summary>
     public uint CurrentThreadId { get; set; } = 1111;
 

@@ -80,6 +80,13 @@ internal static class E2ENative
         return text.ToString();
     }
 
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
+
+    /// <summary>SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN.</summary>
+    public static (int Left, int Top, int Width, int Height) GetVirtualScreen() =>
+        (GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
+
     public static int GetProcessId(nint hwnd)
     {
         if (hwnd == 0)

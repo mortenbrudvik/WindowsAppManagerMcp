@@ -20,6 +20,8 @@ public class HostGuardTests
     private const int ConPtyPid = 2501;    // OpenConsole.exe, owns the hidden console pseudo-window
     private const int OtherPid = 9001;     // an unrelated application
 
+    private const uint GwOwner = 4;
+
     private static readonly int ServerPid = Environment.ProcessId;
     private static readonly DateTime T0 = new(2026, 10, 1, 8, 0, 0, DateTimeKind.Utc);
 
@@ -31,6 +33,7 @@ public class HostGuardTests
     private static readonly nint ExplorerFolder = 0x310;
     private static readonly nint OtherWindow = 0x400;
     private static readonly nint OtherDialog = 0x410;          // owned by OtherWindow
+    private static readonly nint TerminalWpfDialog = 0x130;    // owned by TerminalWindow without WS_POPUP (GW_OWNER only)
 
     private readonly Mock<INativeWindowWrapper> _windows = new();
     private readonly Mock<INativeProcessWrapper> _processes = new();
@@ -60,6 +63,8 @@ public class HostGuardTests
         Window(ExplorerFolder, ExplorerPid);
         Window(OtherWindow, OtherPid);
         Window(OtherDialog, OtherPid, rootOwner: OtherWindow);
+        Window(TerminalWpfDialog, TerminalPid);
+        _windows.Setup(w => w.GetWindow(TerminalWpfDialog, GwOwner)).Returns(TerminalWindow);
 
         _windows.Setup(w => w.GetShellWindow()).Returns(ShellDesktopWindow);
         _windows.Setup(w => w.GetForegroundWindow()).Returns(TerminalWindow);
@@ -110,6 +115,16 @@ public class HostGuardTests
     {
         // Arrange
         _windows.Setup(w => w.GetForegroundWindow()).Returns(TerminalDialog);
+
+        // Act & Assert
+        CreateSut().Host.StartupForegroundWindow!.Handle.Should().Be(TerminalWindow);
+    }
+
+    [Fact]
+    public void Host_StartupForegroundIsAnOwnedOverlappedWindow_RecordsItsOwner()
+    {
+        // Arrange - a WPF or WinForms dialog: GA_ROOTOWNER is the dialog itself, GW_OWNER the terminal
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TerminalWpfDialog);
 
         // Act & Assert
         CreateSut().Host.StartupForegroundWindow!.Handle.Should().Be(TerminalWindow);
@@ -370,6 +385,18 @@ public class HostGuardTests
     }
 
     [Fact]
+    public void IsHostWindow_DelegatedTerminal_ProtectsItsOwnedOverlappedWindowsToo()
+    {
+        // Arrange - only the recorded window identifies the host; its WPF dialog is linked by GW_OWNER only
+        UseDelegatedTerminalWithoutConsole();
+        var sut = CreateSut();
+
+        // Act & Assert
+        sut.IsHostWindow(TerminalWpfDialog).Should().BeTrue("the dialog is owned by the recorded terminal window");
+        sut.IsHostWindow(SecondTerminalWindow).Should().BeFalse();
+    }
+
+    [Fact]
     public void IsHostWindow_UnrelatedAppInFrontAtStartup_ProtectsOnlyThatWindow()
     {
         // Arrange - the server started while another application was in front
@@ -412,7 +439,8 @@ public class HostGuardTests
         var windows = new Mock<INativeWindowWrapper>(MockBehavior.Strict);
         windows.Setup(w => w.GetShellWindow()).Returns(ShellDesktopWindow);
         windows.Setup(w => w.GetForegroundWindow()).Returns(TerminalWindow);
-        windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.RootOwner)).Returns<nint, WindowAncestor>((h, _) => h);
+        windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), It.IsAny<WindowAncestor>())).Returns<nint, WindowAncestor>((h, _) => h);
+        windows.Setup(w => w.GetWindow(It.IsAny<nint>(), GwOwner)).Returns(nint.Zero);
         windows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>()))
             .Returns<nint>(h => (uint)(h == ShellDesktopWindow ? ExplorerPid : TerminalPid));
         var sut = new HostGuard(windows.Object, _processes.Object);

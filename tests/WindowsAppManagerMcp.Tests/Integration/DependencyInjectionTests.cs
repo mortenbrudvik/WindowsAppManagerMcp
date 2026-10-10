@@ -365,9 +365,20 @@ public class DependencyInjectionTests : IDisposable
         // Act
         var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-        // Assert
-        options.Filters.CallToolFilters.Should().ContainSingle()
-            .Which.Method.Should().BeSameAs(filter);
+        // Assert - added last, so it is the outermost filter and also sees the input gate filter's wait
+        options.Filters.CallToolFilters.Should().HaveCount(2);
+        options.Filters.CallToolFilters[^1].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheInputGateFilter()
+    {
+        // Window-changing tools must not run between an input call's guard check and its input
+        var filter = typeof(InputGateToolFilter).GetMethod(nameof(InputGateToolFilter.Filter))!;
+
+        var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+        options.Filters.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
     }
 
     [Fact]

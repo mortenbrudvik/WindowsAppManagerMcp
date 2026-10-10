@@ -20,19 +20,26 @@ public class ProcessService : IProcessService
     private readonly IBrowserDetectionService _browserDetection;
     private readonly IExecutableResolver _executableResolver;
     private readonly INativeProcessWrapper _processWrapper;
+    private readonly ITargetPolicy? _targetPolicy;
 
+    /// <param name="targetPolicy">
+    /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
+    /// it; without it no process is refused by policy.
+    /// </param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
         IBrowserDetectionService browserDetection,
         IExecutableResolver? executableResolver = null,
-        INativeProcessWrapper? processWrapper = null)
+        INativeProcessWrapper? processWrapper = null,
+        ITargetPolicy? targetPolicy = null)
     {
         _windowService = windowService;
         _validationService = validationService;
         _browserDetection = browserDetection;
         _executableResolver = executableResolver ?? new ExecutableResolver();
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
+        _targetPolicy = targetPolicy;
     }
 
     public LaunchResult LaunchApplication(
@@ -452,6 +459,18 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
             }
 
+            // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
+            if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
+                                  "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
+                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+            }
+
             // PID reuse guard: the process the agent saw in list_processes may have exited
             if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
             {
@@ -477,10 +496,45 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
             }
 
+            // forceKill ends the whole process tree, so every process in it must pass the policy too
+            if (forceKill && DeniedDescendant(processId) is { } denied)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
+                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
+                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+            }
+
             return forceKill
                 ? TerminateForcefully(process, processId, processName)
                 : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
         }
+    }
+
+    /// <summary>
+    /// The first process in <paramref name="processId"/>'s tree (children, grandchildren, ...) that the
+    /// target policy refuses, or null. Without a policy, nothing is refused.
+    /// </summary>
+    private (int ProcessId, string ImageName, string? Reason)? DeniedDescendant(int processId)
+    {
+        if (_targetPolicy == null)
+        {
+            return null;
+        }
+
+        foreach (var (childId, imageName) in _processWrapper.GetDescendantsOf(processId) ?? [])
+        {
+            if (_targetPolicy.Evaluate([imageName]) is { Allowed: false } verdict)
+            {
+                return (childId, imageName, verdict.Reason);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
