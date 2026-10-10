@@ -141,6 +141,7 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.IsAncestorOfCurrentProcess)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetAncestorProcesses)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetAncestorsOf)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetDescendantsOf)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetProcessStartTime)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read
             },

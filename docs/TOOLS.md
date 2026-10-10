@@ -48,7 +48,7 @@ The policy applies to:
 
 - every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
 - [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
-- [kill_process](#kill_process), even with `forceKill: true`;
+- [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
 
 [take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works. The UI Automation and browser reading tools are not covered yet.
@@ -2708,7 +2708,7 @@ To end the process anyway, call again with `forceKill: true`. This ends the proc
 | `ProtectedProcess` | Protected system or shell process (see below) |
 | `CannotTerminateSelf` | The PID is this server |
 | `CannotTerminateHost` | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
-| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process. `forceKill` does not override it; nothing was done |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process, or, with `forceKill: true`, one of its child processes (a forced kill ends the whole process tree; the error names the child). `forceKill` does not override it; nothing was done |
 | `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `NoClosableWindow` | Graceful mode: no closable main window; process left running |
 | `GracefulCloseTimedOut` | Graceful mode: still running after the timeout; process left running |

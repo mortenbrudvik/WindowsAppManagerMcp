@@ -91,4 +91,51 @@ public class ProcessAncestryTests
         new NativeProcessWrapper().IsAncestorOfCurrentProcess(Environment.ProcessId).Should().BeFalse();
         new NativeProcessWrapper().IsAncestorOfCurrentProcess(ancestors[0]).Should().BeTrue();
     }
+
+    [Fact]
+    public void FindDescendants_ReturnsTheWholeTreeBreadthFirst()
+    {
+        // Arrange - cmd(100) -> conhost(200), KeePass(300) -> helper(400); 500 is unrelated
+        var parents = new Dictionary<int, int> { [100] = 50, [200] = 100, [300] = 100, [400] = 300, [500] = 50 };
+        var starts = new Dictionary<int, DateTime>
+        {
+            [100] = T0, [200] = T0.AddSeconds(1), [300] = T0.AddMinutes(1), [400] = T0.AddMinutes(2), [500] = T0
+        };
+
+        // Act
+        var descendants = NativeProcessWrapper.FindDescendants(100, parents, pid => starts.TryGetValue(pid, out var t) ? t : null);
+
+        // Assert
+        descendants.Should().Equal(200, 300, 400);
+    }
+
+    [Fact]
+    public void FindDescendants_ChildStartedBeforeItsParent_IsAReusedPid()
+    {
+        // Arrange - 300 names 100 as its parent, but started before 100: its real parent exited and 100 is a newer process
+        var parents = new Dictionary<int, int> { [100] = 50, [300] = 100, [400] = 300 };
+        var starts = new Dictionary<int, DateTime> { [100] = T0.AddHours(1), [300] = T0, [400] = T0.AddMinutes(1) };
+
+        // Act & Assert
+        NativeProcessWrapper.FindDescendants(100, parents, pid => starts.TryGetValue(pid, out var t) ? t : null)
+            .Should().BeEmpty();
+    }
+
+    [Fact]
+    public void FindDescendants_Cycle_Terminates()
+    {
+        var parents = new Dictionary<int, int> { [100] = 200, [200] = 100, [0] = 0 };
+
+        NativeProcessWrapper.FindDescendants(100, parents, _ => null).Should().Equal(200);
+    }
+
+    [Fact]
+    public void GetDescendantsOf_RealSnapshot_FindsNoChildOfAProcessThatHasNone()
+    {
+        // Act - reads the process list only; the test host has started no child process of its own
+        var descendants = new NativeProcessWrapper().GetDescendantsOf(int.MaxValue - 1);
+
+        // Assert
+        descendants.Should().BeEmpty();
+    }
 }

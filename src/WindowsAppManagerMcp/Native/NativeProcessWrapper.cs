@@ -221,7 +221,77 @@ public class NativeProcessWrapper : INativeProcessWrapper
         return ancestors;
     }
 
-    private static Dictionary<int, int>? SnapshotParentProcessIds()
+    public IReadOnlyList<(int ProcessId, string ImageName)> GetDescendantsOf(int processId)
+    {
+        var processes = SnapshotProcesses();
+        if (processes == null || processId <= 0 || !processes.ContainsKey(processId))
+        {
+            return [];
+        }
+
+        var parentByProcessId = processes.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
+        return FindDescendants(processId, parentByProcessId, TryGetStartTime)
+            .Select(id => (id, processes[id].ImageName))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Walks the children of <paramref name="processId"/> breadth-first, the way Kill(entireProcessTree)
+    /// finds them. A child that started before its parent is skipped with its own children: Windows reuses
+    /// PIDs, so its real parent exited and the process now holding that PID is unrelated.
+    /// </summary>
+    public static IReadOnlyList<int> FindDescendants(
+        int processId,
+        IReadOnlyDictionary<int, int> parentByProcessId,
+        Func<int, DateTime?> getStartTime)
+    {
+        var childrenByParent = parentByProcessId
+            .Where(p => p.Key != p.Value)
+            .GroupBy(p => p.Value)
+            .ToDictionary(g => g.Key, g => g.Select(p => p.Key).OrderBy(id => id).ToList());
+
+        var descendants = new List<int>();
+        var visited = new HashSet<int> { processId };
+        var pending = new Queue<int>();
+        pending.Enqueue(processId);
+        while (pending.Count > 0)
+        {
+            var parent = pending.Dequeue();
+            if (!childrenByParent.TryGetValue(parent, out var children))
+            {
+                continue;
+            }
+
+            var parentStart = getStartTime(parent);
+            foreach (var child in children)
+            {
+                if (!visited.Add(child))
+                {
+                    continue;
+                }
+
+                var childStart = getStartTime(child);
+                if (parentStart.HasValue && childStart.HasValue && childStart.Value < parentStart.Value)
+                {
+                    continue;
+                }
+
+                descendants.Add(child);
+                pending.Enqueue(child);
+            }
+        }
+
+        return descendants;
+    }
+
+    private static Dictionary<int, int>? SnapshotParentProcessIds() =>
+        SnapshotProcesses()?.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
+
+    /// <summary>The length of PROCESSENTRY32W.szExeFile.</summary>
+    private const int MaxPath = 260;
+
+    /// <summary>Every running process with its parent's ID and its image name, from one Toolhelp snapshot.</summary>
+    private static unsafe Dictionary<int, (int ParentProcessId, string ImageName)>? SnapshotProcesses()
     {
         var snapshot = NativeMethods.Kernel32.CreateToolhelp32Snapshot(NativeMethods.Kernel32.TH32CS_SNAPPROCESS, 0);
         if (snapshot == NativeMethods.Kernel32.INVALID_HANDLE_VALUE || snapshot == nint.Zero)
@@ -231,21 +301,28 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         try
         {
-            var parentByProcessId = new Dictionary<int, int>();
+            var processes = new Dictionary<int, (int ParentProcessId, string ImageName)>();
             var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
 
             if (!NativeMethods.Kernel32.Process32FirstW(snapshot, ref entry))
             {
-                return parentByProcessId;
+                return processes;
             }
 
             do
             {
-                parentByProcessId[(int)entry.th32ProcessID] = (int)entry.th32ParentProcessID;
+                var name = (char*)entry.szExeFile;
+                var length = 0;
+                while (length < MaxPath && name[length] != '\0')
+                {
+                    length++;
+                }
+
+                processes[(int)entry.th32ProcessID] = ((int)entry.th32ParentProcessID, new string(name, 0, length));
             }
             while (NativeMethods.Kernel32.Process32NextW(snapshot, ref entry));
 
-            return parentByProcessId;
+            return processes;
         }
         finally
         {

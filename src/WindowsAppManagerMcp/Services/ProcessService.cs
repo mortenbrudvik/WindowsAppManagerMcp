@@ -496,10 +496,45 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
             }
 
+            // forceKill ends the whole process tree, so every process in it must pass the policy too
+            if (forceKill && DeniedDescendant(processId) is { } denied)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
+                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
+                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+            }
+
             return forceKill
                 ? TerminateForcefully(process, processId, processName)
                 : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
         }
+    }
+
+    /// <summary>
+    /// The first process in <paramref name="processId"/>'s tree (children, grandchildren, ...) that the
+    /// target policy refuses, or null. Without a policy, nothing is refused.
+    /// </summary>
+    private (int ProcessId, string ImageName, string? Reason)? DeniedDescendant(int processId)
+    {
+        if (_targetPolicy == null)
+        {
+            return null;
+        }
+
+        foreach (var (childId, imageName) in _processWrapper.GetDescendantsOf(processId) ?? [])
+        {
+            if (_targetPolicy.Evaluate([imageName]) is { Allowed: false } verdict)
+            {
+                return (childId, imageName, verdict.Reason);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

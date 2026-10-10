@@ -121,9 +121,11 @@ public class TargetPolicyEnforcementTests
 
     private const int KeePassPid = 3001;
 
+    private readonly Mock<INativeProcessWrapper> _processWrapper = new();
+
     private (ProcessService Service, Mock<IProcessHandle> Process) CreateProcessService(string processName, ITargetPolicy policy)
     {
-        var wrapper = new Mock<INativeProcessWrapper>();
+        var wrapper = _processWrapper;
         var process = new Mock<IProcessHandle>();
         process.SetupGet(p => p.Id).Returns(KeePassPid);
         process.SetupGet(p => p.ProcessName).Returns(processName);
@@ -165,6 +167,59 @@ public class TargetPolicyEnforcementTests
 
         sut.KillProcess(KeePassPid, confirm: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
         process.Verify(p => p.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_ADeniedChildProcess_RefusesTheWholeTree()
+    {
+        // Arrange - KeePass was started from a terminal; forceKill ends the terminal's whole tree
+        var (sut, process) = CreateProcessService("cmd", Policy());
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe"), (5002, "KeePass.exe")]);
+
+        // Act
+        var result = sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        result.ErrorMessage.Should().Contain("KeePass").And.Contain("5002").And.Contain("child process");
+        process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_AllowList_EveryProcessOfTheTreeMustBeAllowed()
+    {
+        var (sut, process) = CreateProcessService("notepad", Policy(allow: "notepad"));
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5003, "mspaint.exe")]);
+
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_AllowedTree_IsKilled()
+    {
+        // Arrange
+        var (sut, process) = CreateProcessService("cmd", Policy());
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe")]);
+        process.SetupGet(p => p.HasExited).Returns(true);
+        process.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+
+        // Assert
+        process.Verify(p => p.Kill(true), Times.Once);
+    }
+
+    [Fact]
+    public void KillProcess_WithoutForceKill_DoesNotReadTheTree()
+    {
+        // The graceful close asks only the process's main window to close; its children live on
+        var (sut, _) = CreateProcessService("cmd", Policy());
+
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: false);
+
+        _processWrapper.Verify(w => w.GetDescendantsOf(It.IsAny<int>()), Times.Never);
     }
 
     #endregion
