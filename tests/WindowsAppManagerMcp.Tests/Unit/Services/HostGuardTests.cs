@@ -142,6 +142,48 @@ public class HostGuardTests
         // Assert
         host.ConsoleWindow.Should().Be(nint.Zero);
         host.ConsoleHostWindow.Should().BeNull();
+        host.ConsoleServerProcesses.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Host_UnderAPseudoConsole_RecordsTheConsoleServerThatOwnsTheConsoleWindow()
+    {
+        // Act - Windows Terminal (ConPTY): the pseudo-window belongs to OpenConsole.exe, and the terminal owns it
+        var host = CreateSut().Host;
+
+        // Assert - the console host window is the terminal's, the console server is a sibling of the shell
+        host.ConsoleHostWindow!.Process.ProcessId.Should().Be(TerminalPid);
+        host.ConsoleServerProcesses.Should().Equal(new HostProcess(ConPtyPid, T0.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void Host_WhenTheConsoleWindowReportsItsClient_StillRecordsTheConsoleServersTheTerminalStarted()
+    {
+        // Arrange - Windows can report a console window as owned by its first client (the shell) instead of
+        // the console server; the terminal that shows the console started the console server itself
+        Window(ConsoleWindow, ShellPid, rootOwner: TerminalWindow);
+        _processes.Setup(p => p.GetDescendantsOf(TerminalPid))
+            .Returns([(ConPtyPid, "OpenConsole.exe"), (ShellPid, "pwsh.exe"), (OtherPid, "notepad.exe")]);
+
+        // Act
+        var sut = CreateSut();
+
+        // Assert
+        sut.Host.ConsoleServerProcesses.Select(p => p.ProcessId).Should().BeEquivalentTo([ShellPid, ConPtyPid]);
+        sut.IsHostProcess(ConPtyPid).Should().BeTrue();
+        sut.IsHostProcess(OtherPid).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Host_TheConsoleHostIsTheShell_DoesNotProtectEveryConsoleServerItStarted()
+    {
+        // Arrange - not a real terminal setup, but explorer.exe starts the console servers of every console the
+        // user opens, and those are not the agent's
+        Window(ConsoleWindow, ConPtyPid, rootOwner: ExplorerFolder);
+        _processes.Setup(p => p.GetDescendantsOf(ExplorerPid)).Returns([(OtherPid, "conhost.exe")]);
+
+        // Act & Assert
+        CreateSut().IsHostProcess(OtherPid).Should().BeFalse();
     }
 
     [Theory]
@@ -270,6 +312,27 @@ public class HostGuardTests
 
         // Act & Assert
         CreateSut().IsHostProcess(TerminalPid).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsHostProcess_TheConsoleServerOfThePseudoConsole_IsTrueAlthoughNotAnAncestor()
+    {
+        // Arrange - OpenConsole.exe (or conhost.exe) serves the console the agent's shell runs in;
+        // ending it ends that session, and it is neither an ancestor nor the terminal window's process
+
+        // Act & Assert
+        CreateSut().IsHostProcess(ConPtyPid).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsHostProcess_ConsoleServerIdReusedByANewerProcess_IsFalse()
+    {
+        // Arrange
+        var sut = CreateSut();
+        _startTimes[ConPtyPid] = T0.AddHours(2);
+
+        // Act & Assert
+        sut.IsHostProcess(ConPtyPid).Should().BeFalse();
     }
 
     [Fact]

@@ -31,7 +31,17 @@ public sealed record HostSnapshot(
     nint ConsoleWindow,
     HostWindow? ConsoleHostWindow,
     HostWindow? StartupForegroundWindow,
-    int? ShellProcessId);
+    int? ShellProcessId)
+{
+    /// <summary>
+    /// The console server of the server's console (conhost.exe, or OpenConsole.exe under Windows Terminal and
+    /// other ConPTY hosts): the process that owns <see cref="ConsoleWindow"/>, and the console servers that the
+    /// process of <see cref="ConsoleHostWindow"/> started (Windows can report a console window as owned by its
+    /// first client instead). Under a pseudo-console the console server is neither an ancestor nor the
+    /// terminal, but ending it ends the console the agent's shell runs in. Empty when there is no console window.
+    /// </summary>
+    public IReadOnlyList<HostProcess> ConsoleServerProcesses { get; init; } = [];
+}
 
 /// <summary>
 /// A process recorded by the host guard. The start time tells it apart from a later process that

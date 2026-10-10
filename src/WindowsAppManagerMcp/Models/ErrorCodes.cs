@@ -186,8 +186,8 @@ public enum ProcessErrorCode
 
     /// <summary>
     /// The process belongs to the agent's host (IHostGuard.IsHostProcess: an ancestor of this server such as the
-    /// terminal or editor hosting the agent, the console host's process, or the startup foreground window's
-    /// process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
+    /// terminal or editor hosting the agent, the console host's process or the console server behind it, or the
+    /// startup foreground window's process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
     /// </summary>
     CannotTerminateHost = 11,
 

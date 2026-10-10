@@ -363,7 +363,7 @@ public class ProcessService : IProcessService
     /// <summary>What counts as the agent's host process, for the CannotTerminateHost messages.</summary>
     private const string HostProcessKinds =
         "this server, an ancestor of it such as the terminal or editor hosting the agent, the process that shows " +
-        "its console, or the app that was in front when the server started";
+        "its console or the console server behind it (conhost or OpenConsole), or the app that was in front when the server started";
 
     public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,

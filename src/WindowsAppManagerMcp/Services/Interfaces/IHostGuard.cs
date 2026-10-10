@@ -23,8 +23,9 @@ public interface IHostGuard
     /// True for a process whose end ends or disrupts the agent's session: this server's own process,
     /// its ancestors (as recorded at start), the process that owns the window showing its console (for
     /// example WindowsTerminal.exe, or the console's client process such as cmd.exe under classic
-    /// conhost, which makes the client the console window's owner), and the process that owned the
-    /// startup foreground window. The last one covers Windows Terminal as the default terminal when
+    /// conhost, which makes the client the console window's owner), the console server of its console
+    /// (conhost.exe or OpenConsole.exe, see <see cref="HostSnapshot.ConsoleServerProcesses"/>), and the
+    /// process that owned the startup foreground window. The last one covers Windows Terminal as the default terminal when
     /// the server has no console window: the terminal is then neither an ancestor nor the console
     /// host, but killing it closes the agent's terminal. Kill and close-process guards use this.
     /// A recorded ID that now belongs to a process started later (a reused ID) is not the host.
