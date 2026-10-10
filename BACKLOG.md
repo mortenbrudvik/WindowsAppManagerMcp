@@ -178,7 +178,7 @@
 
 ---
 
-## MCP Tools Summary (42 Tools)
+## MCP Tools Summary (47 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -189,8 +189,8 @@
 | `resize_window` | Window Control | Resize window dimensions |
 | `set_window_bounds` | Window Control | Move and resize in one operation |
 | `set_window_state` | Window Control | Minimize, maximize, restore |
-| `focus_window` | Window Control | Bring window to foreground |
-| `close_window` | Window Control | Close window gracefully (WM_CLOSE) |
+| `focus_window` | Window Control | Bring window to foreground, verified, and report what is in front |
+| `close_window` | Window Control | Close window gracefully (WM_CLOSE); refuses shell and agent-host windows |
 | `snap_window` | Window Control | Snap to halves/quarters/thirds |
 | `move_window_to_monitor` | Window Control | Move to specific monitor |
 | `set_windows_bounds_batch` | Batch Operations | Move/resize multiple windows |
@@ -206,16 +206,21 @@
 | `capture_window` | Screenshot | Capture a window |
 | `capture_with_elements` | Screenshot | Capture window with UI element overlays |
 | `get_ui_elements` | UI Automation | Get UI element tree with bounding boxes |
+| `get_focused_element` | UI Automation | Get the element with keyboard focus, its window and process |
+| `get_element_at_point` | UI Automation | Get the element at a screen point, its ancestors and window |
 | `get_browser_url` | Browser Reading | Get the URL of a browser window (UI Automation or CDP) |
 | `get_browser_content` | Browser Reading | Get the text (or HTML via CDP) of a browser page |
 | `get_active_browser_url` | Browser Reading | Get the URL of the foreground browser window |
 | `launch_browser_with_debug` | Browser Reading | Launch Chrome/Edge/Brave with a CDP debug port and a temporary profile |
-| `click` | Input Simulation | Left click at screen coordinates |
+| `click` | Input Simulation | Left click at screen coordinates, guarded, on the window named by windowHandle |
 | `right_click` | Input Simulation | Right click at screen coordinates |
 | `double_click` | Input Simulation | Double left click at screen coordinates |
 | `mouse_move` | Input Simulation | Move cursor without clicking |
-| `type_text` | Input Simulation | Type text using Unicode characters |
-| `send_keys` | Input Simulation | Send key combinations to the foreground window (Ctrl+C, Enter, etc.) |
+| `type_text` | Input Simulation | Type text using Unicode characters into the window named by windowHandle |
+| `send_keys` | Input Simulation | Send key combinations (Ctrl+C, Enter, etc.) to the window named by windowHandle |
+| `get_control_status` | Input Control | Whether the user paused input, the pause hotkey's state and held keys |
+| `resume_input` | Input Control | Resume input after a pause, only when the user confirms |
+| `release_all_input` | Input Control | Release stuck keys and mouse buttons |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |
@@ -494,20 +499,22 @@ Design notes, sources and the full defect register: [docs/AUTOMATION-ROADMAP.md]
 
 *The model sees real pixels it can click from accurately. Keyboard and mouse input cannot reach the agent's own host, a shell window, an elevated or deny-listed window, or an unintended target. Every input result reports where it actually went. The user can pause everything with a hotkey. A desktop-safe suite against a self-owned fixture app validates the real foreground, UIPI and capture behaviour.*
 
+M1 is complete on the integration branch `m1-see-and-type-safely` and reaches users with the release that follows its merge into main: until that release step rebuilds it, the committed plugin exe (`bin/WindowsAppManagerMcp.exe`) is the 1.12.0 build. What shipped, the deliberate deviations and what moved to later milestones are in the [roadmap](docs/AUTOMATION-ROADMAP.md#m1-see-and-type-safely).
+
 | # | Task | Status | Priority | Effort | Notes |
 |---|------|--------|----------|--------|-------|
-| M1.1 | Default host-window input guard | ⏳ Pending | P0 | S | Input that names no target still goes to the focused window, which is usually the agent's own terminal. A cheap HostGuard on the default input path makes that impossible unless the agent explicitly targets the host. |
-| M1.2 | Captures as MCP image content with the true origin and an image-to-screen transform | ⏳ Pending | P0 | M | Return every capture as an image content block the model can see, with vision-sized defaults. Ship the corrected window-capture origin and transform in the same change: downscaled images on top of a (0,0) origin would… |
-| M1.3 | Verified window activation (EnsureForeground) | ⏳ Pending | P0 | M | One routine that gets a window in front despite the foreground lock and reports what is actually in front afterwards. focus_window, the input guard, element-action fallbacks and layout focus all use it. |
-| M1.4 | Integrity, elevation and desktop-state probes | ⏳ Pending | P0 | S | A small mockable service that answers three questions: is the target more privileged than the server, is the input desktop available, and is the session locked. Without it, UIPI and secure-desktop failures are invisible… |
-| M1.5 | Target-guarded input with receiving-window reporting | ⏳ Pending | P0 | M | Every mouse and keyboard tool can name its intended window. The server refuses to send input that would land elsewhere, including clicks into a modal-disabled window. Every result reports where the input actually went. |
-| M1.6 | Unfiltered window reads and user-facing listings | ⏳ Pending | P0 | M | Post-action reads, get_foreground_window and the guard must be able to see untitled popups, menus and splash screens. Listings must stop showing phantom cloaked or shell windows and must attribute UWP windows to the… |
-| M1.7 | Close guards for shell and agent-host windows | ⏳ Pending | P0 | S | close_window today posts WM_CLOSE to Program Manager (which opens the Shut Down dialog) or to the agent's own terminal after nothing more than an IsWindow check. |
-| M1.8 | Fix the UIA traversal filters behind a testable tree seam | ⏳ Pending | P0 | M | controlTypes:'Button,Edit' returns nothing with Success=true, size and enabled filters prune whole subtrees, and maxDepth is off by one. None of this can be unit-tested today. |
-| M1.9 | get_focused_element and get_element_at_point | ⏳ Pending | P1 | S | The cheapest checks before typing ('is the caret in the Email field?') and the cheapest way to map a screenshot point to a semantic element. Pulled forward because the observe-act-verify guidance relies on them. |
-| M1.10 | Input session safety: pause hotkey, cancellation and stuck-input recovery | ⏳ Pending | P1 | M | Give the user a guaranteed way to stop a runaway action. Make long input cancellable, and make sure an interrupted batch can never leave modifiers or buttons held down system-wide. |
-| M1.11 | Desktop-safe end-to-end tests against a self-owned fixture app | ⏳ Pending | P1 | M | After M0.1, nothing tests the real foreground, UIPI, SendInput, capture and UIA paths, where Windows behaviour differs from mocks. A fixture app that the suite owns makes these tests safe to run. |
-| M1.12 | Server-enforced target allow/deny policy | ⏳ Pending | P2 | S | The agent acts on untrusted screen and web content, and the model sets its own confirm flags. A server-side policy stops a prompt-injected agent from typing into password managers, credential prompts or other sensitive… |
+| M1.1 | Default host-window input guard | ✅ Complete | P0 | S | Branches `m1-security-probes` (HostGuard) and `m1-input-guard` (wiring). Input with or without a target never reaches the agent's own terminal, editor or chat window (TargetIsAgentHost) unless the call names it as windowHandle with allowHostTarget; the host record also covers the console server (`m1-fix-guards`). isAgentHost on every window; get_server_info moved to M2.11. |
+| M1.2 | Captures as MCP image content with the true origin and an image-to-screen transform | ✅ Complete | P0 | M | Branch `m1-captures` (+ wave 1 follow-ups). Image content plus metadata, vision-sized JPEG/PNG defaults, imageToScreen, real origin (MapWindowPoints for client areas), safe outputPath, opaque pixels, widened overlay pens; minimized windows refused (`m1-fix-guards`). Hidden/cloaked/hung capture health moved to M2.9, image-space clicks to M3.11. |
+| M1.3 | Verified window activation (EnsureForeground) | ✅ Complete | P0 | M | Branch `m1-foreground` (+ wave 2/3 follow-ups). Verified activation on one thread with setForeground, attachThreadInput and a zero-distance-move unlock; owner-chain in-front rule, one verified menu Esc (skipped while a modifier is down), WindowHidden and policy refusals (`m1-fix-guards`). apply_layout returns the per-placement focus results as `focus` (fixed on `m1-last-fixes`). |
+| M1.4 | Integrity, elevation and desktop-state probes | ✅ Complete | P0 | S | Branch `m1-security-probes`. ProcessSecurityProbe: integrity levels, LikelyElevated vs Restricted, input desktop and session state; consumed by the input guard (TargetElevated, DesktopUnavailable, SessionLocked). |
+| M1.5 | Target-guarded input with receiving-window reporting | ✅ Complete | P0 | M | Branch `m1-input-guard`. windowHandle on every input tool, a guard before every SendInput batch, receivingWindow/foregroundAfter/actualX/actualY, BlockedByModal, TargetOccluded, destructive and focus-changing chords, atomic presses (CursorNotAtPoint); MouseInUse and chord spellings (`m1-fix-guards`). Selector targets moved to M2.4. |
+| M1.6 | Unfiltered window reads and user-facing listings | ✅ Complete | P0 | M | Branch `m1-window-reads` (+ wave 1/2 follow-ups). Unfiltered reads for any window; listings without cloaked, tool, untitled and shell windows; className, isCloaked, ownerHandle and UWP app attribution. |
+| M1.7 | Close guards for shell and agent-host windows | ✅ Complete | P0 | S | Branch `m1-close-guards` (+ wave 2/3 follow-ups). ProtectedWindow for shell and host windows unless force; AccessDenied/CloseFailed from the Win32 error; kill_process refuses host processes and checks a forced kill's tree (ProcessTreeUnreadable, `m1-fix-guards`). Destructive annotations moved to M2.10. |
+| M1.8 | Fix the UIA traversal filters behind a testable tree seam | ✅ Complete | P0 | M | Branch `m1-uia-tree` (+ wave 1/2 follow-ups). IUiaTree seam with FakeUiaTree, per-element filters with splicing, exact maxDepth, InvalidControlType, truncation reporting, partial tree on timeout (also for a hung provider, `m1-fix-guards`), per-application stuck-read limits. CacheRequest moved to M3.1. |
+| M1.9 | get_focused_element and get_element_at_point | ✅ Complete | P1 | S | Branch `m1-uia-tree`. Both read through IUiaTree under a timeout with MCP cancellation; password values are never read; the top-level window comes from WindowFromPoint plus GA_ROOT. Element refs wait for M3.4. |
+| M1.10 | Input session safety: pause hotkey, cancellation and stuck-input recovery | ✅ Complete | P1 | M | Branch `m1-session-safety` (+ wave 3 follow-ups). Pause hotkey shared by every server on the desktop, PausedByUser for input and window-changing tools, resume_input only with the user's confirmation, exact held-input release, release_all_input, get_control_status; bounded gate and window waits, InputBusy and NotResponding (`m1-fix-concurrency`). Takeover detection stays in M7.4. |
+| M1.11 | Desktop-safe end-to-end tests against a self-owned fixture app | ✅ Complete | P1 | M | Branch `m1-fixture-e2e`, scenarios added with M1.1-M1.10. WamFixtureApp, gated E2E project with a fail-closed wrapper guard, DesktopNoInput tier, on-demand e2e.yml; scenarios for listings, UI elements, capture origins, EnsureForeground, the input guard, close guard and pause. DPI moves, the in-process MCP client (M2.12), an alpha check and the WebView2 pane (M3.3) remain. |
+| M1.12 | Server-enforced target allow/deny policy | ✅ Complete | P2 | S | Branch `m1-input-guard`. WAM_DENY_PROCESSES (password managers and credential prompts by default) and WAM_ALLOW_PROCESSES, enforced for input, close, kill (whole tree), window captures and, since `m1-fix-guards`, every window change and focus. take_screenshot/capture_region do not black out denied windows; get_server_info moved to M2.11. |
 
 ### M2: Honest results and a stable MCP surface
 

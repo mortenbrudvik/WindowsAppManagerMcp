@@ -26,11 +26,62 @@ public enum WindowErrorCode
     /// <summary>Failed to change window state.</summary>
     StateChangeFailed = 6,
 
-    /// <summary>Failed to focus the window.</summary>
+    /// <summary>
+    /// The window could not be brought to the foreground: Windows kept another window in front
+    /// (the foreground lock, an open menu, or an elevated foreground window).
+    /// </summary>
     FocusFailed = 7,
 
-    /// <summary>Failed to close the window.</summary>
-    CloseFailed = 8
+    /// <summary>
+    /// The close message could not be sent (a Win32 error other than access denied, or an unexpected
+    /// error in a batch); the error text has the reason.
+    /// </summary>
+    CloseFailed = 8,
+
+    // Codes added in M1 are numbered from 20, so that earlier window codes can be added after
+    // CloseFailed without renumbering. Activation codes (EnsureForeground, roadmap M1.3):
+
+    /// <summary>The window's thread is not responding (IsHungAppWindow), or a call to it did not return in time.</summary>
+    NotResponding = 20,
+
+    /// <summary>The window is cloaked: it is on another virtual desktop, or its app has hidden it.</summary>
+    Cloaked = 21,
+
+    // Close guard codes (roadmap M1.7):
+
+    /// <summary>
+    /// The window is part of the desktop shell (the desktop or a taskbar) or of the agent's own host (the
+    /// terminal, editor or chat app the server was started from), and force was not true. Nothing was sent.
+    /// </summary>
+    ProtectedWindow = 22,
+
+    /// <summary>
+    /// Windows refused the message with ERROR_ACCESS_DENIED (5): User Interface Privilege Isolation blocks
+    /// messages to windows of more privileged processes, such as an app running as administrator.
+    /// </summary>
+    AccessDenied = 23,
+
+    /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
+    ConfirmationRequired = 24,
+
+    /// <summary>
+    /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the window's process
+    /// (roadmap M1.12). force does not override it. Nothing was sent.
+    /// </summary>
+    TargetDeniedByPolicy = 25,
+
+    /// <summary>
+    /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
+    /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
+    /// </summary>
+    PausedByUser = 26,
+
+    /// <summary>
+    /// The window (its top-level window) is hidden: it does not have WS_VISIBLE, for example an app that hid
+    /// its window in the notification area. It was not activated, because keyboard input would then go to a
+    /// window the user cannot see.
+    /// </summary>
+    WindowHidden = 27
 }
 
 /// <summary>
@@ -140,14 +191,31 @@ public enum ProcessErrorCode
     /// <summary>The process name did not match expectedProcessName (the PID may have been reused). Nothing was done.</summary>
     ProcessNameMismatch = 10,
 
-    /// <summary>The process is an ancestor of this server (for example the terminal or editor hosting the agent).</summary>
+    /// <summary>
+    /// The process belongs to the agent's host (IHostGuard.IsHostProcess: an ancestor of this server such as the
+    /// terminal or editor hosting the agent, the console host's process or the console server behind it, or the
+    /// startup foreground window's process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
+    /// </summary>
     CannotTerminateHost = 11,
 
     /// <summary>Forced termination was requested, but the process had not exited when the wait ended.</summary>
     TerminationNotConfirmed = 12,
 
     /// <summary>The graceful close timeout is outside the allowed range.</summary>
-    InvalidTimeout = 13
+    InvalidTimeout = 13,
+
+    /// <summary>
+    /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the process (roadmap
+    /// M1.12). Nothing was done.
+    /// </summary>
+    TargetDeniedByPolicy = 14,
+
+    /// <summary>
+    /// forceKill: the process list could not be read, or did not list the process (it may just have exited), so
+    /// the child processes the forced kill would also end could not be checked against the target policy and the
+    /// host guard. Nothing was terminated.
+    /// </summary>
+    ProcessTreeUnreadable = 15
 }
 
 /// <summary>
@@ -184,6 +252,51 @@ public enum LayoutErrorCode
 
     /// <summary>No windows matched the capture filters, so nothing was saved.</summary>
     NoWindowsCaptured = 9
+}
+
+/// <summary>
+/// Error codes for the capture tools (take_screenshot, capture_region, capture_window, capture_with_elements).
+/// </summary>
+public enum ScreenshotErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>The format is not auto, png, jpeg or jpg.</summary>
+    InvalidFormat = 1,
+
+    /// <summary>maxDimension or maxWidth is out of range, or would scale the image to zero pixels.</summary>
+    InvalidImageSize = 2,
+
+    /// <summary>The output mode is unknown, or outputPath was given without a file output.</summary>
+    InvalidOutputMode = 3,
+
+    /// <summary>outputPath is not absolute, has the wrong extension, or its folder does not exist.</summary>
+    InvalidOutputPath = 4,
+
+    /// <summary>outputPath names an existing file and overwrite was not true.</summary>
+    FileExists = 5,
+
+    /// <summary>The image file could not be written.</summary>
+    FileWriteFailed = 6,
+
+    /// <summary>The monitor index is out of range.</summary>
+    InvalidMonitorIndex = 7,
+
+    /// <summary>The region's width or height is not positive.</summary>
+    InvalidRegion = 8,
+
+    /// <summary>The window handle is invalid or the window no longer exists.</summary>
+    InvalidHandle = 9,
+
+    /// <summary>Windows could not capture the pixels (for example the window is minimized).</summary>
+    CaptureFailed = 10,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the server's target policy (WAM_DENY_PROCESSES,
+    /// WAM_ALLOW_PROCESSES) refuses the window's process (roadmap M1.12). Nothing was captured or read.
+    /// </summary>
+    TargetDeniedByPolicy = 11
 }
 
 /// <summary>

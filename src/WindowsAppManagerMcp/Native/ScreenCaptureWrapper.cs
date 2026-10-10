@@ -7,7 +7,10 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 {
     private const int MaxCaptureSize = 16384;
 
-    public byte[] CaptureScreenRegion(int x, int y, int width, int height)
+    internal const string BitBltMethod = "BitBlt";
+    internal const string PrintWindowMethod = "PrintWindow";
+
+    public CaptureResult CaptureScreenRegion(int x, int y, int width, int height)
     {
         ValidateDimensions(width, height);
 
@@ -46,7 +49,8 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
                 throw new InvalidOperationException("BitBlt failed");
 
             // Get pixel data from bitmap
-            return GetBitmapData(memoryDc, bitmap, width, height);
+            var data = GetBitmapData(memoryDc, bitmap, width, height);
+            return new CaptureResult(data, width, height, x, y, BitBltMethod);
         }
         finally
         {
@@ -64,14 +68,17 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
         }
     }
 
-    public (byte[] Data, int Width, int Height) CaptureWindow(nint windowHandle, bool includeFrame)
+    public CaptureResult CaptureWindow(nint windowHandle, bool includeFrame)
     {
         if (!IsValidWindow(windowHandle))
             throw new ArgumentException("Invalid window handle", nameof(windowHandle));
 
-        // Get window dimensions
+        // Size and screen origin of what is captured. GetWindowDC and PrintWindow without
+        // PW_CLIENTONLY start at the window rectangle's corner; GetDC and PW_CLIENTONLY start at the
+        // client area's top-left corner on screen. All values are physical pixels because the server
+        // is per-monitor DPI aware.
         RECT rect;
-        int width, height;
+        int width, height, originX, originY;
 
         if (includeFrame)
         {
@@ -80,14 +87,27 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
             width = rect.Width;
             height = rect.Height;
+            originX = rect.Left;
+            originY = rect.Top;
         }
         else
         {
             if (!NativeMethods.User32.GetClientRect(windowHandle, out rect))
                 throw new InvalidOperationException("Failed to get client rect");
 
+            // The whole client rectangle on screen. In a right-to-left mirrored window
+            // (WS_EX_LAYOUTRTL, Arabic or Hebrew UI) client x = 0 is the right edge, so
+            // ClientToScreen(0, 0) would give the top-right corner; MapWindowPoints with a RECT keeps
+            // left < right, so Left is the left edge in every layout.
+            var clientOnScreen = rect;
+            if (NativeMethods.User32.MapWindowPoints(windowHandle, nint.Zero, ref clientOnScreen, 2) == 0 &&
+                Marshal.GetLastPInvokeError() != 0)
+                throw new InvalidOperationException("Failed to get the screen position of the client area");
+
             width = rect.Width;
             height = rect.Height;
+            originX = Math.Min(clientOnScreen.Left, clientOnScreen.Right);
+            originY = Math.Min(clientOnScreen.Top, clientOnScreen.Bottom);
         }
 
         if (width <= 0 || height <= 0)
@@ -128,10 +148,12 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
             flags |= NativeEnums.PW_RENDERFULLCONTENT;
 
             bool success = NativeMethods.User32.PrintWindow(windowHandle, memoryDc, flags);
+            var method = PrintWindowMethod;
 
             // Fallback to BitBlt if PrintWindow fails
             if (!success)
             {
+                method = BitBltMethod;
                 success = NativeMethods.Gdi32.BitBlt(
                     memoryDc, 0, 0, width, height,
                     windowDc, 0, 0,
@@ -143,7 +165,7 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
             // Get pixel data from bitmap
             var data = GetBitmapData(memoryDc, bitmap, width, height);
-            return (data, width, height);
+            return new CaptureResult(data, width, height, originX, originY, method);
         }
         finally
         {

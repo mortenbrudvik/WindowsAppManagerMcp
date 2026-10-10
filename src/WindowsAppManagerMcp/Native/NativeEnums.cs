@@ -54,6 +54,14 @@ internal static class NativeEnums
     public const uint WS_MAXIMIZE = 0x01000000;
     public const uint WS_CAPTION = 0x00C00000;
 
+    // Extended window styles (GWL_EXSTYLE)
+    public const long WS_EX_TOOLWINDOW = 0x00000080;
+    public const long WS_EX_APPWINDOW = 0x00040000;
+
+    // DwmGetWindowAttribute attributes
+    public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    public const uint DWMWA_CLOAKED = 14;
+
     // Monitor flags
     public const uint MONITOR_DEFAULTTONULL = 0;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
@@ -67,6 +75,10 @@ internal static class NativeEnums
 
     // Window messages
     public const uint WM_CLOSE = 0x0010;
+
+    // Win32 error codes that a wrapper returns in a Win32CallResult
+    public const int ERROR_ACCESS_DENIED = 5;
+    public const int ERROR_INVALID_WINDOW_HANDLE = 1400;
 
     // Raster operation codes for BitBlt
     public const uint SRCCOPY = 0x00CC0020;

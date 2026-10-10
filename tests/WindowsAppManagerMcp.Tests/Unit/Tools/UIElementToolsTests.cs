@@ -15,7 +15,9 @@ public class UIElementToolsTests
         _mockService = TestDataFactory.CreateMockUIElementService();
     }
 
-    private UIElementTools CreateSut() => new UIElementTools(_mockService.Object);
+    private readonly Mock<IElementInspectionService> _mockInspection = new();
+
+    private UIElementTools CreateSut() => new UIElementTools(_mockService.Object, _mockInspection.Object);
 
     #region Basic Tool Operation Tests
 
@@ -461,6 +463,68 @@ public class UIElementToolsTests
         result.Elements.Should().NotBeNull();
         result.Elements.Should().NotBeEmpty();
         result.Error.Should().BeNull();
+    }
+
+    #endregion
+
+    #region get_focused_element and get_element_at_point
+
+    [Theory]
+    [InlineData(null, 5000)]
+    [InlineData(2500, 2500)]
+    [InlineData(100, 1000)]
+    [InlineData(999999, 30000)]
+    public void GetFocusedElement_PassesTheClampedTimeoutAndTheCallsToken(int? timeoutMs, int expectedMs)
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var expected = new FocusedElementResult(true, null, 1, "Window", 2, "app", 3.0);
+        _mockInspection.Setup(s => s.GetFocusedElement(TimeSpan.FromMilliseconds(expectedMs), cts.Token)).Returns(expected);
+        var sut = CreateSut();
+
+        // Act
+        var result = timeoutMs is { } ms
+            ? sut.GetFocusedElement(ms, cts.Token)
+            : sut.GetFocusedElement(cancellationToken: cts.Token);
+
+        // Assert
+        result.Should().BeSameAs(expected);
+    }
+
+    [Theory]
+    [InlineData(100, -200, null, 3)]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(5, 6, 10, 10)]
+    public void GetElementAtPoint_PassesThePointAndAncestorsToTheService(int x, int y, int? ancestors, int expectedAncestors)
+    {
+        // Arrange
+        var expected = new ElementAtPointResult(true, x, y, null, [], null, null, null, null, 1.0);
+        _mockInspection.Setup(s => s.GetElementAtPoint(x, y, expectedAncestors, TimeSpan.FromMilliseconds(5000), It.IsAny<CancellationToken>()))
+            .Returns(expected);
+        var sut = CreateSut();
+
+        // Act
+        var result = ancestors is { } count
+            ? sut.GetElementAtPoint(x, y, count)
+            : sut.GetElementAtPoint(x, y);
+
+        // Assert
+        result.Should().BeSameAs(expected);
+    }
+
+    [Theory]
+    [InlineData(1, 1000)]
+    [InlineData(60000, 30000)]
+    public void GetElementAtPoint_ClampsTheTimeout(int timeoutMs, int expectedMs)
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        sut.GetElementAtPoint(1, 2, timeoutMs: timeoutMs);
+
+        // Assert
+        _mockInspection.Verify(s => s.GetElementAtPoint(1, 2, 3, TimeSpan.FromMilliseconds(expectedMs), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

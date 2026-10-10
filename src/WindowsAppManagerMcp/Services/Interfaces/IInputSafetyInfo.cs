@@ -1,0 +1,25 @@
+using WindowsAppManagerMcp.Models;
+
+namespace WindowsAppManagerMcp.Services.Interfaces;
+
+/// <summary>
+/// The safety settings in force, for reporting: what the host guard recorded, the target policy, and the
+/// destructive chords that need a target. Meant for a later get_server_info (roadmap M2.11); no tool reads
+/// it yet.
+/// </summary>
+public interface IInputSafetyInfo
+{
+    /// <summary>Reads the current settings. Cheap; nothing is probed.</summary>
+    InputSafetySnapshot Read();
+}
+
+/// <summary>The safety settings in force.</summary>
+/// <param name="Host">What the host guard recorded at server start: the agent's host processes and windows.</param>
+/// <param name="Policy">The target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES).</param>
+/// <param name="DestructiveChords">The send_keys chords that need windowHandle, in send_keys syntax.</param>
+/// <param name="DestructiveChordSource">"default", or WAM_DESTRUCTIVE_CHORDS.</param>
+public sealed record InputSafetySnapshot(
+    HostSnapshot Host,
+    TargetPolicySettings Policy,
+    IReadOnlyList<string> DestructiveChords,
+    string DestructiveChordSource);

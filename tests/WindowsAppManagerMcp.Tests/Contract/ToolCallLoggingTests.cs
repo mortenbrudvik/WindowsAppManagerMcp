@@ -20,6 +20,8 @@ public class ToolCallLoggingTests
     private const string ThrowingTool = "throwing_tool";
     private const string CodedErrorTool = "coded_error_tool";
     private const string DeliberateErrorTool = "deliberate_error_tool";
+    private const string ResultErrorTool = "result_error_tool";
+    private const string ResultErrorWithoutCodeTool = "result_error_without_code_tool";
     private const string SecretArgument = "secret typed text 4711";
     private const string SecretToolMessage = "secret page content 0815";
 
@@ -67,6 +69,32 @@ public class ToolCallLoggingTests
 
         // Assert
         Finished(server).Message.Should().EndWith(": isError PresetNotFound");
+    }
+
+    [Fact]
+    public async Task ResultMarkedIsErrorByTheTool_LogsTheErrorCodeFromItsJson()
+    {
+        // Arrange - the capture tools return isError results with the code inside the metadata JSON
+        await using var server = await StartServerAsync();
+
+        // Act
+        await server.CallToolAsync(ResultErrorTool);
+
+        // Assert
+        Finished(server).Message.Should().EndWith(": isError CaptureFailed").And.NotContain(SecretToolMessage);
+    }
+
+    [Fact]
+    public async Task ResultMarkedIsErrorWithoutAUsableCode_LogsNoErrorCode()
+    {
+        // Arrange - a code that is not an identifier is result content, not a code
+        await using var server = await StartServerAsync();
+
+        // Act
+        await server.CallToolAsync(ResultErrorWithoutCodeTool);
+
+        // Assert
+        Finished(server).Message.Should().EndWith(": isError (no errorCode)");
     }
 
     [Fact]
@@ -177,10 +205,13 @@ public class ToolCallLoggingTests
         var callLogger = factory.CreateLogger(ToolErrorReporting.CallLoggerCategory);
         var errorLogger = factory.CreateLogger("WindowsAppManagerMcp.ToolErrors");
         var otherLogger = factory.CreateLogger("Microsoft.Hosting.Lifetime");
+        var hostGuardLogger = factory.CreateLogger<HostGuard>();
 
         // Assert
         callLogger.IsEnabled(LogLevel.Information).Should().BeTrue();
         callLogger.IsEnabled(LogLevel.Debug).Should().BeFalse();
+        hostGuardLogger.IsEnabled(LogLevel.Information).Should().BeTrue("the recorded agent host explains later refusals");
+        hostGuardLogger.IsEnabled(LogLevel.Debug).Should().BeFalse();
         errorLogger.IsEnabled(LogLevel.Information).Should().BeFalse();
         errorLogger.IsEnabled(LogLevel.Warning).Should().BeTrue();
         otherLogger.IsEnabled(LogLevel.Information).Should().BeFalse();
@@ -226,6 +257,8 @@ public class ToolCallLoggingTests
         McpServerTool.Create(Throws, new McpServerToolCreateOptions { Name = ThrowingTool }),
         McpServerTool.Create(ThrowsWithCode, new McpServerToolCreateOptions { Name = CodedErrorTool }),
         McpServerTool.Create(ThrowsDeliberately, new McpServerToolCreateOptions { Name = DeliberateErrorTool }),
+        McpServerTool.Create(ReturnsError, new McpServerToolCreateOptions { Name = ResultErrorTool }),
+        McpServerTool.Create(ReturnsErrorWithoutCode, new McpServerToolCreateOptions { Name = ResultErrorWithoutCodeTool }),
     ];
 
     private static List<CapturedLogEntry> CallLines(InProcessMcpServer server) =>
@@ -246,6 +279,18 @@ public class ToolCallLoggingTests
     private static string ThrowsWithCode() => throw new ToolErrorException("PresetNotFound", SecretToolMessage);
 
     private static string ThrowsDeliberately() => throw new McpException(SecretToolMessage);
+
+    private static CallToolResult ReturnsError() => new()
+    {
+        IsError = true,
+        Content = [new TextContentBlock { Text = $$"""{"success":false,"error":"{{SecretToolMessage}}","errorCode":"CaptureFailed"}""" }]
+    };
+
+    private static CallToolResult ReturnsErrorWithoutCode() => new()
+    {
+        IsError = true,
+        Content = [new TextContentBlock { Text = $$"""{"success":false,"errorCode":"{{SecretToolMessage}}"}""" }]
+    };
 
     private static RequestContext<CallToolRequestParams> CreateRequest(IServiceProvider services) =>
         new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })

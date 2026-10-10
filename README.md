@@ -2,18 +2,18 @@
 
 [![Build](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml)
 [![Test](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml)
-![Coverage](https://img.shields.io/badge/coverage-60%25-yellowgreen)
+![Coverage](https://img.shields.io/badge/coverage-75%25-green)
 
 An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts.
 
 ## Features
 
-- **Window Discovery** - Find and list windows by title, process name, or handle
+- **Window Discovery** - Find and list app windows by title, process name, class name, or handle, without hidden cloaked, tool or shell windows; UWP apps are reported under their own process
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows
 - **Multi-Monitor Support** - Move windows between monitors, get display information
-- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
-- **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
-- **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations
+- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays; captures come back as images the model sees, sized for vision, with an image-to-screen transform for clicking
+- **UI Automation** - Retrieve UI element trees with bounding boxes, and check which element has keyboard focus or sits at a screen point
+- **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations, aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs
 - **Process Management** - List running processes, terminate processes safely
@@ -44,7 +44,9 @@ Install as a Claude Code plugin:
 Then restart Claude Code. The plugin includes a skill with usage guidance.
 
 The plugin runs the pre-built `bin/WindowsAppManagerMcp.exe` from this repository, so it needs the
-.NET 8 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between.
+.NET 8 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between:
+the tools and safety behaviour described here are those of the source on `main`, and the plugin gets
+them with the next release (its version is `serverInfo.version` in the MCP handshake).
 
 ### Option 2: Claude Desktop (Manual)
 
@@ -81,14 +83,14 @@ that folder holds the committed plugin exe (see [Building](#building)).
 Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
 page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is a
 framework-dependent single-file exe and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
-is pushed; no release was published for the tags up to v1.11.0, so until the next tag use Option 3.
+is pushed; the first one is v1.12.0 (no release was published for earlier tags).
 
 The release zip is built by CI from the tagged sources. It is not a copy of the plugin's committed
 `bin/WindowsAppManagerMcp.exe`: both have the same version and sources, but they are separate builds,
 so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
-## Available Tools (42)
+## Available Tools (47)
 
 | Category | Tools |
 |----------|-------|
@@ -97,13 +99,30 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
-| UI Automation | `get_ui_elements` |
+| UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
 | Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
+| Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 
 See [docs/TOOLS.md](docs/TOOLS.md) for complete documentation with examples.
+
+## Configuration
+
+The server reads these environment variables when it starts (for example in the `env` block of the MCP
+server configuration). No tool argument can change them.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WAM_PAUSE_HOTKEY` | `Ctrl+Alt+Shift+Pause` | The [pause hotkey](docs/TOOLS.md#pause-hotkey) chord, such as `Ctrl+Alt+F12`; `none` turns it off |
+| `WAM_DENY_PROCESSES` | common password managers, `CredentialUIBroker`, `consent` | Apps the agent may not act on: no input, window changes, closing, killing or window captures (`TargetDeniedByPolicy`). A value replaces the default list; `default` puts it back in, `none` alone turns it off. See [Target policy](docs/TOOLS.md#target-policy) |
+| `WAM_ALLOW_PROCESSES` | not set | When set, the only apps the agent may act on; the deny list still wins |
+| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
+| `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
+
+The server logs the deny list, the allow list and the chords in force to stderr when it starts. The test
+opt-ins `WAM_ALLOW_DESKTOP_TESTS` and `WAM_ALLOW_DESKTOP_NOINPUT_TESTS` are described under [Testing](#testing).
 
 ## Usage Examples
 
@@ -140,6 +159,7 @@ Once configured, you can ask Claude to:
 - "Capture a 800x600 region at position 100, 200"
 - "Capture the Notepad window with UI element overlays"
 - "Get all buttons and text inputs from the Settings window"
+- "Which control has keyboard focus?" / "What is at position 640, 480?"
 
 ### Click & Keyboard Automation
 - "Click at position 500, 300"
@@ -150,7 +170,9 @@ Once configured, you can ask Claude to:
 - "Press Ctrl+C to copy"
 - "Press Enter to confirm"
 
-> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. Agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+> **Input is guarded.** Every input tool takes an optional `windowHandle`: keys are sent only after the server has brought that window to the front and only while it (or its dialog) is in front, and clicks only when the point is on that window or a popup of it. Without `windowHandle`, input goes to the foreground window or the window at the point, but never to the agent's own terminal, editor or chat app (`TargetIsAgentHost`), to windows of apps running as administrator (`TargetElevated`) or to apps the user denies through `WAM_DENY_PROCESSES` (`TargetDeniedByPolicy`, password managers by default). Chords that close, quit or lock, such as Alt+F4, need `windowHandle`, and a chord that switches windows, such as Alt+Tab, must be the last key of a `send_keys` call. A click is pressed exactly at the point the guard checked. Every result reports `receivingWindow` and `foregroundAfter`. Close windows with `close_window`, never with Alt+F4. See [Input guard](docs/TOOLS.md#input-guard) and the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+
+> **Pause hotkey.** Press **Ctrl+Alt+Shift+Pause** at any time to pause the input of every Windows App Manager server on your desktop (each MCP client session runs its own server, and they share the pause): running input stops, keys the servers hold are released, and every input tool and every tool that changes windows or starts or stops processes returns `PausedByUser` until you press it again (or confirm an agent's `resume_input` request, which resumes them all). A second press within 2 seconds of the pause is ignored. The agent cannot resume itself. Set another chord with the `WAM_PAUSE_HOTKEY` environment variable (for example `Ctrl+Alt+F12`, or `none` to turn it off). See [Pause hotkey](docs/TOOLS.md#pause-hotkey).
 
 ### Browser Reading
 - "What page is open in Chrome?"
@@ -242,16 +264,28 @@ dotnet test --filter "Category!=Desktop"
 dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
-- **1,300+ tests** covering unit and integration scenarios, about 60% line coverage
+- **About 3,000 tests** covering unit, contract and integration scenarios (and end-to-end harness tests), about 75% line coverage
 - By default a test run sends no keyboard or mouse input, launches or kills no
   processes, and does not move, focus or close your windows (some tests only read
   system state, such as the window, monitor and process lists)
 - **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) are for
   tests with real side effects, such as starting processes or sending input. They are skipped
   unless you opt in; CI runs them without the opt-in and fails unless every one is reported as
-  skipped. Today the only ones are the gate's own canaries, which have no side effects. To opt in:
+  skipped. A narrower tier, `[DesktopNoInputFact]` (also `Category=DesktopNoInput`), only starts
+  the suite's own fixture app and reads or captures it; `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` opts in
+  to that tier alone.
+- **End-to-end tests** (`tests/WindowsAppManagerMcp.E2ETests`) drive the real server services
+  against `tests/FixtureApp`, a small WPF app the suite owns, never against your own windows. They
+  are desktop tests of both tiers; on GitHub they run only on demand (`.github/workflows/e2e.yml`).
+  To opt in:
 
 ```powershell
+# Only the no-input tier: start the fixture app, read and capture it
+$env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = "1"
+dotnet test --filter "Category=DesktopNoInput"
+Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
+
+# Both tiers: also bring the fixture app to the front and type into it
 $env:WAM_ALLOW_DESKTOP_TESTS = "1"
 dotnet test --filter "Category=Desktop"
 Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
@@ -279,7 +313,7 @@ WindowsAppManagerMcp/
 │   ├── Native/          # P/Invoke declarations and native wrappers
 │   ├── Services/        # Business logic
 │   └── Tools/           # MCP tool definitions
-├── tests/               # Unit and integration tests
+├── tests/               # Unit and integration tests, plus end-to-end tests against tests/FixtureApp
 ├── config/layouts/      # Example layout presets
 └── docs/                # Documentation
 ```
@@ -288,9 +322,14 @@ WindowsAppManagerMcp/
 
 - **Launch Validation** - `launch_application` rejects path traversal, resolves bare program names in system folders, `PATH` and App Paths before the working directory can shadow them, and refuses arguments that `cmd.exe` would run as commands. It protects against data being turned into commands, not against an agent that runs `cmd` or PowerShell on purpose
 - **Untrusted Content** - Web page text, window titles and UI element names come from other apps and websites and can contain prompt-injection text. The skill and [docs/TOOLS.md](docs/TOOLS.md#untrusted-content) tell agents to treat them as data, never as instructions
-- **Protected Processes** - System-critical processes cannot be terminated
+- **Input Guard** - Every keyboard and mouse batch is checked first. Input never reaches the agent's own terminal, editor or chat app (unless the call names it as `windowHandle` with `allowHostTarget`, which agents are told to pass only when the user asked), windows of elevated or denied apps, a locked session or a UAC prompt. With `windowHandle`, keys go only to that window (or its dialog) and stop when another window comes to the front, and clicks go only to a point on that window. See [Input guard](docs/TOOLS.md#input-guard)
+- **Target Policy** - The user denies apps to the agent with `WAM_DENY_PROCESSES` (password managers and credential prompts by default) or allows only some with `WAM_ALLOW_PROCESSES`; no tool argument overrides it (see [Configuration](#configuration))
+- **Protected Processes** - System-critical processes and the agent's own host (its terminal or editor and that terminal's console processes) cannot be terminated; a forced kill checks the whole process tree first
 - **Confirmation Required** - Process termination requires explicit confirmation
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
+- **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume, and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
+- **Protected Windows** - `close_window` and `close_windows_batch` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in unless `force` is true, and closing more than 3 windows in one batch requires `confirm`
+- **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), so a hung app cannot block the other tools
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.
 
 ## Requirements

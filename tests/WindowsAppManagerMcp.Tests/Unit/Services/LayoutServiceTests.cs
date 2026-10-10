@@ -10,6 +10,7 @@ public class LayoutServiceTests : IDisposable
     private readonly Mock<IWindowService> _mockWindowService;
     private readonly Mock<IMonitorService> _mockMonitorService;
     private readonly Mock<IProcessService> _mockProcessService;
+    private readonly Mock<IForegroundService> _mockForegroundService;
 
     public LayoutServiceTests()
     {
@@ -20,12 +21,14 @@ public class LayoutServiceTests : IDisposable
         _mockWindowService = TestDataFactory.CreateMockWindowService();
         _mockMonitorService = TestDataFactory.CreateMockMonitorService();
         _mockProcessService = TestDataFactory.CreateMockProcessService();
+        _mockForegroundService = TestDataFactory.CreateMockForegroundService();
     }
 
     private LayoutService CreateSut() => new LayoutService(
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
+        _mockForegroundService.Object,
         _testLayoutPath);
 
     public void Dispose()
@@ -337,6 +340,29 @@ public class LayoutServiceTests : IDisposable
         result.Preset.Placements[0].Matcher.ProcessName.Should().Be("notepad");
     }
 
+    [Theory]
+    [InlineData("ApplicationFrameHost")]
+    [InlineData("CalculatorApp")]
+    public async Task CaptureCurrentLayoutAsync_ProcessFilters_MatchTheUwpAppAndItsFrameHost(string processName)
+    {
+        // Arrange
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp") with { HostProcessName = "ApplicationFrameHost", HostProcessId = 4300 },
+            TestDataFactory.CreateWindowInfo(2, "Notepad", "notepad")
+        };
+        _mockWindowService.Setup(w => w.GetAllWindows(false)).Returns(testWindows);
+        var sut = CreateSut();
+
+        // Act
+        var included = await sut.CaptureCurrentLayoutAsync("uwp-include", includeProcesses: [processName]);
+        var excluded = await sut.CaptureCurrentLayoutAsync("uwp-exclude", excludeProcesses: [processName]);
+
+        // Assert - the placement stores the app's own process name
+        included.Preset!.Placements.Select(p => p.Matcher.ProcessName).Should().Equal("CalculatorApp");
+        excluded.Preset!.Placements.Select(p => p.Matcher.ProcessName).Should().Equal("notepad");
+    }
+
     [Fact]
     public async Task CaptureCurrentLayoutAsync_WithExcludeFilter_ExcludesSpecifiedProcesses()
     {
@@ -413,6 +439,61 @@ public class LayoutServiceTests : IDisposable
                 testWindow.Handle,
                 It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_AWindowThePolicyDenies_IsNeitherArrangedNorFocused()
+    {
+        // Arrange - a layout that places (and focuses) a password manager the user denied to the agent
+        var keePass = TestDataFactory.CreateWindowInfo(processName: "KeePass");
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns([keePass]);
+        _mockWindowService.Setup(w => w.EvaluateTargetPolicy(keePass.Handle))
+            .Returns(TargetPolicyVerdict.Deny("KeePass", "KeePass is on the deny list"));
+
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "denied", placements: [TestDataFactory.CreateWindowPlacement(processName: "KeePass", focus: true)]));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("denied");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.TargetDeniedByPolicy));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("KeePass is on the deny list");
+        result.WindowsArranged.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
+            Times.Never);
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_PlacementSavedForTheUwpFrameHost_StillMatchesTheUwpWindow()
+    {
+        // Arrange - presets saved before UWP windows were attributed to the app name ApplicationFrameHost
+        var calculator = TestDataFactory.CreateWindowInfo(4100, "Calculator", "CalculatorApp", processId: 4200) with
+        {
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 4300
+        };
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns([calculator]);
+
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "legacy-uwp",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "ApplicationFrameHost")]));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("legacy-uwp");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(1);
+        result.WindowsNotFound.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(calculator.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 
@@ -504,6 +585,37 @@ public class LayoutServiceTests : IDisposable
                 It.IsAny<bool>(),
                 It.IsAny<int>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_AWindowThatDoesNotRespond_FailsItsPlacement_AndTheOthersAreArranged()
+    {
+        // Arrange - the first window's application is hung: WindowService gives up on it at the deadline
+        var hung = TestDataFactory.CreateWindowInfo(handleValue: 1001, title: "Hung - App", processName: "hungapp", processId: 5001);
+        var fine = TestDataFactory.CreateWindowInfo(handleValue: 1002, title: "Fine - App", processName: "fineapp", processId: 5002);
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo> { hung, fine });
+        _mockWindowService.Setup(w => w.SetWindowBounds(hung.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Throws(new WindowNotRespondingException(hung.Handle, "Window 1001 did not answer within 5 s."));
+        _mockWindowService.Setup(w => w.SetWindowBounds(fine.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns(true);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "hung-test",
+            placements: new List<WindowPlacement>
+            {
+                new(new WindowMatcher(ProcessName: "hungapp"), 0, new RelativePosition(0, 0, 0.5, 1.0), null, Focus: true, Order: 0),
+                new(new WindowMatcher(ProcessName: "fineapp"), 0, new RelativePosition(0.5, 0, 0.5, 1.0), null, Focus: false, Order: 1)
+            }));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("hung-test", matchBy: "process_only");
+
+        // Assert - not focused either: the focus step needs the window placed first
+        result.Success.Should().BeFalse();
+        result.WindowsArranged.Should().Be(1);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("Hung - App").And.Contain("did not answer");
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
     }
 
     /// <summary>
@@ -1046,9 +1158,17 @@ public class LayoutServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyPresetAsync_WhenFocusFails_ReportsIt()
+    public async Task ApplyPresetAsync_WhenFocusFails_ReportsTheVerifiedOutcome()
     {
-        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(false);
+        _mockForegroundService.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
+            .Returns((nint handle, int _) => new FocusOutcome
+            {
+                Target = handle,
+                ForegroundHandle = new nint(0x200),
+                ForegroundTitle = "Terminal",
+                ErrorCode = WindowErrorCode.FocusFailed,
+                Error = "The window could not be brought to the foreground; 'Terminal' (WindowsTerminal) is in front"
+            });
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
@@ -1058,13 +1178,17 @@ public class LayoutServiceTests : IDisposable
         result.WindowsArranged.Should().Be(1);
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
-        result.Errors.Should().ContainSingle().Which.Should().Contain("foreground");
+        result.Errors.Should().ContainSingle().Which.Should().Contain("foreground").And.Contain("FocusFailed").And.Contain("Terminal");
+        var focus = result.Focus.Should().ContainSingle().Subject;
+        focus.Success.Should().BeFalse();
+        focus.IsForeground.Should().BeFalse();
+        focus.ErrorCode.Should().Be(nameof(WindowErrorCode.FocusFailed));
+        focus.ForegroundHandle.Should().Be(0x200);
     }
 
     [Fact]
-    public async Task ApplyPresetAsync_WhenFocusSucceeds_ReportsSuccess()
+    public async Task ApplyPresetAsync_WhenFocusSucceeds_ReportsSuccessAndHowTheWindowCameToTheFront()
     {
-        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(true);
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus-ok",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
@@ -1074,6 +1198,24 @@ public class LayoutServiceTests : IDisposable
         result.Success.Should().BeTrue();
         result.ErrorCode.Should().BeNull();
         result.Errors.Should().BeNull();
+        var focus = result.Focus.Should().ContainSingle().Subject;
+        focus.IsForeground.Should().BeTrue();
+        focus.Method.Should().Be(FocusMethod.SetForeground);
+        _mockForegroundService.Verify(f => f.EnsureForeground(new nint(focus.Handle), It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WithoutFocusPlacements_ActivatesNothingAndReportsNoFocus()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("no-focus",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: false)]));
+
+        var result = await sut.ApplyPresetAsync("no-focus");
+
+        result.Success.Should().BeTrue();
+        result.Focus.Should().BeNull();
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
     }
 
     [Fact]

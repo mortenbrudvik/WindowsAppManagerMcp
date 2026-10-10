@@ -97,6 +97,14 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial int GetWindowLongW(nint hWnd, int nIndex);
 
+        // Exported by 64-bit user32 only; NativeWindowWrapper falls back to GetWindowLongW in a 32-bit process.
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial nint GetWindowLongPtrW(nint hWnd, int nIndex);
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool IsHungAppWindow(nint hwnd);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial int SetWindowLongW(nint hWnd, int nIndex, int dwNewLong);
 
@@ -155,6 +163,15 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool GetClientRect(nint hWnd, out RECT lpRect);
+
+        /// <summary>
+        /// Converts points from one window's coordinates to another's. With cPoints 2 the points are
+        /// treated as a RECT, and for a mirrored (WS_EX_LAYOUTRTL) window left and right are swapped
+        /// back so that left is not greater than right. Returns 0 on failure, but also for a zero
+        /// offset: SetLastError marshalling clears the last error first, so a failure has a non-zero one.
+        /// </summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial int MapWindowPoints(nint hWndFrom, nint hWndTo, ref RECT lpPoints, uint cPoints);
 
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

@@ -8,6 +8,12 @@ namespace WindowsAppManagerMcp.Tools;
 [McpServerToolType]
 public class AppLauncherTools
 {
+    /// <summary>
+    /// The longest wait for a launched application's window, whatever waitTimeoutMs asks for. The launch tools run
+    /// inside the input gate, so an agent's value must not hold it, and with it every input and window tool, for long.
+    /// </summary>
+    public const int MaxWaitTimeoutMs = 30_000;
+
     private readonly IProcessService _processService;
 
     public AppLauncherTools(IProcessService processService)
@@ -26,7 +32,7 @@ public class AppLauncherTools
         string? workingDirectory = null,
         [Description("Whether to wait for the application window to appear before returning (default: false)")]
         bool waitForWindow = false,
-        [Description("Maximum time in milliseconds to wait for the window (default: 5000)")]
+        [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000)
     {
         var result = _processService.LaunchApplication(
@@ -34,7 +40,7 @@ public class AppLauncherTools
             arguments,
             workingDirectory,
             waitForWindow,
-            waitTimeoutMs);
+            BoundedWait(waitTimeoutMs));
 
         return new LaunchResultDto(
             Success: result.Success,
@@ -47,11 +53,13 @@ public class AppLauncherTools
     }
 
     [McpServerTool(Name = "list_processes")]
-    [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage.")]
+    [Description("List currently running processes with optional filtering by name. Returns process info including ID, name, window count, and memory usage. " +
+                 "By default only processes with a visible, titled window are listed, including windows on other virtual desktops and tool windows; " +
+                 "pass includeWindowless=true to list every process, for example to confirm that a process has exited.")]
     public IReadOnlyList<ProcessInfoDto> ListProcesses(
         [Description("Filter processes by name (partial match, case-insensitive)")]
         string? nameFilter = null,
-        [Description("Include processes without visible windows (default: false)")]
+        [Description("Also list processes without a visible, titled window (default: false). windowCount is then 0 for every process.")]
         bool includeWindowless = false)
     {
         var processes = _processService.GetRunningProcesses(nameFilter, includeWindowless);
@@ -71,7 +79,9 @@ public class AppLauncherTools
                  "It never escalates: if the process has no closable window (errorCode NoClosableWindow) or is still running after the timeout, " +
                  "for example because it shows a 'Save changes?' prompt (errorCode GracefulCloseTimedOut), the process is left running and success is false. " +
                  "forceKill=true terminates the process and all of its child processes immediately; unsaved work is lost. " +
-                 "The result reports closeRequested, forced and exited. Refuses protected system processes and the terminal/editor hosting this server.")]
+                 "The result reports closeRequested, forced and exited. Refuses protected system processes, the agent's own host (the terminal or editor hosting this server; errorCode CannotTerminateHost) " +
+                 "and apps the user's policy denies (TargetDeniedByPolicy); with forceKill=true also when a child process it would end belongs to that host or is denied by the policy, " +
+                 "or when the child processes cannot be read to check them (ProcessTreeUnreadable).")]
     public KillResultDto KillProcess(
         [Description("The process ID to terminate (get from list_processes tool)")]
         int processId,
@@ -106,13 +116,13 @@ public class AppLauncherTools
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
-        [Description("Maximum time in milliseconds to wait for each window (default: 5000)")]
+        [Description("Maximum time in milliseconds to wait for each window (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000)
     {
         var serviceApplications = applications.Select(a =>
             (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
 
-        var results = _processService.LaunchApplicationsBatch(serviceApplications, waitForWindows, waitTimeoutMs);
+        var results = _processService.LaunchApplicationsBatch(serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs));
 
         var items = results.Select((r, i) => new LaunchResultItem(
             Executable: applications[i].Executable,
@@ -131,6 +141,9 @@ public class AppLauncherTools
             Results: items
         );
     }
+
+    /// <summary>waitTimeoutMs within 0 to <see cref="MaxWaitTimeoutMs"/>.</summary>
+    private static int BoundedWait(int waitTimeoutMs) => Math.Clamp(waitTimeoutMs, 0, MaxWaitTimeoutMs);
 }
 
 public record KillResultDto(

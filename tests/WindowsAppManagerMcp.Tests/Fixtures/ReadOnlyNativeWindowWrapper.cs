@@ -38,9 +38,29 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public nint GetForegroundWindow() => inner.GetForegroundWindow();
 
+    public nint GetAncestor(nint hWnd, WindowAncestor ancestor) => inner.GetAncestor(hWnd, ancestor);
+
+    public nint GetShellWindow() => inner.GetShellWindow();
+
     public uint GetCurrentProcessId() => inner.GetCurrentProcessId();
 
     public string? GetProcessName(uint processId) => inner.GetProcessName(processId);
+
+    public void EnumChildWindows(nint hWndParent, Func<nint, bool> callback) => inner.EnumChildWindows(hWndParent, callback);
+
+    public string GetClassName(nint hWnd) => inner.GetClassName(hWnd);
+
+    public nint GetWindowLongPtr(nint hWnd, int index) => inner.GetWindowLongPtr(hWnd, index);
+
+    public nint GetWindow(nint hWnd, uint command) => inner.GetWindow(hWnd, command);
+
+    public bool IsCloaked(nint hWnd) => inner.IsCloaked(hWnd);
+
+    public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd) => inner.GetExtendedFrameBounds(hWnd);
+
+    public bool IsHungAppWindow(nint hWnd) => inner.IsHungAppWindow(hWnd);
+
+    public uint GetDpiForWindow(nint hWnd) => inner.GetDpiForWindow(hWnd);
 
     // Window changes: refused before anything reaches the wrapped instance
 
@@ -53,7 +73,7 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public bool BringWindowToTop(nint hWnd) => throw Refused(nameof(BringWindowToTop));
 
-    public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) => throw Refused(nameof(PostMessage));
+    public Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) => throw Refused(nameof(PostMessage));
 
     private static InvalidOperationException Refused(string method) =>
         new($"{method} would change a real window. This test wrapper is read-only; " +

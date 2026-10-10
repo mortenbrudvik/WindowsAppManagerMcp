@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WamFixtureApp: a small WPF app with known AutomationIds that the end-to-end tests
+    (tests/WindowsAppManagerMcp.E2ETests) start, read, capture and type into. The suite owns this
+    app, so its desktop tests never act on the developer's own windows.
+
+    Never start it from a normal test run: only the E2E harness starts it, and only when a desktop
+    tier is opted in (see TESTING.md, "End-to-end tests against the fixture app"). FixtureContract.cs
+    and FixtureOptions.cs are also compiled into the E2E project, so both sides share one contract.
+
+    No WebView2 pane: it would add the Microsoft.Web.WebView2 package and a runtime dependency on the
+    Edge WebView2 runtime to every build. Add it when the Chromium accessibility work (M3) needs it.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>WamFixtureApp</AssemblyName>
+    <RootNamespace>WindowsAppManagerMcp.FixtureApp</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+</Project>

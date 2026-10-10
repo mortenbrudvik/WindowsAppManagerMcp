@@ -1,0 +1,154 @@
+name: E2E
+
+# End-to-end tests against the suite's own fixture app (tests/WindowsAppManagerMcp.E2ETests and
+# tests/FixtureApp). They start a real app and, in the "all" tier, bring it to the front and type into
+# it, so they never run on push or pull_request: only when started by hand, and only on a runner with
+# an interactive desktop. Without one the job says so and stops, successfully, before building.
+# See TESTING.md, "End-to-end tests against the fixture app".
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'no-input: find, UI Automation reads and captures only. all: also focus and type into the fixture.'
+        type: choice
+        options:
+          - no-input
+          - all
+        default: no-input
+      runner:
+        description: 'Runner label: windows-latest, or a self-hosted runner that runs in a logged-on desktop session.'
+        type: string
+        default: windows-latest
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    env:
+      # Set to 1 only in the test step below, for the tier that was asked for.
+      WAM_ALLOW_DESKTOP_TESTS: '0'
+      WAM_ALLOW_DESKTOP_NOINPUT_TESTS: '0'
+
+    steps:
+      - name: Check for an interactive desktop
+        id: desktop
+        shell: pwsh
+        run: |
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class DesktopProbe
+          {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint desiredAccess);
+              [DllImport("user32.dll")]
+              public static extern bool CloseDesktop(IntPtr desktop);
+              [DllImport("user32.dll")]
+              public static extern int GetSystemMetrics(int index);
+          }
+          '@
+          $problems = @()
+          $sessionId = (Get-Process -Id $PID).SessionId
+          if ($sessionId -eq 0) {
+            $problems += 'the runner runs in session 0 (a service session has no desktop)'
+          }
+          if (-not [Environment]::UserInteractive) {
+            $problems += 'the window station is not interactive'
+          }
+          # DESKTOP_READOBJECTS: fails when no desktop receives input, or when it is the secure desktop (locked session, UAC)
+          $inputDesktop = [DesktopProbe]::OpenInputDesktop(0, $false, 0x0001)
+          if ($inputDesktop -eq [IntPtr]::Zero) {
+            $problems += "the input desktop cannot be opened (Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))"
+          } else {
+            [DesktopProbe]::CloseDesktop($inputDesktop) | Out-Null
+          }
+          $width = [DesktopProbe]::GetSystemMetrics(0)
+          $height = [DesktopProbe]::GetSystemMetrics(1)
+          if ($width -le 0 -or $height -le 0) {
+            $problems += "the screen size is ${width}x${height}"
+          }
+
+          if ($problems.Count -eq 0) {
+            Write-Host "Interactive desktop: session $sessionId, screen ${width}x${height}."
+            "interactive=true" >> $env:GITHUB_OUTPUT
+          } else {
+            $reason = $problems -join '; '
+            Write-Host "::notice title=E2E tests skipped::No interactive desktop on this runner: $reason. Run this workflow on a self-hosted runner in a logged-on desktop session."
+            "interactive=false" >> $env:GITHUB_OUTPUT
+            "### E2E tests skipped`n`nNo interactive desktop on runner '$env:RUNNER_NAME': $reason.`n`nThe fixture app tests need a logged-on desktop session. Start this workflow with a self-hosted runner label (input 'runner') whose runner is started from a logged-on session, not as a service." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Checkout
+        if: steps.desktop.outputs.interactive == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        if: steps.desktop.outputs.interactive == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        if: steps.desktop.outputs.interactive == 'true'
+        run: dotnet restore
+
+      - name: Build
+        # Builds the fixture app too; the E2E assembly records where its exe is.
+        if: steps.desktop.outputs.interactive == 'true'
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run end-to-end tests
+        if: steps.desktop.outputs.interactive == 'true'
+        shell: pwsh
+        env:
+          TIER: ${{ inputs.tier }}
+        run: |
+          if ($env:TIER -eq 'all') {
+            $env:WAM_ALLOW_DESKTOP_TESTS = '1'
+            $filter = 'Category=Desktop'
+          } else {
+            $env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = '1'
+            $filter = 'Category=DesktopNoInput'
+          }
+          $results = Join-Path $PWD 'TestResults/e2e'
+          dotnet test tests/WindowsAppManagerMcp.E2ETests/WindowsAppManagerMcp.E2ETests.csproj `
+            --no-build --configuration Release `
+            --filter $filter `
+            --blame-hang-timeout 5m `
+            --blame-hang-dump-type mini `
+            --results-directory $results `
+            --logger trx `
+            --logger "console;verbosity=detailed"
+          $exitCode = $LASTEXITCODE
+
+          # An opt-in that did not reach the tests would leave them all skipped and the job green.
+          $namespace = @{ t = 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010' }
+          $trx = @(Get-ChildItem -LiteralPath $results -Filter *.trx -Recurse -File)
+          $outcomes = @(if ($trx.Count -gt 0) {
+            Select-Xml -LiteralPath $trx.FullName -XPath '//t:UnitTestResult/@outcome' -Namespace $namespace |
+              ForEach-Object { $_.Node.Value }
+          })
+          $passed = @($outcomes | Where-Object { $_ -eq 'Passed' }).Count
+          $failed = @($outcomes | Where-Object { $_ -eq 'Failed' }).Count
+          $skipped = @($outcomes | Where-Object { $_ -eq 'NotExecuted' }).Count
+          "### E2E tests ($env:TIER)`n`n$passed passed, $failed failed, $skipped skipped." >> $env:GITHUB_STEP_SUMMARY
+          if ($passed + $failed -eq 0) {
+            throw "No end-to-end test ran for tier '$env:TIER' (filter $filter): the opt-in did not reach the tests."
+          }
+          if ($exitCode -ne 0) {
+            throw "dotnet test exited with code $exitCode."
+          }
+
+      - name: Upload test results
+        if: always() && steps.desktop.outputs.interactive == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            TestResults/e2e/**/*.trx
+            TestResults/e2e/**/*.dmp
+            TestResults/e2e/**/Sequence_*.xml
+          if-no-files-found: ignore

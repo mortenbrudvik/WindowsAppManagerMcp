@@ -1,13 +1,19 @@
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
-/// Unit tests for ScreenshotTools.
+/// Unit tests for ScreenshotTools: what reaches the screenshot service, and the shape of the MCP
+/// result (an image block followed by a metadata text block, isError on failure).
 /// Tests T9.3 from BACKLOG-TECHNICAL.md.
 /// </summary>
 public class ScreenshotToolsTests
 {
+    private static readonly CaptureOptions Defaults = new();
+
     private readonly Mock<IScreenshotService> _mockScreenshotService;
     private readonly Mock<IUIElementService> _mockUIElementService;
     private readonly Mock<IWindowService> _mockWindowService;
@@ -19,10 +25,13 @@ public class ScreenshotToolsTests
         _mockWindowService = TestDataFactory.CreateMockWindowService();
     }
 
+    private TargetPolicySettings _policy = TargetPolicySettings.Default;
+
     private ScreenshotTools CreateSut() => new ScreenshotTools(
         _mockScreenshotService.Object,
         _mockUIElementService.Object,
-        _mockWindowService.Object);
+        _mockWindowService.Object,
+        new TargetPolicy(_policy));
 
     #region T9.3.1: ListScreens Tests
 
@@ -80,7 +89,7 @@ public class ScreenshotToolsTests
     #region T9.3.2-T9.3.4: TakeScreenshot Tests
 
     [Fact]
-    public void TakeScreenshot_WithDefaults_UsesPrimaryMonitor()
+    public void TakeScreenshot_WithDefaults_UsesPrimaryMonitorAndDefaultOptions()
     {
         // Arrange
         var screenList = TestDataFactory.CreateScreenListResult(primaryIndex: 1);
@@ -91,7 +100,7 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot();
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "png", 85, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, Defaults), Times.Once);
     }
 
     [Fact]
@@ -104,66 +113,89 @@ public class ScreenshotToolsTests
         sut.TakeScreenshot(monitorIndex: 2);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(2, "png", 85, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(2, Defaults), Times.Once);
+        _mockScreenshotService.Verify(s => s.ListScreens(), Times.Never);
     }
 
     [Fact]
-    public void TakeScreenshot_WithFormat_PassesFormat()
+    public void TakeScreenshot_WithFormatAndQuality_PassesThem()
     {
         // Arrange
         var sut = CreateSut();
 
+        var expected = Defaults with { Format = "png", Quality = 95 };
+
         // Act
-        sut.TakeScreenshot(format: "jpeg");
+        sut.TakeScreenshot(format: "png", quality: 95);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 85, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), expected), Times.Once);
     }
 
     [Fact]
-    public void TakeScreenshot_WithQuality_PassesQuality()
+    public void TakeScreenshot_ReturnsTheImageBlockFollowedByTheMetadata()
     {
         // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.TakeScreenshot(format: "jpeg", quality: 95);
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), "jpeg", 95, false, null, null), Times.Once);
-    }
-
-    [Fact]
-    public void TakeScreenshot_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = TestDataFactory.CreateScreenshotResult();
-        _mockScreenshotService.Setup(s => s.CaptureMonitor(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(expectedResult);
+        var image = TestDataFactory.CreateEncodedImage();
+        var metadata = TestDataFactory.CreateScreenshotResult(width: 1568, height: 882, regionX: -2560, regionY: 365);
+        _mockScreenshotService.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<ScreenshotResult>(metadata, image));
         var sut = CreateSut();
 
         // Act
         var result = sut.TakeScreenshot();
 
         // Assert
-        result.Should().Be(expectedResult);
+        result.IsError.Should().BeFalse();
+        result.Content.Should().HaveCount(2);
+        var imageBlock = result.Content[0].Should().BeOfType<ImageContentBlock>().Subject;
+        imageBlock.MimeType.Should().Be("image/jpeg");
+        Convert.FromBase64String(imageBlock.Data).Should().Equal(image.Data);
+        var json = Metadata(result);
+        json.GetProperty("success").GetBoolean().Should().BeTrue();
+        json.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(-2560);
+        json.GetProperty("imageToScreen").GetProperty("offsetY").GetInt32().Should().Be(365);
+        json.TryGetProperty("imageData", out _).Should().BeFalse("the image travels in the image block only");
     }
 
     [Fact]
-    public void TakeScreenshot_WithAllParameters_PassesAllCorrectly()
+    public void TakeScreenshot_WhenServiceReturnsError_ReturnsIsErrorWithOnlyMetadata()
     {
         // Arrange
-        var screenList = TestDataFactory.CreateScreenListResult();
-        _mockScreenshotService.Setup(s => s.ListScreens()).Returns(screenList);
+        var failure = TestDataFactory.CreateScreenshotResult(success: false, error: "Monitor index 99 is out of range.",
+            errorCode: "InvalidMonitorIndex");
+        _mockScreenshotService.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<ScreenshotResult>(failure, null));
         var sut = CreateSut();
 
         // Act
-        sut.TakeScreenshot(monitorIndex: 1, format: "jpeg", quality: 75);
+        var result = sut.TakeScreenshot(monitorIndex: 99);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureMonitor(1, "jpeg", 75, false, null, null), Times.Once);
+        result.IsError.Should().BeTrue();
+        result.Content.Should().ContainSingle().Which.Should().BeOfType<TextContentBlock>();
+        var json = Metadata(result);
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("errorCode").GetString().Should().Be("InvalidMonitorIndex");
+        json.GetProperty("error").GetString().Should().Contain("out of range");
+    }
+
+    [Fact]
+    public void TakeScreenshot_WithFileOutput_ReturnsOnlyTheMetadata()
+    {
+        // Arrange - the service leaves the image out for output "file"
+        var metadata = TestDataFactory.CreateScreenshotResult() with { FilePath = @"C:\captures\shot.jpg" };
+        _mockScreenshotService.Setup(s => s.CaptureMonitor(It.IsAny<int>(), It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<ScreenshotResult>(metadata, null));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.TakeScreenshot(output: "file");
+
+        // Assert
+        result.IsError.Should().BeFalse();
+        result.Content.Should().ContainSingle();
+        Metadata(result).GetProperty("filePath").GetString().Should().Be(@"C:\captures\shot.jpg");
     }
 
     #endregion
@@ -180,55 +212,35 @@ public class ScreenshotToolsTests
         sut.CaptureRegion(100, 200, 800, 600);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(100, 200, 800, 600, "png", 85, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(100, 200, 800, 600, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureRegion_WithFormat_PassesFormat()
+    public void CaptureRegion_WithFormatAndQuality_PassesThem()
     {
         // Arrange
         var sut = CreateSut();
 
-        // Act
-        sut.CaptureRegion(0, 0, 400, 300, format: "jpeg");
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 85, false, null, null), Times.Once);
-    }
-
-    [Fact]
-    public void CaptureRegion_WithQuality_PassesQuality()
-    {
-        // Arrange
-        var sut = CreateSut();
+        var expected = Defaults with { Format = "jpeg", Quality = 90 };
 
         // Act
         sut.CaptureRegion(0, 0, 400, 300, format: "jpeg", quality: 90);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, "jpeg", 90, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureRegion_ReturnsServiceResult()
+    public void CaptureRegion_ReturnsImageAndMetadata()
     {
         // Arrange
-        var expectedResult = TestDataFactory.CreateScreenshotResult(
-            width: 800, height: 600, regionX: 100, regionY: 200);
-        _mockScreenshotService.Setup(s => s.CaptureRegion(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
         var result = sut.CaptureRegion(100, 200, 800, 600);
 
         // Assert
-        result.Should().Be(expectedResult);
-        result.CapturedRegion.X.Should().Be(100);
-        result.CapturedRegion.Y.Should().Be(200);
+        result.Content.Select(c => c.Type).Should().Equal("image", "text");
     }
 
     #endregion
@@ -245,8 +257,7 @@ public class ScreenshotToolsTests
         sut.CaptureWindow(handle: 12345);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "png", 85, false, null, null), Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), true, Defaults), Times.Once);
     }
 
     [Fact]
@@ -259,54 +270,7 @@ public class ScreenshotToolsTests
         sut.CaptureWindow(handle: 12345, includeFrame: false);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), false, "png", 85, false, null, null), Times.Once);
-    }
-
-    [Fact]
-    public void CaptureWindow_WithFormat_PassesFormat()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.CaptureWindow(handle: 12345, format: "jpeg");
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "jpeg", 85, false, null, null), Times.Once);
-    }
-
-    [Fact]
-    public void CaptureWindow_WithQuality_PassesQuality()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.CaptureWindow(handle: 12345, format: "jpeg", quality: 70);
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(12345), true, "jpeg", 70, false, null, null), Times.Once);
-    }
-
-    [Fact]
-    public void CaptureWindow_ReturnsServiceResult()
-    {
-        // Arrange
-        var expectedResult = TestDataFactory.CreateScreenshotResult(width: 1024, height: 768);
-        _mockScreenshotService.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(expectedResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.CaptureWindow(handle: 12345);
-
-        // Assert
-        result.Should().Be(expectedResult);
+        _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), false, Defaults), Times.Once);
     }
 
     [Fact]
@@ -315,56 +279,31 @@ public class ScreenshotToolsTests
         // Arrange
         var sut = CreateSut();
 
+        var expected = Defaults with { Format = "jpeg", Quality = 50 };
+
         // Act
         sut.CaptureWindow(handle: 99999, includeFrame: false, format: "jpeg", quality: 50);
 
         // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindow(
-            new nint(99999), false, "jpeg", 50, false, null, null), Times.Once);
-    }
-
-    #endregion
-
-    #region Error Handling Tests
-
-    [Fact]
-    public void TakeScreenshot_WhenServiceReturnsError_ReturnsError()
-    {
-        // Arrange
-        var errorResult = TestDataFactory.CreateScreenshotResult(
-            success: false, imageData: null, error: "Monitor not found");
-        _mockScreenshotService.Setup(s => s.CaptureMonitor(
-                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(errorResult);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.TakeScreenshot(monitorIndex: 99);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Be("Monitor not found");
+        _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(99999), false, expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WhenServiceReturnsError_ReturnsError()
+    public void CaptureWindow_WhenServiceReturnsError_ReturnsIsError()
     {
         // Arrange
-        var errorResult = TestDataFactory.CreateScreenshotResult(
-            success: false, imageData: null, error: "Invalid window handle");
-        _mockScreenshotService.Setup(s => s.CaptureWindow(
-                It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<int?>()))
-            .Returns(errorResult);
+        var failure = TestDataFactory.CreateScreenshotResult(success: false, error: "Invalid window handle",
+            errorCode: "InvalidHandle");
+        _mockScreenshotService.Setup(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()))
+            .Returns(new ScreenCapture<ScreenshotResult>(failure, null));
         var sut = CreateSut();
 
         // Act
         var result = sut.CaptureWindow(handle: 0);
 
         // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Be("Invalid window handle");
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be("InvalidHandle");
     }
 
     #endregion
@@ -378,10 +317,12 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345);
+        var result = sut.CaptureWithElements(handle: 12345);
 
         // Assert
-        _mockWindowService.Verify(w => w.GetWindowInfo(new nint(12345)), Times.Once);
+        result.IsError.Should().BeFalse();
+        result.Content.Select(c => c.Type).Should().Equal("image", "text");
+        _mockWindowService.Verify(w => w.IsValidWindow(new nint(12345)), Times.Once);
         _mockUIElementService.Verify(u => u.GetUIElements(
             new nint(12345),
             It.IsAny<int>(),
@@ -390,22 +331,59 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_WithInvalidWindow_ReturnsError()
+    public void CaptureWithElements_WithInvalidWindow_ReturnsInvalidHandleWithoutWalkingTheTree()
     {
         // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 0);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var json = Metadata(result);
+        json.GetProperty("errorCode").GetString().Should().Be("InvalidHandle");
+        json.GetProperty("error").GetString().Should().Contain("Window not found");
+        VerifyNoWalk();
+    }
+
+    [Fact]
+    public void CaptureWithElements_OfAMinimizedWindow_ReturnsCaptureFailedWithoutWalkingTheTree()
+    {
+        // Arrange - every element of a minimized window is offscreen, and its pixels cannot be captured
+        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(4242)))
+            .Returns(TestDataFactory.CreateWindowInfo(handleValue: 4242, title: "Notepad", state: WindowState.Minimized));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(handle: 4242);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var json = Metadata(result);
+        json.GetProperty("errorCode").GetString().Should().Be("CaptureFailed");
+        json.GetProperty("error").GetString().Should().Contain("minimized").And.Contain("set_window_state");
+        VerifyNoWalk();
+    }
+
+    [Fact]
+    public void CaptureWithElements_ForAnUntitledWindow_StillCaptures()
+    {
+        // Arrange - popups and menus have no title, so GetWindowInfo reports nothing for them
         _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 99999);
+        var result = sut.CaptureWithElements(handle: 4242);
 
         // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Contain("Window not found");
+        result.IsError.Should().BeFalse();
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            new nint(4242), null, It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithUIElementFailure_ReturnsError()
+    public void CaptureWithElements_WithUIElementFailure_PassesTheWalksErrorCodeOn()
     {
         // Arrange
         _mockUIElementService.Setup(u => u.GetUIElements(
@@ -423,8 +401,33 @@ public class ScreenshotToolsTests
         var result = sut.CaptureWithElements(handle: 12345);
 
         // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Contain("UI elements");
+        result.IsError.Should().BeTrue();
+        var json = Metadata(result);
+        json.GetProperty("errorCode").GetString().Should().Be("OperationTimedOut");
+        json.GetProperty("error").GetString().Should().Contain("UI elements");
+        json.GetProperty("windowTitle").GetString().Should().Be("Test Window");
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("webp", null, "InvalidFormat")]
+    [InlineData("auto", 0, "InvalidImageSize")]
+    [InlineData("auto", -4, "InvalidImageSize")]
+    public void CaptureWithElements_WithInvalidOptions_DoesNotWalkTheTree(string format, int? maxWidth, string expectedCode)
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.CaptureWithElements(12345, format: format, maxWidth: maxWidth);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be(expectedCode);
+        _mockWindowService.Verify(w => w.IsValidWindow(It.IsAny<nint>()), Times.Never);
+        VerifyNoWalk();
     }
 
     [Fact]
@@ -500,9 +503,11 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_CallsScreenshotServiceWithElements()
+    public void CaptureWithElements_CallsScreenshotServiceWithElementsTitleAndDefaults()
     {
         // Arrange
+        var windowInfo = TestDataFactory.CreateWindowInfo(title: "My Test Window");
+        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(windowInfo);
         var sut = CreateSut();
 
         // Act
@@ -511,80 +516,65 @@ public class ScreenshotToolsTests
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             new nint(12345),
+            "My Test Window",
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<(int, int, int, int)>(),
             true, // default includeFrame
-            "png", // default format
-            85, // default quality
             true, // default highlightInteractable
-            false, // default saveToFile
-            null, // default outputPath
-            null // default maxWidth
-        ), Times.Once);
+            Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_ReturnsResultWithWindowTitle()
+    public void CaptureWithElements_WithFormatJpegAndHighlightOff_PassesThem()
     {
         // Arrange
-        var windowInfo = TestDataFactory.CreateWindowInfo(title: "My Test Window");
-        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(windowInfo);
+        var sut = CreateSut();
+
+        var expected = Defaults with { Format = "jpeg", Quality = 70 };
+
+        // Act
+        sut.CaptureWithElements(handle: 12345, format: "jpeg", quality: 70, highlightInteractable: false);
+
+        // Assert
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(),
+            It.IsAny<string?>(),
+            It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<bool>(),
+            false,
+            expected), Times.Once);
+    }
+
+    [Fact]
+    public void CaptureWithElements_MetadataListsTheElements()
+    {
+        // Arrange
         var sut = CreateSut();
 
         // Act
         var result = sut.CaptureWithElements(handle: 12345);
 
         // Assert
-        result.WindowTitle.Should().Be("My Test Window");
-    }
-
-    [Fact]
-    public void CaptureWithElements_WithFormatJpeg_PassesFormat()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.CaptureWithElements(handle: 12345, format: "jpeg", quality: 70);
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(),
-            It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<(int, int, int, int)>(),
-            It.IsAny<bool>(),
-            "jpeg",
-            70,
-            It.IsAny<bool>(),
-            It.IsAny<bool>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>()
-        ), Times.Once);
-    }
-
-    [Fact]
-    public void CaptureWithElements_WithHighlightInteractableFalse_PassesFlag()
-    {
-        // Arrange
-        var sut = CreateSut();
-
-        // Act
-        sut.CaptureWithElements(handle: 12345, highlightInteractable: false);
-
-        // Assert
-        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(),
-            It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<(int, int, int, int)>(),
-            It.IsAny<bool>(),
-            It.IsAny<string>(),
-            It.IsAny<int>(),
-            false,
-            It.IsAny<bool>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>()
-        ), Times.Once);
+        var elements = Metadata(result).GetProperty("elements");
+        elements.GetArrayLength().Should().Be(3);
+        elements[0].GetProperty("screenBounds").GetProperty("x").GetInt32().Should().Be(200);
     }
 
     #endregion
+
+    private void VerifyNoWalk()
+    {
+        _mockUIElementService.Verify(
+            u => u.GetUIElements(
+                It.IsAny<nint>(),
+                It.IsAny<int>(),
+                It.IsAny<UIElementFilter?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    private static JsonElement Metadata(CallToolResult result) =>
+        JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
 }

@@ -12,6 +12,7 @@ public class ProcessKillTests
 
     private readonly Mock<INativeProcessWrapper> _mockWrapper = new();
     private readonly Mock<IProcessHandle> _mockProcess = new();
+    private readonly Mock<IHostGuard> _hostGuard = new();
 
     public ProcessKillTests()
     {
@@ -19,14 +20,18 @@ public class ProcessKillTests
         _mockProcess.SetupGet(p => p.ProcessName).Returns("notepad");
         _mockWrapper.Setup(w => w.OpenProcess(Pid)).Returns(_mockProcess.Object);
         _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(It.IsAny<int>())).Returns(false);
+        _mockWrapper.Setup(w => w.GetDescendantsOf(It.IsAny<int>())).Returns([]);
+        _hostGuard.Setup(g => g.IsHostProcess(It.IsAny<int>())).Returns(false);
     }
 
-    private ProcessService CreateSut() => new(
+    private ProcessService CreateSut(bool withHostGuard = true) => new(
         TestDataFactory.CreateMockWindowService().Object,
         new Mock<IInputValidationService>().Object,
         TestDataFactory.CreateMockBrowserDetectionService().Object,
         new Mock<IExecutableResolver>().Object,
-        _mockWrapper.Object);
+        _mockWrapper.Object,
+        targetPolicy: null,
+        hostGuard: withHostGuard ? _hostGuard.Object : null);
 
     private void VerifyNeverForceKilled() =>
         _mockProcess.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
@@ -366,7 +371,8 @@ public class ProcessKillTests
     [InlineData(true)]
     public void KillProcess_HostAncestor_IsRefusedInBothModes(bool forceKill)
     {
-        // Arrange - e.g. the Windows Terminal or VS Code process that hosts the agent
+        // Arrange - e.g. the Windows Terminal or VS Code process that hosts the agent. The live ancestor
+        // walk still counts when the host guard has no record of it (its ancestor read failed at start).
         _mockProcess.SetupGet(p => p.ProcessName).Returns("WindowsTerminal");
         _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(Pid)).Returns(true);
 
@@ -378,6 +384,134 @@ public class ProcessKillTests
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
         _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
         VerifyNeverForceKilled();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void KillProcess_HostProcessThatIsNoAncestor_IsRefusedInBothModes(bool forceKill)
+    {
+        // Arrange - Windows Terminal as the default terminal: it shows the agent's console but is not an
+        // ancestor of the server. The host guard recorded it at start (console host or startup foreground).
+        _mockProcess.SetupGet(p => p.ProcessName).Returns("WindowsTerminal");
+        _hostGuard.Setup(g => g.IsHostProcess(Pid)).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: forceKill);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
+        result.ErrorMessage.Should().Contain("WindowsTerminal").And.Contain("agent's host");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_AHostProcessInTheTree_RefusesTheWholeTree()
+    {
+        // Arrange - a launcher that started the agent's terminal: forceKill would end the terminal too
+        const int terminalPid = 5004;
+        _mockProcess.SetupGet(p => p.ProcessName).Returns("launcher");
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "helper.exe"), (terminalPid, "WindowsTerminal.exe")]);
+        _hostGuard.Setup(g => g.IsHostProcess(terminalPid)).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
+        result.ErrorMessage.Should().Contain("WindowsTerminal.exe").And.Contain(terminalPid.ToString())
+            .And.Contain("child process").And.Contain("without forceKill");
+        result.ProcessName.Should().Be("launcher");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_TheServerInTheTree_IsRefusedEvenWithoutAHostGuard()
+    {
+        // Arrange - the runtime would also refuse, but only with an exception after other checks
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(Environment.ProcessId, "WindowsAppManagerMcp.exe")]);
+
+        // Act
+        var result = CreateSut(withHostGuard: false).KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_Graceful_AHostProcessInTheTree_DoesNotMatter()
+    {
+        // Arrange - a graceful close asks only the process's own main window to close; its children live on
+        _hostGuard.Setup(g => g.IsHostProcess(5004)).Returns(true);
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5004, "WindowsTerminal.exe")]);
+        _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _mockWrapper.Verify(w => w.GetDescendantsOf(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_WhenTheProcessTreeCannotBeRead_RefusesInsteadOfKillingAnUncheckedTree()
+    {
+        // Arrange - the process snapshot failed: the children are unknown, so neither the policy nor the
+        // host check could look at them, and Kill(entireProcessTree) would still end them all
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
+        result.ErrorMessage.Should().Contain("child processes").And.Contain("without forceKill")
+            .And.Contain("did not list the process", "the snapshot can also miss a process that was just found running");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_Graceful_WhenTheProcessTreeCannotBeRead_StillAsksTheWindowToClose()
+    {
+        // Arrange - a graceful close never ends the children, so it does not need the tree
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
+        _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_TreeWithoutHostProcesses_AsksTheHostGuardAboutEveryProcess()
+    {
+        // Arrange
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "conhost.exe"), (5002, "child.exe")]);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _hostGuard.Verify(g => g.IsHostProcess(Pid), Times.Once);
+        _hostGuard.Verify(g => g.IsHostProcess(5001), Times.Once);
+        _hostGuard.Verify(g => g.IsHostProcess(5002), Times.Once);
+        _mockProcess.Verify(p => p.Kill(true), Times.Once);
     }
 
     [Theory]

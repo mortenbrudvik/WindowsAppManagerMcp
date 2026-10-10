@@ -181,6 +181,20 @@ public class DependencyInjectionTests : IDisposable
         layoutService.GetAllPresets().Should().NotBeNull();
     }
 
+    [Fact]
+    public void UIElementService_ReceivesTheWindowWrapper_SoStuckReadsAreCountedPerApplication()
+    {
+        // Act - the window wrapper is an optional constructor parameter; without it every walk would
+        // share one stuck-read count, and one hung application would block all of them
+        var service = _serviceProvider.GetRequiredService<IUIElementService>();
+        var windows = typeof(UIElementService)
+            .GetField("_windows", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(service);
+
+        // Assert
+        windows.Should().BeSameAs(_serviceProvider.GetRequiredService<INativeWindowWrapper>());
+    }
+
     #endregion
 
     #region T7.3.8: Service Provider Build No Circular Dependencies
@@ -351,9 +365,21 @@ public class DependencyInjectionTests : IDisposable
         // Act
         var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-        // Assert
-        options.Filters.CallToolFilters.Should().ContainSingle()
-            .Which.Method.Should().BeSameAs(filter);
+        // Assert - added first: the SDK runs the first filter added as the outermost (ServerFilterPipelineTests), so it
+        // also logs the input gate filter's wait and the calls that filter refuses while input is paused
+        options.Filters.CallToolFilters.Should().HaveCount(2);
+        options.Filters.CallToolFilters[0].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheInputGateFilter()
+    {
+        // Window-changing tools must not run between an input call's guard check and its input
+        var filter = typeof(InputGateToolFilter).GetMethod(nameof(InputGateToolFilter.Filter))!;
+
+        var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+        options.Filters.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
     }
 
     [Fact]

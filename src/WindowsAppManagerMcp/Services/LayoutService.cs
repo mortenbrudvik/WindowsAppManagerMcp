@@ -42,6 +42,7 @@ public class LayoutService : ILayoutService
     private readonly IWindowService _windowService;
     private readonly IMonitorService _monitorService;
     private readonly IProcessService _processService;
+    private readonly IForegroundService _foregroundService;
     private readonly LayoutStorageOptions _options;
     private readonly ILayoutFolderAccess _folderAccess;
 
@@ -61,11 +62,13 @@ public class LayoutService : ILayoutService
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
+        IForegroundService foregroundService,
         string? layoutsPath = null)
         : this(
             windowService,
             monitorService,
             processService,
+            foregroundService,
             layoutsPath == null ? LayoutStorageOptions.FromEnvironment() : LayoutStorageOptions.ForPath(layoutsPath))
     {
     }
@@ -75,17 +78,20 @@ public class LayoutService : ILayoutService
     /// the folder is prepared on first use, so an unusable location is reported as
     /// <see cref="LayoutErrorCode.StorageUnavailable"/> instead of failing service construction.
     /// </summary>
+    /// <param name="foregroundService">Brings the windows of placements with focus set to the front, verified.</param>
     /// <param name="folderAccess">Checks that the folder can be listed and written; defaults to the real file system.</param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
+        IForegroundService foregroundService,
         LayoutStorageOptions options,
         ILayoutFolderAccess? folderAccess = null)
     {
         _windowService = windowService;
         _monitorService = monitorService;
         _processService = processService;
+        _foregroundService = foregroundService;
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _folderAccess = folderAccess ?? new LayoutFolderAccess();
     }
@@ -264,16 +270,16 @@ public class LayoutService : ILayoutService
 
         foreach (var window in windows)
         {
-            // Filter by process name
+            // Filter by process name, the app's or (for UWP windows) the frame host's, as find_windows does
             if (includeProcesses?.Length > 0)
             {
-                if (!includeProcesses.Any(p => window.ProcessName.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                if (!includeProcesses.Any(p => ProcessNameContains(window, p)))
                     continue;
             }
 
             if (excludeProcesses?.Length > 0)
             {
-                if (excludeProcesses.Any(p => window.ProcessName.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                if (excludeProcesses.Any(p => ProcessNameContains(window, p)))
                     continue;
             }
 
@@ -376,11 +382,14 @@ public class LayoutService : ILayoutService
         var arranged = 0;
         var notFound = 0;
         var launched = 0;
+        List<FocusResult>? focusResults = null;
 
-        void AddError(LayoutErrorCode code, string message)
+        void AddError(LayoutErrorCode code, string message) => AddErrorWithCode(code.ToString(), message);
+
+        void AddErrorWithCode(string code, string message)
         {
             errors.Add(message);
-            errorCode ??= code.ToString();
+            errorCode ??= code;
         }
 
         // Sort placements by order
@@ -432,6 +441,15 @@ public class LayoutService : ILayoutService
                 }
             }
 
+            // The user's policy: a denied window is neither placed nor focused (restoring or raising it would put it
+            // on screen, where a screenshot shows it)
+            if (_windowService.EvaluateTargetPolicy(window.Handle) is { Allowed: false } verdict)
+            {
+                AddErrorWithCode(nameof(WindowErrorCode.TargetDeniedByPolicy),
+                    $"Did not arrange window '{window.Title}' for {label}: {WindowService.WindowChangeRefusal(window.Handle, verdict)}");
+                continue;
+            }
+
             // Apply placement to the first matching window
             var targetMonitor = monitors.ElementAtOrDefault(placement.MonitorIndex) ?? monitors[0];
             var workArea = targetMonitor.WorkArea;
@@ -441,19 +459,39 @@ public class LayoutService : ILayoutService
             var w = (int)(placement.Position.Width * workArea.Width);
             var h = (int)(placement.Position.Height * workArea.Height);
 
-            if (_windowService.SetWindowBounds(window.Handle, x, y, w, h))
+            bool placed;
+            string? notResponding = null;
+            try
+            {
+                placed = _windowService.SetWindowBounds(window.Handle, x, y, w, h);
+            }
+            catch (WindowNotRespondingException ex)
+            {
+                // The application is hung or busy: this placement fails, and the others still run
+                placed = false;
+                notResponding = ex.Message;
+            }
+
+            if (placed)
             {
                 arranged++;
 
-                if (placement.Focus && !_windowService.FocusWindow(window.Handle))
+                if (placement.Focus)
                 {
-                    AddError(LayoutErrorCode.ArrangeFailed,
-                        $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground");
+                    var focus = _foregroundService.EnsureForeground(window.Handle);
+                    (focusResults ??= []).Add(FocusResult.From(focus));
+                    if (!focus.IsForeground)
+                    {
+                        AddError(LayoutErrorCode.ArrangeFailed,
+                            $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground " +
+                            $"({focus.ErrorCode}): {focus.Error}");
+                    }
                 }
             }
             else
             {
-                AddError(LayoutErrorCode.ArrangeFailed, $"Failed to arrange window '{window.Title}' for {label}");
+                AddError(LayoutErrorCode.ArrangeFailed,
+                    $"Failed to arrange window '{window.Title}' for {label}{(notResponding == null ? string.Empty : $": {notResponding}")}");
             }
 
             // Small delay between window operations
@@ -467,7 +505,8 @@ public class LayoutService : ILayoutService
             WindowsNotFound: notFound,
             WindowsLaunched: launched,
             Errors: errors.Count > 0 ? errors : null,
-            ErrorCode: errorCode
+            ErrorCode: errorCode,
+            Focus: focusResults
         );
     }
 
@@ -499,8 +538,17 @@ public class LayoutService : ILayoutService
         if (string.IsNullOrEmpty(matcher.ProcessName))
             return true;
 
-        return window.ProcessName.Contains(matcher.ProcessName, StringComparison.OrdinalIgnoreCase);
+        return ProcessNameContains(window, matcher.ProcessName);
     }
+
+    /// <summary>
+    /// True when <paramref name="name"/> is part of the window's process name or, for a UWP window, of
+    /// its frame host's (ApplicationFrameHost), the same rule as find_windows. Presets saved before
+    /// UWP windows were attributed to the app store ApplicationFrameHost as their process name.
+    /// </summary>
+    private static bool ProcessNameContains(WindowInfo window, string name) =>
+        window.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase) ||
+        window.HostProcessName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
 
     private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher)
     {

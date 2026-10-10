@@ -8,6 +8,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Infrastructure;
 public class ReadOnlyNativeWindowWrapperTests
 {
     private static readonly nint Handle = new(4242);
+    private static readonly nint ChildHandle = new(4343);
 
     public static TheoryData<string, Action<INativeWindowWrapper>> WindowChanges() => new()
     {
@@ -48,16 +49,37 @@ public class ReadOnlyNativeWindowWrapperTests
         inner.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(77u);
         inner.Setup(w => w.GetWindowRect(Handle)).Returns((1, 2, 3, 4));
         inner.Setup(w => w.GetForegroundWindow()).Returns(Handle);
+        inner.Setup(w => w.GetAncestor(Handle, WindowAncestor.RootOwner)).Returns(new nint(4343));
+        inner.Setup(w => w.GetShellWindow()).Returns(new nint(4444));
         inner.Setup(w => w.GetCurrentProcessId()).Returns(88u);
         inner.Setup(w => w.GetProcessName(77u)).Returns("app");
+        inner.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, cb) => cb(ChildHandle));
+        inner.Setup(w => w.GetClassName(Handle)).Returns("Notepad");
+        inner.Setup(w => w.GetWindowLongPtr(Handle, -20)).Returns(new nint(0x80));
+        inner.Setup(w => w.GetWindow(Handle, 4u)).Returns(ChildHandle);
+        inner.Setup(w => w.IsCloaked(Handle)).Returns(true);
+        inner.Setup(w => w.GetExtendedFrameBounds(Handle)).Returns((5, 6, 7, 8));
+        inner.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
+        inner.Setup(w => w.GetDpiForWindow(Handle)).Returns(144u);
         var sut = new ReadOnlyNativeWindowWrapper(inner.Object);
         var enumerated = new List<nint>();
+        var children = new List<nint>();
 
         // Act
         sut.EnumWindows(h => { enumerated.Add(h); return true; });
+        sut.EnumChildWindows(Handle, h => { children.Add(h); return true; });
 
         // Assert
         enumerated.Should().Equal(Handle);
+        children.Should().Equal(ChildHandle);
+        sut.GetClassName(Handle).Should().Be("Notepad");
+        sut.GetWindowLongPtr(Handle, -20).Should().Be(new nint(0x80));
+        sut.GetWindow(Handle, 4u).Should().Be(ChildHandle);
+        sut.IsCloaked(Handle).Should().BeTrue();
+        sut.GetExtendedFrameBounds(Handle).Should().Be((5, 6, 7, 8));
+        sut.IsHungAppWindow(Handle).Should().BeTrue();
+        sut.GetDpiForWindow(Handle).Should().Be(144u);
         sut.IsWindowVisible(Handle).Should().BeTrue();
         sut.IsWindow(Handle).Should().BeTrue();
         sut.IsIconic(Handle).Should().BeTrue();
@@ -66,6 +88,8 @@ public class ReadOnlyNativeWindowWrapperTests
         sut.GetWindowThreadProcessId(Handle).Should().Be(77u);
         sut.GetWindowRect(Handle).Should().Be((1, 2, 3, 4));
         sut.GetForegroundWindow().Should().Be(Handle);
+        sut.GetAncestor(Handle, WindowAncestor.RootOwner).Should().Be(new nint(4343));
+        sut.GetShellWindow().Should().Be(new nint(4444));
         sut.GetCurrentProcessId().Should().Be(88u);
         sut.GetProcessName(77u).Should().Be("app");
     }
@@ -82,8 +106,13 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.IsWindow), nameof(INativeWindowWrapper.IsIconic),
             nameof(INativeWindowWrapper.IsZoomed), nameof(INativeWindowWrapper.GetWindowText),
             nameof(INativeWindowWrapper.GetWindowThreadProcessId), nameof(INativeWindowWrapper.GetWindowRect),
-            nameof(INativeWindowWrapper.GetForegroundWindow), nameof(INativeWindowWrapper.GetCurrentProcessId),
+            nameof(INativeWindowWrapper.GetForegroundWindow), nameof(INativeWindowWrapper.GetAncestor),
+            nameof(INativeWindowWrapper.GetShellWindow), nameof(INativeWindowWrapper.GetCurrentProcessId),
             nameof(INativeWindowWrapper.GetProcessName),
+            nameof(INativeWindowWrapper.EnumChildWindows), nameof(INativeWindowWrapper.GetClassName),
+            nameof(INativeWindowWrapper.GetWindowLongPtr), nameof(INativeWindowWrapper.GetWindow),
+            nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetExtendedFrameBounds),
+            nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
         ];
         var changes = WindowChanges().Select(row => (string)row[0]);
 

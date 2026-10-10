@@ -23,4 +23,11 @@ public interface INativeInputWrapper
     /// Returns the number of events that were successfully inserted.
     /// </summary>
     uint SendInput(IReadOnlyList<InputEvent> events);
+
+    /// <summary>
+    /// True when the key or mouse button is down now (GetAsyncKeyState). Windows keeps one key state for the
+    /// session: a key the user holds, a key another program injected and a key this server injected all look
+    /// the same. False when the state cannot be read, for example while a UAC prompt has the input.
+    /// </summary>
+    bool IsKeyDown(ushort virtualKey);
 }

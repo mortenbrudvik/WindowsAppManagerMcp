@@ -8,6 +8,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// actual browsers running, which is better suited for manual testing.
 /// These tests verify basic behavior and error handling.
 /// </summary>
+[Collection(RealUiAutomationCollection.Name)]
 public class UIAutomationWrapperTests
 {
     private UIAutomationWrapper CreateSut() => new();

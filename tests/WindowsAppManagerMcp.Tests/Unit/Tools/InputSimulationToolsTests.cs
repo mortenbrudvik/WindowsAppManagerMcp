@@ -25,8 +25,8 @@ public class InputSimulationToolsTests
     {
         var mock = new Mock<IInputSimulationService>();
 
-        mock.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new ClickResult(
+        mock.Setup(s => s.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -34,8 +34,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new ClickResult(
+        mock.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -43,8 +43,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y, int delay) => new ClickResult(
+        mock.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, int delay, InputTarget _, bool _, CancellationToken _) => new ClickResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -52,8 +52,8 @@ public class InputSimulationToolsTests
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns((int x, int y) => new MouseMoveResult(
+        mock.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new MouseMoveResult(
                 Success: success,
                 X: x,
                 Y: y,
@@ -66,16 +66,16 @@ public class InputSimulationToolsTests
         mock.Setup(s => s.GetCursorPosition())
             .Returns((500, 500));
 
-        mock.Setup(s => s.TypeText(It.IsAny<string>(), It.IsAny<int>()))
-            .Returns((string text, int delay) => new TypeTextResult(
+        mock.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string text, int delay, InputTarget _, bool _, CancellationToken _) => new TypeTextResult(
                 Success: success,
                 Text: text,
                 CharactersTyped: text?.Length ?? 0,
                 Error: error,
                 ErrorCode: errorCode));
 
-        mock.Setup(s => s.SendKeys(It.IsAny<string>()))
-            .Returns((string keys) => new SendKeysResult(
+        mock.Setup(s => s.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(
                 Success: success,
                 Keys: keys,
                 Error: error,
@@ -96,7 +96,7 @@ public class InputSimulationToolsTests
         sut.Click(100, 200);
 
         // Assert
-        _mockInputService.Verify(s => s.Click(100, 200), Times.Once);
+        _mockInputService.Verify(s => s.Click(100, 200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 100, 200, "left");
-        _mockInputService.Setup(s => s.Click(100, 200)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.Click(100, 200, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -124,7 +124,7 @@ public class InputSimulationToolsTests
         sut.Click(-100, -200);
 
         // Assert
-        _mockInputService.Verify(s => s.Click(-100, -200), Times.Once);
+        _mockInputService.Verify(s => s.Click(-100, -200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public class InputSimulationToolsTests
             ClickType: "left",
             Error: "Coordinates are outside screen bounds",
             ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        _mockInputService.Setup(s => s.Click(5000, 5000)).Returns(errorResult);
+        _mockInputService.Setup(s => s.Click(5000, 5000, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -163,7 +163,7 @@ public class InputSimulationToolsTests
         sut.RightClick(300, 400);
 
         // Assert
-        _mockInputService.Verify(s => s.RightClick(300, 400), Times.Once);
+        _mockInputService.Verify(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 300, 400, "right");
-        _mockInputService.Setup(s => s.RightClick(300, 400)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -192,7 +192,7 @@ public class InputSimulationToolsTests
             ClickType: "right",
             Error: "SendInput failed",
             ErrorCode: InputErrorCode.SendInputFailed);
-        _mockInputService.Setup(s => s.RightClick(300, 400)).Returns(errorResult);
+        _mockInputService.Setup(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -217,7 +217,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 50), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 50, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 100);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 100), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 100, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -243,7 +243,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 1);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: 1000);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 500), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 500, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -269,7 +269,7 @@ public class InputSimulationToolsTests
         sut.DoubleClick(500, 600, delayMs: -50);
 
         // Assert
-        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -277,7 +277,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new ClickResult(true, 500, 600, "double");
-        _mockInputService.Setup(s => s.DoubleClick(500, 600, 50)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.DoubleClick(500, 600, 50, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -301,7 +301,7 @@ public class InputSimulationToolsTests
         sut.MouseMove(700, 800);
 
         // Assert
-        _mockInputService.Verify(s => s.MoveMouse(700, 800), Times.Once);
+        _mockInputService.Verify(s => s.MoveMouse(700, 800, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -309,7 +309,7 @@ public class InputSimulationToolsTests
     {
         // Arrange
         var expectedResult = new MouseMoveResult(true, 700, 800);
-        _mockInputService.Setup(s => s.MoveMouse(700, 800)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.MoveMouse(700, 800, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(expectedResult);
         var sut = CreateSut();
 
         // Act
@@ -329,7 +329,7 @@ public class InputSimulationToolsTests
             Y: 10000,
             Error: "Coordinates are outside screen bounds",
             ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        _mockInputService.Setup(s => s.MoveMouse(10000, 10000)).Returns(errorResult);
+        _mockInputService.Setup(s => s.MoveMouse(10000, 10000, InputTarget.None, false, It.IsAny<CancellationToken>())).Returns(errorResult);
         var sut = CreateSut();
 
         // Act
@@ -350,7 +350,7 @@ public class InputSimulationToolsTests
         sut.MouseMove(0, 0);
 
         // Assert
-        _mockInputService.Verify(s => s.MoveMouse(0, 0), Times.Once);
+        _mockInputService.Verify(s => s.MoveMouse(0, 0, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -397,74 +397,74 @@ public class InputSimulationToolsTests
     #region TypeText Tests
 
     [Fact]
-    public void TypeText_CallsServiceWithCorrectParameters()
+    public async Task TypeText_CallsServiceWithCorrectParameters()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.TypeText("Hello World");
+        await sut.TypeText("Hello World");
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello World", 0), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello World", 0, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void TypeText_WithCustomDelay_PassesClampedDelay()
+    public async Task TypeText_WithCustomDelay_PassesClampedDelay()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.TypeText("Hello", delayMs: 50);
+        await sut.TypeText("Hello", delayMs: 50);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 50), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 50, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void TypeText_WithDelayBelowMinimum_ClampsTo0()
+    public async Task TypeText_WithDelayBelowMinimum_ClampsTo0()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.TypeText("Hello", delayMs: -10);
+        await sut.TypeText("Hello", delayMs: -10);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 0), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void TypeText_WithDelayAboveMaximum_ClampsTo100()
+    public async Task TypeText_WithDelayAboveMaximum_ClampsTo100()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.TypeText("Hello", delayMs: 500);
+        await sut.TypeText("Hello", delayMs: 500);
 
         // Assert
-        _mockInputService.Verify(s => s.TypeText("Hello", 100), Times.Once);
+        _mockInputService.Verify(s => s.TypeTextAsync("Hello", 100, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void TypeText_ReturnsServiceResult()
+    public async Task TypeText_ReturnsServiceResult()
     {
         // Arrange
         var expectedResult = new TypeTextResult(true, "Hello", 5);
-        _mockInputService.Setup(s => s.TypeText("Hello", 0)).Returns(expectedResult);
+        _mockInputService.Setup(s => s.TypeTextAsync("Hello", 0, InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText("Hello");
+        var result = await sut.TypeText("Hello");
 
         // Assert
         result.Should().Be(expectedResult);
     }
 
     [Fact]
-    public void TypeText_WhenServiceReturnsError_ReturnsError()
+    public async Task TypeText_WhenServiceReturnsError_ReturnsError()
     {
         // Arrange
         var errorResult = new TypeTextResult(
@@ -473,11 +473,11 @@ public class InputSimulationToolsTests
             CharactersTyped: 0,
             Error: "Text cannot be empty",
             ErrorCode: InputErrorCode.EmptyText);
-        _mockInputService.Setup(s => s.TypeText("", 0)).Returns(errorResult);
+        _mockInputService.Setup(s => s.TypeTextAsync("", 0, InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
         var sut = CreateSut();
 
         // Act
-        var result = sut.TypeText("");
+        var result = await sut.TypeText("");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -489,48 +489,48 @@ public class InputSimulationToolsTests
     #region SendKeys Tests
 
     [Fact]
-    public void SendKeys_CallsServiceWithCorrectKeys()
+    public async Task SendKeys_CallsServiceWithCorrectKeys()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.SendKeys("{ENTER}");
+        await sut.SendKeys("{ENTER}");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys("{ENTER}"), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void SendKeys_WithModifierKeys_PassesToService()
+    public async Task SendKeys_WithModifierKeys_PassesToService()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.SendKeys("^c");
+        await sut.SendKeys("^c");
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys("^c"), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("^c", InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void SendKeys_ReturnsServiceResult()
+    public async Task SendKeys_ReturnsServiceResult()
     {
         // Arrange
         var expectedResult = new SendKeysResult(true, "{ENTER}");
-        _mockInputService.Setup(s => s.SendKeys("{ENTER}")).Returns(expectedResult);
+        _mockInputService.Setup(s => s.SendKeysAsync("{ENTER}", InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(expectedResult);
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{ENTER}");
+        var result = await sut.SendKeys("{ENTER}");
 
         // Assert
         result.Should().Be(expectedResult);
     }
 
     [Fact]
-    public void SendKeys_WhenServiceReturnsError_ReturnsError()
+    public async Task SendKeys_WhenServiceReturnsError_ReturnsError()
     {
         // Arrange
         var errorResult = new SendKeysResult(
@@ -538,11 +538,11 @@ public class InputSimulationToolsTests
             Keys: "{UNKNOWNKEY}",
             Error: "Unknown key: UNKNOWNKEY",
             ErrorCode: InputErrorCode.UnknownKey);
-        _mockInputService.Setup(s => s.SendKeys("{UNKNOWNKEY}")).Returns(errorResult);
+        _mockInputService.Setup(s => s.SendKeysAsync("{UNKNOWNKEY}", InputTarget.None, false, It.IsAny<CancellationToken>())).ReturnsAsync(errorResult);
         var sut = CreateSut();
 
         // Act
-        var result = sut.SendKeys("{UNKNOWNKEY}");
+        var result = await sut.SendKeys("{UNKNOWNKEY}");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -555,16 +555,56 @@ public class InputSimulationToolsTests
     [InlineData("+{HOME}")]
     [InlineData("{TAB}")]
     [InlineData("{F1}")]
-    public void SendKeys_WithVariousKeyFormats_PassesToService(string keys)
+    public async Task SendKeys_WithVariousKeyFormats_PassesToService(string keys)
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.SendKeys(keys);
+        await sut.SendKeys(keys);
 
         // Assert
-        _mockInputService.Verify(s => s.SendKeys(keys), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync(keys, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region Session safety parameters (roadmap M1.10)
+
+    [Fact]
+    public void MouseTools_PassReleaseHeldModifiersAndTheRequestToken()
+    {
+        // Arrange
+        using var request = new CancellationTokenSource();
+        var sut = CreateSut();
+
+        // Act
+        sut.Click(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        sut.RightClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        sut.DoubleClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        sut.MouseMove(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+
+        // Assert
+        _mockInputService.Verify(s => s.Click(1, 2, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.RightClick(1, 2, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.DoubleClick(1, 2, 50, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.MoveMouse(1, 2, InputTarget.None, true, request.Token), Times.Once);
+    }
+
+    [Fact]
+    public async Task KeyboardTools_PassReleaseHeldModifiersAndTheRequestToken()
+    {
+        // Arrange - cancelling the MCP request must reach the typing loop
+        using var request = new CancellationTokenSource();
+        var sut = CreateSut();
+
+        // Act
+        await sut.TypeText("x", releaseHeldModifiers: true, cancellationToken: request.Token);
+        await sut.SendKeys("{ENTER}", releaseHeldModifiers: true, cancellationToken: request.Token);
+
+        // Assert
+        _mockInputService.Verify(s => s.TypeTextAsync("x", 0, InputTarget.None, true, request.Token), Times.Once);
+        _mockInputService.Verify(s => s.SendKeysAsync("{ENTER}", InputTarget.None, true, request.Token), Times.Once);
     }
 
     #endregion

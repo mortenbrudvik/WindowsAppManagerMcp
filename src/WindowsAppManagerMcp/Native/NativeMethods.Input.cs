@@ -16,5 +16,13 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool GetCursorPos(out POINT lpPoint);
+
+        /// <summary>
+        /// The asynchronous state of a key or mouse button: the high bit is set while it is down. Windows
+        /// keeps one state for the session, so a key the user holds and a key injected down look the same.
+        /// Returns 0 when another desktop (a UAC prompt) receives the input.
+        /// </summary>
+        [LibraryImport("user32.dll")]
+        public static partial short GetAsyncKeyState(int vKey);
     }
 }

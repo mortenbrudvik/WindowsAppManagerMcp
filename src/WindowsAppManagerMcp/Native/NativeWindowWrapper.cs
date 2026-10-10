@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -84,9 +85,22 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return NativeMethods.User32.GetForegroundWindow();
     }
 
-    public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam)
+    public nint GetAncestor(nint hWnd, WindowAncestor ancestor)
     {
-        return NativeMethods.User32.PostMessageW(hWnd, msg, wParam, lParam);
+        return NativeMethods.User32.GetAncestor(hWnd, (uint)ancestor);
+    }
+
+    public nint GetShellWindow()
+    {
+        return NativeMethods.User32.GetShellWindow();
+    }
+
+    public Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam)
+    {
+        // The error must be read here, right after the call: nothing else may run in between
+        return NativeMethods.User32.PostMessageW(hWnd, msg, wParam, lParam)
+            ? Win32CallResult.Ok
+            : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
     }
 
     public uint GetCurrentProcessId()
@@ -107,5 +121,58 @@ public class NativeWindowWrapper : INativeWindowWrapper
             // queried (Win32Exception); callers report it as "Unknown".
             return null;
         }
+    }
+
+    public void EnumChildWindows(nint hWndParent, Func<nint, bool> callback)
+    {
+        // EnumChildWindows(NULL) would list every top-level window instead, like EnumWindows.
+        if (hWndParent == nint.Zero)
+            return;
+
+        NativeMethods.User32.EnumWindowsProc nativeCallback = (hWnd, lParam) => callback(hWnd);
+        NativeMethods.User32.EnumChildWindows(hWndParent, nativeCallback, nint.Zero);
+    }
+
+    public string GetClassName(nint hWnd)
+    {
+        // Window class names are at most 256 characters.
+        var buffer = new char[257];
+        var length = NativeMethods.User32.GetClassNameW(hWnd, buffer, buffer.Length);
+        return length > 0 ? new string(buffer, 0, length) : string.Empty;
+    }
+
+    public nint GetWindowLongPtr(nint hWnd, int index)
+    {
+        return nint.Size == 8
+            ? NativeMethods.User32.GetWindowLongPtrW(hWnd, index)
+            : NativeMethods.User32.GetWindowLongW(hWnd, index);
+    }
+
+    public nint GetWindow(nint hWnd, uint command)
+    {
+        return NativeMethods.User32.GetWindow(hWnd, command);
+    }
+
+    public bool IsCloaked(nint hWnd)
+    {
+        var hr = NativeMethods.Dwmapi.DwmGetWindowAttribute(hWnd, NativeEnums.DWMWA_CLOAKED, out int cloaked, sizeof(int));
+        return hr == 0 && cloaked != 0;
+    }
+
+    public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd)
+    {
+        var hr = NativeMethods.Dwmapi.DwmGetWindowAttribute(
+            hWnd, NativeEnums.DWMWA_EXTENDED_FRAME_BOUNDS, out RECT rect, Marshal.SizeOf<RECT>());
+        return hr == 0 ? (rect.Left, rect.Top, rect.Right, rect.Bottom) : null;
+    }
+
+    public bool IsHungAppWindow(nint hWnd)
+    {
+        return NativeMethods.User32.IsHungAppWindow(hWnd);
+    }
+
+    public uint GetDpiForWindow(nint hWnd)
+    {
+        return NativeMethods.User32.GetDpiForWindow(hWnd);
     }
 }

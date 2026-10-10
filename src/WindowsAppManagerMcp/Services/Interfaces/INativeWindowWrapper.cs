@@ -48,7 +48,8 @@ public interface INativeWindowWrapper
     (int Left, int Top, int Right, int Bottom)? GetWindowRect(nint hWnd);
 
     /// <summary>
-    /// Sets the window position and size.
+    /// Sets the window position and size. The window also goes to the top of the Z order (HWND_TOP)
+    /// unless <paramref name="flags"/> has SWP_NOZORDER, and it is activated unless they have SWP_NOACTIVATE.
     /// </summary>
     bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
 
@@ -63,7 +64,9 @@ public interface INativeWindowWrapper
     bool SetForegroundWindow(nint hWnd);
 
     /// <summary>
-    /// Brings the window to the top of the Z order.
+    /// Brings the window to the top of the Z order and activates it (it is SetWindowPos without
+    /// SWP_NOACTIVATE). To raise a window without activating it, use <see cref="SetWindowPos"/> without
+    /// SWP_NOZORDER and with SWP_NOACTIVATE.
     /// </summary>
     bool BringWindowToTop(nint hWnd);
 
@@ -73,9 +76,24 @@ public interface INativeWindowWrapper
     nint GetForegroundWindow();
 
     /// <summary>
-    /// Posts a message to the message queue of the specified window.
+    /// Gets an ancestor of the window: its parent, its top-level root, or its root owner.
+    /// Returns zero when the handle is not a window.
     /// </summary>
-    bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
+    nint GetAncestor(nint hWnd, WindowAncestor ancestor);
+
+    /// <summary>
+    /// Gets the desktop shell's window (Progman for explorer.exe), or zero when no shell is running.
+    /// </summary>
+    nint GetShellWindow();
+
+    /// <summary>
+    /// Posts a message to the message queue of the specified window. When Windows refuses it, the
+    /// result carries the Win32 error read right after the call: ERROR_ACCESS_DENIED (5) when User
+    /// Interface Privilege Isolation blocks the message because the window belongs to a more privileged
+    /// process, ERROR_INVALID_WINDOW_HANDLE (1400) when the window is gone, ERROR_NOT_ENOUGH_QUOTA
+    /// (1816) when its message queue is full.
+    /// </summary>
+    Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
     /// <summary>
     /// Gets the process ID of the current process.
@@ -87,4 +105,59 @@ public interface INativeWindowWrapper
     /// "msedge"). Returns null when the process has exited or its name cannot be read.
     /// </summary>
     string? GetProcessName(uint processId);
+
+    // Window identity and state reads (M1.6). All of them only read; none can change a window.
+
+    /// <summary>
+    /// Enumerates the child windows of <paramref name="hWndParent"/>, including their descendants,
+    /// by calling the callback for each one until it returns false. A zero handle has no children
+    /// (unlike the Win32 call, it does not list the top-level windows).
+    /// </summary>
+    void EnumChildWindows(nint hWndParent, Func<nint, bool> callback);
+
+    /// <summary>
+    /// Gets the window class name (for example "Notepad", "#32770" for a dialog or "Shell_TrayWnd" for
+    /// the taskbar). Returns an empty string when the handle is not a window.
+    /// </summary>
+    string GetClassName(nint hWnd);
+
+    /// <summary>
+    /// Reads a window value with GetWindowLongPtr, for example GWL_EXSTYLE (-20) or GWL_STYLE (-16).
+    /// Returns 0 when the handle is not a window.
+    /// </summary>
+    nint GetWindowLongPtr(nint hWnd, int index);
+
+    /// <summary>
+    /// Gets a related window with GetWindow, for example GW_OWNER (4) or GW_ENABLEDPOPUP (6).
+    /// Returns 0 when there is none.
+    /// </summary>
+    nint GetWindow(nint hWnd, uint command);
+
+    /// <summary>
+    /// Whether DWM cloaks the window (DWMWA_CLOAKED): it is on another virtual desktop, is a suspended
+    /// UWP frame, or its app hid it this way. IsWindowVisible is still true for a cloaked window, but
+    /// nothing of it is on screen. Returns false when the attribute cannot be read.
+    /// </summary>
+    bool IsCloaked(nint hWnd);
+
+    /// <summary>
+    /// Gets the visible frame of the window (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible
+    /// resize borders that GetWindowRect includes, in physical screen pixels. Returns null when the
+    /// attribute cannot be read.
+    /// </summary>
+    (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd);
+
+    /// <summary>
+    /// Whether Windows considers the window's thread hung (IsHungAppWindow: it has not processed
+    /// messages for several seconds).
+    /// </summary>
+    bool IsHungAppWindow(nint hWnd);
+
+    /// <summary>
+    /// Gets the DPI of the window (GetDpiForWindow). The value depends on the window's DPI awareness:
+    /// 96 for a DPI-unaware window on any monitor, the system DPI for a system-aware window, and the
+    /// DPI of its monitor only for a per-monitor-aware window. Read a monitor's DPI with
+    /// GetDpiForMonitor (INativeMonitorWrapper) instead. Returns 0 when the handle is not a window.
+    /// </summary>
+    uint GetDpiForWindow(nint hWnd);
 }

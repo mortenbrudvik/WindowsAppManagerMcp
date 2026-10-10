@@ -26,5 +26,19 @@ internal static partial class NativeMethods
 
         [LibraryImport("kernel32.dll")]
         public static partial uint GetCurrentThreadId();
+
+        /// <summary>The FILETIME values are passed as 64-bit integers (100 ns ticks since 1601, UTC).</summary>
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool GetProcessTimes(
+            nint hProcess,
+            out long lpCreationTime,
+            out long lpExitTime,
+            out long lpKernelTime,
+            out long lpUserTime);
+
+        /// <summary>The window of the console the calling process is attached to, or zero when it has none.</summary>
+        [LibraryImport("kernel32.dll")]
+        public static partial nint GetConsoleWindow();
     }
 }

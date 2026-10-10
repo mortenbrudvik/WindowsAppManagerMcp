@@ -1,5 +1,10 @@
 namespace WindowsAppManagerMcp.Models;
 
+/// <summary>
+/// A window as IWindowService reads it. For a UWP app, ProcessName and ProcessId name the app's own
+/// process (the process of its CoreWindow), and HostProcessName/HostProcessId the
+/// ApplicationFrameHost process that owns the frame window.
+/// </summary>
 public record WindowInfo(
     nint Handle,
     string Title,
@@ -9,4 +14,30 @@ public record WindowInfo(
     WindowState State,
     bool IsVisible,
     int MonitorIndex
-);
+)
+{
+    /// <summary>The window class name, for example "Notepad", "#32770" (dialog) or "Shell_TrayWnd" (taskbar).</summary>
+    public string ClassName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Whether DWM cloaks the window: it is on another virtual desktop, is a suspended UWP frame, or
+    /// its app hid it. A cloaked window is not on screen even though IsVisible is true.
+    /// </summary>
+    public bool IsCloaked { get; init; }
+
+    /// <summary>The owner window (GW_OWNER), for example the main window of a dialog; null when unowned.</summary>
+    public nint? OwnerHandle { get; init; }
+
+    /// <summary>For a UWP frame window: the frame host process (ApplicationFrameHost); otherwise null.</summary>
+    public string? HostProcessName { get; init; }
+
+    /// <summary>For a UWP frame window: the ID of the frame host process; otherwise null.</summary>
+    public int? HostProcessId { get; init; }
+
+    /// <summary>
+    /// Whether the window belongs to the agent's own host (IHostGuard.IsHostWindow): the terminal, editor
+    /// or chat app the server was started from, or a window it owns. Input tools refuse such a window
+    /// unless it is named explicitly with allowHostTarget, and close_window refuses it without force.
+    /// </summary>
+    public bool IsAgentHost { get; init; }
+}

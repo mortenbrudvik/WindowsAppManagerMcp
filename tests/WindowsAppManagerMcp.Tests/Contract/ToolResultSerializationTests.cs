@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Contract;
@@ -14,7 +15,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// for tool results (<see cref="McpJsonUtilities.DefaultOptions"/>, the default of
 /// McpServerToolCreateOptions.SerializerOptions). A result that cannot be serialized fails
 /// after the tool's side effects already happened (window moved, browser launched), and the
-/// agent loses the whole result.
+/// agent loses the whole result. A tool that builds its own <see cref="CallToolResult"/> (the
+/// capture tools, which return image content) names the DTO of its text block with
+/// <see cref="ToolResultPayloadAttribute"/>, and that DTO is checked instead.
 /// </summary>
 public class ToolResultSerializationTests
 {
@@ -39,6 +42,21 @@ public class ToolResultSerializationTests
         ServerToolCatalog.ServedToolNames.Should().Contain("launch_browser_with_debug").And.Contain("move_window");
         ToolMethods.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
             "every tool the server serves must have its result type checked");
+    }
+
+    [Fact]
+    public void ToolsReturningCallToolResult_NameTheirTextBlockPayload()
+    {
+        // Without the attribute, the theories below would have nothing to check for these tools.
+        var undeclared = ToolMethods
+            .Where(t => UnwrapTask(t.Value.ReturnType) == typeof(CallToolResult))
+            .Where(t => t.Value.GetCustomAttribute<ToolResultPayloadAttribute>() == null)
+            .Select(t => t.Key);
+
+        undeclared.Should().BeEmpty(
+            "a tool that returns CallToolResult must name the DTO it serializes into its text block with [ToolResultPayload]");
+        ToolMethods.Keys.Where(name => GetResultType(ToolMethods[name]) == typeof(ScreenshotResult))
+            .Should().Contain("take_screenshot", "the capture tools are checked through their payload type");
     }
 
     [Theory]
@@ -119,9 +137,60 @@ public class ToolResultSerializationTests
         json.GetProperty("userDataDir").GetString().Should().Be(userDataDir);
     }
 
+    [Fact]
+    public async Task ApplyLayout_ThroughMcpServer_ReturnsTheFocusOutcomeOfEachFocusedPlacement()
+    {
+        // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
+        var layoutService = new Mock<ILayoutService>();
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsArranged: 1,
+                Errors: ["Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): ..."],
+                ErrorCode: nameof(LayoutErrorCode.ArrangeFailed),
+                Focus:
+                [
+                    new FocusResult(false, 2884384, false, ForegroundHandle: 1312934, ForegroundTitle: "pwsh",
+                        ForegroundProcess: "WindowsTerminal", Error: "SetForegroundWindow was refused (foreground lock)",
+                        ErrorCode: nameof(WindowErrorCode.FocusFailed))
+                ]));
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.WithTools(new LayoutPresetTools(layoutService.Object)));
+
+        // Act - goes through the SDK's own argument binding and result serialization
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });
+
+        // Assert
+        var text = result.Content.OfType<TextContentBlock>().Single().Text;
+        var json = JsonDocument.Parse(text).RootElement;
+        json.GetProperty("errorCode").GetString().Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        var focus = json.GetProperty("focus").EnumerateArray().Should().ContainSingle().Subject;
+        focus.GetProperty("handle").GetInt64().Should().Be(2884384);
+        focus.GetProperty("isForeground").GetBoolean().Should().BeFalse();
+        focus.GetProperty("foregroundProcess").GetString().Should().Be("WindowsTerminal");
+        focus.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.FocusFailed));
+        focus.GetProperty("error").GetString().Should().Contain("foreground lock");
+    }
+
+    /// <summary>
+    /// The type the SDK serializes for the tool: its return type, unwrapped from Task, or for a tool
+    /// that returns <see cref="CallToolResult"/> the payload type of its text block. Null when there
+    /// is nothing to serialize.
+    /// </summary>
     private static Type? GetResultType(MethodInfo method)
     {
-        var type = method.ReturnType;
+        var type = UnwrapTask(method.ReturnType);
+        if (type == typeof(CallToolResult))
+        {
+            return method.GetCustomAttribute<ToolResultPayloadAttribute>()?.PayloadType;
+        }
+
+        return type;
+    }
+
+    private static Type? UnwrapTask(Type type)
+    {
         if (type == typeof(void) || type == typeof(Task) || type == typeof(ValueTask))
         {
             return null;

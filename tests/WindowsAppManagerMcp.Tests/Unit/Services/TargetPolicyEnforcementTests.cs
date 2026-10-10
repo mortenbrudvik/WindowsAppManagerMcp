@@ -1,0 +1,408 @@
+using ModelContextProtocol.Protocol;
+using System.Text.Json;
+using WindowsAppManagerMcp.Tools;
+
+namespace WindowsAppManagerMcp.Tests.Unit.Services;
+
+/// <summary>
+/// The target policy (roadmap M1.12) outside the input path: close_window and close_windows_batch,
+/// kill_process, capture_window and capture_with_elements refuse a denied process with
+/// TargetDeniedByPolicy, and no tool argument (force, forceKill) overrides it. Windows, processes and
+/// captures are mocks; nothing is closed, killed or captured.
+/// </summary>
+public class TargetPolicyEnforcementTests
+{
+    private const uint WmClose = 0x0010;
+
+    private static TargetPolicy Policy(string? deny = null, string? allow = null) =>
+        new(TargetPolicySettings.FromEnvironment(name => name switch
+        {
+            TargetPolicySettings.DenyVariable => deny,
+            TargetPolicySettings.AllowVariable => allow,
+            _ => null
+        }));
+
+    #region close_window, close_windows_batch
+
+    private readonly Mock<INativeWindowWrapper> _native = new();
+
+    private nint AddWindow(nint handle, string className, uint processId, string processName)
+    {
+        _native.Setup(n => n.IsWindow(handle)).Returns(true);
+        _native.Setup(n => n.GetClassName(handle)).Returns(className);
+        _native.Setup(n => n.GetWindowText(handle)).Returns(processName + " window");
+        _native.Setup(n => n.GetAncestor(handle, It.IsAny<WindowAncestor>())).Returns(handle);
+        _native.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(processId);
+        _native.Setup(n => n.GetProcessName(processId)).Returns(processName);
+        _native.Setup(n => n.PostMessage(handle, WmClose, nint.Zero, nint.Zero)).Returns(Win32CallResult.Ok);
+        return handle;
+    }
+
+    private WindowService CreateWindowService(ITargetPolicy? policy)
+    {
+        var monitors = TestDataFactory.CreateMockMonitorService();
+        monitors.Setup(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>())).Returns(new MonitorRect(0, 0, 960, 1040));
+        return new(monitors.Object, _native.Object, Mock.Of<IHostGuard>(), policy);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CloseWindow_DeniedProcess_IsRefused_EvenWithForce(bool force)
+    {
+        // Arrange
+        var keePass = AddWindow(0x300, "WindowsForms10.Window.8.app.0.1", 3001, "KeePass");
+
+        // Act
+        var result = CreateWindowService(Policy()).CloseWindow(keePass, force);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass").And.Contain("force does not override it");
+        _native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public void CloseWindowsBatch_RefusesTheDeniedWindow_AndClosesTheOthers()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+
+        // Act
+        var results = CreateWindowService(Policy()).CloseWindowsBatch([notepad, keePass], force: false, delayBetweenMs: 0);
+
+        // Assert
+        results[0].Success.Should().BeTrue();
+        results[1].ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        _native.Verify(n => n.PostMessage(notepad, WmClose, nint.Zero, nint.Zero), Times.Once);
+        _native.Verify(n => n.PostMessage(keePass, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public void CloseWindow_UwpFrameOfADeniedApp_IsRefused()
+    {
+        // Arrange - the frame belongs to ApplicationFrameHost; the hosted CoreWindow to the denied app
+        var frame = AddWindow(0x400, "ApplicationFrameWindow", 500, "ApplicationFrameHost");
+        var coreWindow = new nint(0x401);
+        _native.Setup(n => n.EnumChildWindows(frame, It.IsAny<Func<nint, bool>>()))
+            .Callback((nint _, Func<nint, bool> callback) => callback(coreWindow));
+        _native.Setup(n => n.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        _native.Setup(n => n.GetWindowThreadProcessId(coreWindow)).Returns(600u);
+        _native.Setup(n => n.GetProcessName(600u)).Returns("LastPass");
+
+        // Act & Assert
+        CreateWindowService(Policy()).CloseWindow(frame, force: true).ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+    }
+
+    [Fact]
+    public void CloseWindow_AllowList_RefusesUnlistedWindows()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var paint = AddWindow(0x210, "MSPaintApp", 2101, "mspaint");
+        var sut = CreateWindowService(Policy(allow: "notepad"));
+
+        // Act & Assert
+        sut.CloseWindow(notepad, force: false).Success.Should().BeTrue();
+        var refused = sut.CloseWindow(paint, force: false);
+        refused.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        refused.Error.Should().Contain(TargetPolicySettings.AllowVariable);
+    }
+
+    [Fact]
+    public void CloseWindow_WithoutAPolicy_RefusesNothingByPolicy()
+    {
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+
+        CreateWindowService(policy: null).CloseWindow(keePass, force: false).Success.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Window changes: move, resize, bounds, state, snap, monitor and their batches
+
+    /// <summary>Every window change of WindowService that can restore, raise or move a window.</summary>
+    public static TheoryData<string> WindowChanges() =>
+        new() { "move", "resize", "bounds", "minimize", "restore", "maximize", "snap", "monitor" };
+
+    private static bool Change(WindowService sut, nint handle, string change) => change switch
+    {
+        "move" => sut.MoveWindow(handle, 10, 10),
+        "resize" => sut.ResizeWindow(handle, 400, 300),
+        "bounds" => sut.SetWindowBounds(handle, 10, 10, 400, 300),
+        "minimize" => sut.SetWindowState(handle, WindowState.Minimized),
+        "restore" => sut.SetWindowState(handle, WindowState.Normal),
+        "maximize" => sut.SetWindowState(handle, WindowState.Maximized),
+        "snap" => sut.SnapWindow(handle, SnapPosition.LeftHalf, monitorIndex: 0),
+        _ => sut.MoveWindowToMonitor(handle, 0, "restore")
+    };
+
+    private void VerifyWindowUntouched()
+    {
+        _native.Verify(n => n.SetWindowPos(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        _native.Verify(n => n.ShowWindow(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_DeniedProcess_IsRefused_AndTheWindowIsNotTouched(string change)
+    {
+        // Arrange - a minimized password manager: restoring or raising it would put it in a screenshot
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.IsIconic(keePass)).Returns(true);
+        _native.Setup(n => n.GetWindowRect(keePass)).Returns((0, 0, 800, 600));
+
+        // Act
+        var changed = Change(CreateWindowService(Policy()), keePass, change);
+
+        // Assert
+        changed.Should().BeFalse();
+        VerifyWindowUntouched();
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_AllowedProcess_IsDone(string change)
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        _native.Setup(n => n.GetWindowRect(notepad)).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
+        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+
+        // Act & Assert
+        Change(CreateWindowService(Policy()), notepad, change).Should().BeTrue();
+    }
+
+    [Fact]
+    public void WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
+    {
+        // Arrange
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.GetWindowRect(keePass)).Returns((0, 0, 800, 600));
+        var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
+
+        // Act
+        var results = new[]
+        {
+            tools.MoveWindow(keePass, 10, 10),
+            tools.ResizeWindow(keePass, 400, 300),
+            tools.SetWindowBounds(keePass, 10, 10, 400, 300),
+            tools.SetWindowState(keePass, "restore"),
+            tools.SnapWindow(keePass, "left_half"),
+            tools.MoveWindowToMonitor(keePass, 0)
+        };
+
+        // Assert
+        results.Should().OnlyContain(r => !r.Success && r.ErrorCode == nameof(WindowErrorCode.TargetDeniedByPolicy) &&
+                                          r.Error!.Contains("KeePass"));
+        VerifyWindowUntouched();
+    }
+
+    [Fact]
+    public void WindowBatchTools_RefuseTheDeniedWindow_AndChangeTheOthers()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
+        _native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
+        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
+
+        // Act
+        var bounds = tools.SetWindowsBoundsBatch(
+            [new WindowBoundsPlacement(notepad, 0, 0, 400, 300), new WindowBoundsPlacement(keePass, 0, 0, 400, 300)], delayBetweenMs: 0);
+        var snaps = tools.SnapWindowsBatch(
+            [new WindowSnapPlacement(keePass, "left_half", 0), new WindowSnapPlacement(notepad, "right_half", 0)], delayBetweenMs: 0);
+        var states = tools.SetWindowsStateBatch(
+            [new WindowStateChange(notepad, "maximize"), new WindowStateChange(keePass, "restore")], delayBetweenMs: 0);
+
+        // Assert
+        foreach (var batch in new[] { bounds, snaps, states })
+        {
+            batch.Succeeded.Should().Be(1);
+            var refused = batch.Results.Single(r => r.Handle == keePass);
+            refused.Success.Should().BeFalse();
+            refused.ErrorCode.Should().Be(nameof(WindowErrorCode.TargetDeniedByPolicy));
+            refused.Error.Should().Contain("KeePass");
+            batch.Results.Single(r => r.Handle == notepad).Success.Should().BeTrue();
+        }
+
+        _native.Verify(n => n.SetWindowPos(keePass, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        _native.Verify(n => n.ShowWindow(keePass, It.IsAny<int>()), Times.Never);
+    }
+
+    #endregion
+
+    #region kill_process
+
+    private const int KeePassPid = 3001;
+
+    private readonly Mock<INativeProcessWrapper> _processWrapper = new();
+
+    private (ProcessService Service, Mock<IProcessHandle> Process) CreateProcessService(string processName, ITargetPolicy policy)
+    {
+        var wrapper = _processWrapper;
+        var process = new Mock<IProcessHandle>();
+        process.SetupGet(p => p.Id).Returns(KeePassPid);
+        process.SetupGet(p => p.ProcessName).Returns(processName);
+        wrapper.Setup(w => w.OpenProcess(KeePassPid)).Returns(process.Object);
+        var service = new ProcessService(
+            TestDataFactory.CreateMockWindowService().Object,
+            new Mock<IInputValidationService>().Object,
+            TestDataFactory.CreateMockBrowserDetectionService().Object,
+            new Mock<IExecutableResolver>().Object,
+            wrapper.Object,
+            policy);
+        return (service, process);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void KillProcess_DeniedProcess_IsRefused_EvenWithForceKill(bool forceKill)
+    {
+        // Arrange
+        var (sut, process) = CreateProcessService("KeePass", Policy());
+
+        // Act
+        var result = sut.KillProcess(KeePassPid, confirm: true, forceKill: forceKill);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        result.ProcessName.Should().Be("KeePass");
+        result.ErrorMessage.Should().Contain(TargetPolicySettings.DenyVariable);
+        process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+        process.Verify(p => p.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_AllowList_RefusesUnlistedProcesses()
+    {
+        var (sut, process) = CreateProcessService("notepad", Policy(allow: "mspaint"));
+
+        sut.KillProcess(KeePassPid, confirm: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        process.Verify(p => p.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_ADeniedChildProcess_RefusesTheWholeTree()
+    {
+        // Arrange - KeePass was started from a terminal; forceKill ends the terminal's whole tree
+        var (sut, process) = CreateProcessService("cmd", Policy());
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe"), (5002, "KeePass.exe")]);
+
+        // Act
+        var result = sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        result.ErrorMessage.Should().Contain("KeePass").And.Contain("5002").And.Contain("child process");
+        process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_AllowList_EveryProcessOfTheTreeMustBeAllowed()
+    {
+        var (sut, process) = CreateProcessService("notepad", Policy(allow: "notepad"));
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5003, "mspaint.exe")]);
+
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void KillProcess_ForceKill_AllowedTree_IsKilled()
+    {
+        // Arrange
+        var (sut, process) = CreateProcessService("cmd", Policy());
+        _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe")]);
+        process.SetupGet(p => p.HasExited).Returns(true);
+        process.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+
+        // Assert
+        process.Verify(p => p.Kill(true), Times.Once);
+    }
+
+    [Fact]
+    public void KillProcess_WithoutForceKill_DoesNotReadTheTree()
+    {
+        // The graceful close asks only the process's main window to close; its children live on
+        var (sut, _) = CreateProcessService("cmd", Policy());
+
+        sut.KillProcess(KeePassPid, confirm: true, forceKill: false);
+
+        _processWrapper.Verify(w => w.GetDescendantsOf(It.IsAny<int>()), Times.Never);
+    }
+
+    #endregion
+
+    #region capture_window, capture_with_elements
+
+    private readonly Mock<IScreenshotService> _screenshots = TestDataFactory.CreateMockScreenshotService();
+    private readonly Mock<IUIElementService> _elements = TestDataFactory.CreateMockUIElementService();
+    private readonly Mock<IWindowService> _windows = TestDataFactory.CreateMockWindowService();
+
+    private ScreenshotTools CreateScreenshotTools(nint handle, string processName)
+    {
+        _windows.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _windows.Setup(w => w.GetWindowInfo(handle))
+            .Returns(TestDataFactory.CreateWindowInfo((int)handle, processName + " window", processName, 3001));
+        return new ScreenshotTools(_screenshots.Object, _elements.Object, _windows.Object, Policy());
+    }
+
+    private static JsonElement Payload(CallToolResult result) =>
+        JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+
+    [Fact]
+    public void CaptureWindow_DeniedProcess_IsRefused_AndNothingIsCaptured()
+    {
+        // Arrange
+        var sut = CreateScreenshotTools(0x300, "KeePass");
+
+        // Act
+        var result = sut.CaptureWindow(0x300);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        result.Content.OfType<ImageContentBlock>().Should().BeEmpty();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public void CaptureWithElements_DeniedProcess_IsRefused_BeforeItsElementsAreRead()
+    {
+        // Arrange
+        var sut = CreateScreenshotTools(0x300, "KeePass");
+
+        // Act
+        var result = sut.CaptureWithElements(0x300);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _elements.Verify(e => e.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()), Times.Never);
+        _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
+            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public void CaptureWindow_AllowedProcess_IsCaptured()
+    {
+        var sut = CreateScreenshotTools(0x200, "notepad");
+
+        sut.CaptureWindow(0x200);
+
+        _screenshots.Verify(s => s.CaptureWindow(new nint(0x200), true, It.IsAny<CaptureOptions>()), Times.Once);
+    }
+
+    #endregion
+}
