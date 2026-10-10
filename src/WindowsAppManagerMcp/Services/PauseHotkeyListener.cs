@@ -137,6 +137,8 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
             }
             catch (Exception ex)
             {
+                // The status says Failed, so nothing may listen: free a key that was registered before the failure
+                Free(registered, ref holderMark);
                 _status = _status with { State = PauseHotkeyState.Failed, Error = $"The hotkey could not be registered: {ex.GetType().Name}: {ex.Message}" };
                 retry = false;
             }
@@ -169,13 +171,21 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
         }
         finally
         {
-            foreach (var id in registered)
-            {
-                _native.UnregisterHotKey(id);
-            }
-
-            holderMark?.Dispose();
+            Free(registered, ref holderMark);
         }
+    }
+
+    /// <summary>Unregisters the keys in <paramref name="registered"/> and removes the holder mark.</summary>
+    private void Free(List<int> registered, ref IDisposable? holderMark)
+    {
+        foreach (var id in registered)
+        {
+            _native.UnregisterHotKey(id);
+        }
+
+        registered.Clear();
+        holderMark?.Dispose();
+        holderMark = null;
     }
 
     /// <summary>
@@ -260,14 +270,18 @@ public sealed class PauseHotkeyListener : IPauseHotkey, IDisposable
         }
     }
 
-    /// <summary>Marks this server as the chord's holder, so other servers report that a server has it.</summary>
+    /// <summary>
+    /// Marks this server as the chord's holder, so other servers report that a server has it. A failure, of any
+    /// kind, is not fatal: the hotkey works without the mark, and a server that starts later only reports Failed
+    /// instead of OtherServer.
+    /// </summary>
     private IDisposable? MarkHolder(PauseHotkeyChord chord)
     {
         try
         {
             return _native.MarkChordHolder(ChordId(chord));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException)
+        catch (Exception ex)
         {
             _logger?.LogWarning(ex, "The pause hotkey is registered, but other servers cannot see that this server holds it");
             return null;

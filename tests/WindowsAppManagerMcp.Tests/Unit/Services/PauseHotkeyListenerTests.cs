@@ -181,6 +181,43 @@ public class PauseHotkeyListenerTests
     }
 
     [Fact]
+    public void AHolderMarkThatFails_DoesNotStopTheHotkey()
+    {
+        // Arrange - any failure of the mark: without it, a server that starts later only reports Failed instead of
+        // OtherServer; the hotkey itself works, and the status says so
+        _native.OnMark = () => throw new InvalidOperationException("mark failed");
+        using var sut = CreateSut();
+        var pressed = new ManualResetEventSlim();
+
+        // Act
+        sut.Start(pressed.Set);
+        _native.Press();
+
+        // Assert
+        pressed.Wait(Timeout).Should().BeTrue();
+        sut.Status.State.Should().Be(PauseHotkeyState.Registered);
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ARegistrationThatThrows_AfterAKeyWasRegistered_IsFailed_AndFreesThatKey()
+    {
+        // Arrange - Break registers, then registering Pause throws: the status says Failed, so nothing may listen
+        _native.OnRegister = (_, _, vk) => vk == VkPause ? throw new InvalidOperationException("register failed") : Win32CallResult.Ok;
+        using var sut = CreateSut();
+
+        // Act
+        sut.Start(() => { });
+
+        // Assert - freed before Start returned
+        sut.Status.State.Should().Be(PauseHotkeyState.Failed);
+        sut.Status.Error.Should().Contain("register failed");
+        _native.Registered.Should().BeEmpty();
+        _native.Unregistered.Should().Equal(PauseHotkeyListener.FirstHotkeyId);
+        _native.Desktop.IsMarked(DefaultChordId).Should().BeFalse();
+    }
+
+    [Fact]
     public void ARegistrationForOneOfTheKeys_StillWorks_AndSaysWhichKeyFailed()
     {
         _native.OnRegister = (_, _, vk) => vk == VkPause ? Win32CallResult.Failure(1409) : Win32CallResult.Ok;
