@@ -939,10 +939,10 @@ Tools for capturing screenshots of screens, regions, and windows.
 
 The **Response** examples below show the metadata text, formatted.
 
-- **Size:** the image is scaled down to at most 1568 pixels on its long edge by default (`maxDimension`), the size vision models work at. `maxDimension: 0` keeps full resolution. `width` and `height` are the returned image size; `originalWidth` and `originalHeight` are set only when the image was scaled down.
+- **Size:** the image is scaled down to at most 1568 pixels on its long edge by default (`maxDimension`), the size vision models work at. `maxDimension: 0` keeps full resolution. `width` and `height` are the returned image size; `originalWidth` and `originalHeight` are set only when the image was scaled down. An edge that would scale below one pixel (a long, thin strip) keeps one pixel; `imageToScreen` has a scale per axis, so points still map exactly. A full-resolution image of a large monitor, especially as PNG, can be several megabytes, more than many clients and models accept as inline image content: for full detail use `output: "file"`, or capture a smaller region.
 - **Format:** `format: "auto"` (default) returns JPEG at quality 80, or PNG when the image's long edge is at most 512 pixels (small regions and dialogs, where text must stay crisp). Pass `"png"` or `"jpeg"` (`"jpg"` also works) to choose. Any other value fails with `InvalidFormat` instead of falling back. PNG images are always opaque.
 - **Output:** `output: "image"` (default) returns the image and the metadata. `"file"` writes the image to a file and returns only the metadata, with `filePath`. `"both"` does both, and `"metadata"` returns only the metadata (`byteSize` still tells how large the image would be).
-- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
+- **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)).
 - Image pixels are not screen coordinates. `capturedRegion` is the captured screen rectangle with its real origin, and `imageToScreen` converts image points to screen points; see [Image coordinates](#image-coordinates).
@@ -1021,7 +1021,7 @@ Capture a screenshot of a specific monitor.
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1112,7 +1112,7 @@ Capture a screenshot of an arbitrary screen region.
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1165,7 +1165,7 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | quality | int | No | 80 | JPEG quality (1-100) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -1240,7 +1240,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms (1000-30000) |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
-| outputPath | string | No | temp file | Absolute file path for output "file" or "both"; the folder must exist |
+| outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | bool | No | false | Deprecated: the same as output "file" |
 | maxWidth | int | No | - | Deprecated: maximum image width in pixels |
@@ -3058,12 +3058,12 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), capture_with_elements (in `error`) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools | `format` is not auto, png, jpeg or jpg |
 | `InvalidHandle` | [Window Control](#window-control) tools, [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window handle is zero or invalid, or the window no longer exists |
-| `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative, `maxWidth` is not positive, or the limit would scale an edge of the image to zero pixels |
+| `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The key specification is malformed |
 | `InvalidMonitorIndex` | [take_screenshot](#take_screenshot) | `monitorIndex` is out of range; see [list_screens](#list_screens) |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata, or `outputPath` was given without a file output |
-| `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not absolute, does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
+| `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
 | `InvalidRegion` | [capture_region](#capture_region) | `width` or `height` is not positive |

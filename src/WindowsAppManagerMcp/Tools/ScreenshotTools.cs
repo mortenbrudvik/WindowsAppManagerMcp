@@ -35,7 +35,7 @@ public class ScreenshotTools
         "'both' (image, file and metadata) or 'metadata' (only the metadata, no image).";
 
     internal const string OutputPathDescription =
-        "Absolute path of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
+        "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
         "The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.";
 
     internal const string OverwriteDescription =

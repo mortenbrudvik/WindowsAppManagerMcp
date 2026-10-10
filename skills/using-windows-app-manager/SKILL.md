@@ -204,7 +204,7 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 The capture tools return the image as image content, so you see the picture directly, followed by JSON metadata: `width`/`height` of the image, `capturedRegion` (the captured screen rectangle), `imageToScreen` (see Coordinates) and `filePath` when a file was written.
 
 - Defaults are sized for vision: the long edge is at most 1568 pixels (`maxDimension`; 0 keeps full resolution), and the format is JPEG, or PNG when the image is at most 512 pixels on its long edge. Pass `format: "png"` when exact pixels matter, or capture a small region to read small text.
-- `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
+- `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` on a drive letter (network paths are refused) ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
 - A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists` or `CaptureFailed` (a minimized window cannot be captured).
 - If you only need positions, call `get_ui_elements`. It returns element bounds with no image data.
 
