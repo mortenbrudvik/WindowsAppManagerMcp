@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Schema;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Tools;
 
@@ -84,9 +86,10 @@ public class ToolResultSerializationTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_SuccessResultWithWindowHandle_SerializesHandleAsNumber()
+    public async Task LaunchBrowserWithDebug_ThroughMcpServer_ReturnsWindowHandleAndLaunchDetails()
     {
         // Arrange - the normal success path finds the browser window, so the handle is non-null.
+        const string userDataDir = @"C:\Temp\browser-debug";
         var processService = new Mock<IProcessService>();
         processService.Setup(s => s.LaunchBrowserWithDebug(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
@@ -95,20 +98,24 @@ public class ToolResultSerializationTests
                 ProcessId: 4321,
                 WindowHandle: new nint(5678),
                 CdpPort: 9222,
-                UserDataDir: @"C:\Temp\browser-debug",
+                UserDataDir: userDataDir,
                 Error: null,
                 ErrorCode: null));
         var tools = new BrowserReadingTools(Mock.Of<IBrowserReadingService>(), processService.Object);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.WithTools(tools));
 
-        // Act
-        var dto = tools.LaunchBrowserWithDebug();
-        var json = JsonSerializer.SerializeToElement(dto, McpJsonUtilities.DefaultOptions);
+        // Act - goes through the SDK's own argument binding and result serialization.
+        var result = await server.Client.CallToolAsync("launch_browser_with_debug");
 
         // Assert
+        var text = result.Content.OfType<TextContentBlock>().Single().Text;
+        result.IsError.Should().NotBe(true, "the call failed with: {0}", text);
+        var json = JsonDocument.Parse(text).RootElement;
         json.GetProperty("success").GetBoolean().Should().BeTrue();
         json.GetProperty("processId").GetInt32().Should().Be(4321);
         json.GetProperty("windowHandle").GetInt64().Should().Be(5678);
         json.GetProperty("cdpPort").GetInt32().Should().Be(9222);
+        json.GetProperty("userDataDir").GetString().Should().Be(userDataDir);
     }
 
     private static Type? GetResultType(MethodInfo method)
