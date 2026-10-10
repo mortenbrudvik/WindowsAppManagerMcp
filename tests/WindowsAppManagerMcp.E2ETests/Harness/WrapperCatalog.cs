@@ -68,6 +68,16 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.GetForegroundWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetCurrentProcessId)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetProcessName)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetAncestor)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetShellWindow)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.EnumChildWindows)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetClassName)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindowLongPtr)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindow)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsCloaked)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.SetWindowPos)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.ShowWindow)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.SetForegroundWindow)] = WrapperMember.WindowAction("hWnd"),
@@ -118,7 +128,40 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.FindWithWhereExe)] = WrapperMember.ProcessStart,
                 // Opening a process only reads; the handle it returns is guarded in turn
                 [nameof(INativeProcessWrapper.OpenProcess)] = WrapperMember.Read,
-                [nameof(INativeProcessWrapper.IsAncestorOfCurrentProcess)] = WrapperMember.Read
+                [nameof(INativeProcessWrapper.IsAncestorOfCurrentProcess)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetAncestorProcesses)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetProcessStartTime)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read
+            },
+            [typeof(INativeHitTestWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeHitTestWrapper.WindowFromPoint)] = WrapperMember.Read,
+                [nameof(INativeHitTestWrapper.GetRootWindow)] = WrapperMember.Read
+            },
+            [typeof(INativeSecurityWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeSecurityWrapper.GetProcessCreationTime)] = WrapperMember.Read,
+                // Opens the process token for TOKEN_QUERY only
+                [nameof(INativeSecurityWrapper.QueryProcessToken)] = WrapperMember.Read,
+                // Opens the input desktop for DESKTOP_READOBJECTS only; the server never switches desktops
+                [nameof(INativeSecurityWrapper.QueryInputDesktop)] = WrapperMember.Read,
+                [nameof(INativeSecurityWrapper.GetThreadDesktopName)] = WrapperMember.Read,
+                [nameof(INativeSecurityWrapper.QuerySessionState)] = WrapperMember.Read
+            },
+            [typeof(IUiaTree)] = new Dictionary<string, WrapperMember>
+            {
+                // Tree reads only: acting UIA pattern calls are forbidden outside the Native wrappers by
+                // NativeCallGuardTests, and IUiaTree exposes none
+                [nameof(IUiaTree.IsAvailable)] = WrapperMember.Read,
+                [nameof(IUiaTree.FromHandle)] = WrapperMember.Read,
+                [nameof(IUiaTree.FromPoint)] = WrapperMember.Read,
+                [nameof(IUiaTree.GetFocusedElement)] = WrapperMember.Read,
+                [nameof(IUiaTree.GetParent)] = WrapperMember.Read,
+                [nameof(IUiaTree.GetChildren)] = WrapperMember.Read,
+                [nameof(IUiaTree.Read)] = WrapperMember.Read,
+                [nameof(IUiaTree.ReadInteraction)] = WrapperMember.Read,
+                [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
+                [nameof(IUiaTree.ReadValue)] = WrapperMember.Read
             },
             [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>
             {

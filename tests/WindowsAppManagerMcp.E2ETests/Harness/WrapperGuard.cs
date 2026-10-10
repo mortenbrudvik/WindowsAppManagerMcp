@@ -173,6 +173,13 @@ public static class WrapperGuard
         var interfaces = new HashSet<Type>();
         foreach (var type in ServerAssembly.GetTypes())
         {
+            if (type.IsInterface && IsOpaqueToken(type))
+            {
+                // A member-less interface such as IUiaNode is a handle the wrapper that made it takes back
+                // (IUiaTree.Read(node)). It has nothing to call, so there is nothing to guard, and a proxy in
+                // its place would break the wrapper that receives it.
+                continue;
+            }
             if (type.IsInterface)
             {
                 if (type.Name.StartsWith("INative", StringComparison.Ordinal) ||
@@ -183,11 +190,17 @@ public static class WrapperGuard
             }
             else if (IsNativeImplementation(type))
             {
-                interfaces.UnionWith(type.GetInterfaces().Where(i => i.Assembly == ServerAssembly));
+                interfaces.UnionWith(type.GetInterfaces().Where(i => i.Assembly == ServerAssembly && !IsOpaqueToken(i)));
             }
         }
         return interfaces;
     }
+
+    /// <summary>True for an interface with no members of its own and none inherited: a marker or opaque handle.</summary>
+    internal static bool IsOpaqueToken(Type interfaceType) =>
+        interfaceType.IsInterface &&
+        interfaceType.GetMembers().Length == 0 &&
+        interfaceType.GetInterfaces().All(i => i.GetMembers().Length == 0);
 }
 
 /// <summary>The proxy behind <see cref="WrapperGuard"/>. Public only because DispatchProxy derives from it.</summary>

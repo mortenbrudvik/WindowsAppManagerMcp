@@ -22,8 +22,20 @@ public class WrapperCatalogTests
             typeof(INativeMonitorWrapper),
             typeof(INativeProcessWrapper),
             typeof(IProcessHandle),
-            typeof(ITcpPortOwnerResolver)
+            typeof(ITcpPortOwnerResolver),
+            typeof(INativeHitTestWrapper),
+            typeof(INativeSecurityWrapper),
+            typeof(IUiaTree)
         });
+    }
+
+    [Fact]
+    public void OpaqueNodeHandles_AreNotTreatedAsWrappers()
+    {
+        // IUiaNode has nothing to call; IUiaTree takes it back, so it must reach the tree unproxied
+        WrapperGuard.IsOpaqueToken(typeof(IUiaNode)).Should().BeTrue();
+        WrapperGuard.ServerNativeWrapperInterfaces.Should().NotContain(typeof(IUiaNode));
+        WrapperGuard.IsOpaqueToken(typeof(IUiaTree)).Should().BeFalse();
     }
 
     [Fact]

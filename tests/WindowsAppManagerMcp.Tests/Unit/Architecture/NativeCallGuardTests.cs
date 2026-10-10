@@ -119,6 +119,7 @@ public class NativeCallGuardTests
         ["User32.GetClassNameW"] = "reads the class name of a window",
         ["User32.GetWindowThreadProcessId"] = "reads which process owns a window",
         ["User32.GetForegroundWindow"] = "reads which window is in the foreground",
+        ["User32.GetShellWindow"] = "reads the handle of the desktop shell's window",
         ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",
         ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
         ["User32.GetWindow"] = "reads a related window, such as the owner or the enabled popup",

@@ -73,7 +73,8 @@ public class FixtureUiElementsTests
         foreach (var (id, expected) in ready.Elements)
         {
             byId.Should().ContainKey(id);
-            var actual = byId[id];
+            var actual = byId[id]!;
+            actual.Should().NotBeNull("'{0}' is on screen, so UI Automation reports its bounds", id);
             _output.WriteLine($"{id}: UI Automation ({actual.X}, {actual.Y}, {actual.Width}x{actual.Height}), fixture {expected}");
             actual.X.Should().BeCloseTo(expected.X, BoundsTolerance, "x of '{0}'", id);
             actual.Y.Should().BeCloseTo(expected.Y, BoundsTolerance, "y of '{0}'", id);

@@ -11,15 +11,15 @@ public static class CaptureChecks
     /// <summary>How far a swatch pixel may be from its color per channel (color management, scaling).</summary>
     public const int ColorTolerance = 12;
 
-    /// <summary>Decodes the image of a successful capture that returned its data inline.</summary>
-    public static Bitmap DecodeImage(ScreenshotResult result)
+    /// <summary>Decodes the image of a successful capture that returned its image inline.</summary>
+    public static Bitmap DecodeImage(ScreenCapture<ScreenshotResult> capture)
     {
-        ArgumentNullException.ThrowIfNull(result);
-        if (!result.Success || string.IsNullOrEmpty(result.ImageData))
+        ArgumentNullException.ThrowIfNull(capture);
+        if (!capture.Metadata.Success || capture.Image is null)
         {
-            throw new InvalidOperationException($"The capture has no inline image: {result.Error ?? "no ImageData"}.");
+            throw new InvalidOperationException($"The capture has no inline image: {capture.Metadata.Error ?? "no image"}.");
         }
-        return new Bitmap(new MemoryStream(Convert.FromBase64String(result.ImageData)));
+        return new Bitmap(new MemoryStream(capture.Image.Data));
     }
 
     /// <summary>

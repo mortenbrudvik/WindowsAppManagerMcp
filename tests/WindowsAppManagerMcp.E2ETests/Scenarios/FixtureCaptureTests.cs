@@ -30,6 +30,8 @@ public class FixtureCaptureTests
 
         // Assert
         result.Success.Should().BeTrue(result.Error);
+        result.CapturedRegion.Should().Be(new CapturedRegion(
+            ready.ClientRect.X, ready.ClientRect.Y, ready.ClientRect.Width, ready.ClientRect.Height));
         result.Width.Should().Be(ready.ClientRect.Width);
         result.Height.Should().Be(ready.ClientRect.Height);
         mismatches.Should().BeEmpty();
@@ -48,6 +50,8 @@ public class FixtureCaptureTests
 
         // Assert
         result.Success.Should().BeTrue(result.Error);
+        result.CapturedRegion.Should().Be(new CapturedRegion(
+            ready.WindowRect.X, ready.WindowRect.Y, ready.WindowRect.Width, ready.WindowRect.Height));
         result.Width.Should().Be(ready.WindowRect.Width);
         result.Height.Should().Be(ready.WindowRect.Height);
         mismatches.Should().BeEmpty();
@@ -61,12 +65,15 @@ public class FixtureCaptureTests
         Wait.Until(
             () =>
             {
-                result = e2e.Server.Screenshots.CaptureWindow(e2e.Fixture.MainWindowHandle, includeFrame, format: "png");
+                // Full resolution, lossless: image pixels map 1:1 to screen pixels from the capture origin
+                var capture = e2e.Server.Screenshots.CaptureWindow(
+                    e2e.Fixture.MainWindowHandle, includeFrame, new CaptureOptions { Format = "png", MaxDimension = 0 });
+                result = capture.Metadata;
                 if (!result.Success)
                 {
                     return false;
                 }
-                using var image = CaptureChecks.DecodeImage(result);
+                using var image = CaptureChecks.DecodeImage(capture);
                 mismatches = CaptureChecks.SwatchMismatches(image, originX, originY, e2e.Fixture.Ready);
                 return mismatches.Count == 0;
             },
