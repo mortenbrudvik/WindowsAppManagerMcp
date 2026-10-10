@@ -250,8 +250,8 @@ public sealed class ForegroundService : IForegroundService
 
     /// <summary>
     /// The window is in front after an activation step. If it is in menu mode, keys would select menu
-    /// items, so one Esc closes the menu, but only while the window is verified to be in front: Esc goes
-    /// to whatever window has keyboard focus. There is no second Esc: nothing shows whether the window
+    /// items, so one Esc closes the menu, but only while the window is verified to be in front (Esc goes
+    /// to whatever window has keyboard focus) and no modifier key is down (Esc would be a shortcut). There is no second Esc: nothing shows whether the window
     /// has processed the first one yet, and an Esc that arrives after its menu has closed reaches the
     /// window itself (IDCANCEL in a dialog). A menu that is still open afterwards is reported instead.
     /// </summary>
@@ -267,7 +267,14 @@ public sealed class ForegroundService : IForegroundService
         if (!token.IsCancellationRequested && IsInMenuMode(foreground))
         {
             foreground = _windows.GetForegroundWindow();
-            if (IsInFront(root, foreground))
+            if (IsInFront(root, foreground) && ModifiersDown())
+            {
+                // With a modifier down the Esc would be a shortcut (Ctrl+Esc opens Start, Alt+Esc sends the window
+                // back, Ctrl+Shift+Esc opens Task Manager): leave the menu open and report it, as the input tools
+                // refuse with ModifiersHeld
+                _logger?.LogInformation("A menu of window {Window} was left open: a modifier key is down", root);
+            }
+            else if (IsInFront(root, foreground))
             {
                 if (Inject(
                     [
@@ -331,6 +338,13 @@ public sealed class ForegroundService : IForegroundService
         var outcome = _session.Send(events);
         return outcome.PausedByUser ? null : (uint)outcome.Inserted;
     }
+
+    /// <summary>
+    /// True when Windows reports a modifier key down (Shift, Ctrl, Alt, Windows): the user's, or stuck. Read
+    /// through the input session when there is one, as the input tools read it before each batch.
+    /// </summary>
+    private bool ModifiersDown() =>
+        _session != null ? _session.ReadModifiersDown().Count > 0 : KeyNames.SidedModifiers.Any(_input.IsKeyDown);
 
     /// <summary>
     /// Why no further activation step may be taken: the caller stopped waiting, or the user paused input (the

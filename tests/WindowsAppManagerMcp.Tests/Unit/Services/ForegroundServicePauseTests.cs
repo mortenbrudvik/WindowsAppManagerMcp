@@ -145,6 +145,30 @@ public class ForegroundServicePauseTests
     }
 
     [Fact]
+    public void AModifierTheUserHolds_StopsTheEscThatClosesAMenu()
+    {
+        // Arrange - the target comes to the front in menu mode while the user holds Alt (the pause chord's
+        // first key, say): an injected Esc would be Alt+Esc, which sends the window to the back
+        _input.Press(0xA4);
+        _setForeground = h =>
+        {
+            _foreground = h;
+            return true;
+        };
+        _threads.Setup(t => t.GetGuiThreadInfo(TargetThread))
+            .Returns(new GuiThreadInfo(GuiInMenuMode, Target, Target, nint.Zero, Target));
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - the menu is left open and reported, as the input tools report ModifiersHeld
+        outcome.IsForeground.Should().BeTrue();
+        outcome.InMenuMode.Should().BeTrue();
+        outcome.MenuClosed.Should().BeFalse();
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
     public void WhileRunning_TheInputUnlockGoesThroughTheSession()
     {
         // Arrange - only input unlocks the foreground lock

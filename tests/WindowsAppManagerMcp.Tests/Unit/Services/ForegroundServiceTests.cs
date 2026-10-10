@@ -35,6 +35,7 @@ public class ForegroundServiceTests
     private const ushort VK_MENU = 0x12;
     private const ushort VK_LMENU = 0xA4;
     private const ushort VK_RMENU = 0xA5;
+    private const ushort VK_LCONTROL = 0xA2;
 
     private readonly Mock<INativeWindowWrapper> _windows = new();
     private readonly Mock<INativeThreadInputWrapper> _threads = new();
@@ -619,6 +620,26 @@ public class ForegroundServiceTests
         outcome.MenuClosed.Should().BeFalse();
         outcome.InMenuMode.Should().BeTrue();
         _calls.Should().Equal("SetForegroundWindow(Target) -> True", "SendInput(Esc down, Esc up)");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenAModifierIsDownWhileTheWindowIsInMenuMode_SendsNoEscAndReportsInMenuMode()
+    {
+        // Arrange - the user holds Ctrl (or starts the pause chord): the Esc would become Ctrl+Esc (Start),
+        // Alt+Esc (the next window) or Ctrl+Shift+Esc (Task Manager)
+        _lock = ForegroundLock.Open;
+        _threads.Setup(t => t.GetGuiThreadInfo(TargetThread)).Returns(MenuState(inMenuMode: true));
+        _input.Setup(i => i.IsKeyDown(VK_LCONTROL)).Returns(true);
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - in front, the menu left open and reported, no key sent
+        outcome.IsForeground.Should().BeTrue();
+        outcome.MenuClosed.Should().BeFalse();
+        outcome.InMenuMode.Should().BeTrue();
+        _sentInput.Should().BeEmpty();
+        _calls.Should().Equal("SetForegroundWindow(Target) -> True");
     }
 
     [Fact]
