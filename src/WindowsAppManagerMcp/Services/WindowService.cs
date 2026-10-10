@@ -288,22 +288,18 @@ public class WindowService : IWindowService
 
     /// <summary>
     /// Why closing the window could take down the desktop shell or end the agent's own session, or null
-    /// when it cannot. The shell rule checks the window, the top-level window it is part of and that
-    /// window's root owner: DefWindowProc destroys any window that gets WM_CLOSE, so a child or an owned
-    /// helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the taskbar itself.
-    /// The host rule is <see cref="IHostGuard.IsHostWindow"/>, which is root-owner aware on its own.
+    /// when it cannot. The shell rule checks the window, the top-level window it is part of and every
+    /// window that owns it (<see cref="WindowOwnerChain"/>: GW_OWNER as well as GA_ROOTOWNER, so an owned
+    /// overlapped helper counts too): DefWindowProc destroys any window that gets WM_CLOSE, so a child or
+    /// an owned helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the
+    /// taskbar itself. The host rule is <see cref="IHostGuard.IsHostWindow"/>, which follows the same chain.
     /// </summary>
     private string? FindCloseProtection(nint handle)
     {
         var shellWindow = _nativeWrapper.GetShellWindow();
-        nint[] windows =
-        [
-            handle,
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.Root),
-            _nativeWrapper.GetAncestor(handle, WindowAncestor.RootOwner)
-        ];
+        var windows = WindowOwnerChain.SelfAndOwners(_nativeWrapper, handle);
 
-        foreach (var window in windows.Where(w => w != nint.Zero).Distinct())
+        foreach (var window in windows)
         {
             var className = _nativeWrapper.GetClassName(window);
             if (WindowClassification.IsShellWindowClass(className) || (shellWindow != nint.Zero && window == shellWindow))

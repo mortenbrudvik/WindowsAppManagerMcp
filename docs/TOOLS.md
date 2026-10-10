@@ -547,8 +547,8 @@ Close a window gracefully (sends WM_CLOSE message). Protected windows are refuse
 ```
 
 **Protected windows.** Without `force: true`, close_window sends nothing to these windows and returns `ProtectedWindow`:
-- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor), or the shell's desktop window whatever its class. Child windows and owned popups of these count too: a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
-- The agent's own host: the terminal, editor or chat app this server was started from (its ancestor processes, the window that shows its console, and the window that was in front when the server started), and every window owned by one of those. Closing it can end the agent's session.
+- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor), or the shell's desktop window whatever its class. Child windows and owned windows of these count too (owned through any number of owners, including WPF and WinForms windows owned without WS_POPUP): a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
+- The agent's own host: the terminal, editor or chat app this server was started from (its ancestor processes, the window that shows its console, and the window that was in front when the server started), and every window owned by one of those, directly or through other owned windows. Closing it can end the agent's session.
 
 File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar.
 

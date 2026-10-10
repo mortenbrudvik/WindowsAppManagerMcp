@@ -10,6 +10,7 @@ public class WindowServiceCloseTests
 {
     // Win32 values (NativeEnums is internal to the server assembly)
     private const uint WmClose = 0x0010;
+    private const uint GwOwner = 4;
     private const int ErrorAccessDenied = 5;
     private const int ErrorInvalidWindowHandle = 1400;
     private const int ErrorNotEnoughQuota = 1816;
@@ -139,6 +140,24 @@ public class WindowServiceCloseTests
     }
 
     [Fact]
+    public void CloseWindow_OverlappedWindowOwnedByTheTaskbar_IsRefused()
+    {
+        // Arrange - owned without WS_POPUP, so GA_ROOTOWNER returns the window itself and only GW_OWNER
+        // (the shared owner chain) links it to the taskbar
+        var taskbar = AddWindow("Shell_TrayWnd");
+        var helper = AddWindow("ShellHelperWindow");
+        _native.Setup(n => n.GetWindow(helper, GwOwner)).Returns(taskbar);
+
+        // Act
+        var result = CreateSut().CloseWindow(helper, force: false);
+
+        // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        result.Error.Should().Contain("Shell_TrayWnd");
+        VerifyNothingPosted();
+    }
+
+    [Fact]
     public void CloseWindow_TheShellWindow_IsRefusedWhateverItsClass()
     {
         // Arrange - a replacement shell's desktop window has its own class
@@ -216,6 +235,33 @@ public class WindowServiceCloseTests
         otherResult.Success.Should().BeTrue();
         _native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Once);
         VerifyPosted(otherApp);
+    }
+
+    [Fact]
+    public void CloseWindow_WpfDialogOwnedByTheRecordedForegroundWindow_IsRefused_ByTheRealHostGuard()
+    {
+        // Arrange - a delegated terminal: not an ancestor and no console, only its window recorded at start.
+        // Its WPF dialog is owned (GW_OWNER) but not WS_POPUP, so GA_ROOTOWNER is the dialog itself
+        var processes = new Mock<INativeProcessWrapper>();
+        var terminal = AddWindow("CASCADIA_HOSTING_WINDOW_CLASS", processId: 705);
+        var wpfDialog = AddWindow("HwndWrapper[Terminal;;1]", processId: 705);
+        var otherWindowOfTheTerminal = AddWindow("CASCADIA_HOSTING_WINDOW_CLASS", processId: 705);
+        _native.Setup(n => n.GetWindow(wpfDialog, GwOwner)).Returns(terminal);
+        _native.Setup(n => n.GetForegroundWindow()).Returns(terminal);
+        processes.Setup(p => p.GetAncestorProcesses()).Returns([]);
+        var hostGuard = new HostGuard(_native.Object, processes.Object);
+        var sut = new WindowService(TestDataFactory.CreateMockMonitorService().Object, _native.Object, hostGuard);
+
+        // Act
+        var dialogResult = sut.CloseWindow(wpfDialog, force: false);
+        var otherResult = sut.CloseWindow(otherWindowOfTheTerminal, force: false);
+
+        // Assert
+        dialogResult.ErrorCode.Should().Be(WindowErrorCode.ProtectedWindow);
+        dialogResult.Error.Should().Contain("agent's host");
+        otherResult.Success.Should().BeTrue("only the recorded window and the windows it owns are host windows");
+        VerifyPosted(otherWindowOfTheTerminal);
+        _native.Verify(n => n.PostMessage(wpfDialog, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
     }
 
     #endregion

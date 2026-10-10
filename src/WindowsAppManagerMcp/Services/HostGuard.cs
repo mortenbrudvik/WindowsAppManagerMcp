@@ -94,8 +94,9 @@ public sealed class HostGuard : IHostGuard
             return false;
         }
 
-        var rootOwner = _windows.GetAncestor(hWnd, WindowAncestor.RootOwner);
-        nint[] candidates = rootOwner == nint.Zero || rootOwner == hWnd ? [hWnd] : [hWnd, rootOwner];
+        // The window, its top-level window and every window that owns it (GW_OWNER as well as
+        // GA_ROOTOWNER, so WPF and WinForms dialogs of a host window count too)
+        var candidates = WindowOwnerChain.SelfAndOwners(_windows, hWnd);
 
         // Recorded windows by identity, including popups and dialogs they own
         if (candidates.Any(IsRecordedHostWindow))
@@ -164,10 +165,14 @@ public sealed class HostGuard : IHostGuard
             ShellProcessId: shellProcessId == 0 ? null : shellProcessId);
     }
 
-    /// <summary>Records the root owner of a window with its process, or null when the window is gone.</summary>
+    /// <summary>
+    /// Records the window at the top of a window's owner chain (<see cref="WindowOwnerChain.TopOwner"/>)
+    /// with its process, or null when the window is gone. An owned dialog in front at startup, Win32 or
+    /// WPF, is recorded as the application window that owns it.
+    /// </summary>
     private HostWindow? RecordRootOwner(nint hWnd)
     {
-        var rootOwner = _windows.GetAncestor(hWnd, WindowAncestor.RootOwner);
+        var rootOwner = WindowOwnerChain.TopOwner(_windows, hWnd);
         if (rootOwner == nint.Zero)
         {
             rootOwner = hWnd;
