@@ -94,7 +94,8 @@ public class FixtureWindowTests
         E2ENative.GetWindow(modal, E2ENative.GW_OWNER).Should().Be(main);
         E2ENative.IsWindowEnabled(main).Should().BeFalse("ShowDialog disables the owner while the dialog is open");
 
-        // Recorded, not asserted yet: whether GW_ENABLEDPOPUP finds a WPF dialog decides how M1.5 reports it.
+        // Recorded, not asserted: the input guard's BlockedByModal takes GW_ENABLEDPOPUP when it names a
+        // dialog, and otherwise finds the dialog through the owner chain (FixtureInputGuardTests checks the result).
         _output.WriteLine(
             $"GetWindow(main, GW_ENABLEDPOPUP) = 0x{E2ENative.GetWindow(main, E2ENative.GW_ENABLEDPOPUP):X}; modal is 0x{modal:X}.");
     }
