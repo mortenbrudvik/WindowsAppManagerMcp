@@ -44,7 +44,10 @@ public enum LaunchErrorCode
     /// <summary>The executable path is empty or null.</summary>
     EmptyExecutablePath = 1,
 
-    /// <summary>The executable path contains invalid characters (command injection attempt).</summary>
+    /// <summary>
+    /// The executable contains characters that are not valid in a Windows path (", &lt;, &gt;, |, *, ?, control characters),
+    /// or a bare name / relative path contains shell metacharacters.
+    /// </summary>
     InvalidCharacters = 2,
 
     /// <summary>Path traversal attempt detected (..).</summary>
