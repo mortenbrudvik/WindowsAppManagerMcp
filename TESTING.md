@@ -4,6 +4,11 @@
 
 A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refactor methodology.
 
+> **Desktop safety:** a plain `dotnet test` is safe to run on your own desktop. A test that
+> launches or kills real processes, sends real keyboard or mouse input, or moves, focuses or
+> closes real windows must use `[DesktopFact]` or `[DesktopTheory]`. Those tests are skipped
+> unless `WAM_ALLOW_DESKTOP_TESTS=1`. See [Desktop Tests](#desktop-tests).
+
 ---
 
 ## Table of Contents
@@ -650,6 +655,21 @@ public void MatchesWindow_ReturnsExpectedResult(
 }
 ```
 
+### `[DesktopFact]` / `[DesktopTheory]` - Tests With Real Desktop Side Effects
+
+Prefer mocking the native layer. When a test must really launch or kill a process, send input,
+or change a real window, use `[DesktopFact]` or `[DesktopTheory]` instead of `[Fact]` or
+`[Theory]`. They are skipped unless `WAM_ALLOW_DESKTOP_TESTS=1` and report the trait
+`Category=Desktop`. See [Desktop Tests](#desktop-tests).
+
+```csharp
+[DesktopFact]
+public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
+{
+    // Really starts notepad.exe: only runs when WAM_ALLOW_DESKTOP_TESTS=1
+}
+```
+
 ### xUnit Assertions Reference
 
 ```csharp
@@ -1020,16 +1040,19 @@ public class Program
 ### Running Coverage
 
 ```bash
-# Run tests with coverage
-dotnet test /p:CollectCoverage=true
+# Run tests with coverage (same filter as CI)
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
 # Generate HTML report
 dotnet tool install -g dotnet-reportgenerator-globaltool
-reportgenerator -reports:./coverage/coverage.cobertura.xml -targetdir:./coverage/report
+reportgenerator -reports:./TestResults/**/coverage.cobertura.xml -targetdir:./TestResults/report
 
 # Open report
-start ./coverage/report/index.html
+start ./TestResults/report/index.html
 ```
+
+CI fails the build when line coverage of the `Category!=Desktop` run drops below the
+threshold in `.github/workflows/test.yml` (currently 59%).
 
 ---
 
@@ -1661,6 +1684,8 @@ public static class TestDataFactory
 - [ ] Asserts are specific and meaningful
 - [ ] No dependencies on external state
 - [ ] Cleanup implemented if test creates resources
+- [ ] No real desktop side effects (input, process launch or kill, window changes); if
+      unavoidable, the test uses `[DesktopFact]` or `[DesktopTheory]`
 
 ### Mock Setup Checklist
 
@@ -1762,8 +1787,11 @@ tests/
 ### Command Line
 
 ```bash
-# Run all tests
+# Run all tests (desktop tests are reported as Skipped)
 dotnet test
+
+# Run what CI runs (desktop tests left out entirely)
+dotnet test --filter "Category!=Desktop"
 
 # Run with verbose output
 dotnet test --logger "console;verbosity=detailed"
@@ -1778,11 +1806,55 @@ dotnet test --filter "FullyQualifiedName~IsValidWindow_WithZeroHandle"
 dotnet test --filter "ClassName~Layout"
 
 # Run with coverage
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
-
-# Run and generate coverage report
-dotnet test /p:CollectCoverage=true && reportgenerator -reports:./coverage/*.xml -targetdir:./coverage/report
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 ```
+
+### Desktop Tests
+
+Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input,
+`INativeWindowWrapper` for window changes, `IScreenCaptureWrapper` and `IUIAutomationWrapper`
+for capture and UI Automation. Some tests read real system state (the monitor, window and
+process lists, a small screen region) but change nothing.
+
+A few tests have real side effects. For example, the `ProcessServiceTests` launch tests start
+Notepad. They are marked `[DesktopFact]` or `[DesktopTheory]`
+(`tests/WindowsAppManagerMcp.Tests/Infrastructure/DesktopTestAttributes.cs`), which:
+
+- **skip the test unless `WAM_ALLOW_DESKTOP_TESTS` is exactly `1`**. The gate is in the
+  attribute, so it holds for every runner: plain `dotnet test`, any `--filter`, IDE test
+  explorers and coverage tools.
+- **report the trait `Category=Desktop`**, so you can select or exclude them with `--filter`.
+
+A desktop test can still type into, click on, or close whatever window has focus, so save
+your work before opting in. Run them deliberately:
+
+```powershell
+# PowerShell
+$env:WAM_ALLOW_DESKTOP_TESTS = "1"
+dotnet test --filter "Category=Desktop"
+Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
+```
+
+```bash
+# Git Bash
+WAM_ALLOW_DESKTOP_TESTS=1 dotnet test --filter "Category=Desktop"
+```
+
+Rules for new tests:
+
+- Do not send real input, start or kill processes, or move, focus or close real windows
+  from a `[Fact]` or `[Theory]`. Mock the wrapper instead (see
+  [Mocking Native P/Invoke Layer](#9-mocking-native-pinvoke-layer)).
+- `ProcessService` has no launcher seam yet. Its tests keep `Process.Start` from launching
+  anything by having the validation mock return an empty file name; see the class comment in
+  `ProcessServiceTests`.
+- Never call `KillProcess` on a real system process, even to check that the guard refuses it.
+- A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
+  test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
+- `NativeCallGuardTests` scans the server assembly and fails if anything other than
+  `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
+  `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
+  `ProcessService` calls `Process.Start`, `Kill` or `CloseMainWindow`.
 
 ### Visual Studio
 
@@ -1796,18 +1868,27 @@ dotnet test /p:CollectCoverage=true && reportgenerator -reports:./coverage/*.xml
 
 ### Continuous Integration
 
-Add to your CI pipeline:
+`.github/workflows/test.yml` runs the suite on every push and pull request to `main`. It
+leaves desktop tests out, kills a test that hangs for 5 minutes, caps the job at 20 minutes,
+and enforces a line-coverage threshold:
 
 ```yaml
-# GitHub Actions example
-- name: Run tests
-  run: dotnet test --configuration Release --logger trx --results-directory TestResults
+# GitHub Actions (abridged from .github/workflows/test.yml)
+- name: Test with coverage
+  run: |
+    dotnet test --no-build --configuration Release `
+      --filter "Category!=Desktop" `
+      --blame-hang-timeout 5m `
+      --collect:"XPlat Code Coverage" `
+      --results-directory ./TestResults `
+      --logger "trx;LogFileName=test-results.trx"
 
 - name: Upload test results
-  uses: actions/upload-artifact@v3
+  uses: actions/upload-artifact@v4
+  if: always()
   with:
     name: test-results
-    path: TestResults
+    path: TestResults/**/*.trx
 ```
 
 ---
