@@ -18,7 +18,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Full history: the plugin binary check diffs src/ against the commit the exe was built from.
+          # Full history: the plugin binary check diffs the build inputs (src/, config/, root build
+          # files) against the commit the exe was built from.
           fetch-depth: 0
 
       - name: Setup .NET

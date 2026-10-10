@@ -48,7 +48,8 @@ Show the user the version comparison before proceeding.
 
 This publishes straight to `$dest\bin`, the path the plugin runs, and leaves the committed
 `bin/WindowsAppManagerMcp.exe` in the repository untouched (only `/commit` refreshes that one).
-`-AllowDirty` allows testing uncommitted changes; the script warns when `src/` is dirty. If the
+`-AllowDirty` allows testing uncommitted changes; the script warns when a build input (`src/`,
+`config/` or a root build file) is dirty. If the
 installed exe is running (this session's MCP server), the script moves it aside and installs the
 new one; the new build is used after a restart.
 

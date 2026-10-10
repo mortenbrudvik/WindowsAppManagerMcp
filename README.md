@@ -209,9 +209,12 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
   commit SHA, as `serverInfo.version` in the MCP handshake.
 - The plugin runs the committed `bin/WindowsAppManagerMcp.exe`; it is the only binary in git.
   Refresh it only with `./scripts/Publish-Plugin.ps1` (the `/commit` release flow does this). The
-  script refuses uncommitted `src/` changes and verifies the exe reports `<version>+<HEAD sha>`.
-- `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and was
-  built from the current `src/`. The Build workflow runs it on pushes and pull requests as a warning and on `v*`
+  script refuses uncommitted changes to the build inputs and verifies the exe reports
+  `<version>+<HEAD sha>`. The build inputs are `src/`, `config/` (the sample layout presets are
+  embedded in the exe) and the MSBuild, NuGet and SDK files at the repository root; they are listed
+  once, in `scripts/ReleaseCommon.ps1`.
+- `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and that
+  no build input changed since the commit it was built from. The Build workflow runs it on pushes and pull requests as a warning and on `v*`
   tags as an error, so a release cannot ship a stale exe. The tag's GitHub release gets
   `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
   build from the committed exe, see [Option 4](#option-4-download-release)).

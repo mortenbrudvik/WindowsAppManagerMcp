@@ -8,9 +8,12 @@
       1. Directory.Build.props, plugin.json and marketplace.json declare the same version.
       2. With -Tag: the tag is v<version>.
       3. The exe's ProductVersion is <version>+<commit sha>.
-      4. That commit exists and nothing under src/ changed between it and HEAD.
-         (scripts/Publish-Plugin.ps1 refuses to build with uncommitted src/ changes, so the SHA
-         always describes the sources the exe was built from.)
+      4. That commit exists and no build input changed between it and HEAD. The build inputs are
+         listed once, in $BuildInputPaths in scripts/ReleaseCommon.ps1: src/, config/ (the sample
+         layout presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository
+         root, and Directory.Build.props apart from its <Version> line, which check 3 covers.
+         (scripts/Publish-Plugin.ps1 refuses to build while a build input has uncommitted
+         changes, so the SHA always describes what the exe was built from.)
 
     Needs the full git history (in GitHub Actions: actions/checkout with fetch-depth: 0).
 
@@ -76,24 +79,24 @@ else {
         $problems.Add("$exeLabel was built from commit $($build.CommitSha), which is not in this repository's history (shallow clone, or built from an unpushed commit). $republish")
     }
     else {
-        $changed = Invoke-Git $root @('diff', '--name-only', $build.CommitSha, 'HEAD', '--', 'src')
-        if ($changed.ExitCode -ne 0) {
-            $problems.Add("git diff between $($build.CommitSha) and HEAD failed.")
+        $files = $null
+        try {
+            $files = @(Get-ChangedBuildInputs $root $build.CommitSha)
         }
-        else {
-            $files = @($changed.Output | Where-Object { $_ })
-            if ($files.Count -gt 0) {
-                $shown = ($files | Select-Object -First 10) -join ', '
-                $more = $(if ($files.Count -gt 10) { " and $($files.Count - 10) more" } else { '' })
-                $problems.Add("$exeLabel is stale: built from $($build.CommitSha.Substring(0, [Math]::Min(12, $build.CommitSha.Length))), and $($files.Count) file(s) under src/ changed since then ($shown$more). $republish")
-            }
+        catch {
+            $problems.Add("Comparing the build inputs of $($build.CommitSha) and HEAD failed: $($_.Exception.Message)")
+        }
+        if ($files -and $files.Count -gt 0) {
+            $shown = ($files | Select-Object -First 10) -join ', '
+            $more = $(if ($files.Count -gt 10) { " and $($files.Count - 10) more" } else { '' })
+            $problems.Add("$exeLabel is stale: built from $($build.CommitSha.Substring(0, [Math]::Min(12, $build.CommitSha.Length))), and $($files.Count) build input(s) changed since then ($shown$more). $republish")
         }
     }
 }
 
 $inActions = $env:GITHUB_ACTIONS -eq 'true'
 if ($problems.Count -eq 0) {
-    Write-Host "OK: $exeLabel is $version and was built from the current src/."
+    Write-Host "OK: $exeLabel is $version and was built from the current build inputs (src/, config/ and the root build files)."
     exit 0
 }
 
