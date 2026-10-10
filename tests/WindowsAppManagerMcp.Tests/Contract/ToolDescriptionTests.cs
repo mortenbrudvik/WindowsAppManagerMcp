@@ -89,4 +89,24 @@ public class ToolDescriptionTests
     {
         ServerToolCatalog.Description("launch_browser_with_debug").Should().Contain("no authentication");
     }
+
+    [Theory]
+    [InlineData("get_ui_elements", "controlTypes")]
+    [InlineData("get_ui_elements", "interactableOnly")]
+    [InlineData("get_ui_elements", "visibleOnly")]
+    [InlineData("get_ui_elements", "minWidth")]
+    [InlineData("get_ui_elements", "minHeight")]
+    [InlineData("capture_with_elements", "controlTypes")]
+    [InlineData("capture_with_elements", "interactableOnly")]
+    [InlineData("capture_with_elements", "visibleOnly")]
+    public void UIElementFilterDescription_SaysItDropsWholeSubtrees(string toolName, string parameterName)
+    {
+        // An element that fails a filter is dropped together with everything inside it, so a
+        // client that only sees tools/list must not be told the filters are a safe way to narrow the tree.
+        var description = ServerToolCatalog.AllDescriptions()
+            .Single(d => d.Source == $"{toolName}.{parameterName}")
+            .Text;
+
+        description.Should().Contain("drops whole subtrees");
+    }
 }

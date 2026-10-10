@@ -6,6 +6,30 @@ $script:PluginName = 'windows-app-manager'
 $script:ExeName = 'WindowsAppManagerMcp.exe'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
+# Everything in the repository that goes into bin/WindowsAppManagerMcp.exe, as git pathspecs relative
+# to the repository root. Publish-Plugin.ps1 refuses to build while any of them has uncommitted
+# changes, and Test-PluginBinary.ps1 reports the exe as stale when any of them changed after the
+# commit the exe was built from.
+#   src     the project and its sources
+#   config  the sample layout presets the project embeds (config/layouts/*.json, see the
+#           EmbeddedResource item in src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj)
+#   others  files MSBuild, NuGet and the .NET SDK read from the repository root. Files that do not
+#           exist yet are listed too, so adding one later counts as a change.
+# Directory.Build.props is a build input as well, but Set-Version.ps1 changes its <Version> on purpose
+# right before publishing, so it is checked separately with the <Version> line ignored (the version
+# itself is compared with the exe's ProductVersion). When the project starts to read another file from
+# outside src/, add it here; ReleaseBuildInputsTests checks the csproj and the root files against this list.
+$script:BuildInputPaths = @(
+    'src',
+    'config',
+    'Directory.Build.targets',
+    'Directory.Build.rsp',
+    'Directory.Packages.props',
+    'global.json',
+    ':(icase)nuget.config'
+)
+$script:BuildPropsPath = 'Directory.Build.props'
+
 function Get-RepoRoot {
     (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 }
@@ -112,4 +136,64 @@ function Invoke-Git([string]$Root, [string[]]$Arguments) {
         ExitCode = $LASTEXITCODE
         Output   = $output
     }
+}
+
+# True when Directory.Build.props changed in more than its <Version> line. $DiffArguments selects
+# what git diff compares: @('HEAD') for the working tree and index against HEAD, @($sha, 'HEAD') for
+# two commits.
+function Test-BuildPropsChangedBeyondVersion([string]$Root, [string[]]$DiffArguments) {
+    $diff = Invoke-Git $Root (@('diff', '--no-color', '--no-ext-diff', '-U0') + $DiffArguments + @('--', $script:BuildPropsPath))
+    if ($diff.ExitCode -ne 0) {
+        throw "git diff $($DiffArguments -join ' ') -- $($script:BuildPropsPath) failed."
+    }
+    foreach ($line in @($diff.Output)) {
+        $text = [string]$line
+        if ($text.StartsWith('+++') -or $text.StartsWith('---')) {
+            continue
+        }
+        if (($text.StartsWith('+') -or $text.StartsWith('-')) -and
+            $text -notmatch '^[+-]\s*<Version>[^<]*</Version>\s*$') {
+            return $true
+        }
+    }
+    $false
+}
+
+# Build inputs (see $BuildInputPaths) that changed between $FromCommit and HEAD. Throws when git fails.
+function Get-ChangedBuildInputs([string]$Root, [string]$FromCommit) {
+    $changed = Invoke-Git $Root (@('diff', '--name-only', $FromCommit, 'HEAD', '--') + $script:BuildInputPaths)
+    if ($changed.ExitCode -ne 0) {
+        throw "git diff between $FromCommit and HEAD failed."
+    }
+    $files = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @($changed.Output | Where-Object { $_ })) {
+        $files.Add([string]$file)
+    }
+    if (Test-BuildPropsChangedBeyondVersion $Root @($FromCommit, 'HEAD')) {
+        $files.Add("$($script:BuildPropsPath) (more than its <Version>)")
+    }
+    # Unrolled: wrap the call in @() to get an array, also when nothing changed.
+    $files.ToArray()
+}
+
+# Uncommitted build inputs (see $BuildInputPaths) in the working tree, as git status --porcelain
+# lines: modified, staged and untracked files, and ignored files outside src/ (src/ holds the
+# ignored bin/ and obj/ build output). Throws when git fails.
+function Get-UncommittedBuildInputs([string]$Root) {
+    $entries = New-Object System.Collections.Generic.List[string]
+    $otherPaths = @($script:BuildInputPaths | Where-Object { $_ -ne 'src' })
+
+    $sources = Invoke-Git $Root @('status', '--porcelain', '--', 'src')
+    $others = Invoke-Git $Root (@('status', '--porcelain', '--ignored', '--') + $otherPaths)
+    if ($sources.ExitCode -ne 0 -or $others.ExitCode -ne 0) {
+        throw "git status for the build inputs failed in $Root."
+    }
+    foreach ($line in @(@($sources.Output) + @($others.Output) | Where-Object { $_ })) {
+        $entries.Add([string]$line)
+    }
+    if (Test-BuildPropsChangedBeyondVersion $Root @('HEAD')) {
+        $entries.Add(" M $($script:BuildPropsPath) (more than its <Version>)")
+    }
+    # Unrolled: wrap the call in @() to get an array, also when nothing is uncommitted.
+    $entries.ToArray()
 }

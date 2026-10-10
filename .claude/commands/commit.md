@@ -25,7 +25,9 @@ Create a versioned release commit with tag for the Windows App Manager plugin.
   `--no-index`, `git check-ignore` prints nothing for a tracked file.
 - When the `v<version>` tag is pushed, the Build workflow runs `scripts/Test-PluginBinary.ps1`. It
   fails, and no GitHub release is created, unless the committed exe has the tagged version and was
-  built from the tagged `src/`.
+  built from the tagged build inputs: `src/`, `config/` (the sample layout presets embedded in the
+  exe), the MSBuild, NuGet and SDK files at the repository root, and `Directory.Build.props` apart
+  from its `<Version>`. `$BuildInputPaths` in `scripts/ReleaseCommon.ps1` lists them.
 - The GitHub release asset is **not** the committed exe. The tag build runs its own
   `dotnet publish` on the CI runner and the release job zips that output. It is built from the same
   sources with the same version, but it is a different binary: it reports
@@ -48,7 +50,9 @@ If version or message not provided as arguments, ask the user:
 ### 2. Make Sure the Sources Are Committed
 
 Run `git status --short`. The exe records the HEAD commit it was built from, so
-`Publish-Plugin.ps1` refuses to build while `src/` has uncommitted changes. If there are source
+`Publish-Plugin.ps1` refuses to build while a build input has uncommitted changes: `src/`,
+`config/`, a root build file such as `global.json` or `NuGet.config` (also when it is untracked or
+ignored), or `Directory.Build.props` beyond the `<Version>` that step 3 sets. If there are such
 changes, ask the user to commit them first (normal conventional commits), then continue.
 
 Make the release commit on the branch that gets pushed and tagged, normally `main` after the

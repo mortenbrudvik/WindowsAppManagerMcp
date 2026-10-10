@@ -366,6 +366,31 @@ public class CdpServiceTests
     }
 
     [Fact]
+    public async Task GetPageSnapshotAsync_DialogOpen_SaysToInspectTheDialogInsteadOfPressingEnter()
+    {
+        // Enter accepts a confirm/beforeunload dialog, so the error must not recommend it as a way to
+        // dismiss the dialog. It points to inspecting the dialog or asking the user instead.
+        var socket = new FakeCdpWebSocket((s, command) =>
+        {
+            if (command.GetProperty("method").GetString() == "Page.enable")
+            {
+                s.Enqueue("""{"method":"Page.javascriptDialogOpening","params":{"url":"https://shop.example/","message":"Delete all items?","type":"confirm","hasBrowserHandler":true}}""");
+            }
+        });
+        var sut = CreateSut(sockets: new FakeCdpWebSocketFactory(socket));
+
+        var result = await sut.GetPageSnapshotAsync(Tab, textOnly: true, maxLength: null, LongTimeout);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
+        result.Error.Should().Contain("JavaScript confirm dialog")
+            .And.Contain("untrusted")
+            .And.Contain("Do not press Enter")
+            .And.Contain("capture_window")
+            .And.Contain("ask the user");
+        result.Error.Should().NotContainAny("press Enter or Escape", "Dismiss the dialog (for example");
+    }
+
+    [Fact]
     public async Task GetPageSnapshotAsync_ReturnsEvaluationFailed_WhenPageThrows()
     {
         var socket = new FakeCdpWebSocket((s, command) =>

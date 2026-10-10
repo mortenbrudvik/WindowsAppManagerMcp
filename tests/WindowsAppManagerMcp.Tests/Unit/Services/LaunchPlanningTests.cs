@@ -224,7 +224,7 @@ public class LaunchPlanningTests
     #region Invalid Arguments and Planting
 
     [Fact]
-    public void PlanLaunch_NullArgument_ReturnsInvalidArguments()
+    public void PlanLaunch_NullArgument_ReturnsInvalidArgumentValue()
     {
         // Arrange
         ResolveAs(@"C:\Windows\notepad.exe", LaunchTargetKind.NativeExecutable);
@@ -234,11 +234,11 @@ public class LaunchPlanningTests
 
         // Assert
         plan.IsValid.Should().BeFalse();
-        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidArguments));
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidArgumentValue));
     }
 
     [Fact]
-    public void PlanLaunch_ArgumentWithNulCharacter_ReturnsInvalidArguments()
+    public void PlanLaunch_ArgumentWithNulCharacter_ReturnsInvalidArgumentValue()
     {
         // Arrange
         ResolveAs(@"C:\Windows\notepad.exe", LaunchTargetKind.NativeExecutable);
@@ -248,7 +248,7 @@ public class LaunchPlanningTests
 
         // Assert
         plan.IsValid.Should().BeFalse();
-        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidArguments));
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidArgumentValue));
     }
 
     [Fact]

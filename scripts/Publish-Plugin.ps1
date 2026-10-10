@@ -5,9 +5,13 @@
 
 .DESCRIPTION
     1. Checks that Directory.Build.props, plugin.json and marketplace.json declare the same version.
-    2. Refuses to build when src/ has uncommitted changes. The exe embeds the HEAD commit SHA in its
-       ProductVersion, and CI (scripts/Test-PluginBinary.ps1) uses that SHA to prove the committed
-       binary matches the sources. Use -AllowDirty only for local, uncommitted test builds.
+    2. Refuses to build when a build input has uncommitted changes: src/, config/ (the sample layout
+       presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository root
+       (modified, untracked or ignored), and Directory.Build.props beyond the <Version> that
+       Set-Version.ps1 changes ($BuildInputPaths in scripts/ReleaseCommon.ps1 lists them). The exe
+       embeds the HEAD commit SHA in its ProductVersion, and CI (scripts/Test-PluginBinary.ps1) uses
+       that SHA to prove the committed binary matches its build inputs. Use -AllowDirty only for
+       local, uncommitted test builds.
     3. Runs dotnet publish (Release, win-x64, framework-dependent single file) into a staging folder
        under artifacts/ (gitignored).
     4. Checks the publish produced only WindowsAppManagerMcp.exe (plus symbols), because that single
@@ -22,8 +26,8 @@
     installed plugin's bin folder so a local test build does not touch the committed exe.
 
 .PARAMETER AllowDirty
-    Build even if src/ has uncommitted changes. The exe's commit SHA will then not describe its
-    sources, so never commit a binary built this way.
+    Build even if a build input has uncommitted changes. The exe's commit SHA will then not
+    describe what it was built from, so never commit a binary built this way.
 
 .EXAMPLE
     ./scripts/Publish-Plugin.ps1
@@ -52,17 +56,16 @@ if ($problems.Count -gt 0) {
     throw ("Version mismatch:`n  " + ($problems -join "`n  "))
 }
 
-# 2. Sources are committed
+# 2. Build inputs are committed
 $head = Invoke-Git $root @('rev-parse', 'HEAD')
 if ($head.ExitCode -ne 0) {
     throw "Could not read the HEAD commit in $root. Publish-Plugin.ps1 must run inside the git repository."
 }
 $headSha = ([string]$head.Output).Trim()
 
-$status = Invoke-Git $root @('status', '--porcelain', '--', 'src')
-$dirty = @($status.Output | Where-Object { $_ })
+$dirty = @(Get-UncommittedBuildInputs $root)
 if ($dirty.Count -gt 0) {
-    $message = "src/ has uncommitted changes, so the exe's commit SHA ($headSha) would not describe its sources:`n  " + ($dirty -join "`n  ")
+    $message = "Build inputs have uncommitted changes, so the exe's commit SHA ($headSha) would not describe what it was built from:`n  " + ($dirty -join "`n  ")
     if (-not $AllowDirty) {
         throw "$message`nCommit them first, or pass -AllowDirty for a local test build that must not be committed."
     }
