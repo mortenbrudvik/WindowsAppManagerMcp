@@ -21,10 +21,16 @@ public class ProcessService : IProcessService
     private readonly IExecutableResolver _executableResolver;
     private readonly INativeProcessWrapper _processWrapper;
     private readonly ITargetPolicy? _targetPolicy;
+    private readonly IHostGuard? _hostGuard;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
     /// it; without it no process is refused by policy.
+    /// </param>
+    /// <param name="hostGuard">
+    /// The agent's host as recorded at server start (roadmap M1.1/M1.7): kill_process refuses its
+    /// processes, and a forced kill whose process tree contains one. The server always passes it; without
+    /// it only this server and its live ancestors count as the host.
     /// </param>
     public ProcessService(
         IWindowService windowService,
@@ -32,7 +38,8 @@ public class ProcessService : IProcessService
         IBrowserDetectionService browserDetection,
         IExecutableResolver? executableResolver = null,
         INativeProcessWrapper? processWrapper = null,
-        ITargetPolicy? targetPolicy = null)
+        ITargetPolicy? targetPolicy = null,
+        IHostGuard? hostGuard = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -40,6 +47,7 @@ public class ProcessService : IProcessService
         _executableResolver = executableResolver ?? new ExecutableResolver();
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
         _targetPolicy = targetPolicy;
+        _hostGuard = hostGuard;
     }
 
     public LaunchResult LaunchApplication(
@@ -352,6 +360,11 @@ public class ProcessService : IProcessService
     private const string ForceKillConsequence =
         "this terminates the process and all of its child processes immediately, and unsaved work is lost.";
 
+    /// <summary>What counts as the agent's host process, for the CannotTerminateHost messages.</summary>
+    private const string HostProcessKinds =
+        "this server, an ancestor of it such as the terminal or editor hosting the agent, the process that shows " +
+        "its console, or the app that was in front when the server started";
+
     public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
         bool waitForWindows = false,
@@ -484,29 +497,47 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
             }
 
-            // Closing or killing an ancestor (the terminal or editor hosting the agent) ends the agent's own session
-            if (IsHostAncestor(processId))
+            // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
+            if (IsHostProcess(processId))
             {
                 return new KillResult(
                     Success: false,
                     ProcessId: processId,
                     ProcessName: processName,
-                    ErrorMessage: $"'{processName}' (PID {processId}) is an ancestor of this MCP server, such as the terminal " +
-                                  "or editor hosting the agent. Closing it would end the agent's own session, so it is refused.",
+                    ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
+                                  "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
                     ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
             }
 
-            // forceKill ends the whole process tree, so every process in it must pass the policy too
-            if (forceKill && DeniedDescendant(processId) is { } denied)
+            // forceKill ends the whole process tree, so every process in it must pass the policy and the
+            // host check too. A graceful close asks only the process's own main window to close.
+            if (forceKill)
             {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
-                                  $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
-                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
-                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+                var tree = _processWrapper.GetDescendantsOf(processId) ?? [];
+                if (DeniedDescendant(tree) is { } denied)
+                {
+                    return new KillResult(
+                        Success: false,
+                        ProcessId: processId,
+                        ProcessName: processName,
+                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                      $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
+                                      "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
+                        ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+                }
+
+                if (HostDescendant(tree) is { } host)
+                {
+                    return new KillResult(
+                        Success: false,
+                        ProcessId: processId,
+                        ProcessName: processName,
+                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                      $"'{host.ImageName}' (PID {host.ProcessId}) belongs to the agent's host: {HostProcessKinds}. " +
+                                      "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
+                                      "forceKill (only its main window is asked to close), or ask the user.",
+                        ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+                }
             }
 
             return forceKill
@@ -516,21 +547,40 @@ public class ProcessService : IProcessService
     }
 
     /// <summary>
-    /// The first process in <paramref name="processId"/>'s tree (children, grandchildren, ...) that the
-    /// target policy refuses, or null. Without a policy, nothing is refused.
+    /// The first process of a process tree (children, grandchildren, ...) that the target policy refuses,
+    /// or null. Without a policy, nothing is refused.
     /// </summary>
-    private (int ProcessId, string ImageName, string? Reason)? DeniedDescendant(int processId)
+    private (int ProcessId, string ImageName, string? Reason)? DeniedDescendant(IReadOnlyList<(int ProcessId, string ImageName)> tree)
     {
         if (_targetPolicy == null)
         {
             return null;
         }
 
-        foreach (var (childId, imageName) in _processWrapper.GetDescendantsOf(processId) ?? [])
+        foreach (var (childId, imageName) in tree)
         {
             if (_targetPolicy.Evaluate([imageName]) is { Allowed: false } verdict)
             {
                 return (childId, imageName, verdict.Reason);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first process of a process tree that belongs to the agent's host (<see cref="IHostGuard.IsHostProcess"/>,
+    /// or this server itself), or null. The live ancestor walk of <see cref="IsHostProcess"/> is not repeated
+    /// for each child: a child that is an ancestor of the server makes the tree's root one too, and the
+    /// root has been checked already.
+    /// </summary>
+    private (int ProcessId, string ImageName)? HostDescendant(IReadOnlyList<(int ProcessId, string ImageName)> tree)
+    {
+        foreach (var child in tree)
+        {
+            if (child.ProcessId == Environment.ProcessId || _hostGuard?.IsHostProcess(child.ProcessId) == true)
+            {
+                return child;
             }
         }
 
@@ -669,8 +719,19 @@ public class ProcessService : IProcessService
             Warning: warning);
     }
 
-    private bool IsHostAncestor(int processId)
+    /// <summary>
+    /// True for a process of the agent's host: what the host guard recorded at server start (this server,
+    /// its ancestors, the console host's process and the startup foreground window's process), or an
+    /// ancestor found by a live walk of the process tree. The live walk keeps the check working when the
+    /// host guard could not read the ancestors at start (it then logs a warning and protects less).
+    /// </summary>
+    private bool IsHostProcess(int processId)
     {
+        if (_hostGuard?.IsHostProcess(processId) == true)
+        {
+            return true;
+        }
+
         try
         {
             return _processWrapper.IsAncestorOfCurrentProcess(processId);
