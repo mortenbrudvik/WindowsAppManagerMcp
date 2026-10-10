@@ -8,7 +8,7 @@ Task status is tracked in [BACKLOG.md](../BACKLOG.md) (Phase 13). This document 
 
 ## Assessment
 
-Both reviews reach the same diagnosis of WindowsAppManagerMcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, now complete, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
+Both reviews reach the same diagnosis of WindowsAppManagerMcp. The architecture is sound: services behind interfaces, DI, mockable native wrappers, per-monitor DPI, structured Success/ErrorCode results, and UIA and CDP read paths. It is not yet safe or reliable for an agent to drive a Windows task from start to finish. Five problems stand out. (1) The model cannot see screenshots, because they arrive as base64 inside a JSON text block. (2) Keyboard and mouse input has no target and no verified activation, so it can land in the agent's own terminal; the test suite already did this with Alt+F4. (3) Many tools report success after doing the wrong thing or nothing at all: maximize on the wrong monitor, unknown states treated as restore, save_layout always true, CDP reads from the wrong tab, and a controlTypes filter that drops nested matches. (4) Headline features are broken: a stale plugin binary, an unserializable debug-launch result, and no published release. (5) Everything is addressed by raw HWND plus hand-computed physical pixels, with no waits and no element actions, so a simple form fill costs 4-10 round trips that cannot be verified. The plan works in layers. M0, shipped in 1.12.0, stops the bleeding. M1 makes seeing and typing safe by default. It starts with a default host-window input guard, ships image content together with the true capture origin, and adds verified activation, guarded input with receiving-window reporting, and a desktop-safe fixture e2e suite to validate the Windows-specific behaviour. M2 makes results honest and settles the MCP surface (contract tests, annotations, stable SDK, curated toolsets) before M3-M5 add about 30 tools. It also pulls scroll and clipboard forward. M3 is the biggest lever. It moves from blind coordinates to selector-addressed, pattern-first UIA actions with stable refs, popup-aware search, Chromium accessibility activation, text and table reading, virtualized items and server-side waits, each returning verified post-state. That cuts typical tasks to 1-2 calls that can each be checked. M4-M7 complete the input vocabulary, build a thin browser bridge with a Playwright handoff, add breadth, and hold the deferred items. Design assumptions were checked against the repo. ModelContextProtocol 0.5.0-preview.1 already exposes McpServerOptions.Filters.CallToolFilters and McpServer.ElicitAsync, so the M0 exception filter and M2 elicitation can be built on the current SDK. ProcessStartInfo.ArgumentList is honored with UseShellExecute=true on .NET 10; re-check this on the net8 target. The main residual risks are Windows-behaviour details the critics flagged: the foreground-lock unlock, popup hit-testing, InvokePattern blocking while its modal is open, Edge title formats, and stale element refs. That is why the fixture e2e suite sits in M1, ahead of the large feature work.
 
 ## Milestones
 
@@ -27,17 +27,17 @@ Both reviews reach the same diagnosis of WindowsAppManagerMcp. The architecture 
 
 Every later fix reaches users and can be tested without touching the developer's desktop. The most dangerous confirmed defects are gone: unsafe tests, the stale binary, the IntPtr crash and opaque errors, the '(x86)' launch block, silent kill escalation, races and UIA crashes, lost layouts, CDP hangs and wrong-tab reads, and docs that teach Alt+F4.
 
-M0 is complete on the integration branch m0-stop-the-bleeding: the 8 planned items plus integration fixes, a six-lens final review, and a hardening round driven by an external review, 88 commits in all. It builds with 0 warnings, and the full suite passes with 1509 tests, plus 2 skipped canaries that only run when desktop tests are switched on. Nothing was launched or typed during the runs. It is not on main yet: landing it also rebuilds the plugin exe as release 1.12.0.
+M0 shipped in release 1.12.0 on 2026-10-10 (PR #1, release commit ef7d56f). It covers the 8 planned items plus integration fixes, a six-lens final review, and a hardening round driven by an external review. CI on main is green: 1509 tests, a check that desktop tests stay skipped on the runner, and a strict check of the committed plugin exe on the release tag. The repository's first GitHub release was created from that tag.
 
 - M0.3 shipped differently from its first design: failures come back as structured isError results with an errorCode instead of a rethrown McpException, and every tool call is logged with its duration. The M0.2 and M0.3 designs below describe what shipped.
 - The DesktopNoInput test tier planned in M0.1 is deferred to M1.11, because no capture-only desktop tests exist yet.
 - marketplace.json metadata.version stays at 1.0.0 on purpose: it versions the marketplace listing, not the plugin. Set-Version.ps1 stamps plugin.json and the plugin entry.
 - Beyond the plan, M0 also routes every process start and kill through NativeProcessWrapper, checked by IL guard tests that now work as an allow-list. It stops tracking .claude/settings.local.json, replaces the third-party release action with the GitHub CLI, pins the remaining third-party actions to commit SHAs, and adds a CI step that proves desktop tests stay skipped.
-- The plugin exe in bin/ is rebuilt once when M0 lands, with scripts/Publish-Plugin.ps1, as release 1.12.0.
+- The plugin exe in bin/ was rebuilt for 1.12.0 with scripts/Publish-Plugin.ps1 and reports 1.12.0+fc8d350.
 
 ### M0.1 Deny-by-default desktop test gating
 
-**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-test-isolation` (Done)
+**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-test-isolation` (Shipped in 1.12.0)
 
 Builds on the merged input-isolation fix (6c4648d). Any test that touches the real desktop is skipped unless the developer explicitly opts in, so no runner, filter or worktree can send input, launch apps or kill processes by accident. CI runs only non-desktop tests.
 
@@ -47,7 +47,7 @@ Builds on the merged input-isolation fix (6c4648d). Any test that touches the re
 
 ### M0.2 Single-source version and working release pipeline
 
-**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-release-pipeline` (Done)
+**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-release-pipeline` (Shipped in 1.12.0)
 
 Make the exe the plugin runs the one built from main. Make the version visible over MCP, make tag pushes produce GitHub releases, and remove stale duplicate binaries and wrong publish paths.
 
@@ -57,7 +57,7 @@ Make the exe the plugin runs the one built from main. Make the version visible o
 
 ### M0.3 Tool contract: serializable DTOs, serialization test, exception-surfacing filter
 
-**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-tool-contract` (Done)
+**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-tool-contract` (Shipped in 1.12.0)
 
 Fix the launch_browser_with_debug crash, which comes from System.Text.Json refusing to serialize IntPtr. Add a test over every tool that would have caught it, and replace the SDK's opaque 'An error occurred invoking' with actionable messages.
 
@@ -67,7 +67,7 @@ Fix the launch_browser_with_debug crash, which comes from System.Text.Json refus
 
 ### M0.4 Launch validation, argument quoting and truthful kill_process
 
-**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-launch-and-kill` (Done)
+**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-launch-and-kill` (Shipped in 1.12.0)
 
 Allow normal paths such as 'Program Files (x86)' while guarding against argument injection through .bat/.cmd files. Quote arguments correctly. kill_process must never silently escalate to a hard kill and must report what really happened.
 
@@ -77,7 +77,7 @@ Allow normal paths such as 'Program Files (x86)' while guarding against argument
 
 ### M0.5 Concurrency safety and a UIA traversal that survives bad nodes
 
-**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-concurrency-and-uia-crash` (Done)
+**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-concurrency-and-uia-crash` (Shipped in 1.12.0)
 
 The SDK runs tool calls concurrently. Make the monitor state an atomic snapshot and serialize all injected input. Make UIA traversal survive null ControlType (WinUI AppBar and SemanticZoom) and per-element failures instead of aborting the whole call.
 
@@ -87,7 +87,7 @@ The SDK runs tool calls concurrently. Make the monitor state an atomic snapshot 
 
 ### M0.6 Layout storage outside the versioned plugin folder, with honest results
 
-**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-layout-storage` (Done)
+**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-layout-storage` (Shipped in 1.12.0)
 
 Saved layouts live inside the versioned plugin folder today, so every update wipes them, and the sample presets never ship. Move storage, seed the samples, migrate old files, report save and delete outcomes honestly, reload from disk and make the cache thread-safe.
 
@@ -97,7 +97,7 @@ Saved layouts live inside the versioned plugin folder today, so every update wip
 
 ### M0.7 CDP timeouts, safe tab selection and explicit data source
 
-**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-cdp-timeouts` (Done)
+**Priority:** P0 · **Effort:** M · **Kind:** fix · **Branch:** `m0-cdp-timeouts` (Shipped in 1.12.0)
 
 No CDP call may hang; today one hangs forever when a JS alert is open. Never return another tab's or another browser's data with Success=true. Every result says whether it came from CDP or UIA.
 
@@ -107,7 +107,7 @@ No CDP call may hang; today one hangs forever when a JS alert is open. Never ret
 
 ### M0.8 Docs safety hotfix
 
-**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-docs-safety` (Done)
+**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m0-docs-safety` (Shipped in 1.12.0)
 
 Stop the skill and docs from teaching the failure that already closed the user's terminal, and from pointing agents at paths that are known to be broken. Document the four browser tools and fix the tool counts and parameter names.
 
