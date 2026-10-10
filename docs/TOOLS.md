@@ -2122,7 +2122,7 @@ The first time a layout tool runs, the server:
 
 Neither step overwrites an existing preset, and a preset you delete is not added back on the next start. Preset files you add or edit by hand are picked up on the next layout tool call, without a restart.
 
-If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points to a read-only location), the layout tools fail with `StorageUnavailable` and a message naming the folder. The other tools keep working.
+If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points to a read-only location), the layout tools fail with `StorageUnavailable` and a message naming the folder. The other tools keep working. The server checks this when a layout tool first uses the folder, by listing it and creating and deleting a temporary file in it, and checks again on every call until the folder is usable. If the folder stops being writable later, `save_layout` fails with `SaveFailed` and a message naming the file.
 
 **Layout error codes:**
 
