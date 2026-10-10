@@ -10,6 +10,7 @@ public class LayoutServiceTests : IDisposable
     private readonly Mock<IWindowService> _mockWindowService;
     private readonly Mock<IMonitorService> _mockMonitorService;
     private readonly Mock<IProcessService> _mockProcessService;
+    private readonly Mock<IForegroundService> _mockForegroundService;
 
     public LayoutServiceTests()
     {
@@ -20,12 +21,14 @@ public class LayoutServiceTests : IDisposable
         _mockWindowService = TestDataFactory.CreateMockWindowService();
         _mockMonitorService = TestDataFactory.CreateMockMonitorService();
         _mockProcessService = TestDataFactory.CreateMockProcessService();
+        _mockForegroundService = TestDataFactory.CreateMockForegroundService();
     }
 
     private LayoutService CreateSut() => new LayoutService(
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
+        _mockForegroundService.Object,
         _testLayoutPath);
 
     public void Dispose()
@@ -1046,9 +1049,17 @@ public class LayoutServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyPresetAsync_WhenFocusFails_ReportsIt()
+    public async Task ApplyPresetAsync_WhenFocusFails_ReportsTheVerifiedOutcome()
     {
-        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(false);
+        _mockForegroundService.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
+            .Returns((nint handle, int _) => new FocusOutcome
+            {
+                Target = handle,
+                ForegroundHandle = new nint(0x200),
+                ForegroundTitle = "Terminal",
+                ErrorCode = WindowErrorCode.FocusFailed,
+                Error = "The window could not be brought to the foreground; 'Terminal' (WindowsTerminal) is in front"
+            });
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
@@ -1058,13 +1069,17 @@ public class LayoutServiceTests : IDisposable
         result.WindowsArranged.Should().Be(1);
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
-        result.Errors.Should().ContainSingle().Which.Should().Contain("foreground");
+        result.Errors.Should().ContainSingle().Which.Should().Contain("foreground").And.Contain("FocusFailed").And.Contain("Terminal");
+        var focus = result.Focus.Should().ContainSingle().Subject;
+        focus.Success.Should().BeFalse();
+        focus.IsForeground.Should().BeFalse();
+        focus.ErrorCode.Should().Be(nameof(WindowErrorCode.FocusFailed));
+        focus.ForegroundHandle.Should().Be(0x200);
     }
 
     [Fact]
-    public async Task ApplyPresetAsync_WhenFocusSucceeds_ReportsSuccess()
+    public async Task ApplyPresetAsync_WhenFocusSucceeds_ReportsSuccessAndHowTheWindowCameToTheFront()
     {
-        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(true);
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus-ok",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
@@ -1074,6 +1089,24 @@ public class LayoutServiceTests : IDisposable
         result.Success.Should().BeTrue();
         result.ErrorCode.Should().BeNull();
         result.Errors.Should().BeNull();
+        var focus = result.Focus.Should().ContainSingle().Subject;
+        focus.IsForeground.Should().BeTrue();
+        focus.Method.Should().Be(FocusMethod.SetForeground);
+        _mockForegroundService.Verify(f => f.EnsureForeground(new nint(focus.Handle), It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WithoutFocusPlacements_ActivatesNothingAndReportsNoFocus()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("no-focus",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: false)]));
+
+        var result = await sut.ApplyPresetAsync("no-focus");
+
+        result.Success.Should().BeTrue();
+        result.Focus.Should().BeNull();
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
     }
 
     [Fact]

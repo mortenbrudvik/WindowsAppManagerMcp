@@ -6,9 +6,9 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 
 /// <summary>
 /// Guards that keep the default test run desktop-safe.
-/// Service tests mock INativeInputWrapper, INativeWindowWrapper and INativeProcessWrapper. If a
-/// service called SendInput, SetWindowPos or a similar API directly, its tests would act on the
-/// real desktop again. These tests scan the server assembly's IL:
+/// Service tests mock INativeInputWrapper, INativeWindowWrapper, INativeProcessWrapper and
+/// INativeThreadInputWrapper. If a service called SendInput, SetWindowPos or a similar API directly,
+/// its tests would act on the real desktop again. These tests scan the server assembly's IL:
 /// <list type="bullet">
 /// <item>Allow-lists: outside the action wrappers (<see cref="ActionWrappers"/>), code may call only
 /// the NativeMethods APIs in <see cref="ReadOnlyNativeApis"/>; and outside UIAutomationWrapper,
@@ -18,8 +18,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// wrapper or reviewed onto a list.</item>
 /// <item>The NativeWindowWrapper queries that read-only tests run against the real desktop (through
 /// ReadOnlyNativeWindowWrapper) may call only the read-only APIs.</item>
-/// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, and starting
-/// or stopping processes.</item>
+/// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, attaching thread
+/// input, and starting or stopping processes.</item>
 /// </list>
 /// </summary>
 public class NativeCallGuardTests
@@ -46,7 +46,8 @@ public class NativeCallGuardTests
     /// </summary>
     private static readonly Type[] ActionWrappers =
     [
-        typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper)
+        typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper),
+        typeof(NativeThreadInputWrapper)
     ];
 
     /// <summary>
@@ -127,6 +128,8 @@ public class NativeCallGuardTests
         ["User32.GetDpiForWindow"] = "reads the DPI of a window",
         ["Dwmapi.DwmGetWindowAttribute"] = "reads a DWM attribute such as cloaking or the visible frame (DwmSetWindowAttribute, which changes them, is not listed)",
         ["Kernel32.GetCurrentProcessId"] = "reads the server's own process ID",
+        // Thread reads for verified activation (NativeThreadInputWrapper; AttachThreadInput is not listed)
+        ["User32.GetGUIThreadInfo"] = "reads a thread's GUI state: its active, focus and menu owner windows and whether it is in menu mode",
     };
 
     /// <summary>
@@ -320,6 +323,24 @@ public class NativeCallGuardTests
             "the scan must see the wrapper's own SetWindowPos and ShowWindow calls");
         Unexpected(callers, typeof(NativeWindowWrapper), NativeMethodsType).Should().BeEmpty(
             "moving, resizing, showing and focusing windows must go through INativeWindowWrapper so tests can mock it");
+    }
+
+    [Fact]
+    public void AttachThreadInput_IsOnlyCalledByNativeThreadInputWrapper()
+    {
+        // Arrange - attaching shares keyboard state, focus and activation with another thread, so it must
+        // stay behind the mockable seam that ForegroundService's tests replace
+        var user32Type = NativeMethodsType.GetNestedType("User32", BindingFlags.NonPublic | BindingFlags.Public);
+        user32Type.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == user32Type && callee.Name == "AttachThreadInput");
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeThreadInputWrapper),
+            "the scan must see the wrapper's own AttachThreadInput call");
+        Unexpected(callers, typeof(NativeThreadInputWrapper), NativeMethodsType).Should().BeEmpty(
+            "attaching thread input must go through INativeThreadInputWrapper so tests can mock it");
     }
 
     [Fact]

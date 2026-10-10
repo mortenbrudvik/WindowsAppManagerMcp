@@ -18,7 +18,15 @@ public enum WrapperCallKind
     ProcessAction,
 
     /// <summary>Starts a process.</summary>
-    ProcessStart
+    ProcessStart,
+
+    /// <summary>
+    /// Attaches or detaches the calling thread's input queue to or from another thread's
+    /// (AttachThreadInput). It sends no input and changes no window by itself, but while attached the
+    /// two threads share keyboard state, focus and the active window. The window calls made while
+    /// attached are window actions, checked on their own.
+    /// </summary>
+    ThreadInputAttach
 }
 
 /// <summary>
@@ -39,6 +47,8 @@ public sealed record WrapperMember(
     public static WrapperMember ProcessAction { get; } = new(WrapperCallKind.ProcessAction, [], []);
 
     public static WrapperMember ProcessStart { get; } = new(WrapperCallKind.ProcessStart, [], []);
+
+    public static WrapperMember ThreadInputAttach { get; } = new(WrapperCallKind.ThreadInputAttach, [], []);
 
     public static WrapperMember WindowAction(params string[] windowParameters) =>
         new(WrapperCallKind.WindowAction, windowParameters, []);
@@ -132,6 +142,14 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.GetAncestorProcesses)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetProcessStartTime)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read
+            },
+            [typeof(INativeThreadInputWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeThreadInputWrapper.GetCurrentThreadId)] = WrapperMember.Read,
+                [nameof(INativeThreadInputWrapper.GetWindowThreadId)] = WrapperMember.Read,
+                [nameof(INativeThreadInputWrapper.GetGuiThreadInfo)] = WrapperMember.Read,
+                // Shares the calling thread's input with another thread; refused in the no-input tier
+                [nameof(INativeThreadInputWrapper.AttachThreadInput)] = WrapperMember.ThreadInputAttach
             },
             [typeof(INativeHitTestWrapper)] = new Dictionary<string, WrapperMember>
             {

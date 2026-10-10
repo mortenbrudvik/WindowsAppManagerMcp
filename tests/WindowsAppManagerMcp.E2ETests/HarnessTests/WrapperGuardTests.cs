@@ -42,6 +42,8 @@ public class WrapperGuardTests
     [InlineData(typeof(ITcpPortOwnerResolver), true)]
     [InlineData(typeof(IUIAutomationWrapper), true)]
     [InlineData(typeof(IScreenCaptureWrapper), true)]
+    [InlineData(typeof(INativeThreadInputWrapper), true)]
+    [InlineData(typeof(IForegroundService), false)]
     [InlineData(typeof(IWindowService), false)]
     [InlineData(typeof(IInputSimulationService), false)]
     [InlineData(typeof(IExecutableResolver), false)]
@@ -460,6 +462,122 @@ public class WrapperGuardTests
         var act = () => new FixtureOnlyCallPolicy(new FakeDesktop(), 0);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    #endregion
+
+    #region Verified activation (EnsureForeground)
+
+    [Fact]
+    public void ReadOnlyGuard_RefusesAttachingThreadInput()
+    {
+        var inner = new Mock<INativeThreadInputWrapper>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+
+        var act = () => guarded.AttachThreadInput(1111, 2222, attach: true);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*AttachThreadInput*DesktopNoInput*ThreadInputAttach*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void ReadOnlyGuard_PassesThreadReadsThrough()
+    {
+        var inner = new Mock<INativeThreadInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.GetWindowThreadId(OtherWindow)).Returns(2222u);
+        inner.Setup(w => w.GetGuiThreadInfo(2222u)).Returns((GuiThreadInfo?)null);
+        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+
+        guarded.GetWindowThreadId(OtherWindow).Should().Be(2222u);
+        guarded.GetGuiThreadInfo(2222u).Should().BeNull();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_LetsTheCallingThreadAttachToAndDetachFromAnotherThread()
+    {
+        // Arrange - the activation thread attaches to the foreground thread, which may be the terminal's
+        var inner = new Mock<INativeThreadInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.AttachThreadInput(1111, 2222, It.IsAny<bool>())).Returns(true);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(new FakeDesktop { CurrentThreadId = 1111 }));
+
+        // Act & Assert
+        guarded.AttachThreadInput(1111, 2222, attach: true).Should().BeTrue();
+        guarded.AttachThreadInput(1111, 2222, attach: false).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(3333u, 2222u)] // two other threads: the attach that does not help SetForegroundWindow
+    [InlineData(1111u, 1111u)] // a thread to itself
+    [InlineData(1111u, 0u)]
+    public void FixtureOnlyGuard_RefusesAnyOtherAttach(uint attachThreadId, uint attachToThreadId)
+    {
+        var inner = new Mock<INativeThreadInputWrapper>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(new FakeDesktop { CurrentThreadId = 1111 }));
+
+        var act = () => guarded.AttachThreadInput(attachThreadId, attachToThreadId, attach: true);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*AttachThreadInput*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyPolicy_RefusesAThreadInputAttachMemberItHasNoRuleFor()
+    {
+        var policy = FixtureOnly(new FakeDesktop());
+        var method = Method(nameof(IFutureWrapperMembers.ReleaseHeldKeys));
+
+        policy.Check(new WrapperCall(typeof(INativeThreadInputWrapper), method, [], null, WrapperMember.ThreadInputAttach))
+            .Should().Contain("no rule");
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_AllowsAZeroDistanceMouseMoveOverAnyWindow()
+    {
+        // Arrange - the input unlock moves nothing and presses nothing, wherever the cursor is
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(1u);
+        var desktop = new FakeDesktop { Foreground = OtherWindow, Cursor = (10, 10), WindowAtCursor = OtherWindow };
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        // Act & Assert
+        guarded.SendInput([InputEvent.Mouse(FixtureOnlyCallPolicy.MouseMoveFlag)]).Should().Be(1u);
+    }
+
+    [Theory]
+    [InlineData(0x0001u | 0x8000u)] // an absolute move goes to a point
+    [InlineData(0x0001u | 0x0002u)] // a move with a button press
+    public void FixtureOnlyGuard_ChecksAnyOtherMouseEventOverAnotherWindow(uint flags)
+    {
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = OtherWindow };
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        var act = () => guarded.SendInput([InputEvent.Mouse(flags)]);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*mouse input at (10, 10)*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_ChecksABatchThatMixesAZeroDistanceMoveWithKeys()
+    {
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Foreground = OtherWindow, Cursor = (10, 10), WindowAtCursor = FixtureWindow };
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        var act = () => guarded.SendInput([InputEvent.Mouse(FixtureOnlyCallPolicy.MouseMoveFlag), InputEvent.Key(0x1B, 0)]);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*keyboard input*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void InputEvent_CarriesNoDistance_SoAMoveWithoutAbsoluteIsZeroDistance()
+    {
+        // The zero-distance rule relies on this: the server's NativeInputWrapper sends every mouse event
+        // with dx = dy = 0. An InputEvent that gains a distance must revisit FixtureOnlyCallPolicy.
+        typeof(InputEvent).GetProperties().Select(p => p.Name)
+            .Should().BeEquivalentTo(nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags));
     }
 
     #endregion

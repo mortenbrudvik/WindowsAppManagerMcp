@@ -17,6 +17,9 @@ public interface IDesktopProbe
     int GetWindowProcessId(nint hwnd);
 
     string GetWindowTitle(nint hwnd);
+
+    /// <summary>The OS ID of the calling thread: the thread about to make the guarded call.</summary>
+    uint GetCurrentThreadId();
 }
 
 /// <summary>The real desktop, through read-only user32 calls.</summary>
@@ -32,4 +35,6 @@ public sealed class Win32DesktopProbe : IDesktopProbe
     public int GetWindowProcessId(nint hwnd) => E2ENative.GetProcessId(hwnd);
 
     public string GetWindowTitle(nint hwnd) => hwnd == 0 ? "" : E2ENative.GetWindowText(hwnd);
+
+    public uint GetCurrentThreadId() => E2ENative.GetCurrentThreadId();
 }

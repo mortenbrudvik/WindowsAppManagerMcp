@@ -284,10 +284,17 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// cursor is over a fixture window, window calls only when every window they name is a fixture window,
 /// and process closes and kills only on the fixture process. The check runs before every SendInput
 /// batch, so a window that comes to the front mid-text stops the typing. No process may be started.
+/// Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
+/// moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server
+/// may attach its own calling thread's input to another thread (never two other threads to each other),
+/// because the window calls it makes while attached are checked as window actions.
 /// This is the harness's stand-in for the server's own target guard (M1.1, M1.5), which does not exist yet.
 /// </summary>
 public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
 {
+    /// <summary>MOUSEEVENTF_MOVE: a relative move. <see cref="InputEvent"/> carries no distance, so it moves by 0, 0.</summary>
+    internal const uint MouseMoveFlag = 0x0001;
+
     private readonly IDesktopProbe _probe;
     private readonly int _fixtureProcessId;
     private readonly string _fixtureProcessName;
@@ -312,6 +319,7 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         WrapperCallKind.Input => CheckInput(call),
         WrapperCallKind.WindowAction => CheckWindows(call, call.Member!),
         WrapperCallKind.ProcessAction => CheckProcess(call),
+        WrapperCallKind.ThreadInputAttach => CheckThreadInputAttach(call),
         WrapperCallKind.ProcessStart =>
             $"an E2E test may not start processes; teach {nameof(FixtureOnlyCallPolicy)} which starts are safe first.",
         var kind => $"{nameof(FixtureOnlyCallPolicy)} has no rule for {kind} calls."
@@ -329,6 +337,11 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
                     return "SendInput without an event list.";
                 }
                 var batch = events.ToList();
+                if (batch.Count > 0 && batch.All(IsZeroDistanceMove))
+                {
+                    // Moves nothing and presses nothing, so it acts on no window, wherever the cursor is
+                    return null;
+                }
                 if (batch.Any(e => e.Kind != InputEventKind.Mouse) &&
                     RefuseUnlessFixture(_probe.GetForegroundWindow(), "keyboard input: the foreground window") is { } keys)
                 {
@@ -382,6 +395,37 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         }
         return null;
     }
+
+    /// <summary>
+    /// The server may attach only the calling thread's own input queue, and only to another thread: that is
+    /// what verified activation does, so its SetForegroundWindow passes the foreground lock. Attaching two
+    /// other threads to each other would tie up input queues the server does not own.
+    /// </summary>
+    private string? CheckThreadInputAttach(WrapperCall call)
+    {
+        if (call.ServiceType != typeof(INativeThreadInputWrapper) ||
+            call.Method.Name != nameof(INativeThreadInputWrapper.AttachThreadInput))
+        {
+            return $"the E2E guard has no rule for {call.Name}; teach {nameof(FixtureOnlyCallPolicy)} about it.";
+        }
+
+        if (call.Args.Length < 2 || call.Args[0] is not uint attachThreadId || call.Args[1] is not uint attachToThreadId)
+        {
+            return "AttachThreadInput without thread IDs.";
+        }
+
+        var callingThreadId = _probe.GetCurrentThreadId();
+        if (attachThreadId != callingThreadId)
+        {
+            return $"AttachThreadInput may only attach the calling thread ({callingThreadId}), not thread {attachThreadId}.";
+        }
+
+        return attachToThreadId == 0 || attachToThreadId == callingThreadId
+            ? $"AttachThreadInput to thread {attachToThreadId} is not an attach to another thread."
+            : null;
+    }
+
+    private static bool IsZeroDistanceMove(InputEvent e) => e.Kind == InputEventKind.Mouse && e.Flags == MouseMoveFlag;
 
     private string? CheckProcess(WrapperCall call)
     {

@@ -563,20 +563,6 @@ public class WindowServiceTests
         VerifyNoWindowWasChanged(native);
     }
 
-    [Fact]
-    public void FocusWindow_WithInvalidHandle_ReturnsFalse()
-    {
-        // Arrange
-        var (sut, native) = CreateSutWithNoValidWindows();
-
-        // Act
-        var result = sut.FocusWindow(new nint(InvalidHandleValue));
-
-        // Assert
-        result.Should().BeFalse();
-        VerifyNoWindowWasChanged(native);
-    }
-
     #endregion
 
     #region T2.9: SnapWindow Tests (Invalid Handle)

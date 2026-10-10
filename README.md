@@ -151,7 +151,7 @@ Once configured, you can ask Claude to:
 - "Press Ctrl+C to copy"
 - "Press Enter to confirm"
 
-> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. Agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. `focus_window` brings a window to the front despite the Windows foreground lock and reports the window actually in front (`isForeground`, `foregroundHandle`), but the foreground can change again, so agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
 
 ### Browser Reading
 - "What page is open in Chrome?"

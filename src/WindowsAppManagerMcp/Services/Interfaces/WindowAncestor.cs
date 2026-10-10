@@ -13,8 +13,10 @@ public enum WindowAncestor : uint
     Root = 2,
 
     /// <summary>
-    /// The owned root: the top-level window found by walking parents and owners, so a dialog or
-    /// popup owned by an application window resolves to that application window.
+    /// The owned root: the window found by walking the chain GetParent returns, which is the parent
+    /// of a child window and the owner of a WS_POPUP top-level window. A Win32 dialog or popup owned by
+    /// an application window resolves to that application window, but an owned window without WS_POPUP
+    /// (WPF and WinForms owned windows) resolves to itself; walk GetWindow(GW_OWNER) to find its owner.
     /// </summary>
     RootOwner = 3
 }

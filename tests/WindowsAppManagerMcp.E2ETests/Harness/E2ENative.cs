@@ -50,6 +50,9 @@ internal static class E2ENative
     [DllImport("user32.dll")]
     public static extern nint WindowFromPoint(POINT point);
 
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out POINT point);

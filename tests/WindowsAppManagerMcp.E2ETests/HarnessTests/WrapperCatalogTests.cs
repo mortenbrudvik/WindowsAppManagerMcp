@@ -25,6 +25,7 @@ public class WrapperCatalogTests
             typeof(ITcpPortOwnerResolver),
             typeof(INativeHitTestWrapper),
             typeof(INativeSecurityWrapper),
+            typeof(INativeThreadInputWrapper),
             typeof(IUiaTree)
         });
     }
@@ -168,6 +169,8 @@ public class WrapperCatalogTests
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.CloseMainWindow), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IProcessHandle.Kill), WrapperCallKind.ProcessAction)]
     [InlineData(typeof(IProcessHandle), nameof(IDisposable.Dispose), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.GetGuiThreadInfo), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.AttachThreadInput), WrapperCallKind.ThreadInputAttach)]
     public void Find_ClassifiesTheMembersTheScenariosAndLaterWavesDependOn(Type type, string name, WrapperCallKind expected)
     {
         var method = AllMethods(type).Single(m => m.Name == name);
