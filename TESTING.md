@@ -1846,9 +1846,12 @@ Rules for new tests:
   [Mocking Native P/Invoke Layer](#9-mocking-native-pinvoke-layer)).
 - Build `ProcessService` with a mocked `INativeProcessWrapper` and `IExecutableResolver`, as
   `CreateSut` in `ProcessServiceTests` and `ProcessKillTests` does. Without them the constructor
-  falls back to the real `NativeProcessWrapper` and `ExecutableResolver`. That is only acceptable
-  for tests that call nothing but `PlanLaunch`, which builds a `ProcessStartInfo` and never starts
-  a process (`LaunchPlanningTests`).
+  falls back to the real `NativeProcessWrapper` and `ExecutableResolver`. `LaunchPlanningTests`
+  only calls `PlanLaunch`, which never starts a process, and still passes a strict
+  `INativeProcessWrapper` mock, so an accidental launch or kill throws.
+- To read real windows, wrap the real `NativeWindowWrapper` in `ReadOnlyNativeWindowWrapper`, as
+  `CreateReadOnlySut` in `WindowServiceTests` does. It forwards the queries and throws on every
+  call that would move, show, focus or close a window.
 - Never call `KillProcess` on a real system process, even to check that the guard refuses it.
 - A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
   test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
@@ -1860,6 +1863,13 @@ Rules for new tests:
   declares a P/Invoke that starts or terminates processes directly, such as `CreateProcess`,
   `ShellExecute` or `TerminateProcess` (`NoPlatformInvoke_StartsOrTerminatesProcesses`). New
   process code goes through `INativeProcessWrapper`.
+- `NativeCallGuardTests` also works as an allow-list. Outside `NativeWindowWrapper`,
+  `NativeInputWrapper` and `NativeProcessWrapper`, code may call only the read-only
+  `NativeMethods` APIs listed in `ReadOnlyNativeApis`, and P/Invoke declarations must live in
+  `NativeMethods`. Outside `UIAutomationWrapper`, UI Automation elements, patterns and text ranges
+  may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`, `SetValue`, `Toggle`, `Select`,
+  `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
+  until it goes through a mockable wrapper or is reviewed onto a list.
 - The guards scan only the server assembly. They do not see code in the test project, so the
   rules above are up to you there.
 
