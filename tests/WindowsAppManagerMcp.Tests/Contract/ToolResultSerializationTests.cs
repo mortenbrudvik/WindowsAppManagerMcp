@@ -55,6 +55,8 @@ public class ToolResultSerializationTests
 
         undeclared.Should().BeEmpty(
             "a tool that returns CallToolResult must name the DTO it serializes into its text block with [ToolResultPayload]");
+        ToolMethods.Keys.Where(name => GetResultType(ToolMethods[name]) == typeof(ScreenshotResult))
+            .Should().Contain("take_screenshot", "the capture tools are checked through their payload type");
     }
 
     [Theory]

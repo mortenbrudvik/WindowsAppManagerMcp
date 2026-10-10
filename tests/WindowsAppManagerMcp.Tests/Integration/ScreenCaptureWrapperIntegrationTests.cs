@@ -31,7 +31,8 @@ public class ScreenCaptureWrapperIntegrationTests
 
         // Assert
         result.Should().NotBeNull();
-        result.Should().NotBeEmpty();
+        result.Bgra.Should().NotBeEmpty();
+        result.Method.Should().Be("BitBlt");
     }
 
     #endregion
@@ -50,7 +51,20 @@ public class ScreenCaptureWrapperIntegrationTests
         var result = _sut.CaptureScreenRegion(0, 0, width, height);
 
         // Assert
-        result.Length.Should().Be(expectedSize);
+        result.Bgra.Length.Should().Be(expectedSize);
+        result.Width.Should().Be(width);
+        result.Height.Should().Be(height);
+    }
+
+    [Fact]
+    public void CaptureScreenRegion_ReportsTheRegionOriginAsScreenOrigin()
+    {
+        // Act
+        var result = _sut.CaptureScreenRegion(3, 7, 10, 10);
+
+        // Assert
+        result.ScreenOriginX.Should().Be(3);
+        result.ScreenOriginY.Should().Be(7);
     }
 
     #endregion

@@ -3,13 +3,24 @@ namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
-/// Tool-layer checks that save and maxWidth options are forwarded, and that an
-/// invalid maxWidth does not walk the UI tree.
+/// Tool-layer checks that every capture tool forwards the size, output and file options, including
+/// the legacy maxWidth and saveToFile aliases, to the screenshot service unchanged.
 /// </summary>
 public class ScreenshotOptionTests
 {
-    private const string MaxWidthMustBePositive = "maxWidth must be a positive number of pixels.";
     private const string OutputPath = @"C:\shots\screen.png";
+
+    private static readonly CaptureOptions Expected = new()
+    {
+        Format = "png",
+        Quality = 60,
+        MaxDimension = 1200,
+        Output = "both",
+        OutputPath = OutputPath,
+        Overwrite = true,
+        SaveToFile = true,
+        MaxWidth = 800
+    };
 
     private readonly Mock<IScreenshotService> _mockScreenshotService;
     private readonly Mock<IUIElementService> _mockUIElementService;
@@ -28,105 +39,84 @@ public class ScreenshotOptionTests
         _mockWindowService.Object);
 
     [Fact]
-    public void TakeScreenshot_ForwardsSaveOptionsAndMaxWidth()
+    public void TakeScreenshot_ForwardsAllOptions()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.TakeScreenshot(monitorIndex: 0, saveToFile: true, outputPath: OutputPath, maxWidth: 800);
+        sut.TakeScreenshot(monitorIndex: 0, format: "png", quality: 60, maxDimension: 1200, output: "both",
+            outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
-        _mockScreenshotService.Verify(
-            s => s.CaptureMonitor(0, "png", 85, true, OutputPath, 800),
-            Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(0, Expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureRegion_ForwardsSaveOptionsAndMaxWidth()
+    public void CaptureRegion_ForwardsAllOptions()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureRegion(10, 20, 300, 200, saveToFile: true, outputPath: OutputPath, maxWidth: 800);
+        sut.CaptureRegion(10, 20, 300, 200, format: "png", quality: 60, maxDimension: 1200, output: "both",
+            outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
-        _mockScreenshotService.Verify(
-            s => s.CaptureRegion(10, 20, 300, 200, "png", 85, true, OutputPath, 800),
-            Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureRegion(10, 20, 300, 200, Expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_ForwardsSaveOptionsAndMaxWidth()
+    public void CaptureWindow_ForwardsAllOptions()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(12345, saveToFile: true, outputPath: OutputPath, maxWidth: 800);
+        sut.CaptureWindow(12345, format: "png", quality: 60, maxDimension: 1200, output: "both",
+            outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
-        _mockScreenshotService.Verify(
-            s => s.CaptureWindow(new nint(12345), true, "png", 85, true, OutputPath, 800),
-            Times.Once);
+        _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), true, Expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_ForwardsSaveOptionsAndMaxWidth()
+    public void CaptureWithElements_ForwardsAllOptions()
     {
-        // Arrange
+        // Arrange - this tool checks the options itself before walking the UI tree, and C:\shots does
+        // not exist, so the call leaves outputPath out
         var sut = CreateSut();
+        var options = Expected with { OutputPath = null };
 
         // Act
-        sut.CaptureWithElements(12345, saveToFile: true, outputPath: OutputPath, maxWidth: 800);
+        sut.CaptureWithElements(12345, format: "png", quality: 60, maxDimension: 1200, output: "both",
+            overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             new nint(12345),
+            It.IsAny<string?>(),
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<(int, int, int, int)>(),
-            true,
-            "png",
-            85,
             true,
             true,
-            OutputPath,
-            800), Times.Once);
+            options), Times.Once);
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-4)]
-    public void CaptureWithElements_WithNonPositiveMaxWidth_DoesNotWalkUiTree(int maxWidth)
+    [Fact]
+    public void LegacyCall_WithSaveToFileAndMaxWidth_KeepsItsMeaning()
     {
-        // Arrange
+        // Arrange - how a 1.12 client asked for a small file
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(12345, maxWidth: maxWidth);
+        sut.TakeScreenshot(saveToFile: true, maxWidth: 1280);
 
         // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Be(MaxWidthMustBePositive);
-        _mockWindowService.Verify(w => w.GetWindowInfo(It.IsAny<nint>()), Times.Never);
-        _mockUIElementService.Verify(
-            u => u.GetUIElements(
-                It.IsAny<nint>(),
-                It.IsAny<int>(),
-                It.IsAny<UIElementFilter?>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(),
-            It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<(int, int, int, int)>(),
-            It.IsAny<bool>(),
-            It.IsAny<string>(),
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>(),
-            It.IsAny<string?>(),
-            It.IsAny<int?>()), Times.Never);
+        _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(),
+            It.Is<CaptureOptions>(o => o.SaveToFile && o.MaxWidth == 1280 && o.MaxDimension == null)), Times.Once);
+        var request = CaptureRequest.Resolve(new CaptureOptions { SaveToFile = true, MaxWidth = 1280 });
+        request.Output.Should().Be(CaptureOutputMode.File);
+        request.MaxWidth.Should().Be(1280);
+        request.MaxDimension.Should().BeNull("maxWidth alone keeps its old meaning: a width limit only");
     }
 }

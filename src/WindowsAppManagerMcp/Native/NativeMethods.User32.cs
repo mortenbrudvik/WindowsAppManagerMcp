@@ -156,6 +156,10 @@ internal static partial class NativeMethods
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool GetClientRect(nint hWnd, out RECT lpRect);
 
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool ClientToScreen(nint hWnd, ref POINT lpPoint);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool PrintWindow(nint hWnd, nint hdcBlt, uint nFlags);
