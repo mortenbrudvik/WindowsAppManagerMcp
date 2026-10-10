@@ -15,8 +15,8 @@ public class WindowManagerToolsCloseTests
     public WindowManagerToolsCloseTests()
     {
         _windowService.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns(true);
-        _windowService.Setup(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<nint> handles, bool _, int _) => handles.Select(WindowCloseResult.Sent).ToList());
+        _windowService.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(WindowCloseResult.Sent).ToList());
     }
 
     private WindowManagerTools CreateSut() => new(_windowService.Object, Mock.Of<IForegroundService>());
@@ -80,60 +80,61 @@ public class WindowManagerToolsCloseTests
     #region close_windows_batch
 
     [Fact]
-    public void CloseWindowsBatch_MoreThanThreeWindowsWithoutConfirm_IsRefused_AndClosesNothing()
+    public async Task CloseWindowsBatch_MoreThanThreeWindowsWithoutConfirm_IsRefused_AndClosesNothing()
     {
         // Act
         var act = () => CreateSut().CloseWindowsBatch(Requests(1, 2, 3, 4));
 
         // Assert
-        act.Should().Throw<ToolErrorException>()
+        (await act.Should().ThrowAsync<ToolErrorException>())
             .Where(e => e.ErrorCode == nameof(WindowErrorCode.ConfirmationRequired))
             .WithMessage("*4 windows*confirm=true*Nothing was closed*");
-        _windowService.Verify(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>()), Times.Never);
+        _windowService.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
-    public void CloseWindowsBatch_MoreThanThreeWindowsWithConfirm_ClosesThem()
+    public async Task CloseWindowsBatch_MoreThanThreeWindowsWithConfirm_ClosesThem()
     {
         // Act
-        var result = CreateSut().CloseWindowsBatch(Requests(1, 2, 3, 4), delayBetweenMs: 0, confirm: true);
+        var result = await CreateSut().CloseWindowsBatch(Requests(1, 2, 3, 4), delayBetweenMs: 0, confirm: true);
 
         // Assert
         result.TotalRequested.Should().Be(4);
         result.Succeeded.Should().Be(4);
-        _windowService.Verify(w => w.CloseWindowsBatch(
-            It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1, 2, 3, 4 })), false, 0), Times.Once);
+        _windowService.Verify(w => w.CloseWindowsBatchAsync(
+            It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1, 2, 3, 4 })), false, 0,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(3)]
-    public void CloseWindowsBatch_UpToThreeWindows_NeedsNoConfirm(int count)
+    public async Task CloseWindowsBatch_UpToThreeWindows_NeedsNoConfirm(int count)
     {
         // Act
-        var result = CreateSut().CloseWindowsBatch(Requests(Enumerable.Range(1, count).Select(i => (long)i).ToArray()));
+        var result = await CreateSut().CloseWindowsBatch(Requests(Enumerable.Range(1, count).Select(i => (long)i).ToArray()));
 
         // Assert
         result.Succeeded.Should().Be(count);
     }
 
     [Fact]
-    public void CloseWindowsBatch_PassesForceToTheService()
+    public async Task CloseWindowsBatch_PassesForceToTheService()
     {
         // Act
-        CreateSut().CloseWindowsBatch(Requests(1, 2), force: true);
+        await CreateSut().CloseWindowsBatch(Requests(1, 2), force: true);
 
         // Assert
-        _windowService.Verify(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), true, 50), Times.Once);
+        _windowService.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), true, 50, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CloseWindowsBatch_ReportsEachRefusalWithItsErrorCode()
+    public async Task CloseWindowsBatch_ReportsEachRefusalWithItsErrorCode()
     {
         // Arrange
-        _windowService.Setup(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), false, It.IsAny<int>()))
-            .Returns(
+        _windowService.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), false, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
             [
                 WindowCloseResult.Sent(1),
                 WindowCloseResult.Failed(2, WindowErrorCode.ProtectedWindow, "the desktop"),
@@ -141,7 +142,7 @@ public class WindowManagerToolsCloseTests
             ]);
 
         // Act
-        var result = CreateSut().CloseWindowsBatch(Requests(1, 2, 3));
+        var result = await CreateSut().CloseWindowsBatch(Requests(1, 2, 3));
 
         // Assert
         result.Succeeded.Should().Be(1);
@@ -150,6 +151,19 @@ public class WindowManagerToolsCloseTests
             new WindowResultItem(1, true),
             new WindowResultItem(2, false, Error: "the desktop", ErrorCode: "ProtectedWindow"),
             new WindowResultItem(3, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle"));
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_PassesTheCallsToken_SoTheClientCanCancelTheBatch()
+    {
+        // Arrange
+        using var call = new CancellationTokenSource();
+
+        // Act
+        await CreateSut().CloseWindowsBatch(Requests(1, 2), cancellationToken: call.Token);
+
+        // Assert
+        _windowService.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), false, 50, call.Token), Times.Once);
     }
 
     #endregion

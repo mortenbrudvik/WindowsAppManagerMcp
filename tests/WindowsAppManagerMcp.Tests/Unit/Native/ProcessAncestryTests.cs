@@ -9,6 +9,33 @@ public class ProcessAncestryTests
     private static readonly DateTime T0 = new(2026, 1, 1, 8, 0, 0, DateTimeKind.Utc);
 
     [Fact]
+    public async Task WaitForExitAsync_OfAProcessThatKeepsRunning_ReturnsFalseAtTheTimeout()
+    {
+        // Arrange - this test process, which certainly does not exit; nothing is started, closed or killed
+        using var self = new NativeProcessWrapper().OpenProcess(Environment.ProcessId)!;
+
+        // Act
+        var exited = await self.WaitForExitAsync(50, CancellationToken.None);
+
+        // Assert
+        exited.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WaitForExitAsync_WhenTheCallIsCancelled_Throws()
+    {
+        // Arrange
+        using var self = new NativeProcessWrapper().OpenProcess(Environment.ProcessId)!;
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        // Act
+        var act = () => self.WaitForExitAsync(60000, call.Token);
+
+        // Assert - a cancellation, not "did not exit within the timeout"
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public void FindAncestors_ReturnsChainNearestFirst()
     {
         // Arrange - server(500) <- claude(400) <- pwsh(300) <- WindowsTerminal(200) <- explorer(100)

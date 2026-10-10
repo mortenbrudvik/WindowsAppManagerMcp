@@ -511,6 +511,12 @@ public sealed class ForegroundService : IForegroundService
     /// <paramref name="settle"/> (infinite: until the deadline) and never past the deadline. Reads at
     /// least once.
     /// </summary>
+    /// <remarks>
+    /// This and <see cref="WaitUntil"/> poll with Thread.Sleep on purpose: they run on the dedicated activation thread
+    /// (<see cref="IForegroundThread"/>), whose input state AttachThreadInput ties to that thread, and a Task.Delay
+    /// continuation would resume on another one. Each sleep is one short poll interval, and the activation's token and
+    /// deadline end the loop.
+    /// </remarks>
     private bool WaitUntilInFront(nint root, TimeSpan settle, Deadline deadline, CancellationToken token, out nint foreground)
     {
         var stepDeadline = settle == Timeout.InfiniteTimeSpan ? deadline : deadline.NoLaterThan(settle);

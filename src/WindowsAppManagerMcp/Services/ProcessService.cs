@@ -413,12 +413,13 @@ public class ProcessService : IProcessService
         : result.WindowHandle != null ? "started, its window appeared"
         : "started, no window appeared in time";
 
-    public KillResult KillProcess(
+    public async Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
-        string? expectedProcessName = null)
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default)
     {
         // Safety check: require explicit confirmation
         if (!confirm)
@@ -580,9 +581,12 @@ public class ProcessService : IProcessService
                 }
             }
 
+            // A call cancelled before anything is sent does nothing
+            cancellationToken.ThrowIfCancellationRequested();
+
             return forceKill
-                ? TerminateForcefully(process, processId, processName)
-                : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
+                ? await TerminateForcefullyAsync(process, processId, processName, cancellationToken).ConfigureAwait(false)
+                : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -631,7 +635,8 @@ public class ProcessService : IProcessService
     /// Graceful mode: posts WM_CLOSE to the main window and waits. Never escalates to a forced kill;
     /// a process that cannot be closed or is still running is left alone and reported as such.
     /// </summary>
-    private static KillResult CloseGracefully(IProcessHandle process, int processId, string processName, int timeoutMs)
+    private static async Task<KillResult> CloseGracefullyAsync(
+        IProcessHandle process, int processId, string processName, int timeoutMs, CancellationToken cancellationToken)
     {
         bool closeRequested;
         try
@@ -664,7 +669,12 @@ public class ProcessService : IProcessService
         bool exited;
         try
         {
-            exited = process.WaitForExit(timeoutMs);
+            exited = await process.WaitForExitAsync(timeoutMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The close request was sent; the process may still exit, or show a prompt
+            throw;
         }
         catch (Exception ex)
         {
@@ -692,7 +702,8 @@ public class ProcessService : IProcessService
     /// <summary>
     /// Force mode: terminates the process and its child processes, then confirms that it exited.
     /// </summary>
-    private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
+    private static async Task<KillResult> TerminateForcefullyAsync(
+        IProcessHandle process, int processId, string processName, CancellationToken cancellationToken)
     {
         AggregateException? treeFailures = null;
         try
@@ -725,7 +736,12 @@ public class ProcessService : IProcessService
         bool exited;
         try
         {
-            exited = process.WaitForExit(ForceKillExitWaitMs);
+            exited = await process.WaitForExitAsync(ForceKillExitWaitMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The termination was requested; only the confirmation that the process exited is not waited for
+            throw;
         }
         catch (Exception ex)
         {

@@ -96,8 +96,11 @@ public interface IProcessHandle : IDisposable
     /// </summary>
     bool CloseMainWindow();
 
-    /// <summary>Waits for the process to exit. Returns true if it exited within the timeout.</summary>
-    bool WaitForExit(int milliseconds);
+    /// <summary>
+    /// Waits, asynchronously, for the process to exit. True if it exited within <paramref name="milliseconds"/>.
+    /// </summary>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled first.</exception>
+    Task<bool> WaitForExitAsync(int milliseconds, CancellationToken cancellationToken);
 
     /// <summary>Terminates the process immediately, optionally with all of its descendants.</summary>
     void Kill(bool entireProcessTree);

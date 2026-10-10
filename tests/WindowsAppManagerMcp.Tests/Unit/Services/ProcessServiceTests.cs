@@ -535,13 +535,13 @@ public class ProcessServiceTests
     #region T4.5: KillProcess Tests
 
     [Fact]
-    public void KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
+    public async Task KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(1234, confirm: false);
+        var result = await sut.KillProcessAsync(1234, confirm: false);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -550,13 +550,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(0, confirm: true);
+        var result = await sut.KillProcessAsync(0, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -564,13 +564,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(-1, confirm: true);
+        var result = await sut.KillProcessAsync(-1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -578,14 +578,14 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
+    public async Task KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
     {
         // Arrange
         var sut = CreateSut();
         var currentPid = Environment.ProcessId;
 
         // Act
-        var result = sut.KillProcess(currentPid, confirm: true);
+        var result = await sut.KillProcessAsync(currentPid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -594,13 +594,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
+    public async Task KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
     {
         // Arrange - the mocked process seam finds no process with this ID
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
+        var result = await sut.KillProcessAsync(int.MaxValue - 1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();

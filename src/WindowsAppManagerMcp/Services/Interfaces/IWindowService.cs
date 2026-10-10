@@ -77,25 +77,31 @@ public interface IWindowService
     /// </summary>
     WindowCloseResult CloseWindow(nint handle, bool force);
 
-    // Batch operations
-    IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(
+    // Batch operations. Each changes one window after another, with delayBetweenMs (clamped to 0-5000) between two
+    // windows; the cancellation token ends the batch between windows and during that delay: the windows already
+    // changed stay changed, and the call throws OperationCanceledException.
+    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowBoundsBatchAsync(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
-        int delayBetweenMs = 50);
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default);
 
-    IReadOnlyList<(nint Handle, bool Success, string? Error)> SnapWindowsBatch(
+    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SnapWindowsBatchAsync(
         IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)> placements,
-        int delayBetweenMs = 50);
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default);
 
-    IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowStateBatch(
+    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowStateBatchAsync(
         IReadOnlyList<(nint Handle, WindowState State)> changes,
-        int delayBetweenMs = 30);
+        int delayBetweenMs = 30,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// <see cref="CloseWindow"/> for each window, in order, with the same <paramref name="force"/>. A
     /// refused or failed window does not stop the batch; each result says what happened to its window.
     /// </summary>
-    IReadOnlyList<WindowCloseResult> CloseWindowsBatch(
+    Task<IReadOnlyList<WindowCloseResult>> CloseWindowsBatchAsync(
         IReadOnlyList<nint> handles,
         bool force,
-        int delayBetweenMs = 50);
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default);
 }

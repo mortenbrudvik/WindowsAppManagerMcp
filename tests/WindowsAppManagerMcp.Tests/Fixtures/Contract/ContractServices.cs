@@ -95,16 +95,16 @@ public sealed class ContractServices : IDisposable
         Windows.Setup(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>())).Returns(true);
         Windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>())).Returns(true);
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>())).Returns((nint handle, bool _) => new WindowCloseResult(handle, true));
-        Windows.Setup(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<nint> handles, bool _, int _) => handles.Select(h => new WindowCloseResult(h, true)).ToList());
-        Windows.Setup(w => w.SetWindowBoundsBatch(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _) =>
+        Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(h => new WindowCloseResult(h, true)).ToList());
+        Windows.Setup(w => w.SetWindowBoundsBatchAsync(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _, CancellationToken _) =>
                 placements.Select(p => (p.Handle, true, (string?)null)).ToList());
-        Windows.Setup(w => w.SnapWindowsBatch(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _) =>
+        Windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _, CancellationToken _) =>
                 placements.Select(p => (p.Handle, true, (string?)null)).ToList());
-        Windows.Setup(w => w.SetWindowStateBatch(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, WindowState)> changes, int _) =>
+        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowState)> changes, int _, CancellationToken _) =>
                 changes.Select(c => (c.Handle, true, (string?)null)).ToList());
 
         Foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
@@ -126,8 +126,8 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
-        Processes.Setup(p => p.KillProcess(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()))
-            .Returns((int id, bool _, bool _, int _, string? _) =>
+        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
         Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
@@ -217,17 +217,17 @@ public sealed class ContractServices : IDisposable
         Windows.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns(new TargetPolicyVerdict(true, null, null));
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()))
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
-        Windows.Setup(w => w.CloseWindowsBatch(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<nint> handles, bool _, int _) =>
+        Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) =>
                 handles.Select(h => new WindowCloseResult(h, false, WindowErrorCode.InvalidHandle, invalid)).ToList());
-        Windows.Setup(w => w.SetWindowBoundsBatch(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _) =>
+        Windows.Setup(w => w.SetWindowBoundsBatchAsync(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _, CancellationToken _) =>
                 placements.Select(p => (p.Handle, false, (string?)invalid)).ToList());
-        Windows.Setup(w => w.SnapWindowsBatch(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _) =>
+        Windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _, CancellationToken _) =>
                 placements.Select(p => (p.Handle, false, (string?)invalid)).ToList());
-        Windows.Setup(w => w.SetWindowStateBatch(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(nint Handle, WindowState)> changes, int _) =>
+        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowState)> changes, int _, CancellationToken _) =>
                 changes.Select(c => (c.Handle, false, (string?)invalid)).ToList());
 
         Foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
@@ -239,8 +239,8 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns([]);
-        Processes.Setup(p => p.KillProcess(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()))
-            .Returns((int id, bool _, bool _, int _, string? _) =>
+        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));
         Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>

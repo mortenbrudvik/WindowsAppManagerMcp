@@ -86,7 +86,7 @@ public class AppLauncherTools
                  "The result reports closeRequested, forced and exited. Refuses protected system processes, the agent's own host (the terminal or editor hosting this server; errorCode CannotTerminateHost) " +
                  "and apps the user's policy denies (TargetDeniedByPolicy); with forceKill=true also when a child process it would end belongs to that host or is denied by the policy, " +
                  "or when the child processes cannot be read to check them (ProcessTreeUnreadable).")]
-    public KillResultDto KillProcess(
+    public async Task<KillResultDto> KillProcess(
         [Description("The process ID to terminate (get from list_processes tool)")]
         int processId,
         [Description("Must be set to true to confirm termination - this is a safety requirement")]
@@ -96,9 +96,12 @@ public class AppLauncherTools
         [Description("Graceful mode only: milliseconds to wait for the process to exit after the close request (0-60000, default 5000)")]
         int gracefulTimeoutMs = 5000,
         [Description("Optional guard against PID reuse: the expected process name as shown by list_processes (e.g. 'notepad' or 'notepad.exe'). If the PID now belongs to a different process, nothing is done and errorCode is ProcessNameMismatch.")]
-        string? expectedProcessName = null)
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default)
     {
-        var result = _processService.KillProcess(processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName);
+        // The wait for the process to exit (up to gracefulTimeoutMs) ends when the client cancels the call
+        var result = await _processService.KillProcessAsync(
+            processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, cancellationToken).ConfigureAwait(false);
 
         return new KillResultDto(
             Success: result.Success,

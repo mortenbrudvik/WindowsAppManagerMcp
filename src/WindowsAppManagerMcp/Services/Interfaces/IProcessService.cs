@@ -51,13 +51,18 @@ public interface IProcessService
     /// </param>
     /// <param name="gracefulTimeoutMs">Graceful mode: how long to wait for the process to exit (0-60000 ms).</param>
     /// <param name="expectedProcessName">Optional PID-reuse guard: the expected process name, with or without .exe.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the wait for the process to exit; the close request or termination already sent stands, and the call
+    /// throws <see cref="OperationCanceledException"/>. Cancelled before anything was sent, nothing is done.
+    /// </param>
     /// <returns>Result stating whether a close was requested, whether termination was forced, and whether the process exited.</returns>
-    KillResult KillProcess(
+    Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = 5000,
-        string? expectedProcessName = null);
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Launches multiple applications in batch, one after another.
