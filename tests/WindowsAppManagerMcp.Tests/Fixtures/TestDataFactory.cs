@@ -235,6 +235,7 @@ public static class TestDataFactory
             mock.Setup(n => n.IsZoomed(w.Handle)).Returns(w.State == WindowState.Maximized);
             mock.Setup(n => n.GetWindowText(w.Handle)).Returns(w.Title);
             mock.Setup(n => n.GetWindowThreadProcessId(w.Handle)).Returns((uint)w.ProcessId);
+            mock.Setup(n => n.GetProcessName((uint)w.ProcessId)).Returns(w.ProcessName);
             mock.Setup(n => n.GetWindowRect(w.Handle))
                 .Returns((w.Bounds.X, w.Bounds.Y, w.Bounds.X + w.Bounds.Width, w.Bounds.Y + w.Bounds.Height));
         }

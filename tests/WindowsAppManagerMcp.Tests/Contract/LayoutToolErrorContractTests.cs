@@ -24,7 +24,7 @@ public class LayoutToolErrorContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(
+        var result = await server.CallToolAsync(
             "get_layout", new Dictionary<string, object?> { ["name"] = "typo" });
 
         // Assert
@@ -48,7 +48,7 @@ public class LayoutToolErrorContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync("list_layouts");
+        var result = await server.CallToolAsync("list_layouts");
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -64,7 +64,7 @@ public class LayoutToolErrorContractTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync("get_layout");
+        var result = await server.CallToolAsync("get_layout");
 
         // Assert
         result.IsError.Should().BeTrue();

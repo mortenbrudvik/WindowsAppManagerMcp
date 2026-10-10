@@ -3,6 +3,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// <summary>
 /// Unit tests for BrowserReadingService.
 /// Tests the service layer that coordinates browser URL and content extraction.
+/// The window's process name comes from the mocked INativeWindowWrapper, so the results do not
+/// depend on which real process happens to own the fake process ID.
 /// </summary>
 public class BrowserReadingServiceTests
 {
@@ -392,6 +394,49 @@ public class BrowserReadingServiceTests
 
         // Assert
         result.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Process Name Tests
+
+    [Fact]
+    public async Task GetBrowserUrl_TakesTheProcessNameFromTheNativeWrapper()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockNativeWrapper.Setup(n => n.IsWindow(handle)).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
+        _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns("msedge");
+        _mockBrowserDetection.Setup(b => b.IsBrowser("msedge")).Returns(true);
+        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "edge")).Returns("https://example.com");
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.BrowserType.Should().Be("edge");
+        _mockNativeWrapper.Verify(n => n.GetProcessName(1000u), Times.Once);
+    }
+
+    [Fact]
+    public void IsBrowserWindow_WhenTheProcessNameCannotBeRead_ChecksUnknown()
+    {
+        // Arrange - the process exited or cannot be opened
+        var handle = new nint(12345);
+        _mockNativeWrapper.Setup(n => n.IsWindow(handle)).Returns(true);
+        _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
+        _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns((string?)null);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.IsBrowserWindow(handle);
+
+        // Assert
+        result.Should().BeFalse();
+        _mockBrowserDetection.Verify(b => b.IsBrowser("Unknown"), Times.Once);
     }
 
     #endregion
@@ -822,6 +867,7 @@ public class BrowserReadingServiceTests
     {
         _mockNativeWrapper.Setup(n => n.IsWindow(handle)).Returns(true);
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
+        _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns(processName);
         _mockNativeWrapper.Setup(n => n.GetWindowText(handle)).Returns($"Test Page - {processName}");
         _mockBrowserDetection.Setup(b => b.IsBrowser(It.IsAny<string>())).Returns(true);
     }

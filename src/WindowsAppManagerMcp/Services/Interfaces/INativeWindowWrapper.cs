@@ -81,4 +81,10 @@ public interface INativeWindowWrapper
     /// Gets the process ID of the current process.
     /// </summary>
     uint GetCurrentProcessId();
+
+    /// <summary>
+    /// Gets the name of the process with the given ID, without the ".exe" extension (for example
+    /// "msedge"). Returns null when the process has exited or its name cannot be read.
+    /// </summary>
+    string? GetProcessName(uint processId);
 }

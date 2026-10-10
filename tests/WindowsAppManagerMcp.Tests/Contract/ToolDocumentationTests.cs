@@ -27,11 +27,13 @@ public class ToolDocumentationTests
     }
 
     [Fact]
-    public void Catalog_FindsTheServerTools()
+    public void Catalog_ListsExactlyTheToolsTheServerServes()
     {
-        // Guards against the checks below silently running over an empty set.
-        Tools.Should().ContainKey("launch_browser_with_debug");
-        Tools.Count.Should().BeGreaterThan(30);
+        // The checks below run over the catalog, so it must be exactly what the production
+        // registration serves: not empty, no unregistered class, no class without [McpServerToolType].
+        ServerToolCatalog.ServedToolNames.Should().OnlyHaveUniqueItems().And.Contain("launch_browser_with_debug");
+        Tools.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
+            "docs/TOOLS.md, README.md and SKILL.md are checked against the catalog, and tools/list serves the registered tools");
     }
 
     #region docs/TOOLS.md

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -468,7 +467,7 @@ public class WindowService : IWindowService
 
         // Get process ID and name
         var processId = _nativeWrapper.GetWindowThreadProcessId(hWnd);
-        var processName = GetProcessNameFromId((int)processId);
+        var processName = GetProcessName(processId);
 
         // Skip our own process
         if (processId == _nativeWrapper.GetCurrentProcessId())
@@ -504,16 +503,6 @@ public class WindowService : IWindowService
         );
     }
 
-    private static string GetProcessNameFromId(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return process.ProcessName;
-        }
-        catch
-        {
-            return "Unknown";
-        }
-    }
+    /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
+    private string GetProcessName(uint processId) => _nativeWrapper.GetProcessName(processId) ?? "Unknown";
 }

@@ -18,7 +18,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public class ToolResultSerializationTests
 {
-    private static readonly Dictionary<string, MethodInfo> ToolMethods = DiscoverToolMethods();
+    private static IReadOnlyDictionary<string, MethodInfo> ToolMethods => ServerToolCatalog.Tools;
 
     public static TheoryData<string> ToolNames()
     {
@@ -32,12 +32,13 @@ public class ToolResultSerializationTests
     }
 
     [Fact]
-    public void Discovery_FindsTheServerTools()
+    public void Discovery_FindsExactlyTheToolsTheServerServes()
     {
-        // Guards against the theories below silently running over an empty set.
-        ToolMethods.Should().ContainKey("launch_browser_with_debug");
-        ToolMethods.Should().ContainKey("move_window");
-        ToolMethods.Count.Should().BeGreaterThan(30);
+        // The theories below run over the catalog, so it must be exactly what the production
+        // registration serves: a served tool missing from it would never be checked.
+        ServerToolCatalog.ServedToolNames.Should().Contain("launch_browser_with_debug").And.Contain("move_window");
+        ToolMethods.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
+            "every tool the server serves must have its result type checked");
     }
 
     [Theory]
@@ -105,7 +106,7 @@ public class ToolResultSerializationTests
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.WithTools(tools));
 
         // Act - goes through the SDK's own argument binding and result serialization.
-        var result = await server.Client.CallToolAsync("launch_browser_with_debug");
+        var result = await server.CallToolAsync("launch_browser_with_debug");
 
         // Assert
         var text = result.Content.OfType<TextContentBlock>().Single().Text;
@@ -135,17 +136,4 @@ public class ToolResultSerializationTests
         return type;
     }
 
-    private static Dictionary<string, MethodInfo> DiscoverToolMethods()
-    {
-        // Mirrors WithTools<T>(): public and non-public, instance and static methods on [McpServerToolType] types.
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic |
-                                   BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-
-        return typeof(BrowserReadingTools).Assembly.GetTypes()
-            .Where(t => t.GetCustomAttribute<McpServerToolTypeAttribute>() != null)
-            .SelectMany(t => t.GetMethods(flags))
-            .Select(m => (Method: m, Attribute: m.GetCustomAttribute<McpServerToolAttribute>()))
-            .Where(x => x.Attribute != null)
-            .ToDictionary(x => x.Attribute!.Name ?? x.Method.Name, x => x.Method);
-    }
 }

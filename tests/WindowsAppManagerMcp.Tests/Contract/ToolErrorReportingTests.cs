@@ -32,7 +32,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(ThrowingTool);
+        var result = await server.CallToolAsync(ThrowingTool);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -52,7 +52,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(UnserializableTool);
+        var result = await server.CallToolAsync(UnserializableTool);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -68,7 +68,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        await server.Client.CallToolAsync(ThrowingTool);
+        await server.CallToolAsync(ThrowingTool);
 
         // Assert
         server.Logs.Entries.Should().Contain(e =>
@@ -84,7 +84,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(
+        var result = await server.CallToolAsync(
             EchoTool, new Dictionary<string, object?> { ["text"] = "hello" });
 
         // Assert
@@ -99,7 +99,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(EchoTool);
+        var result = await server.CallToolAsync(EchoTool);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -119,7 +119,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(
+        var result = await server.CallToolAsync(
             CountTool, new Dictionary<string, object?> { ["count"] = "not a number" });
 
         // Assert
@@ -137,7 +137,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        await server.Client.CallToolAsync(EchoTool);
+        await server.CallToolAsync(EchoTool);
 
         // Assert - the agent's own mistake is not a server fault
         server.Logs.Entries.Should().NotContain(e =>
@@ -157,7 +157,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(tool);
+        var result = await server.CallToolAsync(tool);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -173,7 +173,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(DeliberateErrorTool);
+        var result = await server.CallToolAsync(DeliberateErrorTool);
 
         // Assert - like the SDK, the McpException message reaches the agent unchanged
         result.IsError.Should().BeTrue();
@@ -192,7 +192,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(CodedErrorTool);
+        var result = await server.CallToolAsync(CodedErrorTool);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -208,8 +208,8 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        await server.Client.CallToolAsync(DeliberateErrorTool);
-        await server.Client.CallToolAsync(CodedErrorTool);
+        await server.CallToolAsync(DeliberateErrorTool);
+        await server.CallToolAsync(CodedErrorTool);
 
         // Assert - an ordinary "not found" must not write an error with a stack trace to stderr
         server.Logs.Entries.Should().NotContain(e =>
@@ -252,7 +252,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var result = await server.Client.CallToolAsync(ThrowingTool);
+        var result = await server.CallToolAsync(ThrowingTool);
 
         // Assert - the agent reads the raw text, so quotes must not be escaped as unicode sequences.
         var text = result.Content.OfType<TextContentBlock>().Single().Text;
@@ -266,7 +266,7 @@ public class ToolErrorReportingTests
         await using var server = await StartServerAsync();
 
         // Act
-        var act = async () => await server.Client.CallToolAsync("no_such_tool");
+        var act = async () => await server.CallToolAsync("no_such_tool");
 
         // Assert
         await act.Should().ThrowAsync<McpProtocolException>();

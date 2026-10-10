@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
@@ -64,6 +65,20 @@ public static class ServiceRegistration
         services.AddSingleton<InputSimulationTools>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The server's log levels: Warning and above for everything, plus the per-call lines of
+    /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
+    /// at Information. Program.cs writes them to stderr; stdout carries the MCP protocol.
+    /// </summary>
+    public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
+    {
+        ArgumentNullException.ThrowIfNull(logging);
+
+        return logging
+            .SetMinimumLevel(LogLevel.Warning)
+            .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information);
     }
 
     /// <summary>

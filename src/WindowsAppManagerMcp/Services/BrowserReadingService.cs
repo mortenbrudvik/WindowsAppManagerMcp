@@ -84,7 +84,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
-            var processName = GetProcessNameFromId((int)processId);
+            var processName = GetProcessName(processId);
 
             // Check if it's a browser
             if (!_browserDetection.IsBrowser(processName))
@@ -237,7 +237,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Get process info
             var processId = _nativeWrapper.GetWindowThreadProcessId(browserHandle);
-            var processName = GetProcessNameFromId((int)processId);
+            var processName = GetProcessName(processId);
 
             // Check if it's a browser
             if (!_browserDetection.IsBrowser(processName))
@@ -427,7 +427,7 @@ public class BrowserReadingService : IBrowserReadingService
 
             // Check if it's a browser
             var processId = _nativeWrapper.GetWindowThreadProcessId(foregroundHandle);
-            var processName = GetProcessNameFromId((int)processId);
+            var processName = GetProcessName(processId);
 
             if (!_browserDetection.IsBrowser(processName))
             {
@@ -619,7 +619,7 @@ public class BrowserReadingService : IBrowserReadingService
             return false;
 
         var processId = _nativeWrapper.GetWindowThreadProcessId(handle);
-        var processName = GetProcessNameFromId((int)processId);
+        var processName = GetProcessName(processId);
 
         return _browserDetection.IsBrowser(processName);
     }
@@ -675,16 +675,6 @@ public class BrowserReadingService : IBrowserReadingService
         maxLength is int max && max >= 0 && content.Length > max ? content[..max] : content;
 
 
-    private static string GetProcessNameFromId(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return process.ProcessName;
-        }
-        catch
-        {
-            return "Unknown";
-        }
-    }
+    /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
+    private string GetProcessName(uint processId) => _nativeWrapper.GetProcessName(processId) ?? "Unknown";
 }

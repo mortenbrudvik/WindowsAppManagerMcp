@@ -22,7 +22,9 @@ builder.Logging.AddConsole(options =>
 {
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
-builder.Logging.SetMinimumLevel(LogLevel.Warning);
+// Warning and above, plus one Information line at the start and end of every tool call (tool, duration,
+// outcome; never arguments or results). See ServiceRegistration.AddWindowsAppManagerLogLevels.
+builder.Logging.AddWindowsAppManagerLogLevels();
 
 // Register services and MCP tool classes (shared with DependencyInjectionTests, see ServiceRegistration).
 // Layout presets live in %LOCALAPPDATA%\WindowsAppManagerMcp\layouts or WAM_LAYOUTS_PATH, outside the

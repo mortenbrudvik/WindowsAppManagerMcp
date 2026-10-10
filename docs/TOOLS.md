@@ -2737,26 +2737,79 @@ An unknown tool name is still reported as a JSON-RPC protocol error, not as a to
 
 ### Error code reference
 
-Common codes. Each tool's section lists the codes that tool returns.
+Every `errorCode` the server returns, in alphabetical order. Most arrive in a normal result with
+`success: false`; the codes marked `isError: true` arrive as a tool error (see
+[Tool errors](#tool-errors)). Where a tool section has its own error code table, it gives more detail.
 
-| Code | Description |
-|------|-------------|
-| `UnhandledException` | The tool threw an unexpected exception (see [Tool errors](#tool-errors)) |
-| `InvalidArguments` | Tool error (`isError: true`): a required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
-| `InvalidArgumentValue` | launch_application / launch_applications_batch (`success: false`): an element of `arguments` is null or contains a NUL character (see [launch_application](#launch_application)) |
-| `ToolError` | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
-| `WindowNotFound` | Window handle is invalid or window closed |
-| `InvalidHandle` | Handle parameter is missing or invalid |
-| `OperationFailed` | Window operation failed (permission denied, etc.) |
-| `PathTraversal` | Security: path traversal attempt detected |
-| `InvalidExecutable` | Invalid or blocked executable path |
-| `ProtectedProcess` | Cannot terminate protected system process |
-| `ConfirmationRequired` | Kill operation requires confirm=true |
-| `PresetNotFound` | Layout preset doesn't exist |
-| `InvalidName` | Layout preset name is empty or too long |
-| `StorageUnavailable` | Layout presets folder cannot be created or used (see [Layout Presets](#layout-presets)) |
-| `CoordinatesOutOfBounds` | Click coordinates outside screen bounds |
-| `SendInputFailed` | SendInput API call failed |
-| `EmptyText` | Text or keys string is empty |
-| `InvalidKeySpecification` | Invalid key specification format |
-| `UnknownKey` | Unknown special key name in braces |
+<!-- ErrorCodeReferenceTests checks this table against the error codes in src/: add or remove a row
+     whenever a code is added to or removed from the server. -->
+
+| Code | Returned by | Meaning |
+|------|-------------|---------|
+| `AccessDenied` | [kill_process](#kill_process) | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
+| `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
+| `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements) | UI Automation is not available |
+| `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
+| `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
+| `CannotTerminateHost` | [kill_process](#kill_process) | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
+| `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
+| `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
+| `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
+| `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
+| `CdpProtocolError` | [Browser Reading](#browser-reading) tools | The CDP connection closed early or returned an unreadable response |
+| `CdpTargetAmbiguous` | [Browser Reading](#browser-reading) tools | Several tabs have the window's title; the tool will not guess |
+| `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
+| `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
+| `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
+| `ConfirmationRequired` | [kill_process](#kill_process) | `confirm` was not true |
+| `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
+| `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move | The coordinates are outside the screen |
+| `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
+| `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
+| `ElementAccessFailed` | [get_ui_elements](#get_ui_elements) | An element the walk needed is no longer available |
+| `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
+| `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
+| `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
+| `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
+| `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
+| `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
+| `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
+| `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
+| `InvalidHandle` | [Window Control](#window-control) tools, [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements) | The window handle is zero or invalid, or the window no longer exists |
+| `InvalidKeySpecification` | [send_keys](#send_keys) | The key specification is malformed |
+| `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
+| `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
+| `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
+| `InvalidSnapPosition` | [snap_window](#snap_window) | `position` is not a known snap position |
+| `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
+| `InvalidUri` | [launch_application](#launch_application), launch_applications_batch | The URI is malformed, or a file URI does not name an absolute local or UNC path |
+| `InvalidWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | The working directory contains invalid characters |
+| `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
+| `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, or its window did not appear |
+| `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
+| `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
+| `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, get_ui_elements | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
+| `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
+| `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
+| `OperationException` | [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements) | Unexpected error while reading; see `error` |
+| `OperationTimedOut` | [get_ui_elements](#get_ui_elements) | Walking the element tree took longer than the timeout |
+| `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
+| `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
+| `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
+| `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
+| `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |
+| `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
+| `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
+| `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
+| `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
+| `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
+| `TerminationException` | [kill_process](#kill_process) | Unexpected error |
+| `TerminationNotConfirmed` | [kill_process](#kill_process) | Force mode: the process had not exited when the wait ended |
+| `ToolError` | any tool (`isError: true`) | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
+| `UnhandledException` | any tool (`isError: true`) | The tool threw an unexpected exception, or its result could not be serialized (see [Tool errors](#tool-errors)) |
+| `UnknownKey` | [send_keys](#send_keys) | Unknown special key name in braces |
+| `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of http, https, file, mailto and tel |
+| `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
+| `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
+| `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements) | apply_layout: no open window matched a placement. get_ui_elements: the window no longer exists |
