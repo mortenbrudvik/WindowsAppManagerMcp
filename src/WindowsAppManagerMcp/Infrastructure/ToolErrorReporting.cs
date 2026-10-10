@@ -97,7 +97,7 @@ public static class ToolErrorReporting
             try
             {
                 var result = await next(request, cancellationToken).ConfigureAwait(false);
-                call.Finished(result.IsError == true ? "isError (no errorCode)" : "ok");
+                call.Finished(result.IsError == true ? $"isError {ReportedErrorCode(result) ?? "(no errorCode)"}" : "ok");
                 return result;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -153,6 +153,36 @@ public static class ToolErrorReporting
                 return CreateErrorResult(toolName, exception);
             }
         };
+
+    /// <summary>
+    /// The errorCode of a result the tool itself marked isError, such as a failed capture: the
+    /// "errorCode" property of its JSON text block. Only a short identifier is taken, so the log never
+    /// receives result content. Null when there is none.
+    /// </summary>
+    private static string? ReportedErrorCode(CallToolResult result)
+    {
+        foreach (var block in result.Content.OfType<TextContentBlock>())
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(block.Text);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("errorCode", out var code) &&
+                    code.ValueKind == JsonValueKind.String &&
+                    code.GetString() is { Length: > 0 and <= 64 } value &&
+                    value.All(char.IsAsciiLetterOrDigit))
+                {
+                    return value;
+                }
+            }
+            catch (JsonException)
+            {
+                // Not JSON: no code to report
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Builds the error result returned to the agent for an unexpected exception that escaped a tool.
