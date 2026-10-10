@@ -48,7 +48,7 @@ public class NativeCallGuardTests
     private static readonly Type[] ActionWrappers =
     [
         typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper),
-        typeof(NativeThreadInputWrapper)
+        typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper)
     ];
 
     /// <summary>
@@ -447,6 +447,25 @@ public class NativeCallGuardTests
             "the scan must see the wrapper's own SetWindowPos and ShowWindow calls");
         Unexpected(callers, typeof(NativeWindowWrapper), NativeMethodsType).Should().BeEmpty(
             "moving, resizing, showing and focusing windows must go through INativeWindowWrapper so tests can mock it");
+    }
+
+    [Fact]
+    public void HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper()
+    {
+        // Arrange - a registered hotkey takes its chord from every other application, so registering one
+        // must stay behind the seam that the pause hotkey's tests replace with a fake
+        var hotkeyType = NativeMethodsType.GetNestedType("Hotkey", BindingFlags.NonPublic | BindingFlags.Public);
+        hotkeyType.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == hotkeyType);
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeHotkeyWrapper),
+            "the scan must see the wrapper's own RegisterHotKey and GetMessage calls");
+        callers[typeof(NativeHotkeyWrapper)].Should().Contain(c => c.EndsWith("Hotkey.RegisterHotKey"));
+        Unexpected(callers, typeof(NativeHotkeyWrapper), NativeMethodsType).Should().BeEmpty(
+            "registering hotkeys and running the hotkey thread's message loop must go through INativeHotkeyWrapper so tests can fake it");
     }
 
     [Fact]

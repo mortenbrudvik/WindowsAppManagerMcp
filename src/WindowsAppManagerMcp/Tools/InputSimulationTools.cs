@@ -32,6 +32,10 @@ public class InputSimulationTools
         "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only " +
         "together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false";
 
+    internal const string ReleaseHeldModifiersDescription =
+        "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with " +
+        "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Default: false";
+
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
         "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
@@ -46,7 +50,12 @@ public class InputSimulationTools
 
     private const string GuardNote =
         " Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), " +
-        "a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter.";
+        "a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter." +
+        SessionNote;
+
+    private const string SessionNote =
+        " While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume." +
+        " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
 
     private readonly IInputSimulationService _inputService;
 
@@ -66,9 +75,12 @@ public class InputSimulationTools
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
-        return _inputService.Click(x, y, Target(windowHandle, allowHostTarget));
+        return _inputService.Click(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "right_click")]
@@ -81,9 +93,12 @@ public class InputSimulationTools
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
-        return _inputService.RightClick(x, y, Target(windowHandle, allowHostTarget));
+        return _inputService.RightClick(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "double_click")]
@@ -98,9 +113,13 @@ public class InputSimulationTools
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
-        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, allowHostTarget));
+        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, allowHostTarget), releaseHeldModifiers,
+            cancellationToken);
     }
 
     [McpServerTool(Name = "mouse_move")]
@@ -114,16 +133,20 @@ public class InputSimulationTools
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
-        return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget));
+        return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text")]
     [Description("Type text by simulating Unicode keyboard input. Works with any language/characters." + KeyboardTargetNote +
                  " The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with " +
-                 "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode).")]
-    public TypeTextResult TypeText(
+                 "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
+                 " Cancelling the request, or the user's pause, stops typing between batches.")]
+    public Task<TypeTextResult> TypeText(
         [Description("The text to type")]
         string text,
         [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
@@ -131,26 +154,33 @@ public class InputSimulationTools
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
         delayMs = Math.Clamp(delayMs, 0, 100);
-        return _inputService.TypeText(text, delayMs, Target(windowHandle, allowHostTarget));
+        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "send_keys")]
     [Description("Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home)." + KeyboardTargetNote +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
-                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination.")]
-    public SendKeysResult SendKeys(
+                 " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
+                 " The user's pause hotkey chord is refused (PauseChordNotAllowed).")]
+    public Task<SendKeysResult> SendKeys(
         [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
         string keys,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
         [Description(AllowHostTargetDescription)]
-        bool allowHostTarget = false)
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
     {
-        return _inputService.SendKeys(keys, Target(windowHandle, allowHostTarget));
+        return _inputService.SendKeysAsync(keys, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     private static InputTarget Target(long? windowHandle, bool allowHostTarget) =>

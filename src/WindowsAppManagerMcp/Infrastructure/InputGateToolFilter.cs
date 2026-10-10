@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services;
+using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Infrastructure;
 
@@ -13,9 +15,14 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// take the gate themselves, around their checks and batches; read-only tools run without it.
 /// </summary>
 /// <remarks>
-/// A tool that is in neither <see cref="InputTools"/> nor <see cref="ReadOnlyTools"/> runs inside the gate,
-/// so a new tool is serialized until it is reviewed onto the read-only list. A contract test checks that
-/// every tool the server serves is in exactly one of the three lists.
+/// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/> and <see cref="ControlTools"/>
+/// runs inside the gate, so a new tool is serialized until it is reviewed onto another list. A contract test
+/// checks that every tool the server serves is in exactly one of the four lists.
+/// <para>
+/// While the user has paused input (roadmap M1.10), the same tools return PausedByUser without running: they
+/// take the foreground from the user, close windows, or start programs that could type. Read-only tools keep
+/// working, so the agent can still look.
+/// </para>
 /// </remarks>
 public static class InputGateToolFilter
 {
@@ -47,7 +54,18 @@ public static class InputGateToolFilter
         "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
-        "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point"
+        "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
+        "get_control_status"
+    };
+
+    /// <summary>
+    /// The tools that control the input session (roadmap M1.10). They run without the gate, so resuming and
+    /// releasing stuck keys are never queued behind a long input call, and resume_input's wait for the user does
+    /// not hold up other tools. Their own input (key-ups) is serialized by the input session's lock.
+    /// </summary>
+    public static IReadOnlySet<string> ControlTools { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "resume_input", "release_all_input"
     };
 
     /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>
@@ -59,24 +77,42 @@ public static class InputGateToolFilter
 
     /// <summary>True when the tool runs inside the gate through this filter.</summary>
     public static bool RunsInsideTheGate(string? toolName) =>
-        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName));
+        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName) && !ControlTools.Contains(toolName));
 
     /// <summary>
     /// Call-tool filter: a tool that <see cref="RunsInsideTheGate"/> waits for the input gate and holds it
-    /// until it returns; every other tool passes straight through.
+    /// until it returns, or returns PausedByUser while the user has paused input; every other tool passes
+    /// straight through.
     /// </summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
         async (request, cancellationToken) =>
         {
-            if (!RunsInsideTheGate(request.Params?.Name))
+            var name = request.Params?.Name;
+            if (!RunsInsideTheGate(name))
             {
                 return await next(request, cancellationToken).ConfigureAwait(false);
             }
 
+            var session = request.Services?.GetService<IInputSession>();
+            if (session?.IsPaused == true)
+            {
+                return PausedResult(name, session);
+            }
+
             using (await InputGate.EnterAsync(cancellationToken).ConfigureAwait(false))
             {
-                return await next(request, cancellationToken).ConfigureAwait(false);
+                // The user may have paused while this call waited for the gate
+                return session?.IsPaused == true
+                    ? PausedResult(name, session)
+                    : await next(request, cancellationToken).ConfigureAwait(false);
             }
         };
+
+    private static CallToolResult PausedResult(string? toolName, IInputSession session) =>
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser),
+            $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+            "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
+            "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
+            "or by confirming resume_input.");
 }

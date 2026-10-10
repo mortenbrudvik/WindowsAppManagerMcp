@@ -24,14 +24,14 @@ public class InputSimulationServiceConcurrencyTests
     }
 
     private InputSimulationService CreateSut(INativeInputWrapper wrapper) =>
-        new(_mockMonitorService.Object, wrapper, TestDataFactory.CreateAllowingInputGuard().Object);
+        new(_mockMonitorService.Object, wrapper, TestDataFactory.CreateAllowingInputGuard().Object, new InputSession(wrapper));
 
     /// <summary>
     /// Starts the first call, waits until it is inside the native layer, then starts the second call.
     /// The fake holds the first call's first native operation open until the second call sends input
     /// (or a short timeout passes), so any interleaving shows up in the recorded operations.
     /// </summary>
-    private static async Task RunOverlapping(HoldingInputWrapper wrapper, Action first, Action second)
+    private static async Task RunOverlapping(HoldingInputWrapper wrapper, Func<Task> first, Func<Task> second)
     {
         var firstTask = Task.Run(first);
         wrapper.FirstOperationStarted.Wait(TestTimeout).Should().BeTrue("the first call should reach the native layer");
@@ -48,7 +48,7 @@ public class InputSimulationServiceConcurrencyTests
         var sut = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => sut.TypeText(As), () => sut.TypeText(Bs));
+        await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => sut.TypeTextAsync(Bs));
 
         // Assert
         string.Concat(wrapper.Operations).Should().Be(As + Bs);
@@ -62,7 +62,7 @@ public class InputSimulationServiceConcurrencyTests
         var sut = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => sut.TypeText(As), () => sut.SendKeys("^c"));
+        await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => sut.SendKeysAsync("^c"));
 
         // Assert - the text goes in batches of up to 32 characters, and the keys come after all of them
         wrapper.Operations.Should().Equal(As[..32], As[32..], "keys");
@@ -76,7 +76,7 @@ public class InputSimulationServiceConcurrencyTests
         var sut = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => sut.Click(100, 100), () => sut.MoveMouse(500, 500));
+        await RunOverlapping(wrapper, () => Task.FromResult(sut.Click(100, 100)), () => Task.FromResult(sut.MoveMouse(500, 500)));
 
         // Assert - the click lands where it was aimed
         wrapper.Operations.Should().Equal("move 100,100", "mouse", "move 500,500");
@@ -102,7 +102,7 @@ public class InputSimulationServiceConcurrencyTests
         };
 
         // Act - the agent races focus_window (its own terminal) against type_text
-        await RunOverlapping(wrapper, () => sut.TypeText(As), () => focusWindow(request, CancellationToken.None).AsTask().Wait());
+        await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => focusWindow(request, CancellationToken.None).AsTask());
 
         // Assert - it could not change the foreground between the guard's check and the typed text
         operationsWhenFocusRan.Should().Be(2, "both batches of the text were sent before focus_window ran");
@@ -117,7 +117,7 @@ public class InputSimulationServiceConcurrencyTests
         var second = CreateSut(wrapper);
 
         // Act
-        await RunOverlapping(wrapper, () => first.TypeText(As), () => second.TypeText(Bs));
+        await RunOverlapping(wrapper, () => first.TypeTextAsync(As), () => second.TypeTextAsync(Bs));
 
         // Assert
         string.Concat(wrapper.Operations).Should().Be(As + Bs);
@@ -133,10 +133,10 @@ public class InputSimulationServiceConcurrencyTests
         var wrapper = new HoldingInputWrapper();
 
         // Act
-        var failingCall = () => CreateSut(failing.Object).TypeText("x");
-        failingCall.Should().Throw<InvalidOperationException>();
+        var failingCall = () => CreateSut(failing.Object).TypeTextAsync("x");
+        await failingCall.Should().ThrowAsync<InvalidOperationException>();
 
-        var laterCall = Task.Run(() => CreateSut(wrapper).TypeText("ok"));
+        var laterCall = Task.Run(() => CreateSut(wrapper).TypeTextAsync("ok"));
 
         // Assert
         var result = await laterCall.WaitAsync(TestTimeout);
@@ -194,6 +194,8 @@ public class InputSimulationServiceConcurrencyTests
             Record(Describe(events));
             return (uint)events.Count;
         }
+
+        public bool IsKeyDown(ushort virtualKey) => false;
 
         private static string Describe(IReadOnlyList<InputEvent> events)
         {

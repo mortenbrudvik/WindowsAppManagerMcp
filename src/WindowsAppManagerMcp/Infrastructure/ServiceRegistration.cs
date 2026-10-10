@@ -83,6 +83,14 @@ public static class ServiceRegistration
         services.AddSingleton<IInputSafetyInfo, InputSafetyInfo>();
         services.AddHostedService<InputSafetyStartup>(); // logs the settings in force at start
 
+        // The user's control over the server's input (roadmap M1.10): every batch goes through the input session,
+        // and the pause hotkey (WAM_PAUSE_HOTKEY) runs on its own thread, started when the server starts
+        services.AddSingleton(_ => PauseHotkeyOptions.FromEnvironment());
+        services.AddSingleton<INativeHotkeyWrapper, NativeHotkeyWrapper>();
+        services.AddSingleton<IPauseHotkey, PauseHotkeyListener>();
+        services.AddSingleton<IInputSession, InputSession>();
+        services.AddHostedService<InputSessionStartup>(); // starts the hotkey; releases held input when the server stops
+
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();
         services.AddSingleton<WindowManagerTools>();
@@ -93,6 +101,7 @@ public static class ServiceRegistration
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<InputSimulationTools>();
+        services.AddSingleton<InputControlTools>();
 
         return services;
     }
@@ -100,8 +109,9 @@ public static class ServiceRegistration
     /// <summary>
     /// The server's log levels: Warning and above for everything, plus the per-call lines of
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
-    /// and the agent host that <see cref="HostGuard"/> records and the safety settings that
-    /// <see cref="InputSafetyStartup"/> reports once at start, at Information.
+    /// and the agent host that <see cref="HostGuard"/> records, the safety settings that
+    /// <see cref="InputSafetyStartup"/> reports once at start and the pause hotkey that
+    /// <see cref="InputSessionStartup"/> registers, at Information.
     /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
     public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
@@ -112,7 +122,8 @@ public static class ServiceRegistration
             .SetMinimumLevel(LogLevel.Warning)
             .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information)
             .AddFilter(typeof(HostGuard).FullName, LogLevel.Information)
-            .AddFilter(typeof(InputSafetyStartup).FullName, LogLevel.Information);
+            .AddFilter(typeof(InputSafetyStartup).FullName, LogLevel.Information)
+            .AddFilter(typeof(InputSessionStartup).FullName, LogLevel.Information);
     }
 
     /// <summary>
@@ -138,6 +149,7 @@ public static class ServiceRegistration
             .WithTools<BrowserReadingTools>()
             .WithTools<ScreenshotTools>()
             .WithTools<UIElementTools>()
-            .WithTools<InputSimulationTools>();
+            .WithTools<InputSimulationTools>()
+            .WithTools<InputControlTools>();
     }
 }

@@ -68,7 +68,13 @@ public enum WindowErrorCode
     /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the window's process
     /// (roadmap M1.12). force does not override it. Nothing was sent.
     /// </summary>
-    TargetDeniedByPolicy = 25
+    TargetDeniedByPolicy = 25,
+
+    /// <summary>
+    /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
+    /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
+    /// </summary>
+    PausedByUser = 26
 }
 
 /// <summary>

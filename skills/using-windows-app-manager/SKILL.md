@@ -10,6 +10,7 @@ description: |
   - Get UI elements or element coordinates from windows, or check which element has keyboard focus or is at a point
   - Click, right-click, double-click, or move the mouse cursor
   - Type text or send keyboard shortcuts
+  - Check whether input is paused, resume it after a pause, or release stuck keys
   - Read the URL or text of a web page open in a browser window
   - Launch applications or open programs
   - List or kill processes
@@ -18,12 +19,13 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 44 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 47 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## Safety Rules (Read First)
 
 The mouse and keyboard tools send real input to the user's desktop.
 
+- **`PausedByUser` means stop.** The user pressed the pause hotkey (Ctrl+Alt+Shift+Pause by default) because they want the agent to stop sending input. The pause covers every Windows App Manager server on the desktop, so it may come from another session's agent. Every input tool and every tool that changes windows or starts or stops processes (`focus_window`, `close_window`, `launch_application`, `kill_process`, ...) return `PausedByUser` until the user resumes; tools that only read still work. Stop at once, tell the user what you were doing and what is left, and wait for them. Do not retry, do not look for another way to send input or change windows, and never try to resume input yourself. Call `resume_input` only after the user has told you to continue, and only once; it asks the user to confirm, and only their answer resumes input (`ResumeNeedsUser`: this client cannot ask, so the user presses the hotkey again; `ResumeDeclined`: they said no, or another question is still open). Never send the hotkey's keys: `send_keys` refuses them (`PauseChordNotAllowed`). `get_control_status` shows whether input is paused.
 - **Always pass `windowHandle` to input tools.** `click`, `right_click`, `double_click`, `mouse_move`, `type_text` and `send_keys` take the handle of the window you mean (from `find_windows`). For keys the server brings that window to the front first and sends them only while it, or a dialog it owns, is in front. For clicks it sends them only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point. A child control's handle stands for its top-level window, so click the field first to put the caret in it (`get_focused_element` shows where it is).
 - **Input never reaches your own terminal, editor or chat window** unless you pass its handle as `windowHandle` together with `allowHostTarget: true`. Do that only when the user explicitly asked for input there.
 - **Read every input result.** `success: false` means nothing (more) was sent. `receivingWindow` says where the input went, or would have gone; `foregroundAfter` what is in front afterwards; mouse tools also report `actualX`/`actualY`.
@@ -40,6 +42,9 @@ The mouse and keyboard tools send real input to the user's desktop.
   - `TargetElevated`: the window runs as administrator; Windows would drop the input. Ask the user to do the step.
   - `TargetDeniedByPolicy`: the user does not allow the agent to act on that app (password managers and credential prompts by default). No argument changes it, not even `force` or `forceKill`: ask the user to do the step. `close_window`, `close_windows_batch`, `kill_process`, `capture_window` and `capture_with_elements` refuse such apps the same way.
   - `SessionLocked`, `DesktopUnavailable`: the screen is locked or a UAC prompt is shown. Wait for the user.
+  - `PausedByUser`: the user paused input with the pause hotkey. Stop and ask the user (see above).
+  - `ModifiersHeld`: Shift, Ctrl, Alt or Windows is down (`heldModifiers`), so keys would become shortcuts and clicks Ctrl-clicks. The user may be typing: wait a moment and retry. Pass `releaseHeldModifiers: true` (or call `release_all_input` with it) only when nobody is pressing the key, because it releases the user's key too. When the keys are all the pause hotkey's modifiers, the user may be pausing: they are never released, so wait and ask.
+  - `InputBusy`: another call held the input for 30 seconds. Retry when your other calls have finished.
 - **Never send destructive keys blind.** Be careful with `^a{DELETE}` and with `{ENTER}` on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - **Close windows with `close_window`, not Alt+F4.** `close_window` and `close_windows_batch` send WM_CLOSE to the exact handle you pass. The app may still ask to save. They refuse the desktop shell (Program Manager, the taskbar) and your own terminal, editor or chat window with `errorCode: "ProtectedWindow"`; pass `force: true` only if the user explicitly asked to close that window. A dialog of the shell, such as Shut Down Windows, is not protected: `close_window` cancels it. A batch of more than 3 windows needs `confirm: true`: check the list with `find_windows` first.
 - **Clicks do not raise their window.** Bring the target window to the front with `focus_window` before clicking it, take coordinates from a fresh `get_ui_elements` or `capture_with_elements` call, and use `get_element_at_point` to check what is at a point before clicking it.
@@ -103,7 +108,7 @@ Use this skill when the user asks to:
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
-## Available Tools (44)
+## Available Tools (47)
 
 ### Window Discovery (3 tools)
 
@@ -183,7 +188,15 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 | `type_text` | Type text into the named window | text, windowHandle, delayMs |
 | `send_keys` | Send keys to the named window | keys (e.g., `^c`, `{ENTER}`), windowHandle |
 
-All six also take `allowHostTarget` (default false): only for input to your own host window, named as `windowHandle`, when the user asked for it.
+All six also take `allowHostTarget` (default false): only for input to your own host window, named as `windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck modifier key (see `ModifiersHeld`).
+
+### Input Control (3 tools)
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `get_control_status` | Is input paused by the user, is the pause hotkey registered, which keys are down | (none) |
+| `resume_input` | Ask the user to resume input after a pause; only their confirmation resumes it | (none) |
+| `release_all_input` | Release stuck keys and mouse buttons | releaseHeldModifiers |
 
 ### App Launch (3 tools)
 

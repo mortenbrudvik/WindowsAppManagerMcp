@@ -88,7 +88,7 @@ The release zip is built by CI from the tagged sources. It is not a copy of the 
 so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
-## Available Tools (44)
+## Available Tools (47)
 
 | Category | Tools |
 |----------|-------|
@@ -100,6 +100,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
 | Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
+| Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 
@@ -152,6 +153,8 @@ Once configured, you can ask Claude to:
 - "Press Enter to confirm"
 
 > **Input is guarded.** Every input tool takes an optional `windowHandle`: keys are sent only after the server has brought that window to the front and only while it (or its dialog) is in front, and clicks only when the point is on that window or a popup of it. Without `windowHandle`, input goes to the foreground window or the window at the point, but never to the agent's own terminal, editor or chat app (`TargetIsAgentHost`), to windows of apps running as administrator (`TargetElevated`) or to apps the user denies through `WAM_DENY_PROCESSES` (`TargetDeniedByPolicy`, password managers by default). Chords that close, quit or lock, such as Alt+F4, need `windowHandle`, and a chord that switches windows, such as Alt+Tab, must be the last key of a `send_keys` call. A click is pressed exactly at the point the guard checked. Every result reports `receivingWindow` and `foregroundAfter`. Close windows with `close_window`, never with Alt+F4. See [Input guard](docs/TOOLS.md#input-guard) and the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+
+> **Pause hotkey.** Press **Ctrl+Alt+Shift+Pause** at any time to pause the input of every Windows App Manager server on your desktop (each MCP client session runs its own server, and they share the pause): running input stops, keys the servers hold are released, and every input tool and every tool that changes windows or starts or stops processes returns `PausedByUser` until you press it again (or confirm an agent's `resume_input` request, which resumes them all). A second press within 2 seconds of the pause is ignored. The agent cannot resume itself. Set another chord with the `WAM_PAUSE_HOTKEY` environment variable (for example `Ctrl+Alt+F12`, or `none` to turn it off). See [Pause hotkey](docs/TOOLS.md#pause-hotkey).
 
 ### Browser Reading
 - "What page is open in Chrome?"
@@ -304,6 +307,7 @@ WindowsAppManagerMcp/
 - **Protected Processes** - System-critical processes cannot be terminated
 - **Confirmation Required** - Process termination requires explicit confirmation
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
+- **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume, and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
 - **Protected Windows** - `close_window` and `close_windows_batch` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in unless `force` is true, and closing more than 3 windows in one batch requires `confirm`
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.
 

@@ -38,7 +38,7 @@ public class InputSimulationServiceGuardTests
         _guard.Setup(g => g.DescribeForeground()).Returns(Terminal);
     }
 
-    private InputSimulationService CreateSut() => new(_monitors.Object, _input.Object, _guard.Object);
+    private InputSimulationService CreateSut() => new(_monitors.Object, _input.Object, _guard.Object, new InputSession(_input.Object));
 
     private static InputGuardResult Refused(InputErrorCode code, WindowSummary? receiving = null, WindowSummary? blocking = null) =>
         InputGuardResult.Refuse(code, $"refused: {code}", InputTarget.None, receiving, blocking);
@@ -205,14 +205,14 @@ public class InputSimulationServiceGuardTests
     #region type_text
 
     [Fact]
-    public void TypeText_GuardRefuses_NothingIsTyped()
+    public async Task TypeText_GuardRefuses_NothingIsTyped()
     {
         // Arrange
         _guard.Setup(g => g.CheckKeyboard(It.IsAny<InputTarget>(), KeyboardInputKind.Text, null))
             .Returns(Refused(InputErrorCode.TargetIsAgentHost, Terminal));
 
         // Act
-        var result = CreateSut().TypeText("rm -rf ~");
+        var result = await CreateSut().TypeTextAsync("rm -rf ~");
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
@@ -223,13 +223,13 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_PassesTheTargetToTheGuard_AndReportsWhereTheTextWent()
+    public async Task TypeText_PassesTheTargetToTheGuard_AndReportsWhereTheTextWent()
     {
         // Arrange
         var target = InputTarget.Window(0x200, allowHostTarget: true);
 
         // Act
-        var result = CreateSut().TypeText("Hello", 0, target);
+        var result = await CreateSut().TypeTextAsync("Hello", 0, target);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -240,13 +240,13 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_LongText_GoesInBatchesOf32Characters_WithARecheckRightBeforeEachBatch()
+    public async Task TypeText_LongText_GoesInBatchesOf32Characters_WithARecheckRightBeforeEachBatch()
     {
         // Arrange
         var text = new string('x', 70);
 
         // Act
-        var result = CreateSut().TypeText(text);
+        var result = await CreateSut().TypeTextAsync(text);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -257,7 +257,7 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_ForegroundChangesMidway_StopsWithTargetLostFocusAndTheCharactersTyped()
+    public async Task TypeText_ForegroundChangesMidway_StopsWithTargetLostFocusAndTheCharactersTyped()
     {
         // Arrange - the third re-check (before characters 65-96) finds another window in front
         var rechecks = 0;
@@ -267,7 +267,7 @@ public class InputSimulationServiceGuardTests
         var text = new string('x', 100);
 
         // Act
-        var result = CreateSut().TypeText(text);
+        var result = await CreateSut().TypeTextAsync(text);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -280,14 +280,14 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_ForegroundChangesBetweenTheCheckAndTheFirstBatch_NothingIsTyped()
+    public async Task TypeText_ForegroundChangesBetweenTheCheckAndTheFirstBatch_NothingIsTyped()
     {
         // Arrange - a window came to the front while the guard was reading the target
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
             .Returns(Refused(InputErrorCode.TargetLostFocus, Notepad));
 
         // Act
-        var result = CreateSut().TypeText("echo pwned\r");
+        var result = await CreateSut().TypeTextAsync("echo pwned\r");
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
@@ -297,10 +297,10 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_WithADelay_SendsOneCharacterPerBatch_AndRechecksBeforeEach()
+    public async Task TypeText_WithADelay_SendsOneCharacterPerBatch_AndRechecksBeforeEach()
     {
         // Act
-        var result = CreateSut().TypeText("abc", 1);
+        var result = await CreateSut().TypeTextAsync("abc", 1);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -310,13 +310,13 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_SurrogatePairAtABatchBoundary_StaysInOneBatch()
+    public async Task TypeText_SurrogatePairAtABatchBoundary_StaysInOneBatch()
     {
         // Arrange - an emoji (two UTF-16 code units) would straddle the 32-character boundary
         var text = new string('a', 31) + "\U0001F600" + "b";
 
         // Act
-        var result = CreateSut().TypeText(text);
+        var result = await CreateSut().TypeTextAsync(text);
 
         // Assert
         result.CharactersTyped.Should().Be(text.Length);
@@ -324,9 +324,9 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_DelayedSurrogatePair_IsOneBatch()
+    public async Task TypeText_DelayedSurrogatePair_IsOneBatch()
     {
-        CreateSut().TypeText("\U0001F600z", 1);
+        await CreateSut().TypeTextAsync("\U0001F600z", 1);
 
         _batches.Select(b => b.Count).Should().Equal(4, 2);
     }
@@ -336,7 +336,7 @@ public class InputSimulationServiceGuardTests
     #region send_keys
 
     [Fact]
-    public void SendKeys_GuardGetsTheParsedKeys_AndTheTarget()
+    public async Task SendKeys_GuardGetsTheParsedKeys_AndTheTarget()
     {
         // Arrange
         var target = InputTarget.Window(0x200);
@@ -346,7 +346,7 @@ public class InputSimulationServiceGuardTests
             .Returns(InputGuardResult.Allow(target, 0x200, Notepad, 0x200));
 
         // Act
-        var result = CreateSut().SendKeys("^w", target);
+        var result = await CreateSut().SendKeysAsync("^w", target);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -360,12 +360,12 @@ public class InputSimulationServiceGuardTests
     [InlineData(InputErrorCode.DestructiveChordNeedsTarget)]
     [InlineData(InputErrorCode.TargetNotForeground)]
     [InlineData(InputErrorCode.SessionLocked)]
-    public void SendKeys_GuardRefuses_NothingIsSent(InputErrorCode code)
+    public async Task SendKeys_GuardRefuses_NothingIsSent(InputErrorCode code)
     {
         _guard.Setup(g => g.CheckKeyboard(It.IsAny<InputTarget>(), KeyboardInputKind.Keys, It.IsAny<IReadOnlyList<InputEvent>?>()))
             .Returns(Refused(code, Terminal));
 
-        var result = CreateSut().SendKeys("%{F4}");
+        var result = await CreateSut().SendKeysAsync("%{F4}");
 
         result.ErrorCode.Should().Be(code);
         result.ReceivingWindow.Should().Be(Terminal);
@@ -373,14 +373,14 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void SendKeys_ForegroundChangesBetweenTheCheckAndTheKeys_NothingIsSent()
+    public async Task SendKeys_ForegroundChangesBetweenTheCheckAndTheKeys_NothingIsSent()
     {
         // Arrange
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
             .Returns(Refused(InputErrorCode.TargetLostFocus, Terminal));
 
         // Act
-        var result = CreateSut().SendKeys("{ENTER}", InputTarget.Window(0x200));
+        var result = await CreateSut().SendKeysAsync("{ENTER}", InputTarget.Window(0x200));
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
@@ -390,7 +390,7 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void SendKeys_RechecksRightBeforeTheKeys()
+    public async Task SendKeys_RechecksRightBeforeTheKeys()
     {
         var order = new List<string>();
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
@@ -400,15 +400,15 @@ public class InputSimulationServiceGuardTests
             .Callback(() => order.Add("keys"))
             .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
 
-        CreateSut().SendKeys("{ENTER}");
+        await CreateSut().SendKeysAsync("{ENTER}");
 
         order.Should().Equal("recheck", "keys");
     }
 
     [Fact]
-    public void SendKeys_UnknownKey_IsReportedBeforeTheGuardRuns()
+    public async Task SendKeys_UnknownKey_IsReportedBeforeTheGuardRuns()
     {
-        var result = CreateSut().SendKeys("{NOPE}");
+        var result = await CreateSut().SendKeysAsync("{NOPE}");
 
         result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
         _guard.Verify(g => g.CheckKeyboard(It.IsAny<InputTarget>(), It.IsAny<KeyboardInputKind>(), It.IsAny<IReadOnlyList<InputEvent>?>()), Times.Never);

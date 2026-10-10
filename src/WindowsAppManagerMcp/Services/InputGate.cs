@@ -15,6 +15,12 @@ public static class InputGate
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
+    /// <summary>
+    /// How long an input call waits for the gate before it gives up with InputBusy (roadmap M1.10): an input
+    /// call must not wait forever behind a long window-changing call or another input call.
+    /// </summary>
+    public static readonly TimeSpan InputWaitTimeout = TimeSpan.FromSeconds(30);
+
     /// <summary>Waits for the gate; disposing the result releases it.</summary>
     public static IDisposable Enter()
     {
@@ -28,6 +34,18 @@ public static class InputGate
         await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         return new Scope();
     }
+
+    /// <summary>
+    /// Waits at most <paramref name="timeout"/> for the gate; null when it is still held then. Disposing the
+    /// result releases the gate.
+    /// </summary>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled while waiting.</exception>
+    public static IDisposable? TryEnter(TimeSpan timeout, CancellationToken cancellationToken) =>
+        Gate.Wait(timeout, cancellationToken) ? new Scope() : null;
+
+    /// <inheritdoc cref="TryEnter"/>
+    public static async Task<IDisposable?> TryEnterAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
+        await Gate.WaitAsync(timeout, cancellationToken).ConfigureAwait(false) ? new Scope() : null;
 
     /// <summary>True while a call holds the gate (for tests).</summary>
     public static bool IsHeld => Gate.CurrentCount == 0;
