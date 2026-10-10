@@ -1810,7 +1810,8 @@ Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard i
 `INativeWindowWrapper` for window changes. Some tests use the real stack read-only: they read
 real system state (the monitor, window and process lists, UI Automation trees in
 `UIAutomationWrapperTests` and `UIElementServiceTests`, a small screen region in
-`ScreenCaptureWrapperIntegrationTests`) but change nothing.
+`ScreenCaptureWrapperIntegrationTests`, process tokens, the input desktop, the session state and the
+agent's host chain in `SecurityProbeIntegrationTests`) but change nothing.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked

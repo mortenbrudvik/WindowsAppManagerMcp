@@ -85,6 +85,21 @@ public class NativeCallGuardTests
 
         // CDP port owner (TcpPortOwnerResolver)
         ["Iphlpapi.GetExtendedTcpTable"] = "reads which process listens on a TCP port",
+
+        // Integrity, elevation and desktop-state probes (NativeSecurityWrapper)
+        ["Kernel32.GetProcessTimes"] = "reads when a process started",
+        ["Kernel32.GetCurrentThreadId"] = "reads the ID of the calling thread",
+        ["Advapi32.OpenProcessToken"] = "opens a process token; NativeSecurityWrapper asks only for TOKEN_QUERY",
+        ["Advapi32.GetTokenInformation"] = "reads the elevation and integrity level of a token",
+        ["Advapi32.GetSidSubAuthorityCount"] = "reads a SID in the server's own memory",
+        ["Advapi32.GetSidSubAuthority"] = "reads a SID in the server's own memory",
+        ["User32.OpenInputDesktop"] = "opens the input desktop with DESKTOP_READOBJECTS to see whether it can be reached; " +
+                                      "the server never switches desktops",
+        ["User32.CloseDesktop"] = "closes a desktop handle the server opened",
+        ["User32.GetThreadDesktop"] = "reads which desktop a thread of the server is on",
+        ["User32.GetUserObjectInformationW"] = "reads the name of a desktop",
+        ["Wtsapi32.WTSQuerySessionInformationW"] = "reads whether the server's session is locked or disconnected",
+        ["Wtsapi32.WTSFreeMemory"] = "frees memory that WTSQuerySessionInformationW returned",
     };
 
     /// <summary>

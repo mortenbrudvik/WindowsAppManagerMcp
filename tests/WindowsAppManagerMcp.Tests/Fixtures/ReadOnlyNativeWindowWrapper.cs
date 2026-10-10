@@ -38,6 +38,10 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public nint GetForegroundWindow() => inner.GetForegroundWindow();
 
+    public nint GetAncestor(nint hWnd, WindowAncestor ancestor) => inner.GetAncestor(hWnd, ancestor);
+
+    public nint GetShellWindow() => inner.GetShellWindow();
+
     public uint GetCurrentProcessId() => inner.GetCurrentProcessId();
 
     public string? GetProcessName(uint processId) => inner.GetProcessName(processId);

@@ -32,6 +32,25 @@ public interface INativeProcessWrapper
     /// process, such as the terminal or editor that hosts the agent which started this server.
     /// </summary>
     bool IsAncestorOfCurrentProcess(int processId);
+
+    /// <summary>
+    /// Returns the current process's ancestors, parent first, with their start times (UTC; null when
+    /// unreadable). Uses the same PID-reuse-aware walk as <see cref="IsAncestorOfCurrentProcess"/>.
+    /// Returns an empty list when the process list cannot be read.
+    /// </summary>
+    IReadOnlyList<(int ProcessId, DateTime? StartTime)> GetAncestorProcesses();
+
+    /// <summary>
+    /// Returns the start time (UTC) of a running process, or null when it is not running or its
+    /// start time cannot be read (for example access is denied).
+    /// </summary>
+    DateTime? GetProcessStartTime(int processId);
+
+    /// <summary>
+    /// Returns the window of the console the current process is attached to (GetConsoleWindow), or
+    /// zero when it has none, for example when it was started with CREATE_NO_WINDOW.
+    /// </summary>
+    nint GetConsoleWindow();
 }
 
 /// <summary>
