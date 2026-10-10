@@ -2831,6 +2831,8 @@ Apply a saved layout preset.
 
 A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows.
 
+Only the windows that [get_all_windows](#get_all_windows) lists are matched. A window on another virtual desktop (cloaked) or a tool window is not, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again.
+
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
 A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error.
