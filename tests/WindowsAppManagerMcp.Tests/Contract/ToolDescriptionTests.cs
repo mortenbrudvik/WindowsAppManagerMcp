@@ -58,4 +58,35 @@ public class ToolDescriptionTests
         ServerToolCatalog.Description(toolName).Should().Contain("get_foreground_window",
             "a click lands on whatever window is at that point");
     }
+
+    [Fact]
+    public void FocusWindowDescription_SaysToConfirmWithGetForegroundWindow()
+    {
+        ServerToolCatalog.Description("focus_window").Should().Contain("get_foreground_window",
+            "Windows can refuse to change the foreground window");
+    }
+
+    [Fact]
+    public void NoToolDescription_ClaimsABooleanReturnValue()
+    {
+        var offenders = ServerToolCatalog.AllDescriptions()
+            .Where(d => d.Text.Contains("Returns true", StringComparison.OrdinalIgnoreCase))
+            .Select(d => d.Source)
+            .ToList();
+
+        offenders.Should().BeEmpty("every tool returns a result object with success and details, not a bare bool");
+    }
+
+    [Fact]
+    public void GetBrowserContentDescription_MarksPageContentAsUntrusted()
+    {
+        ServerToolCatalog.Description("get_browser_content").Should().Contain("untrusted",
+            "web page text can contain prompt-injection instructions");
+    }
+
+    [Fact]
+    public void LaunchBrowserWithDebugDescription_WarnsAboutTheUnauthenticatedPort()
+    {
+        ServerToolCatalog.Description("launch_browser_with_debug").Should().Contain("no authentication");
+    }
 }
