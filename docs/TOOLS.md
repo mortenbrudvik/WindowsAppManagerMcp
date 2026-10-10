@@ -18,6 +18,27 @@ A comprehensive guide to all 38 MCP tools for managing Windows applications, win
 
 ---
 
+## Safety and Coordinates
+
+### Input safety
+
+The input tools send real mouse and keyboard input to the user's desktop.
+
+- `type_text` and `send_keys` have no target window. They type into whatever window is in the foreground, and that is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before every `type_text` or `send_keys` call and check that `handle` is the intended window. If it is not, call `focus_window` and check again. Windows can refuse focus changes, so do not trust `focus_window` alone.
+- Never send destructive key chords without that check. Examples: Alt+F4 (`%{F4}`), Ctrl+W, Ctrl+Q, Ctrl+A followed by Delete, or Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
+- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4.
+- `click`, `right_click` and `double_click` act on whatever is at the given point. Bring the target window to the front and confirm it with `get_foreground_window` before clicking.
+- After each action, check the result before the next step.
+
+### Coordinate space
+
+- All screen coordinates are physical pixels on the virtual desktop. This covers input `x`/`y`, window `bounds`, UI element `bounds` and `screenBounds`, monitor `bounds`/`workArea` and `capture_region` arguments. The server is per-monitor DPI aware, so do not multiply by `scaleFactor`.
+- The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates (see the [get_monitors](#get_monitors) example).
+- Monitor indices are 0-based, and index 0 is not necessarily the primary monitor. Use `primaryIndex` or `isPrimary`.
+- When `maxWidth` scales a screenshot down, image pixels no longer match screen pixels. Use `screenBounds` (from `capture_with_elements`) or `bounds` (from `get_ui_elements`) for clicks, not positions measured on the image.
+
+---
+
 ## Window Discovery
 
 Tools for finding and listing windows on the system.
@@ -1219,7 +1240,9 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
 
 ## Input Simulation
 
-Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Keyboard input is sent to the currently focused window.
+Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Coordinates are physical virtual-desktop pixels and can be negative (see [Coordinate space](#coordinate-space)).
+
+> **Warning:** Keyboard input is sent to whatever window is in the foreground, which is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before `type_text` or `send_keys` and confirm the target. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
 ### click
 
@@ -1389,7 +1412,7 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 
 ### type_text
 
-Type text by simulating keyboard input. Text is sent to the currently focused window using Unicode characters, supporting any language.
+Type text by simulating keyboard input. Text is sent to the foreground window using Unicode characters, supporting any language. There is no target window parameter, so confirm the foreground window with `get_foreground_window` first.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1446,7 +1469,7 @@ Type text by simulating keyboard input. Text is sent to the currently focused wi
 
 ### send_keys
 
-Send key combinations to the focused window. Supports special keys and modifier combinations using SendKeys-style syntax.
+Send key combinations to the foreground window. Supports special keys and modifier combinations using SendKeys-style syntax. There is no target window parameter, so confirm the foreground window with `get_foreground_window` first, and never send chords that close, quit or delete (such as Alt+F4) without that check.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1459,7 +1482,7 @@ Send key combinations to the focused window. Supports special keys and modifier 
 |--------|-------------|---------|
 | `{KEY}` | Special key by name | `{ENTER}`, `{TAB}`, `{F1}` |
 | `^` | Control modifier | `^c` = Ctrl+C |
-| `%` | Alt modifier | `%{F4}` = Alt+F4 |
+| `%` | Alt modifier | `%f` = Alt+F |
 | `+` | Shift modifier | `+{HOME}` = Shift+Home |
 | Regular characters | Sent directly | `abc` types "abc" |
 
@@ -1517,6 +1540,8 @@ Send key combinations to the focused window. Supports special keys and modifier 
 **Example 3:** Select all and delete (Ctrl+A, Delete)
 > "Clear all text in the field"
 
+This deletes everything in the focused control. Send it only after `get_foreground_window` confirms the target window and the right field has focus.
+
 ```json
 {
   "name": "send_keys",
@@ -1526,19 +1551,9 @@ Send key combinations to the focused window. Supports special keys and modifier 
 }
 ```
 
-**Example 4:** Close window (Alt+F4)
-> "Close the current window"
+> **Closing a window:** do not send Alt+F4 (`%{F4}`). It closes whatever window is in the foreground, which may be the agent's own terminal. Use [close_window](#close_window) with the window's handle instead.
 
-```json
-{
-  "name": "send_keys",
-  "arguments": {
-    "keys": "%{F4}"
-  }
-}
-```
-
-**Example 5:** Select to beginning (Shift+Home)
+**Example 4:** Select to beginning (Shift+Home)
 > "Select text from cursor to beginning of line"
 
 ```json
@@ -1550,7 +1565,7 @@ Send key combinations to the focused window. Supports special keys and modifier 
 }
 ```
 
-**Example 6:** Multiple modifiers (Ctrl+Shift+End)
+**Example 5:** Multiple modifiers (Ctrl+Shift+End)
 > "Select from cursor to end of document"
 
 ```json
@@ -2044,10 +2059,18 @@ get_ui_elements { "handle": 12345, "controlTypes": "Button,MenuItem" }
    - Element bounds: `{ "x": 100, "y": 200, "width": 80, "height": 30 }`
    - Center: x = 100 + 80/2 = 140, y = 200 + 30/2 = 215
 
-4. Click the element:
+4. Bring the window to the front and confirm it (check that the returned `handle` is 12345):
+```
+focus_window { "handle": 12345 }
+get_foreground_window {}
+```
+
+5. Click the element:
 ```
 click { "x": 140, "y": 215 }
 ```
+
+6. Verify the result, for example with `get_ui_elements`, a capture or `get_foreground_window`.
 
 ### Keyboard Automation Workflow
 
@@ -2061,12 +2084,17 @@ focus_window { "handle": 12345 }
 click { "x": 500, "y": 300 }
 ```
 
-3. Type text into the field:
+3. Confirm the foreground window before typing. Stop if `handle` is not 12345:
+```
+get_foreground_window {}
+```
+
+4. Type text into the field:
 ```
 type_text { "text": "Hello World" }
 ```
 
-4. Use keyboard shortcuts:
+5. Use keyboard shortcuts (check `get_foreground_window` again if anything else could have taken focus):
 ```
 send_keys { "keys": "^a" }       // Select all
 send_keys { "keys": "^c" }       // Copy
@@ -2086,22 +2114,26 @@ focus_window { "handle": 12345 }
 // 2. Click first field
 click { "x": 500, "y": 100 }
 
-// 3. Type name
+// 3. Confirm the form window is in front (handle 12345) before typing
+get_foreground_window {}
+
+// 4. Type name
 type_text { "text": "John Doe" }
 
-// 4. Tab to next field
+// 5. Tab to next field
 send_keys { "keys": "{TAB}" }
 
-// 5. Type email
+// 6. Type email
 type_text { "text": "john@example.com" }
 
-// 6. Tab to next field
+// 7. Tab to next field
 send_keys { "keys": "{TAB}" }
 
-// 7. Type message
+// 8. Type message
 type_text { "text": "This is my message" }
 
-// 8. Submit form
+// 9. Confirm the form window is still in front, then submit
+get_foreground_window {}
 send_keys { "keys": "{ENTER}" }
 ```
 

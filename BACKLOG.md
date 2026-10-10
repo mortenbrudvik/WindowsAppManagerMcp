@@ -211,7 +211,7 @@
 | `double_click` | Input Simulation | Double left click at screen coordinates |
 | `mouse_move` | Input Simulation | Move cursor without clicking |
 | `type_text` | Input Simulation | Type text using Unicode characters |
-| `send_keys` | Input Simulation | Send key combinations (Ctrl+C, Alt+F4, etc.) |
+| `send_keys` | Input Simulation | Send key combinations to the foreground window (Ctrl+C, Enter, etc.) |
 | `launch_application` | App Launch | Launch app by path/name |
 | `list_processes` | App Launch | List running processes |
 | `kill_process` | App Launch | Terminate process by PID (with safeguards) |

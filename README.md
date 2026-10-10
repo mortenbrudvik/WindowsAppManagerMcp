@@ -127,7 +127,8 @@ Once configured, you can ask Claude to:
 - "Type 'Hello World' into the text field"
 - "Press Ctrl+C to copy"
 - "Press Enter to confirm"
-- "Press Alt+F4 to close the window"
+
+> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. Agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"

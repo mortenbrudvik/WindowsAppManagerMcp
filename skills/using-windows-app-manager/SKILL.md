@@ -19,6 +19,17 @@ description: |
 
 Windows App Manager provides 38 MCP tools for managing Windows applications, windows, and desktop layouts.
 
+## Safety Rules (Read First)
+
+The mouse and keyboard tools send real input to the user's desktop.
+
+- **Keyboard input has no target window.** `type_text` and `send_keys` type into whatever window is in the foreground, and that is often your own terminal or chat window. Call `get_foreground_window` right before every `type_text` or `send_keys` call and check that its `handle` is the window you mean to type into. If it is not, call `focus_window` with the right handle and check again. If it still does not match, stop and do not type. Windows can refuse focus changes, so do not rely on `focus_window` alone.
+- **Never send destructive key chords blind.** Examples: `%{F4}` (Alt+F4), `^w`, `^q`, `^a{DELETE}`, or `{ENTER}` on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
+- **Close windows with `close_window`, not Alt+F4.** `close_window` and `close_windows_batch` send WM_CLOSE to the exact handle you pass. The app may still ask to save.
+- **Clicks land on whatever is at the coordinates.** Before clicking, bring the target window to the front with `focus_window` and confirm with `get_foreground_window`. Take coordinates from a fresh `get_ui_elements` or `capture_with_elements` call.
+- **`kill_process` ends a process.** Use it only when the user asks for it, and pass the exact `processId` from `list_processes` or `find_windows`.
+- **Verify after every action.** Before the next step, check the new state: use what the tool returned (`newBounds`, `newState`, `windowHandle`) or call `get_foreground_window`, `find_windows`, `get_ui_elements` or a capture.
+
 ## When to Use
 
 Use this skill when the user asks to:
@@ -62,7 +73,6 @@ Use this skill when the user asks to:
 - "Type 'Hello World' in the text field"
 - "Press Ctrl+C to copy" / "Press Ctrl+V to paste"
 - "Press Enter" / "Press Tab"
-- "Press Alt+F4 to close"
 
 ### Layout Management
 - "Save my current window arrangement as [name]"
@@ -134,8 +144,8 @@ Use this skill when the user asks to:
 | `right_click` | Right click at coordinates | x, y |
 | `double_click` | Double left click | x, y, delayMs |
 | `mouse_move` | Move cursor (no click) | x, y |
-| `type_text` | Type text using Unicode | text, delayMs |
-| `send_keys` | Send key combinations | keys (e.g., `^c`, `{ENTER}`) |
+| `type_text` | Type text into the foreground window | text, delayMs |
+| `send_keys` | Send keys to the foreground window | keys (e.g., `^c`, `{ENTER}`) |
 
 ### App Launch (3 tools)
 
@@ -154,6 +164,14 @@ Use this skill when the user asks to:
 | `save_layout` | Save current arrangement | name, description, includeProcesses, excludeProcesses |
 | `apply_layout` | Restore saved preset | name, matchBy, launchMissing |
 | `delete_layout` | Delete a preset | name |
+
+## Coordinates
+
+- Screen coordinates are physical pixels on the virtual desktop. This covers the `x`/`y` input parameters, window `bounds`, element `bounds` and `screenBounds`, and monitor `bounds`. The server is per-monitor DPI aware, so do not multiply by `scaleFactor`.
+- The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates.
+- Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`.
+- Image pixels are not screen pixels once `maxWidth` scales a capture down (`originalWidth` is then set). To click something, use `screenBounds` from `capture_with_elements` or `bounds` from `get_ui_elements`. Do not use positions measured on the image.
+- Clicks outside every monitor are rejected with `CoordinatesOutOfBounds`.
 
 ## Snap Positions
 
@@ -177,6 +195,7 @@ The `snap_window` tool supports 14 positions:
 1. Use `find_windows` to locate VS Code and Terminal
 2. Use `snap_window` to snap VS Code to `left_two_thirds`
 3. Use `snap_window` to snap Terminal to `right_third`
+4. Check `newBounds` in each result
 
 ### Save and Restore Workspace
 1. Arrange windows as desired
@@ -215,21 +234,27 @@ The `snap_window` tool supports 14 positions:
 ### Click Automation
 1. Use `find_windows` to locate the target window
 2. Use `get_ui_elements` to get element bounding boxes
-3. Find target element and calculate center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
-4. Use `click`, `right_click`, or `double_click` with the calculated coordinates
+3. Find the target element and calculate its center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
+4. Use `focus_window`, then `get_foreground_window` to confirm the target window is in front
+5. Use `click`, `right_click`, or `double_click` with the calculated coordinates
+6. Verify the result with `get_ui_elements`, a capture, or `get_foreground_window`
 
 ### Keyboard Automation
-1. Use `focus_window` to focus the target window
-2. Use `click` to click on a text field (get coordinates from `get_ui_elements`)
-3. Use `type_text` to enter text
-4. Use `send_keys` for keyboard shortcuts:
+1. Use `find_windows` to get the target window's handle
+2. Use `focus_window` with that handle
+3. If needed, `click` the text field (coordinates from `get_ui_elements`)
+4. Call `get_foreground_window` and confirm its `handle` is the target. Stop if it is not
+5. Use `type_text` to enter text, or `send_keys` for keys and shortcuts:
    - `^c` = Ctrl+C (copy)
    - `^v` = Ctrl+V (paste)
    - `^a` = Ctrl+A (select all)
    - `{ENTER}` = Enter key
    - `{TAB}` = Tab key
-   - `%{F4}` = Alt+F4 (close window)
+   - `{ESC}` = Escape key
    - `+{HOME}` = Shift+Home (select to start)
+6. Repeat step 4 before each later `type_text` or `send_keys` call, then verify the result
+
+To close a window, use `close_window`, not a key chord.
 
 ## Tips
 
@@ -247,7 +272,6 @@ The `snap_window` tool supports 14 positions:
 - Calculate click center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
 - Coordinates are validated against monitor bounds before clicking
 - Use `mouse_move` to hover before clicking if needed for hover effects
-- Keyboard input (`type_text`, `send_keys`) goes to the focused window - use `focus_window` first
 - `type_text` supports any Unicode characters (any language)
 - `send_keys` supports modifiers: `^` = Ctrl, `%` = Alt, `+` = Shift
 - Special keys in braces: `{ENTER}`, `{TAB}`, `{F1}`, `{DELETE}`, etc.
