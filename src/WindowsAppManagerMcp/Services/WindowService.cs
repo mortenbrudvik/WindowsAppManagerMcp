@@ -108,17 +108,17 @@ public class WindowService : IWindowService
         var width = rect.Value.Right - rect.Value.Left;
         var height = rect.Value.Bottom - rect.Value.Top;
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
+
+    /// <summary>
+    /// The SetWindowPos flags for a placement. With <paramref name="bringToFront"/> the window goes to
+    /// the top of the z-order (HWND_TOP), but it is never activated: SWP_NOACTIVATE stays set.
+    /// BringWindowToTop is not used, because it activates the window, so keyboard input would follow it
+    /// whenever the server happened to have the foreground rights. focus_window activates, verified.
+    /// </summary>
+    private static uint PlacementFlags(bool bringToFront) =>
+        bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
 
     public bool ResizeWindow(nint handle, int width, int height)
     {
@@ -146,16 +146,7 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool SetWindowState(nint handle, WindowState state)
@@ -256,16 +247,7 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool IsValidWindow(nint handle)

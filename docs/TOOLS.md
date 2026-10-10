@@ -279,6 +279,8 @@ Get information about the currently focused window. Any window is reported, with
 
 Tools for manipulating window position, size, and state.
 
+`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window). Restoring a minimized window (set_window_bounds, snap_window, move_window_to_monitor) can still activate it.
+
 ### move_window
 
 Move a window to a specific screen position.
@@ -289,7 +291,7 @@ Move a window to a specific screen position.
 | handle | long | Yes | - | Window handle from find_windows |
 | x | int | Yes | - | X coordinate (left edge) |
 | y | int | Yes | - | Y coordinate (top edge) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Move Notepad to position 100, 200"
@@ -362,7 +364,7 @@ Move and resize a window in a single operation.
 | y | int | Yes | - | Y coordinate (top edge) |
 | width | int | Yes | - | New width in pixels |
 | height | int | Yes | - | New height in pixels |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Position the window at 50,50 with size 1000x700"
@@ -582,7 +584,7 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see table below) |
 | monitorIndex | int | No | current | Target monitor (0-based index) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Snap Positions:**
 
@@ -650,7 +652,7 @@ Move a window to a specific monitor.
 | handle | long | Yes | - | Window handle |
 | monitorIndex | int | Yes | - | Target monitor (0-based index) |
 | positioning | string | No | "center" | Position on monitor (see below) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Positioning Options:**
 - `center` - Center of monitor
@@ -707,7 +709,7 @@ Each placement object contains:
 | y | int | Yes | - | Y coordinate |
 | width | int | Yes | - | Width in pixels |
 | height | int | Yes | - | Height in pixels |
-| bringToFront | bool | No | true | Bring window to front |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
 
 **Example:**
 > "Position Notepad and Calculator side by side"
@@ -755,7 +757,7 @@ Each placement object contains:
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see snap_window) |
 | monitorIndex | int | No | current | Target monitor |
-| bringToFront | bool | No | true | Bring window to front |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
 
 **Example:**
 > "Snap VS Code to left half and Terminal to right half"

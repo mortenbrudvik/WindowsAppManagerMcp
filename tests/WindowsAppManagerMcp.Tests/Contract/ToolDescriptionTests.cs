@@ -153,6 +153,17 @@ public class ToolDescriptionTests
         ServerToolCatalog.Description("get_element_at_point").Should().Contain("not image pixels");
     }
 
+    [Theory]
+    [InlineData("move_window")]
+    [InlineData("set_window_bounds")]
+    [InlineData("snap_window")]
+    [InlineData("move_window_to_monitor")]
+    public void BringToFrontDescription_SaysTheWindowIsNotActivated(string toolName)
+    {
+        ParameterDescription(toolName, "bringToFront").Should().Contain("without activating")
+            .And.Contain("focus_window", "an agent that wants to type into the window must activate it first");
+    }
+
     private static string ParameterDescription(string toolName, string parameterName) =>
         ServerToolCatalog.AllDescriptions()
             .Single(d => d.Source == $"{toolName}.{parameterName}")
