@@ -9,6 +9,9 @@ public class UiaWorkerTests
     private static readonly TimeSpan Short = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
+    private const int HungApp = 4242;
+    private const int OtherApp = 5151;
+
     [Fact]
     public void Run_ReturnsTheReadsResult_FromABackgroundMtaThread()
     {
@@ -18,6 +21,7 @@ public class UiaWorkerTests
 
         // Act
         var (threadId, isBackground, apartment) = sut.Run(
+            HungApp,
             _ => (Environment.CurrentManagedThreadId, Thread.CurrentThread.IsBackground, Thread.CurrentThread.GetApartmentState()),
             CancellationToken.None,
             TimeSpan.Zero);
@@ -36,7 +40,7 @@ public class UiaWorkerTests
         var sut = new UiaWorker();
 
         // Act
-        var act = () => sut.Run<int>(_ => throw new UiaElementUnavailableException("gone"), CancellationToken.None, TimeSpan.Zero);
+        var act = () => sut.Run<int>(HungApp, _ => throw new UiaElementUnavailableException("gone"), CancellationToken.None, TimeSpan.Zero);
 
         // Assert
         act.Should().Throw<UiaElementUnavailableException>().WithMessage("gone");
@@ -51,6 +55,7 @@ public class UiaWorkerTests
 
         // Act
         var result = sut.Run(
+            HungApp,
             token =>
             {
                 var read = 0;
@@ -81,11 +86,13 @@ public class UiaWorkerTests
         try
         {
             // Act
-            var act = () => sut.Run(_ => release.Wait(Long), deadline.Token, Short);
+            var act = () => sut.Run(HungApp, _ => release.Wait(Long), deadline.Token, Short);
 
             // Assert
             act.Should().Throw<TimeoutException>().WithMessage("*did not answer in time*");
             sut.StuckCalls.Should().Be(1);
+            sut.StuckCallsFor(HungApp).Should().Be(1);
+            sut.StuckCallsFor(OtherApp).Should().Be(0);
         }
         finally
         {
@@ -93,27 +100,26 @@ public class UiaWorkerTests
         }
 
         SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue("the count drops once the abandoned read returns");
+        sut.StuckCallsFor(HungApp).Should().Be(0);
     }
 
     [Fact]
-    public void Run_WhileTooManyReadsAreStuck_FailsAtOnceWithoutStartingTheRead()
+    public void Run_WhileTooManyReadsOfTheTargetAreStuck_FailsAtOnceWithoutStartingTheRead()
     {
         // Arrange
-        var sut = new UiaWorker(maxStuckCalls: 1);
+        var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 4);
         using var release = new ManualResetEventSlim();
-        using var deadline = new CancellationTokenSource(Short);
         var started = false;
 
         try
         {
-            var stuck = () => sut.Run(_ => release.Wait(Long), deadline.Token, Short);
-            stuck.Should().Throw<TimeoutException>();
+            Stick(sut, HungApp, release);
 
             // Act
-            var act = () => sut.Run(_ => started = true, CancellationToken.None, TimeSpan.Zero);
+            var act = () => sut.Run(HungApp, _ => started = true, CancellationToken.None, TimeSpan.Zero);
 
             // Assert
-            act.Should().Throw<TimeoutException>().WithMessage("*not responding*");
+            act.Should().Throw<UiaReadRefusedException>().WithMessage($"*not responding for the application (process {HungApp})*");
             started.Should().BeFalse();
         }
         finally
@@ -121,9 +127,90 @@ public class UiaWorkerTests
             release.Set();
         }
 
-        // Once the stuck read returns, reads run again
+        // Once the stuck read returns, reads of the application run again
         SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue();
-        sut.Run(_ => 42, CancellationToken.None, TimeSpan.Zero).Should().Be(42);
+        sut.Run(HungApp, _ => 42, CancellationToken.None, TimeSpan.Zero).Should().Be(42);
+    }
+
+    [Fact]
+    public void Run_WhileOneApplicationIsHung_StillReadsOtherApplications()
+    {
+        // Arrange - the hung application has used up its own limit
+        var sut = new UiaWorker(maxStuckCallsPerTarget: 2, maxStuckCalls: 4);
+        using var release = new ManualResetEventSlim();
+
+        try
+        {
+            Stick(sut, HungApp, release);
+            Stick(sut, HungApp, release);
+            var hung = () => sut.Run(HungApp, _ => 1, CancellationToken.None, TimeSpan.Zero);
+            hung.Should().Throw<UiaReadRefusedException>();
+
+            // Act
+            var other = sut.Run(OtherApp, _ => "read", CancellationToken.None, TimeSpan.Zero);
+
+            // Assert
+            other.Should().Be("read");
+            sut.StuckCallsFor(HungApp).Should().Be(2);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Run_WhileTooManyReadsAreStuckOverall_FailsAtOnceForEveryTarget()
+    {
+        // Arrange - two hung applications fill the overall limit
+        var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 2);
+        using var release = new ManualResetEventSlim();
+
+        try
+        {
+            Stick(sut, HungApp, release);
+            Stick(sut, OtherApp, release);
+
+            // Act
+            var act = () => sut.Run(7, _ => 1, CancellationToken.None, TimeSpan.Zero);
+
+            // Assert
+            act.Should().Throw<UiaReadRefusedException>().WithMessage("*2 earlier reads in 2 applications*");
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Run_WithAnUnknownTarget_SharesOneCount()
+    {
+        // Arrange
+        var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 4);
+        using var release = new ManualResetEventSlim();
+
+        try
+        {
+            Stick(sut, 0, release);
+
+            // Act - a negative process ID is unknown too
+            var act = () => sut.Run(-1, _ => 1, CancellationToken.None, TimeSpan.Zero);
+
+            // Assert
+            act.Should().Throw<UiaReadRefusedException>().WithMessage("*could not identify*");
+            sut.Run(HungApp, _ => 2, CancellationToken.None, TimeSpan.Zero).Should().Be(2);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue();
     }
 
     [Fact]
@@ -133,7 +220,7 @@ public class UiaWorkerTests
         var sut = new UiaWorker();
 
         // Act
-        var result = sut.Run(_ =>
+        var result = sut.Run(HungApp, _ =>
         {
             Thread.Sleep(Short);
             return "done";
@@ -143,10 +230,12 @@ public class UiaWorkerTests
         result.Should().Be("done");
     }
 
-    [Fact]
-    public void Constructor_RejectsAStuckLimitBelowOne()
+    [Theory]
+    [InlineData(0, 4)]
+    [InlineData(2, 1)]
+    public void Constructor_RejectsAPerTargetLimitBelowOneOrAboveTheOverallLimit(int perTarget, int overall)
     {
-        var act = () => new UiaWorker(maxStuckCalls: 0);
+        var act = () => new UiaWorker(perTarget, overall);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
@@ -154,8 +243,16 @@ public class UiaWorkerTests
     [Fact]
     public void Run_RejectsANegativeGrace()
     {
-        var act = () => new UiaWorker().Run(_ => 1, CancellationToken.None, TimeSpan.FromMilliseconds(-1));
+        var act = () => new UiaWorker().Run(HungApp, _ => 1, CancellationToken.None, TimeSpan.FromMilliseconds(-1));
 
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    /// <summary>Makes one read of <paramref name="target"/> miss its deadline and stay stuck until <paramref name="release"/> is set.</summary>
+    private static void Stick(UiaWorker sut, int target, ManualResetEventSlim release)
+    {
+        using var deadline = new CancellationTokenSource(Short);
+        var stuck = () => sut.Run(target, _ => release.Wait(Long), deadline.Token, Short);
+        stuck.Should().Throw<TimeoutException>().Which.Should().NotBeOfType<UiaReadRefusedException>();
     }
 }

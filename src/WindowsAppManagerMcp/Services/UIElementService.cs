@@ -34,11 +34,17 @@ public class UIElementService : IUIElementService
 
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
+    private readonly INativeWindowWrapper? _windows;
 
-    public UIElementService(IUiaTree tree, IUiaWorker worker)
+    /// <param name="tree">The UI Automation tree.</param>
+    /// <param name="worker">Runs the walk under a deadline.</param>
+    /// <param name="windows">Identifies the process that owns the window, so a hung application blocks
+    /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count.</param>
+    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null)
     {
         _tree = tree;
         _worker = worker;
+        _windows = windows;
     }
 
     /// <inheritdoc />
@@ -72,6 +78,7 @@ public class UIElementService : IUIElementService
         try
         {
             return _worker.Run(
+                TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, token),
                 cancellationToken,
                 StopGrace);
@@ -80,6 +87,20 @@ public class UIElementService : IUIElementService
         {
             // The worker gave up on a read stuck in an application that does not answer
             return CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+    }
+
+    /// <summary>The process that owns the window, or 0 when it is not known.</summary>
+    private int TargetProcessId(nint windowHandle)
+    {
+        try
+        {
+            return (int)(_windows?.GetWindowThreadProcessId(windowHandle) ?? 0);
+        }
+        catch (Exception)
+        {
+            // Only the stuck-read count depends on it
+            return 0;
         }
     }
 

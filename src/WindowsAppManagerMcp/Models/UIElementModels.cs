@@ -165,8 +165,10 @@ public record FocusedElementResult(
 /// <param name="Element">The element at the point, or null when the call failed.</param>
 /// <param name="Ancestors">The elements above it, nearest first, up to the requested number and never above
 /// the top-level window. Empty when none were requested.</param>
-/// <param name="WindowHandle">The top-level window at the point (WindowFromPoint, then its root window), or
-/// null when there is none. Hidden and disabled windows are skipped.</param>
+/// <param name="WindowHandle">The root of the window hit-tested at the point (WindowFromPoint, then its root
+/// window). The hit test skips hidden windows and disabled child windows, but not a disabled top-level window
+/// such as the owner of a modal dialog. The element's own window is used only when no window is hit; null
+/// when neither is known.</param>
 /// <param name="WindowTitle">The title of <paramref name="WindowHandle"/>.</param>
 /// <param name="ProcessId">The process that provides the element.</param>
 /// <param name="ProcessName">The name of that process, without ".exe".</param>

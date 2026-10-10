@@ -109,6 +109,36 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
+    public void GetFocusedElement_CountsTheReadAgainstTheForegroundWindowsProcess()
+    {
+        // Arrange - keyboard focus is in the foreground window
+        _tree.Focused = BuildForm();
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        CreateSut().GetFocusedElement(Timeout);
+
+        // Assert
+        _worker.LastTargetProcessId.Should().Be(4242);
+    }
+
+    [Fact]
+    public void GetFocusedElement_WhileEarlierReadsOfTheApplicationAreStuck_ReturnsOperationTimedOutWithoutWaiting()
+    {
+        // Arrange
+        var worker = new Mock<IUiaWorker>();
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .Throws(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
+
+        // Act
+        var result = CreateSut(worker.Object).GetFocusedElement(Timeout);
+
+        // Assert - nothing was waited for, so the message does not claim a wait
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("process 4242").And.NotContain("Waited");
+    }
+
+    [Fact]
     public void GetFocusedElement_PasswordField_NeverReadsTheValue()
     {
         // Arrange
@@ -281,7 +311,7 @@ public class ElementInspectionServiceTests
     {
         // Arrange
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
             .Throws(new TimeoutException("UI Automation did not answer in time."));
 
         // Act
@@ -300,7 +330,7 @@ public class ElementInspectionServiceTests
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
             .Throws(new TimeoutException());
 
         // Act
@@ -432,7 +462,7 @@ public class ElementInspectionServiceTests
     [Fact]
     public void GetElementAtPoint_WhenNoWindowIsHit_FallsBackToTheElementsWindow()
     {
-        // Arrange - WindowFromPoint skips disabled windows, such as the owner of a modal dialog
+        // Arrange - a defensive path: WindowFromPoint practically always hits a window, at least the desktop
         var field = BuildForm();
         _tree.AtPoint = (_, _) => field;
         _hitTest.Setup(h => h.WindowFromPoint(It.IsAny<int>(), It.IsAny<int>())).Returns(nint.Zero);
@@ -442,6 +472,38 @@ public class ElementInspectionServiceTests
 
         // Assert
         result.WindowHandle.Should().Be(TopLevel);
+    }
+
+    [Fact]
+    public void GetElementAtPoint_WhenTheHitTestFails_FallsBackToTheElementsWindow()
+    {
+        // Arrange
+        var field = BuildForm();
+        _tree.AtPoint = (_, _) => field;
+        _hitTest.Setup(h => h.WindowFromPoint(It.IsAny<int>(), It.IsAny<int>())).Throws(new InvalidOperationException("hit test"));
+
+        // Act
+        var result = CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.WindowHandle.Should().Be(TopLevel);
+        _worker.LastTargetProcessId.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetElementAtPoint_CountsTheReadAgainstTheProcessOfTheWindowAtThePoint()
+    {
+        // Arrange - the window is hit-tested before the read, which can hang in that window's application
+        var field = BuildForm();
+        _tree.AtPoint = (_, _) => field;
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
+
+        // Act
+        CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+
+        // Assert
+        _worker.LastTargetProcessId.Should().Be(4242);
     }
 
     [Fact]
@@ -460,7 +522,7 @@ public class ElementInspectionServiceTests
     {
         // Arrange - FromPoint can hang on an unresponsive provider
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<Func<CancellationToken, ElementAtPointResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, ElementAtPointResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
             .Throws(new TimeoutException("UI Automation did not answer in time."));
 
         // Act

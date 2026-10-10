@@ -11,6 +11,10 @@ public interface IUiaWorker
     /// <summary>
     /// Runs <paramref name="read"/> on a worker thread and waits for it.
     /// </summary>
+    /// <param name="targetProcessId">The process whose UI the read reads (the owner of the window, of
+    /// the window at the point, or of the foreground window), or 0 when it is not known. Reads that
+    /// miss their deadline are counted per target, so an application that hangs blocks further reads
+    /// of itself, not reads of other applications.</param>
     /// <param name="read">The UI Automation read. It receives <paramref name="cancellationToken"/> and
     /// should stop early, returning what it has, once that is cancelled.</param>
     /// <param name="cancellationToken">Asks the read to stop. The deadline is when this is cancelled
@@ -19,8 +23,22 @@ public interface IUiaWorker
     /// cancelled, for a read that stops cooperatively and returns a partial result.</param>
     /// <returns>What <paramref name="read"/> returned.</returns>
     /// <exception cref="TimeoutException">The read did not return by the deadline (its thread is
-    /// abandoned and finishes on its own), or too many earlier reads are still stuck, which means the
-    /// target application is probably not responding.</exception>
+    /// abandoned and finishes on its own).</exception>
+    /// <exception cref="UiaReadRefusedException">The read was not started, because earlier reads of the
+    /// same target, or too many reads overall, are still stuck: the target application is probably
+    /// not responding.</exception>
     /// <remarks>An exception thrown by <paramref name="read"/> is rethrown unchanged.</remarks>
-    T Run<T>(Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace);
+    T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace);
+}
+
+/// <summary>
+/// <see cref="IUiaWorker"/> did not start a read because earlier reads are still stuck in an
+/// application that does not answer. It fails at once, without waiting for any deadline.
+/// </summary>
+public sealed class UiaReadRefusedException : TimeoutException
+{
+    public UiaReadRefusedException(string message)
+        : base(message)
+    {
+    }
 }

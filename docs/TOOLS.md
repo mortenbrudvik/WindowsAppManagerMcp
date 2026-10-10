@@ -1522,7 +1522,7 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 | `ElementNotFound` | No element has keyboard focus |
 | `ElementAccessFailed` | The focused element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
-| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application that has focus may be hung |
+| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application that has focus may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
 ---
@@ -1592,7 +1592,7 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 
 - `element` has the same fields as in [get_focused_element](#get_focused_element), including the value rules for password fields.
 - `ancestors` never goes above the top-level window, so it can be shorter than requested.
-- `windowHandle` is the top-level window at the point (WindowFromPoint, then its root window). Hidden and disabled windows are skipped by that lookup, so for a point on a window disabled by a modal dialog it falls back to the window the element belongs to.
+- `windowHandle` is the root of the window hit-tested at the point (WindowFromPoint, then its root window). That lookup skips hidden windows and disabled child windows, but not a disabled top-level window such as the owner of a modal dialog. The window the element belongs to is used only when no window is hit, which practically never happens on a monitor.
 - Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
 **Error Codes:**
@@ -1602,7 +1602,7 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 | `ElementNotFound` | UI Automation found no element at the point |
 | `ElementAccessFailed` | The element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
-| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung |
+| `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
 ---
@@ -3018,7 +3018,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process) | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
-| `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | UI Automation is not available |
+| `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
@@ -3037,7 +3037,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
-| `ElementAccessFailed` | [UI Automation](#ui-automation) tools | An element that was being read is no longer available |
+| `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | An element that was being read is no longer available |
 | `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | No element has keyboard focus, or there is no element at the point |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
@@ -3072,8 +3072,8 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
-| `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | Unexpected error while reading; see `error` |
-| `OperationTimedOut` | [UI Automation](#ui-automation) tools | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements |
+| `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | Unexpected error while reading; see `error` |
+| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
@@ -3093,4 +3093,4 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
-| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements) | apply_layout: no open window matched a placement. get_ui_elements: the window no longer exists |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

@@ -664,12 +664,61 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public void GetUIElements_CountsTheWalkAgainstTheProcessThatOwnsTheWindow()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(4242u);
+
+        // Act
+        new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+
+        // Assert - a hung application then blocks only walks of its own windows
+        _worker.LastTargetProcessId.Should().Be(4242);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Throws(new InvalidOperationException("gone"));
+
+        // Act
+        var result = new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _worker.LastTargetProcessId.Should().Be(0);
+    }
+
+    [Fact]
+    public void GetUIElements_WhileEarlierWalksOfTheApplicationAreStuck_ReturnsOperationTimedOut()
+    {
+        // Arrange - the worker refuses to start another read of the hung application
+        BuildToolbarWindow();
+        var worker = new Mock<IUiaWorker>();
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .Throws(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
+
+        // Act
+        var result = new UIElementService(_tree, worker.Object).GetUIElements(Handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("process 4242");
+    }
+
+    [Fact]
     public void GetUIElements_WhenUiAutomationDoesNotAnswerByTheDeadline_ReturnsOperationTimedOut()
     {
         // Arrange - the worker gave up on a read stuck in a hung application
         BuildToolbarWindow();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
             .Throws(new TimeoutException("UI Automation did not answer in time."));
         var sut = new UIElementService(_tree, worker.Object);
 
