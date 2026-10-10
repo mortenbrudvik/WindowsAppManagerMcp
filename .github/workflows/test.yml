@@ -11,9 +11,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      # Desktop tests launch real apps; they are skipped unless this is exactly 1.
+      # Desktop tests launch real apps; they are skipped unless one of these is exactly 1.
+      # The end-to-end tests against the fixture app run only in e2e.yml.
       # See TESTING.md, "Desktop Tests".
       WAM_ALLOW_DESKTOP_TESTS: '0'
+      WAM_ALLOW_DESKTOP_NOINPUT_TESTS: '0'
 
     steps:
       - name: Checkout
@@ -31,8 +33,11 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test with coverage
-        # Category!=Desktop leaves the opt-in desktop tests out of the run entirely.
-        # A test that hangs for 5 minutes is killed and a mini dump is collected.
+        # Runs every test project in the solution. Category!=Desktop leaves the opt-in desktop tests
+        # (both tiers, including the fixture app scenarios) out of the run entirely; the end-to-end
+        # project's own harness tests still run. A test that hangs for 5 minutes is killed and a mini
+        # dump is collected. Each test project writes its own .trx file (default names, so a second
+        # project cannot overwrite the first).
         run: |
           dotnet test --no-build --configuration Release `
             --filter "Category!=Desktop" `
@@ -40,15 +45,17 @@ jobs:
             --blame-hang-dump-type mini `
             --collect:"XPlat Code Coverage" `
             --results-directory ./TestResults `
-            --logger "trx;LogFileName=test-results.trx"
+            --logger trx
 
       - name: Check that desktop tests are skipped without the opt-in
-        # The run above leaves desktop tests out. This one runs only them, with
-        # WAM_ALLOW_DESKTOP_TESTS unset, and fails unless every one was reported as skipped, so CI
-        # proves the gate skips them on the runner (the gate's canaries are always among them).
+        # The run above leaves desktop tests out. This one runs only them (both tiers, every test
+        # project), with both opt-in variables unset, and fails unless every one was reported as
+        # skipped, so CI proves the gate skips them on the runner. The gate's canaries and the fixture
+        # app scenarios of WindowsAppManagerMcp.E2ETests must both be among them.
         shell: pwsh
         run: |
           Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS -ErrorAction SilentlyContinue
+          Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS -ErrorAction SilentlyContinue
           $results = Join-Path $PWD 'TestResults/desktop-gate'
           dotnet test --no-build --configuration Release `
             --filter "Category=Desktop" `
@@ -62,13 +69,17 @@ jobs:
             throw "dotnet test wrote no .trx file to $results."
           }
           $namespace = @{ t = 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010' }
-          $outcomes = @(Select-Xml -LiteralPath $trx.FullName -XPath '//t:UnitTestResult/@outcome' -Namespace $namespace |
-            ForEach-Object { $_.Node.Value })
-          $skipped = @($outcomes | Where-Object { $_ -eq 'NotExecuted' }).Count
-          $executed = $outcomes.Count - $skipped
-          Write-Host "Desktop tests without WAM_ALLOW_DESKTOP_TESTS: $skipped skipped, $executed executed."
-          if ($executed -gt 0 -or $skipped -eq 0) {
-            throw 'Every desktop test must be skipped without WAM_ALLOW_DESKTOP_TESTS, and there must be at least one.'
+          $tests = @(Select-Xml -LiteralPath $trx.FullName -XPath '//t:UnitTestResult' -Namespace $namespace |
+            ForEach-Object { [pscustomobject]@{ Name = $_.Node.testName; Outcome = $_.Node.outcome } })
+          $skipped = @($tests | Where-Object { $_.Outcome -eq 'NotExecuted' })
+          $executed = $tests.Count - $skipped.Count
+          $e2eSkipped = @($skipped | Where-Object { $_.Name -like 'WindowsAppManagerMcp.E2ETests.*' }).Count
+          Write-Host "Desktop tests without the opt-ins: $($skipped.Count) skipped ($e2eSkipped end-to-end), $executed executed."
+          if ($executed -gt 0 -or $skipped.Count -eq 0) {
+            throw 'Every desktop test must be skipped without WAM_ALLOW_DESKTOP_TESTS and WAM_ALLOW_DESKTOP_NOINPUT_TESTS, and there must be at least one.'
+          }
+          if ($e2eSkipped -eq 0) {
+            throw 'The fixture app scenarios of WindowsAppManagerMcp.E2ETests must be among the skipped desktop tests.'
           }
 
       - name: Generate coverage report
@@ -106,14 +117,40 @@ jobs:
           Get-Content CoverageReport/SummaryGithub.md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Check coverage threshold
-        # The Category!=Desktop suite measured 60.38% line coverage (Release, October 2026).
-        # The threshold leaves about one point of headroom for runner-dependent paths
-        # (window and process enumeration); raise it as coverage grows.
+        # Line coverage of the server assembly (package WindowsAppManagerMcp) in the Category!=Desktop
+        # run, merged over every test project's coverage file: a line counts as covered when any test
+        # project covers it. One file per project would not do: the end-to-end project covers almost
+        # nothing in this run (its scenarios are desktop tests), and the order of the files is arbitrary.
+        # The suite measured 60.38% line coverage (Release, October 2026). The threshold leaves about one
+        # point of headroom for runner-dependent paths (window and process enumeration); raise it as
+        # coverage grows.
+        shell: pwsh
         run: |
           $threshold = 59
-          $xml = [xml](Get-Content -Path (Get-ChildItem -Path TestResults -Filter coverage.cobertura.xml -Recurse | Select-Object -First 1).FullName)
-          $coverage = [double]$xml.coverage.'line-rate' * 100
-          Write-Host "Line coverage: $coverage%"
+          $package = 'WindowsAppManagerMcp'
+          $files = @(Get-ChildItem -Path TestResults -Filter coverage.cobertura.xml -Recurse -File)
+          if ($files.Count -eq 0) {
+            throw 'No coverage.cobertura.xml was written to TestResults.'
+          }
+          $valid = @{}
+          $covered = @{}
+          foreach ($file in $files) {
+            $xml = [xml](Get-Content -LiteralPath $file.FullName)
+            foreach ($class in $xml.SelectNodes("/coverage/packages/package[@name='$package']/classes/class")) {
+              foreach ($line in $class.SelectNodes('lines/line')) {
+                $key = "$($class.filename):$($line.number)"
+                $valid[$key] = $true
+                if ([long]$line.hits -gt 0) {
+                  $covered[$key] = $true
+                }
+              }
+            }
+          }
+          if ($valid.Count -eq 0) {
+            throw "No coverage file reports the $package package."
+          }
+          $coverage = [math]::Round(100.0 * $covered.Count / $valid.Count, 2)
+          Write-Host "Line coverage of ${package}: $coverage% ($($covered.Count) of $($valid.Count) lines, $($files.Count) coverage files)"
           if ($coverage -lt $threshold) {
             Write-Error "Coverage $coverage% is below threshold of $threshold%"
             exit 1
