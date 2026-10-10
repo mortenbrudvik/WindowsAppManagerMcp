@@ -19,7 +19,9 @@ description: |
 
 # Using Windows App Manager
 
+<!-- tools:begin count -->
 Windows App Manager provides 47 MCP tools for managing Windows applications, windows, and desktop layouts.
+<!-- tools:end count -->
 
 ## Safety Rules (Read First)
 
@@ -110,6 +112,7 @@ Use this skill when the user asks to:
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
+<!-- tools:begin tool-tables -->
 ## Available Tools (47)
 
 ### Window Discovery (3 tools)
@@ -217,6 +220,7 @@ All six also take `allowHostTarget` (default false): only for input to your own 
 | `save_layout` | Save current arrangement | name, description, includeProcesses, excludeProcesses |
 | `apply_layout` | Restore saved preset | name, matchBy, launchMissing |
 | `delete_layout` | Delete a preset | name |
+<!-- tools:end tool-tables -->
 
 ## Coordinates
 

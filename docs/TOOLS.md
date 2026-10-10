@@ -1,22 +1,24 @@
 # Windows App Manager - MCP Tools Reference
 
+<!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
 A comprehensive guide to all 47 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| [Window Discovery](#window-discovery) | find_windows, get_all_windows, get_foreground_window | 3 |
-| [Window Control](#window-control) | move_window, resize_window, set_window_bounds, set_window_state, focus_window, close_window, snap_window, move_window_to_monitor | 8 |
-| [Batch Operations](#batch-operations) | set_windows_bounds_batch, snap_windows_batch, set_windows_state_batch, close_windows_batch, launch_applications_batch | 5 |
-| [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
-| [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
-| [UI Automation](#ui-automation) | get_ui_elements, get_focused_element, get_element_at_point | 3 |
-| [Browser Reading](#browser-reading) | get_browser_url, get_browser_content, get_active_browser_url, launch_browser_with_debug | 4 |
-| [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move, type_text, send_keys | 6 |
-| [Input Control](#input-control) | get_control_status, resume_input, release_all_input | 3 |
-| [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
-| [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
+| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window) | 3 |
+| [Window Control](#window-control) | [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [focus_window](#focus_window), [close_window](#close_window), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor) | 8 |
+| [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
+| [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
+| [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
+| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | 3 |
+| [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
+| [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [type_text](#type_text), [send_keys](#send_keys) | 6 |
+| [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
+| [App Launch](#app-launch) | [launch_application](#launch_application), [list_processes](#list_processes), [kill_process](#kill_process) | 3 |
+| [Layout Presets](#layout-presets) | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | 5 |
+<!-- tools:end summary -->
 
 ---
 
@@ -114,18 +116,20 @@ Every window reports its `className` and `isCloaked`. A UWP app's frame window (
 
 Find windows matching specific criteria.
 
+<!-- tools:begin params:find_windows -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | titleContains | string | No | - | Partial text to match in window title (case-insensitive) |
 | processName | string | No | - | Process name to match (e.g., 'notepad', 'chrome'). For a UWP app, both the app process and `ApplicationFrameHost` match |
-| processId | int | No | - | Process ID to match. For a UWP app, both the app process and its host process match |
-| handle | long | No | - | Specific window handle to find. Skips the user-facing filter |
-| visibleOnly | bool | No | true | Only return visible windows |
+| processId | integer | No | - | Process ID to match. For a UWP app, both the app process and its host process match |
+| handle | integer | No | - | Specific window handle to find. Skips the user-facing filter |
+| visibleOnly | boolean | No | true | Only return visible windows |
 | className | string | No | - | Exact window class name (case-insensitive), e.g. 'Notepad', '#32770' (dialog), 'Shell_TrayWnd' (taskbar). Skips the user-facing filter |
-| includeCloaked | bool | No | false | Also return cloaked windows (other virtual desktops, suspended apps) |
-| includeToolWindows | bool | No | false | Also return tool windows (palettes and helper windows kept out of the taskbar and Alt+Tab) |
-| includeShell | bool | No | false | Skip the user-facing filter: also return the desktop, taskbar and tray, and tool, cloaked and untitled windows |
+| includeCloaked | boolean | No | false | Also return cloaked windows (other virtual desktops, suspended apps) |
+| includeToolWindows | boolean | No | false | Also return tool windows (palettes and helper windows kept out of the taskbar and Alt+Tab) |
+| includeShell | boolean | No | false | Skip the user-facing filter: also return the desktop, taskbar and tray, and tool, cloaked and untitled windows |
+<!-- tools:end params:find_windows -->
 
 **Example:**
 > "Find all Chrome windows"
@@ -207,10 +211,12 @@ The taskbar is an untitled shell window, so listings leave it out. A `className`
 
 List the visible user-facing app windows on the system (see [Window Discovery](#window-discovery) for what is left out). Use [find_windows](#find_windows) with `className`, `includeCloaked`, `includeToolWindows` or `includeShell` for other windows.
 
+<!-- tools:begin params:get_all_windows -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| includeMinimized | bool | No | true | Include minimized windows in results |
+| includeMinimized | boolean | No | true | Include minimized windows in results |
+<!-- tools:end params:get_all_windows -->
 
 **Example:**
 > "List all open windows"
@@ -273,7 +279,9 @@ List the visible user-facing app windows on the system (see [Window Discovery](#
 
 Get information about the currently focused window. Any window is reported, with no listing filter: when a menu, a popup or the taskbar has focus, `title` is empty and `className` tells what it is. The result is null only when no window is in the foreground.
 
+<!-- tools:begin params:get_foreground_window -->
 **Parameters:** None
+<!-- tools:end params:get_foreground_window -->
 
 **Example:**
 > "What window is currently focused?"
@@ -333,13 +341,15 @@ These tools, focus_window, close_window, the [Batch Operations](#batch-operation
 
 Move a window to a specific screen position.
 
+<!-- tools:begin params:move_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle from find_windows |
-| x | int | Yes | - | X coordinate (left edge) |
-| y | int | Yes | - | Y coordinate (top edge) |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| handle | integer | Yes | - | Window handle from find_windows |
+| x | integer | Yes | - | X coordinate (left edge) |
+| y | integer | Yes | - | Y coordinate (top edge) |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:move_window -->
 
 **Example:**
 > "Move Notepad to position 100, 200"
@@ -369,12 +379,14 @@ Move a window to a specific screen position.
 
 Resize a window to specific dimensions.
 
+<!-- tools:begin params:resize_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
-| width | int | Yes | - | New width in pixels |
-| height | int | Yes | - | New height in pixels |
+| handle | integer | Yes | - | Window handle |
+| width | integer | Yes | - | New width in pixels |
+| height | integer | Yes | - | New height in pixels |
+<!-- tools:end params:resize_window -->
 
 **Example:**
 > "Make the window 1200 pixels wide and 800 pixels tall"
@@ -404,15 +416,17 @@ Resize a window to specific dimensions.
 
 Move and resize a window in a single operation.
 
+<!-- tools:begin params:set_window_bounds -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
-| x | int | Yes | - | X coordinate (left edge) |
-| y | int | Yes | - | Y coordinate (top edge) |
-| width | int | Yes | - | New width in pixels |
-| height | int | Yes | - | New height in pixels |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| handle | integer | Yes | - | Window handle |
+| x | integer | Yes | - | X coordinate (left edge) |
+| y | integer | Yes | - | Y coordinate (top edge) |
+| width | integer | Yes | - | New width in pixels |
+| height | integer | Yes | - | New height in pixels |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:set_window_bounds -->
 
 **Example:**
 > "Position the window at 50,50 with size 1000x700"
@@ -444,11 +458,13 @@ Move and resize a window in a single operation.
 
 Minimize, maximize, or restore a window.
 
+<!-- tools:begin params:set_window_state -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
+| handle | integer | Yes | - | Window handle |
 | state | string | Yes | - | Desired state: 'minimize', 'maximize', or 'restore' ('minimized', 'maximized' and 'normal' also work). Any other value is treated as 'restore' |
+<!-- tools:end params:set_window_state -->
 
 **Example:**
 > "Maximize the VS Code window"
@@ -477,10 +493,12 @@ Minimize, maximize, or restore a window.
 
 Bring a window to the foreground, verify it, and report which window is actually in front afterwards.
 
+<!-- tools:begin params:focus_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
+| handle | integer | Yes | - | Window handle |
+<!-- tools:end params:focus_window -->
 
 Windows' foreground lock usually refuses a background process such as this server when it asks to bring a window to the front. `focus_window` works around that without sending keys, and checks the foreground window after every step (for about a second in total):
 
@@ -576,11 +594,13 @@ The window counts as in front when the foreground window is the window itself or
 
 Close a window gracefully (sends WM_CLOSE message). Protected windows are refused unless `force` is true.
 
+<!-- tools:begin params:close_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
-| force | bool | No | false | Close even a protected window (see below). Set it only when the user explicitly asked to close that window |
+| handle | integer | Yes | - | Window handle |
+| force | boolean | No | false | Close even a protected window (see below). Set it only when the user explicitly asked to close that window |
+<!-- tools:end params:close_window -->
 
 **Example:**
 > "Close the Notepad window"
@@ -632,13 +652,15 @@ File Explorer folder windows are ordinary windows, even though explorer.exe also
 
 Snap a window to predefined screen positions (like Windows Snap Assist).
 
+<!-- tools:begin params:snap_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
+| handle | integer | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see table below) |
-| monitorIndex | int | No | current | Target monitor (0-based index) |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| monitorIndex | integer | No | current | Target monitor (0-based index) |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:snap_window -->
 
 **Snap Positions:**
 
@@ -700,13 +722,15 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 
 Move a window to a specific monitor.
 
+<!-- tools:begin params:move_window_to_monitor -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
-| monitorIndex | int | Yes | - | Target monitor (0-based index) |
+| handle | integer | Yes | - | Window handle |
+| monitorIndex | integer | Yes | - | Target monitor (0-based index) |
 | positioning | string | No | "center" | Position on monitor (see below) |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:move_window_to_monitor -->
 
 **Positioning Options:**
 - `center` - Center of monitor
@@ -757,21 +781,23 @@ The window batches handle each window on its own, and a window that fails does n
 
 Move and resize multiple windows in a single batch operation.
 
+<!-- tools:begin params:set_windows_bounds_batch -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| placements | array | Yes | - | Array of window placements |
-| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
+| placements | object[] | Yes | - | Array of window placements |
+| delayBetweenMs | integer | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
-Each placement object contains:
+Each item of `placements` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
-| x | int | Yes | - | X coordinate |
-| y | int | Yes | - | Y coordinate |
-| width | int | Yes | - | Width in pixels |
-| height | int | Yes | - | Height in pixels |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| handle | integer | Yes | - | Window handle |
+| x | integer | Yes | - | X coordinate |
+| y | integer | Yes | - | Y coordinate |
+| width | integer | Yes | - | Width in pixels |
+| height | integer | Yes | - | Height in pixels |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:set_windows_bounds_batch -->
 
 **Example:**
 > "Position Notepad and Calculator side by side"
@@ -807,19 +833,21 @@ Each placement object contains:
 
 Snap multiple windows to predefined positions in a single batch operation.
 
+<!-- tools:begin params:snap_windows_batch -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| placements | array | Yes | - | Array of snap placements |
-| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
+| placements | object[] | Yes | - | Array of snap placements |
+| delayBetweenMs | integer | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
-Each placement object contains:
+Each item of `placements` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
+| handle | integer | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see snap_window) |
-| monitorIndex | int | No | current | Target monitor |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| monitorIndex | integer | No | current | Target monitor |
+| bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+<!-- tools:end params:snap_windows_batch -->
 
 **Example:**
 > "Snap VS Code to left half and Terminal to right half"
@@ -855,17 +883,19 @@ Each placement object contains:
 
 Set the state (minimize, maximize, restore) of multiple windows in a single batch operation.
 
+<!-- tools:begin params:set_windows_state_batch -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| changes | array | Yes | - | Array of state changes |
-| delayBetweenMs | int | No | 30 | Delay between two windows in milliseconds (clamped to 0-5000) |
+| changes | object[] | Yes | - | Array of state changes |
+| delayBetweenMs | integer | No | 30 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
-Each change object contains:
+Each item of `changes` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle |
+| handle | integer | Yes | - | Window handle |
 | state | string | Yes | - | State: 'minimize', 'maximize', or 'restore'. Any other value is treated as 'restore' |
+<!-- tools:end params:set_windows_state_batch -->
 
 **Example:**
 > "Minimize all browser windows"
@@ -901,18 +931,20 @@ Each change object contains:
 
 Close multiple windows gracefully in a single batch operation. More than 3 windows require `confirm: true`.
 
+<!-- tools:begin params:close_windows_batch -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| windows | array | Yes | - | Array of window handles to close |
-| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
-| confirm | bool | No | false | Must be true to close more than 3 windows in one batch |
-| force | bool | No | false | Close protected windows too (see [close_window](#close_window)); applies to every window in the batch. Set it only when the user explicitly asked to close those windows |
+| windows | object[] | Yes | - | Array of window handles to close |
+| delayBetweenMs | integer | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
+| confirm | boolean | No | false | Must be true to close more than 3 windows in one batch |
+| force | boolean | No | false | Close protected windows too (see [close_window](#close_window)); applies to every window in the batch. Set it only when the user explicitly asked to close those windows |
 
-Each window object contains:
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| handle | long | Yes | Window handle |
+Each item of `windows` contains:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| handle | integer | Yes | - | Window handle |
+<!-- tools:end params:close_windows_batch -->
 
 **Example:**
 > "Close all Notepad windows"
@@ -966,19 +998,21 @@ A batch of more than 3 windows without `confirm: true` closes nothing and return
 
 Launch multiple applications in a single batch operation.
 
+<!-- tools:begin params:launch_applications_batch -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| applications | array | Yes | - | Array of applications to launch |
-| waitForWindows | bool | No | false | Wait for windows to appear |
-| waitTimeoutMs | int | No | 5000 | How long to wait for each window, in ms (clamped to 0-30000) |
+| applications | object[] | Yes | - | Array of applications to launch |
+| waitForWindows | boolean | No | false | Wait for windows to appear |
+| waitTimeoutMs | integer | No | 5000 | How long to wait for each window, in ms (clamped to 0-30000) |
 
-Each application object contains:
+Each item of `applications` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | executable | string | Yes | - | Path, app name, or protocol URI |
 | arguments | string[] | No | - | Command line arguments |
 | workingDirectory | string | No | - | Working directory |
+<!-- tools:end params:launch_applications_batch -->
 
 **Example:**
 > "Launch Notepad and Calculator"
@@ -1021,7 +1055,9 @@ Tools for getting information about connected displays.
 
 Get information about all connected monitors. The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
 
+<!-- tools:begin params:get_monitors -->
 **Parameters:** None
+<!-- tools:end params:get_monitors -->
 
 **Example:**
 > "Show me all connected monitors"
@@ -1064,7 +1100,9 @@ Get information about all connected monitors. The server reuses monitor informat
 
 Get information about the primary display.
 
+<!-- tools:begin params:get_primary_monitor -->
 **Parameters:** None
+<!-- tools:end params:get_primary_monitor -->
 
 **Example:**
 > "What's my primary monitor resolution?"
@@ -1121,7 +1159,9 @@ The **Response** examples below show the metadata text, formatted.
 
 List all available screens/monitors for capture, including virtual screen bounds.
 
+<!-- tools:begin params:list_screens -->
 **Parameters:** None
+<!-- tools:end params:list_screens -->
 
 **Example:**
 > "What screens are available for capture?"
@@ -1182,18 +1222,20 @@ List all available screens/monitors for capture, including virtual screen bounds
 
 Capture a screenshot of a specific monitor.
 
+<!-- tools:begin params:take_screenshot -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| monitorIndex | int | No | primary | Monitor index (0-based). Defaults to primary monitor. |
+| monitorIndex | integer | No | primary | Monitor index (0-based). Defaults to primary monitor. |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | int | No | 80 | JPEG quality (1-100) |
-| maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
+| quality | integer | No | 80 | JPEG quality (1-100) |
+| maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
-| overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
-| saveToFile | bool | No | false | Deprecated: the same as output "file" |
-| maxWidth | int | No | - | Deprecated: maximum image width in pixels |
+| overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
+| saveToFile | boolean | No | false | Deprecated: the same as output "file" |
+| maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+<!-- tools:end params:take_screenshot -->
 
 **Example:**
 > "Take a screenshot of the primary monitor"
@@ -1270,21 +1312,23 @@ If `C:\captures\monitor0.png` already exists, the call fails with `FileExists` u
 
 Capture a screenshot of an arbitrary screen region.
 
+<!-- tools:begin params:capture_region -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X coordinate of the region's left edge |
-| y | int | Yes | - | Y coordinate of the region's top edge |
-| width | int | Yes | - | Width of the region in pixels |
-| height | int | Yes | - | Height of the region in pixels |
+| x | integer | Yes | - | X coordinate of the region's left edge |
+| y | integer | Yes | - | Y coordinate of the region's top edge |
+| width | integer | Yes | - | Width of the region in pixels |
+| height | integer | Yes | - | Height of the region in pixels |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | int | No | 80 | JPEG quality (1-100) |
-| maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
+| quality | integer | No | 80 | JPEG quality (1-100) |
+| maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
-| overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
-| saveToFile | bool | No | false | Deprecated: the same as output "file" |
-| maxWidth | int | No | - | Deprecated: maximum image width in pixels |
+| overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
+| saveToFile | boolean | No | false | Deprecated: the same as output "file" |
+| maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+<!-- tools:end params:capture_region -->
 
 **Example:**
 > "Capture a 400x300 region starting at position 100, 200"
@@ -1325,19 +1369,21 @@ Capture a screenshot of an arbitrary screen region.
 
 Capture a screenshot of a specific window. Works even if the window is partially occluded by other windows.
 
+<!-- tools:begin params:capture_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
-| includeFrame | bool | No | true | Include window frame/decoration (title bar, borders) |
+| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| includeFrame | boolean | No | true | Include window frame/decoration (title bar, borders) |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | int | No | 80 | JPEG quality (1-100) |
-| maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
+| quality | integer | No | 80 | JPEG quality (1-100) |
+| maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
-| overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
-| saveToFile | bool | No | false | Deprecated: the same as output "file" |
-| maxWidth | int | No | - | Deprecated: maximum image width in pixels |
+| overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
+| saveToFile | boolean | No | false | Deprecated: the same as output "file" |
+| maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+<!-- tools:end params:capture_window -->
 
 **Example:**
 > "Capture the VS Code window"
@@ -1394,25 +1440,27 @@ Capture a screenshot of a specific window. Works even if the window is partially
 
 Capture a window screenshot with UI element bounding box overlays. Returns an annotated image, and element coordinates for click targeting in the metadata.
 
+<!-- tools:begin params:capture_with_elements -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
-| includeFrame | bool | No | true | Include window frame/decoration |
+| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| includeFrame | boolean | No | true | Include window frame/decoration |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
-| quality | int | No | 80 | JPEG quality (1-100) |
-| maxDepth | int | No | 5 | How many levels below the window to read (1-10). 1 reads only the window's direct children |
+| quality | integer | No | 80 | JPEG quality (1-100) |
+| maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 reads only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit"); matches inside other containers are kept. Unknown names fail |
-| interactableOnly | bool | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
-| visibleOnly | bool | No | true | Only include visible elements |
-| highlightInteractable | bool | No | true | Use brighter colors for enabled elements |
-| timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn |
-| maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
+| interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
+| visibleOnly | boolean | No | true | Only include visible elements |
+| highlightInteractable | boolean | No | true | Use brighter colors for enabled elements |
+| timeoutMs | integer | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn |
+| maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
-| overwrite | bool | No | false | Allow `outputPath` to replace an existing file |
-| saveToFile | bool | No | false | Deprecated: the same as output "file" |
-| maxWidth | int | No | - | Deprecated: maximum image width in pixels |
+| overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
+| saveToFile | boolean | No | false | Deprecated: the same as output "file" |
+| maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+<!-- tools:end params:capture_with_elements -->
 
 **Color Coding:**
 | Control Type | Color |
@@ -1518,17 +1566,19 @@ Tools for reading UI elements through Windows UI Automation: the element tree of
 
 Get the UI element tree with bounding boxes for a window. Provides a lightweight alternative to screenshots when only element coordinates are needed for programmatic interaction planning.
 
+<!-- tools:begin params:get_ui_elements -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle from find_windows or get_all_windows |
-| maxDepth | int | No | 5 | How many levels below the window to read (1-10). 1 returns only the window's direct children |
+| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 returns only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit,ComboBox"). Unknown names fail with `InvalidControlType` |
-| interactableOnly | bool | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
-| visibleOnly | bool | No | true | Only include visible (on-screen) elements; leaves out everything inside an offscreen element |
-| minWidth | int | No | - | Minimum element width to include |
-| minHeight | int | No | - | Minimum element height to include |
-| timeoutMs | int | No | 10000 | Timeout for UI traversal in ms (1000-30000). When it passes, the elements read so far are returned |
+| interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
+| visibleOnly | boolean | No | true | Only include visible (on-screen) elements; leaves out everything inside an offscreen element |
+| minWidth | integer | No | - | Minimum element width to include |
+| minHeight | integer | No | - | Minimum element height to include |
+| timeoutMs | integer | No | 10000 | Timeout for UI traversal in ms (1000-30000). When it passes, the elements read so far are returned |
+<!-- tools:end params:get_ui_elements -->
 
 **Supported Control Types:**
 AppBar, Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
@@ -1637,10 +1687,12 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 
 Get the UI element that has keyboard focus, with the top-level window and process it belongs to. This is the cheapest check before typing: call it right before `type_text` or `send_keys` to confirm that the caret is in the intended field of the intended window. It only reads.
 
+<!-- tools:begin params:get_focused_element -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| timeoutMs | int | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+<!-- tools:end params:get_focused_element -->
 
 **Example:**
 > "Which field has keyboard focus?"
@@ -1702,13 +1754,15 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 
 Get the UI element at a screen point, the elements above it, and the top-level window and process at that point. Use it to check what a click at (x, y) would hit before clicking, or to name the control under a point you picked from a capture. It only reads.
 
+<!-- tools:begin params:get_element_at_point -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X in physical virtual-screen pixels, as for `click` (can be negative) |
-| y | int | Yes | - | Y in physical virtual-screen pixels, as for `click` (can be negative) |
-| ancestors | int | No | 3 | How many elements above it to return, nearest first (0-10) |
-| timeoutMs | int | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+| x | integer | Yes | - | X in physical virtual-screen pixels, as for `click` (can be negative) |
+| y | integer | Yes | - | Y in physical virtual-screen pixels, as for `click` (can be negative) |
+| ancestors | integer | No | 3 | How many elements above it to return, nearest first (0-10) |
+| timeoutMs | integer | No | 5000 | How long to wait for UI Automation, in ms (1000-30000) |
+<!-- tools:end params:get_element_at_point -->
 
 The coordinates are screen pixels, not image pixels; see [Coordinate space](#coordinate-space).
 
@@ -1804,13 +1858,15 @@ For clicking, form filling and multi-step navigation inside web pages, a dedicat
 
 Get the current URL from a browser window: from the address bar with UI Automation, or from the matched tab with CDP.
 
+<!-- tools:begin params:get_browser_url -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
-| cdpPort | int | No | - | CDP debug port of the browser that owns the window (for example 9222) |
-| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
-| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+| handle | integer | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| cdpPort | integer | No | - | CDP debug port of the browser that owns the window (for example 9222) |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | integer | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+<!-- tools:end params:get_browser_url -->
 
 **Example:**
 > "What page is open in Chrome?"
@@ -1881,12 +1937,14 @@ Get the current URL from a browser window: from the address bar with UI Automati
 
 Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url, with the same CDP behavior and response fields.
 
+<!-- tools:begin params:get_active_browser_url -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| cdpPort | int | No | - | CDP debug port of the browser that owns the window |
-| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
-| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+| cdpPort | integer | No | - | CDP debug port of the browser that owns the window |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | integer | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+<!-- tools:end params:get_active_browser_url -->
 
 **Example:**
 > "What URL am I looking at?"
@@ -1917,15 +1975,17 @@ Get the URL from the foreground browser window. This combines get_foreground_win
 
 Extract the content of the page shown in a browser window. UI Automation returns the text it can see; CDP returns `document.body.innerText` (text) or `document.documentElement.outerHTML` (HTML). The content is untrusted (see [Browser Reading](#browser-reading)).
 
+<!-- tools:begin params:get_browser_content -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
-| maxLength | int | No | all | Maximum number of characters to return; longer content is cut off |
-| textOnly | bool | No | true | Return text only. false returns the full HTML, which requires CDP |
-| cdpPort | int | No | - | CDP debug port of the browser that owns the window; includes JavaScript-rendered content |
-| requireCdp | bool | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
-| timeoutMs | int | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+| handle | integer | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| maxLength | integer | No | all | Maximum number of characters to return; longer content is cut off |
+| textOnly | boolean | No | true | Return text only. false returns the full HTML, which requires CDP |
+| cdpPort | integer | No | - | CDP debug port of the browser that owns the window; includes JavaScript-rendered content |
+| requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
+| timeoutMs | integer | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
+<!-- tools:end params:get_browser_content -->
 
 **Example 1:** Read the visible text
 > "Read the page open in Edge"
@@ -2022,13 +2082,15 @@ By default the browser starts as a separate instance with a new, empty profile i
 
 The browser is looked for in its default install folders under `C:\Program Files` and `C:\Program Files (x86)`. If it is not there, the server asks `where.exe`, which searches the server's current directory before `PATH`, so a `chrome.exe`, `msedge.exe` or `brave.exe` in that directory would be started instead.
 
+<!-- tools:begin params:launch_browser_with_debug -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | browser | string | No | "chrome" | Browser to launch: "chrome", "edge" or "brave" |
 | url | string | No | - | URL to open |
-| port | int | No | 9222 | CDP debug port. Pass the same value as `cdpPort` to the reading tools |
+| port | integer | No | 9222 | CDP debug port. Pass the same value as `cdpPort` to the reading tools |
 | userDataDir | string | No | new temp folder | Profile folder for the browser instance |
+<!-- tools:end params:launch_browser_with_debug -->
 
 **Example:**
 > "Open example.com in a Chrome I can read with CDP"
@@ -2131,14 +2193,16 @@ Every input result reports:
 
 Perform a left mouse click at the specified screen coordinates. Pass `windowHandle`: the click is sent only if the point is on that window or a popup of it ([Input guard](#input-guard)).
 
+<!-- tools:begin params:click -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X coordinate (screen position) |
-| y | int | Yes | - | Y coordinate (screen position) |
-| windowHandle | long | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| x | integer | Yes | - | X coordinate (screen position) |
+| y | integer | Yes | - | Y coordinate (screen position) |
+| windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:click -->
 
 **Example:**
 > "Click the button at 500, 300 in Notepad (handle 12345)"
@@ -2193,14 +2257,16 @@ Coordinates outside every monitor return `CoordinatesOutOfBounds` without `recei
 
 Perform a right mouse click at the specified screen coordinates.
 
+<!-- tools:begin params:right_click -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X coordinate (screen position) |
-| y | int | Yes | - | Y coordinate (screen position) |
-| windowHandle | long | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| x | integer | Yes | - | X coordinate (screen position) |
+| y | integer | Yes | - | Y coordinate (screen position) |
+| windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:right_click -->
 
 **Example:**
 > "Right-click at position 600, 400 in Notepad"
@@ -2224,15 +2290,17 @@ Perform a right mouse click at the specified screen coordinates.
 
 Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions.
 
+<!-- tools:begin params:double_click -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X coordinate (screen position) |
-| y | int | Yes | - | Y coordinate (screen position) |
-| delayMs | int | No | 50 | Delay between clicks in milliseconds (range: 10-500) |
-| windowHandle | long | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| x | integer | Yes | - | X coordinate (screen position) |
+| y | integer | Yes | - | Y coordinate (screen position) |
+| delayMs | integer | No | 50 | Delay between clicks in milliseconds (range: 10-500) |
+| windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:double_click -->
 
 **Example:**
 > "Double-click the file at 200, 150 in File Explorer (handle 23456)"
@@ -2271,14 +2339,16 @@ Perform a double left click at the specified screen coordinates. Useful for open
 
 Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states.
 
+<!-- tools:begin params:mouse_move -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| x | int | Yes | - | X coordinate (screen position) |
-| y | int | Yes | - | Y coordinate (screen position) |
-| windowHandle | long | No | none | The window the input is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| x | integer | Yes | - | X coordinate (screen position) |
+| y | integer | Yes | - | Y coordinate (screen position) |
+| windowHandle | integer | No | none | The window the input is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:mouse_move -->
 
 **Example:**
 > "Hover over the toolbar button at 800, 600 in Notepad"
@@ -2316,14 +2386,16 @@ The same [Input guard](#input-guard) checks as for clicks apply: a move over the
 
 Type text by simulating keyboard input, using Unicode characters, so any language works. Pass `windowHandle`: the server brings that window to the front first, and checks the foreground window again every 32 characters ([Input guard](#input-guard)). Without `windowHandle` the text goes to whatever window is in the foreground; confirm it with `get_foreground_window` first.
 
+<!-- tools:begin params:type_text -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | text | string | Yes | - | The text to type |
-| delayMs | int | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
-| windowHandle | long | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
+| windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:type_text -->
 
 **Example:**
 > "Type 'Hello World' into Notepad"
@@ -2385,13 +2457,15 @@ When another window comes to the front while typing, the call stops with `Target
 
 Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`: the server brings that window to the front first and sends the keys only while it, or a dialog it owns, is in front ([Input guard](#input-guard)). Without `windowHandle` the keys go to whatever window is in the foreground; confirm it with `get_foreground_window` first. Chords that close, quit or lock (such as Alt+F4) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space, or a closing chord) must be the last key of the call (`KeysAfterFocusChange`).
 
+<!-- tools:begin params:send_keys -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | keys | string | Yes | - | Keys to send in SendKeys format (see syntax below) |
-| windowHandle | long | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
-| allowHostTarget | bool | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
-| releaseHeldModifiers | bool | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+<!-- tools:end params:send_keys -->
 
 **SendKeys Syntax:**
 
@@ -2556,7 +2630,9 @@ When the server stops, including when the MCP client closes its standard input, 
 
 Whether the user has paused the server's input (and how and since when), whether the pause hotkey is registered, and which keys and buttons are down. Reads only.
 
+<!-- tools:begin params:get_control_status -->
 **Parameters:** None
+<!-- tools:end params:get_control_status -->
 
 **Example:**
 > "Is input paused?"
@@ -2597,7 +2673,9 @@ Whether the user has paused the server's input (and how and since when), whether
 
 Ask the user to resume the server's input after they paused it. The server asks the user directly, through the MCP client (elicitation: a question with a "Resume input" checkbox that is off by default), and input resumes only when the user confirms. Call it only when the user has asked you to continue.
 
+<!-- tools:begin params:resume_input -->
 **Parameters:** None
+<!-- tools:end params:resume_input -->
 
 **Example:**
 > "I'm done, you can continue"
@@ -2632,10 +2710,12 @@ When input is not paused, `success` is true and `wasPaused` false, and nobody is
 
 Release keys and mouse buttons that are stuck down. Sends the up event of every key and button the server pressed and could not release; normally there are none, because every input call releases its own, also after a failed or interrupted batch, and the server releases them when it stops. With `releaseHeldModifiers: true` it also releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it, for example after an input tool returned `ModifiersHeld` and nobody is pressing the key. Releasing Alt or Windows first sends an unassigned key, so no menu opens. Works while input is paused, except for `releaseHeldModifiers` (`PausedByUser`). While any modifier that is down is one of the pause hotkey's, no modifier the server did not press is released (`ModifiersHeld`), the other keys down included: the user may be pressing the hotkey. The keys and buttons the server pressed are still released.
 
+<!-- tools:begin params:release_all_input -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| releaseHeldModifiers | bool | No | false | Also release modifier keys that are down although the server did not press them (the user's, or stuck) |
+| releaseHeldModifiers | boolean | No | false | Also release modifier keys that are down although the server did not press them (the user's, or stuck) |
+<!-- tools:end params:release_all_input -->
 
 **Example:**
 > "Ctrl seems to be stuck"
@@ -2672,14 +2752,16 @@ Tools for launching applications and managing processes.
 
 Launch an application by path, name, or protocol URI.
 
+<!-- tools:begin params:launch_application -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | executable | string | Yes | - | Path, app name, or protocol URI |
 | arguments | string[] | No | - | Command line arguments |
 | workingDirectory | string | No | - | Working directory for the app |
-| waitForWindow | bool | No | false | Wait for window to appear |
-| waitTimeoutMs | int | No | 5000 | How long to wait for the window, in ms (clamped to 0-30000) |
+| waitForWindow | boolean | No | false | Wait for window to appear |
+| waitTimeoutMs | integer | No | 5000 | How long to wait for the window, in ms (clamped to 0-30000) |
+<!-- tools:end params:launch_application -->
 
 **Example 1:** Launch by name
 > "Open Notepad"
@@ -2774,11 +2856,13 @@ Launch an application by path, name, or protocol URI.
 
 List running processes with optional filtering.
 
+<!-- tools:begin params:list_processes -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | nameFilter | string | No | - | Filter by process name (partial match) |
-| includeWindowless | bool | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+| includeWindowless | boolean | No | false | Also list processes without a visible, titled window; `windowCount` is then 0 for every process |
+<!-- tools:end params:list_processes -->
 
 By default only processes with at least one visible, titled top-level window are listed. Unlike [get_all_windows](#get_all_windows), this counts every such window: windows on other virtual desktops (cloaked), tool windows and the desktop shell's windows too, so a process does not disappear from the list only because its window is not on the current desktop. `windowCount` is the number of those windows. A Store (UWP) app's window counts for the app's own process and for its `ApplicationFrameHost` host. To check whether a process has exited, use `includeWindowless: true`, which lists every running process.
 
@@ -2820,14 +2904,16 @@ By default only processes with at least one visible, titled top-level window are
 
 Close or terminate a process by ID (requires confirmation).
 
+<!-- tools:begin params:kill_process -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| processId | int | Yes | - | Process ID to terminate |
-| confirm | bool | Yes | - | Must be true to confirm termination |
-| forceKill | bool | No | false | `false`: graceful close only. `true`: terminate the process **and all of its child processes** immediately |
-| gracefulTimeoutMs | int | No | 5000 | Graceful mode: how long to wait for the process to exit after the close request (0-60000). A value outside that range fails with `InvalidTimeout`, even with `forceKill: true` |
+| processId | integer | Yes | - | Process ID to terminate |
+| confirm | boolean | Yes | - | Must be true to confirm termination |
+| forceKill | boolean | No | false | `false`: graceful close only. `true`: terminate the process **and all of its child processes** immediately |
+| gracefulTimeoutMs | integer | No | 5000 | Graceful mode: how long to wait for the process to exit after the close request (0-60000). A value outside that range fails with `InvalidTimeout`, even with `forceKill: true` |
 | expectedProcessName | string | No | - | PID-reuse guard: expected name as shown by `list_processes` (`notepad` or `notepad.exe`, case-insensitive) |
+<!-- tools:end params:kill_process -->
 
 **Graceful mode (default) never escalates.** It sends `WM_CLOSE` to the process's main window and waits up to `gracefulTimeoutMs`:
 - The process exits: `success: true`.
@@ -2959,7 +3045,9 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 
 List all layout presets in the layouts folder, sorted by name.
 
+<!-- tools:begin params:list_layouts -->
 **Parameters:** None
+<!-- tools:end params:list_layouts -->
 
 **Example:**
 > "Show my saved layouts"
@@ -2997,10 +3085,12 @@ List all layout presets in the layouts folder, sorted by name.
 
 Get full details of a layout preset. If no preset has that name, the call returns a tool error (`isError: true`) with `errorCode: "PresetNotFound"`.
 
+<!-- tools:begin params:get_layout -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Name of the layout preset |
+<!-- tools:end params:get_layout -->
 
 **Example:**
 > "Show the details of work-setup layout"
@@ -3058,6 +3148,7 @@ Save the current window arrangement as a preset. Saving under an existing name r
 
 If no visible window matches the filters, nothing is saved (an existing preset with that name is kept) and the call fails with `NoWindowsCaptured`.
 
+<!-- tools:begin params:save_layout -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -3065,6 +3156,7 @@ If no visible window matches the filters, nothing is saved (an existing preset w
 | description | string | No | - | Description of the layout |
 | includeProcesses | string | No | - | Only save these processes (comma-separated) |
 | excludeProcesses | string | No | - | Exclude these processes (comma-separated) |
+<!-- tools:end params:save_layout -->
 
 The process filters match part of the process name, case-insensitive. As in [find_windows](#find_windows), a Store (UWP) app's window matches both its own process name and `ApplicationFrameHost`. Each saved placement stores the app's own process name (for example `CalculatorApp`).
 
@@ -3123,12 +3215,14 @@ The process filters match part of the process name, case-insensitive. As in [fin
 
 Apply a saved layout preset.
 
+<!-- tools:begin params:apply_layout -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Name of the preset |
 | matchBy | string | No | "process_and_title" | Match method (see below) |
-| launchMissing | bool | No | false | Launch apps that aren't running |
+| launchMissing | boolean | No | false | Launch apps that aren't running |
+<!-- tools:end params:apply_layout -->
 
 **Match Methods:**
 - `process_and_title` - Match by process name AND window title
@@ -3227,10 +3321,12 @@ A placement with `focus: true` brings its window to the front with the same veri
 
 Delete a layout preset. If no preset has that name, the call fails with `PresetNotFound`. A preset defined in a hand-named file is deleted from that file.
 
+<!-- tools:begin params:delete_layout -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Name of the preset to delete |
+<!-- tools:end params:delete_layout -->
 
 **Example:**
 > "Delete the old-setup layout"
