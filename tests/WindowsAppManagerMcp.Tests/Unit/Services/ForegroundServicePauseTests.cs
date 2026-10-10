@@ -86,6 +86,44 @@ public class ForegroundServicePauseTests
     }
 
     [Fact]
+    public void APauseDuringAStep_StopsTheLaterSteps()
+    {
+        // Arrange - the foreground lock refuses step 1, and the user presses the hotkey during it
+        _setForeground = _ =>
+        {
+            _session.Pause(InputControlSources.Hotkey);
+            return false;
+        };
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 1000);
+
+        // Assert - step 2 neither attaches nor activates, and step 3 sends nothing
+        outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        _windows.Verify(w => w.SetForegroundWindow(It.IsAny<nint>()), Times.Once);
+        _threads.Verify(t => t.AttachThreadInput(It.IsAny<uint>(), It.IsAny<uint>(), It.IsAny<bool>()), Times.Never);
+        _windows.Verify(w => w.BringWindowToTop(It.IsAny<nint>()), Times.Never);
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void APauseWhileTheWindowComesToTheFront_IsReportedAsThePause_NotAsSuccess()
+    {
+        // The window is in front (that cannot be undone), but the caller must not go on as if input were running
+        _setForeground = h =>
+        {
+            _foreground = h;
+            _session.Pause(InputControlSources.Hotkey);
+            return true;
+        };
+
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.PausedByUser);
+        outcome.Error.Should().Contain("stopped part-way");
+    }
+
+    [Fact]
     public void ThePauseStopsTheEscThatClosesAMenu()
     {
         // Arrange - the target comes to the front in menu mode, and the user presses the hotkey as it does

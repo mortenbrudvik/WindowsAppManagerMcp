@@ -150,10 +150,10 @@ public sealed class ForegroundService : IForegroundService
         // window (ShowWindow, BringWindowToTop) can block past the deadline, and once the caller has given
         // up no further step is taken. The blocked call itself still completes, and SW_RESTORE and
         // BringWindowToTop activate, so the window can still come to the front late: callers check
-        // IsInFront again before input.
-        if (token.IsCancellationRequested)
+        // IsInFront again before input. Each step also checks that the user has not paused input meanwhile.
+        if (Interrupted(root, foreground, token) is { } beforeRestore)
         {
-            return Activation.Stopped(root, foreground);
+            return beforeRestore;
         }
 
         if (_windows.IsIconic(root))
@@ -171,9 +171,9 @@ public sealed class ForegroundService : IForegroundService
         var steps = new List<string>();
 
         // Step 1: SetForegroundWindow, which the foreground lock may refuse
-        if (token.IsCancellationRequested)
+        if (Interrupted(root, foreground, token) is { } beforeStep1)
         {
-            return Activation.Stopped(root, foreground);
+            return beforeStep1;
         }
         var accepted = _windows.SetForegroundWindow(activate);
         if (WaitUntilInFront(root, accepted ? _timing.StepSettle : TimeSpan.Zero, deadline, token, out foreground))
@@ -185,9 +185,9 @@ public sealed class ForegroundService : IForegroundService
             : "SetForegroundWindow was refused (foreground lock)");
 
         // Step 2: share the foreground thread's input, which the foreground lock allows to activate
-        if (token.IsCancellationRequested)
+        if (Interrupted(root, foreground, token) is { } beforeStep2)
         {
-            return Activation.Stopped(root, foreground);
+            return beforeStep2;
         }
         if (AttachSkipReason(foreground, out var foregroundThread) is { } skipReason)
         {
@@ -201,7 +201,7 @@ public sealed class ForegroundService : IForegroundService
                 try
                 {
                     _windows.BringWindowToTop(activate);
-                    accepted = !token.IsCancellationRequested && _windows.SetForegroundWindow(activate);
+                    accepted = Interrupted(root, foreground, token) == null && _windows.SetForegroundWindow(activate);
                 }
                 finally
                 {
@@ -223,9 +223,9 @@ public sealed class ForegroundService : IForegroundService
         // Step 3, last resort: become the process that received the last input. A zero-distance mouse
         // move presses no key and no button and moves nothing; a key (Alt in particular) would reach the
         // window in front, often the agent's own terminal.
-        if (token.IsCancellationRequested)
+        if (Interrupted(root, foreground, token) is { } beforeStep3)
         {
-            return Activation.Stopped(root, foreground);
+            return beforeStep3;
         }
         if (!_security.IsInputDesktopAvailable())
         {
@@ -260,6 +260,12 @@ public sealed class ForegroundService : IForegroundService
     /// </summary>
     private Activation Activated(nint root, string method, nint foreground, CancellationToken token)
     {
+        // Paused while the step ran: report the pause, not a success the caller would act on
+        if (_session?.IsPaused == true)
+        {
+            return Paused(root, foreground);
+        }
+
         var escapeSent = false;
         if (!token.IsCancellationRequested && IsInMenuMode(foreground))
         {
@@ -329,10 +335,19 @@ public sealed class ForegroundService : IForegroundService
         return outcome.PausedByUser ? null : (uint)outcome.Inserted;
     }
 
+    /// <summary>
+    /// Why no further activation step may be taken: the caller stopped waiting, or the user paused input (the
+    /// steps take the foreground from the user). Null when the next step may run.
+    /// </summary>
+    private Activation? Interrupted(nint root, nint foreground, CancellationToken token) =>
+        token.IsCancellationRequested ? Activation.Stopped(root, foreground)
+        : _session?.IsPaused == true ? Paused(root, foreground)
+        : null;
+
     private static Activation Paused(nint root, nint foreground) =>
         Activation.Failed(root, foreground, WindowErrorCode.PausedByUser,
-            "Input is paused: the user pressed the pause hotkey, so the window was not activated (activating takes the keyboard focus " +
-            "from the user). Stop and ask the user how to continue; only the user can resume.");
+            "Input is paused: the user pressed the pause hotkey, so the window was not activated, or activation stopped part-way " +
+            "(activating takes the keyboard focus from the user). Stop and ask the user how to continue; only the user can resume.");
 
     /// <summary>Why the attach step must be skipped, or null when it may run.</summary>
     private string? AttachSkipReason(nint foreground, out uint foregroundThread)
