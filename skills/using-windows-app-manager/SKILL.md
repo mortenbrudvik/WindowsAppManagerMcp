@@ -135,7 +135,7 @@ Use this skill when the user asks to:
 | `take_screenshot` | Capture a monitor | monitorIndex, format, maxWidth, saveToFile |
 | `capture_region` | Capture screen region | x, y, width, height, format, maxWidth, saveToFile |
 | `capture_window` | Capture a window | handle, includeFrame, format, maxWidth, saveToFile |
-| `capture_with_elements` | Capture with UI overlays | handle, maxDepth, interactableOnly, maxWidth, saveToFile |
+| `capture_with_elements` | Capture with UI overlays | handle, maxDepth, maxWidth, saveToFile |
 
 All capture tools also accept `quality` (JPEG) and `outputPath` (used with `saveToFile`).
 
@@ -143,7 +143,7 @@ All capture tools also accept `quality` (JPEG) and `outputPath` (used with `save
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `get_ui_elements` | Get UI element tree | handle, maxDepth, interactableOnly, minWidth, minHeight |
+| `get_ui_elements` | Get UI element tree | handle, maxDepth, timeoutMs |
 
 ### Browser Reading (4 tools)
 

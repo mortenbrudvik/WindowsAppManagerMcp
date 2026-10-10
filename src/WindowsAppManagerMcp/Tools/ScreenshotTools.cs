@@ -109,11 +109,11 @@ public class ScreenshotTools
         int quality = 85,
         [Description("Max depth to traverse UI tree (1-10). Default: 5")]
         int maxDepth = 5,
-        [Description("Comma-separated control types to include (e.g., 'Button,Edit'). Empty for all.")]
+        [Description(UIElementTools.ControlTypesDescription)]
         string? controlTypes = null,
-        [Description("Only include enabled/interactable elements. Default: false")]
+        [Description("Only include enabled elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
         bool interactableOnly = false,
-        [Description("Only include visible elements. Default: true")]
+        [Description("Only include elements that are not offscreen. Default: true. " + UIElementTools.VisibleOnlyCaution)]
         bool visibleOnly = true,
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
