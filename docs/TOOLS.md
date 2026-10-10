@@ -1750,9 +1750,35 @@ The following system processes cannot be terminated:
 
 Tools for saving and restoring window arrangements.
 
+**Where presets are stored:** each preset is a JSON file in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute folder path. The folder is outside the plugin install, so presets survive plugin updates.
+
+The first time a layout tool runs, the server:
+- copies presets saved by older versions into this folder. Older versions kept them in a `layouts` folder next to the executable, inside the versioned plugin folder. The original files are left in place.
+- adds the sample presets `work-setup`, `dual-monitor` and `focus-mode`.
+
+Neither step overwrites an existing preset, and a preset you delete is not added back on the next start. Preset files you add or edit by hand are picked up on the next layout tool call, without a restart.
+
+If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points to a read-only location), the layout tools fail with `StorageUnavailable` and a message naming the folder. The other tools keep working.
+
+**Layout error codes:**
+
+| Code | Returned by | Meaning |
+|------|-------------|---------|
+| `PresetNotFound` | get_layout, apply_layout, delete_layout | No preset has that name |
+| `InvalidName` | save_layout, delete_layout | The name is empty or longer than 128 characters |
+| `NoWindowsCaptured` | save_layout | No visible window matched the filters, so nothing was saved |
+| `SaveFailed` | save_layout | The preset file could not be written |
+| `DeleteFailed` | delete_layout | The preset file could not be deleted |
+| `WindowNotFound` | apply_layout | No open window matched a placement |
+| `LaunchFailed` | apply_layout | A missing app could not be launched, or its window did not appear |
+| `ArrangeFailed` | apply_layout | A matched window could not be moved, resized or brought to the foreground |
+| `StorageUnavailable` | all layout tools | The layouts folder could not be created or used |
+
+`list_layouts` and `get_layout` return plain data, so they report `PresetNotFound` and `StorageUnavailable` as a tool error (`isError: true`) whose message contains the code. The other layout tools return `success: false` with `error` and `errorCode` fields.
+
 ### list_layouts
 
-List all saved layout presets.
+List all layout presets in the layouts folder, sorted by name.
 
 **Parameters:** None
 
@@ -1790,7 +1816,7 @@ List all saved layout presets.
 
 ### get_layout
 
-Get full details of a layout preset.
+Get full details of a layout preset. If no preset has that name, the call returns a tool error whose message contains `PresetNotFound`.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1852,7 +1878,9 @@ Get full details of a layout preset.
 
 ### save_layout
 
-Save the current window arrangement as a preset.
+Save the current window arrangement as a preset. Saving under an existing name replaces that preset, and the response has `replaced: true`.
+
+If no visible window matches the filters, nothing is saved (an existing preset with that name is kept) and the call fails with `NoWindowsCaptured`.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1894,7 +1922,20 @@ Save the current window arrangement as a preset.
 {
   "success": true,
   "layoutName": "morning-routine",
-  "windowCount": 4
+  "windowCount": 4,
+  "replaced": false
+}
+```
+
+**Failure response:**
+```json
+{
+  "success": false,
+  "layoutName": "coding-setup",
+  "windowCount": 0,
+  "error": "No visible windows matched the capture filters, so nothing was saved. Check includeProcesses/excludeProcesses.",
+  "errorCode": "NoWindowsCaptured",
+  "replaced": false
 }
 ```
 
@@ -1915,6 +1956,8 @@ Apply a saved layout preset.
 - `process_and_title` - Match by process name AND window title
 - `process_only` - Match by process name only
 - `title_only` - Match by window title only
+
+`success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
@@ -1952,11 +1995,26 @@ Apply a saved layout preset.
 }
 ```
 
+**Partial response** (one app was not running and `launchMissing` was false):
+```json
+{
+  "success": false,
+  "presetName": "work-setup",
+  "windowsArranged": 2,
+  "windowsNotFound": 1,
+  "windowsLaunched": 0,
+  "errors": [
+    "No open window matched placement 3 (process 'WindowsTerminal'); set launchMissing=true to launch 'wt'"
+  ],
+  "errorCode": "WindowNotFound"
+}
+```
+
 ---
 
 ### delete_layout
 
-Delete a layout preset.
+Delete a layout preset. If no preset has that name, the call fails with `PresetNotFound`. A preset defined in a hand-named file is deleted from that file.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1979,6 +2037,15 @@ Delete a layout preset.
 ```json
 {
   "success": true
+}
+```
+
+**Failure response:**
+```json
+{
+  "success": false,
+  "error": "Layout preset 'old-setup' was not found",
+  "errorCode": "PresetNotFound"
 }
 ```
 
@@ -2119,7 +2186,8 @@ send_keys { "keys": "{ENTER}" }
 | `ProtectedProcess` | Cannot terminate protected system process |
 | `ConfirmationRequired` | Kill operation requires confirm=true |
 | `PresetNotFound` | Layout preset doesn't exist |
-| `InvalidPresetName` | Preset name is empty or invalid |
+| `InvalidName` | Layout preset name is empty or too long |
+| `StorageUnavailable` | Layout presets folder cannot be created or used (see [Layout Presets](#layout-presets)) |
 | `CoordinatesOutOfBounds` | Click coordinates outside screen bounds |
 | `SendInputFailed` | SendInput API call failed |
 | `EmptyText` | Text or keys string is empty |
