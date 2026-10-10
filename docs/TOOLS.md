@@ -324,7 +324,7 @@ Minimize, maximize, or restore a window.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | long | Yes | - | Window handle |
-| state | string | Yes | - | Desired state: 'minimize', 'maximize', or 'restore' |
+| state | string | Yes | - | Desired state: 'minimize', 'maximize', or 'restore' ('minimized', 'maximized' and 'normal' also work). Any other value is treated as 'restore' |
 
 **Example:**
 > "Maximize the VS Code window"
@@ -407,7 +407,7 @@ Close a window gracefully (sends WM_CLOSE message).
 }
 ```
 
-> **Note:** The application may prompt to save unsaved work before closing.
+> **Note:** The application may prompt to save unsaved work before closing. `success: true` means the close request (WM_CLOSE) was sent, not that the window has closed. Check with [find_windows](#find_windows) using the handle.
 
 ---
 
@@ -640,7 +640,7 @@ Each change object contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | handle | long | Yes | - | Window handle |
-| state | string | Yes | - | State: 'minimize', 'maximize', or 'restore' |
+| state | string | Yes | - | State: 'minimize', 'maximize', or 'restore'. Any other value is treated as 'restore' |
 
 **Example:**
 > "Minimize all browser windows"
@@ -2142,7 +2142,7 @@ Close or terminate a process by ID (requires confirmation).
 | processId | int | Yes | - | Process ID to terminate |
 | confirm | bool | Yes | - | Must be true to confirm termination |
 | forceKill | bool | No | false | `false`: graceful close only. `true`: terminate the process **and all of its child processes** immediately |
-| gracefulTimeoutMs | int | No | 5000 | Graceful mode: how long to wait for the process to exit after the close request (0-60000) |
+| gracefulTimeoutMs | int | No | 5000 | Graceful mode: how long to wait for the process to exit after the close request (0-60000). A value outside that range fails with `InvalidTimeout`, even with `forceKill: true` |
 | expectedProcessName | string | No | - | PID-reuse guard: expected name as shown by `list_processes` (`notepad` or `notepad.exe`, case-insensitive) |
 
 **Graceful mode (default) never escalates.** It sends `WM_CLOSE` to the process's main window and waits up to `gracefulTimeoutMs`:
@@ -2336,7 +2336,6 @@ Get full details of a layout preset. If no preset has that name, the call return
   "placements": [
     {
       "processName": "Code",
-      "titleContains": null,
       "monitorIndex": 0,
       "position": { "x": 0, "y": 0, "width": 0.5, "height": 1.0 },
       "launchCommand": "code",
@@ -2345,7 +2344,6 @@ Get full details of a layout preset. If no preset has that name, the call return
     },
     {
       "processName": "WindowsTerminal",
-      "titleContains": null,
       "monitorIndex": 0,
       "position": { "x": 0.5, "y": 0, "width": 0.5, "height": 0.5 },
       "launchCommand": "wt",
@@ -2354,7 +2352,6 @@ Get full details of a layout preset. If no preset has that name, the call return
     },
     {
       "processName": "chrome",
-      "titleContains": null,
       "monitorIndex": 1,
       "position": { "x": 0, "y": 0, "width": 1.0, "height": 1.0 },
       "launchCommand": "chrome",

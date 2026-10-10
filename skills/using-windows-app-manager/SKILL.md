@@ -171,7 +171,7 @@ All capture tools also accept `quality` (JPEG) and `outputPath` (used with `save
 |------|-------------|----------------|
 | `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow |
 | `list_processes` | List running processes | nameFilter, includeWindowless |
-| `kill_process` | Terminate process | processId, confirm |
+| `kill_process` | Close or terminate a process | processId, confirm, forceKill, expectedProcessName |
 
 ### Layout Presets (5 tools)
 
