@@ -1816,8 +1816,9 @@ Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard i
 for capture and UI Automation. Some tests read real system state (the monitor, window and
 process lists, a small screen region) but change nothing.
 
-A few tests have real side effects. For example, the `ProcessServiceTests` launch tests start
-Notepad. They are marked `[DesktopFact]` or `[DesktopTheory]`
+Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
+or stops a real process. A test that really needs a side effect like that must be marked
+`[DesktopFact]` or `[DesktopTheory]`
 (`tests/WindowsAppManagerMcp.Tests/Infrastructure/DesktopTestAttributes.cs`), which:
 
 - **skip the test unless `WAM_ALLOW_DESKTOP_TESTS` is exactly `1`**. The gate is in the
