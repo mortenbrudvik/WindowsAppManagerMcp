@@ -297,7 +297,7 @@ public class FilePersistenceTests : IDisposable
         var results = await Task.WhenAll(tasks);
 
         // Assert - All should succeed
-        results.Should().AllSatisfy(r => r.Should().BeTrue());
+        results.Should().AllSatisfy(r => r.Success.Should().BeTrue());
 
         // Verify all files exist
         var files = Directory.GetFiles(_testLayoutPath, "*.json");
