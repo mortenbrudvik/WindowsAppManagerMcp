@@ -196,6 +196,26 @@ public class InputToolGuardContractTests
     }
 
     [Fact]
+    public async Task SendKeys_KeysAfterAltTab_AreRefusedEvenWithWindowHandle()
+    {
+        // Arrange - Alt+Tab goes to the previous window (often the agent's terminal) before the command and Enter
+        _inFront = Notepad;
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("send_keys", new Dictionary<string, object?>
+        {
+            ["keys"] = "%{TAB}exit{ENTER}",
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        // Assert
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.KeysAfterFocusChange));
+        payload.GetProperty("error").GetString().Should().Contain("%{TAB}");
+        VerifyNothingSent();
+    }
+
+    [Fact]
     public async Task Click_WithWindowHandle_PointOnAnotherWindow_IsTargetOccluded_WithTheCursorPosition()
     {
         // Arrange

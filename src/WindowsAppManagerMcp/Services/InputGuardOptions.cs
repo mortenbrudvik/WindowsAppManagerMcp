@@ -33,11 +33,24 @@ public sealed record InputGuardOptions(
     public const string DefaultSource = "default";
 
     /// <summary>
-    /// Alt+F4 (close the window), Ctrl+W (close the tab or window), Ctrl+Q (quit), Ctrl+Shift+Esc (Task
-    /// Manager) and Win+L (lock the session). send_keys has no Windows-key modifier today, so Win+L is
-    /// listed for when it has one.
+    /// Alt+F4 (close the window), Ctrl+W (close the tab or window), Ctrl+Q (quit), Ctrl+F4 (close the
+    /// document or tab), Ctrl+Shift+Esc (Task Manager) and Win+L (lock the session). send_keys has no
+    /// Windows-key modifier today, so Win+L is listed for when it has one.
     /// </summary>
-    public static IReadOnlyList<string> DefaultDestructiveChords { get; } = ["%{F4}", "^w", "^q", "^+{ESC}", "#l"];
+    public static IReadOnlyList<string> DefaultDestructiveChords { get; } = ["%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l"];
+
+    /// <summary>
+    /// Chords that hand the keyboard to another window: Alt+Tab, Alt+Esc (switch windows), Ctrl+Esc and the
+    /// Windows key (the Start menu), and Alt+Space (the window menu, whose items minimize or close the
+    /// window). Together with the destructive chords, which close the window, they must be the last key of
+    /// a send_keys call: keys after them would reach a window the guard never checked. Fixed, not
+    /// configurable.
+    /// </summary>
+    public static IReadOnlyList<string> FocusChangingChords { get; } = ["%{TAB}", "%{ESC}", "^{ESC}", "%{SPACE}", "{LWIN}", "{RWIN}"];
+
+    private static readonly IReadOnlyList<(string Spec, KeyChord Chord)> FocusChanging = FocusChangingChords
+        .Select(spec => (spec, SendKeysParser.KeyPresses(SendKeysParser.Parse(spec)).Single()))
+        .ToList();
 
     /// <summary>The options when nothing is configured.</summary>
     public static InputGuardOptions Default { get; } = FromEnvironment(_ => null);
@@ -80,6 +93,33 @@ public sealed record InputGuardOptions(
             if (DestructiveChords.FirstOrDefault(d => d.Chord.IsPartOf(chord)) is { } match)
             {
                 return match;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first chord in <paramref name="events"/> (parsed send_keys input) that moves the keyboard to
+    /// another window (<see cref="FocusChangingChords"/>) or closes the window (a destructive chord) and is
+    /// followed by more key presses, as its spec; null when there is none. Only the last key of a call may be
+    /// such a chord.
+    /// </summary>
+    public string? FindKeysAfterFocusChange(IReadOnlyList<Models.InputEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        var pressed = SendKeysParser.KeyPresses(events);
+        for (var i = 0; i < pressed.Count - 1; i++)
+        {
+            if (FocusChanging.FirstOrDefault(f => f.Chord.IsPartOf(pressed[i])) is { Spec: { } focus })
+            {
+                return focus;
+            }
+
+            if (DestructiveChords.FirstOrDefault(d => d.Chord.IsPartOf(pressed[i])) is { } destructive)
+            {
+                return destructive.Spec;
             }
         }
 

@@ -155,6 +155,50 @@ public static class SendKeysParser
         return chords;
     }
 
+    /// <summary>
+    /// Every key press in <paramref name="events"/>, as <see cref="Chords"/> reads them, plus a modifier key
+    /// that is tapped: pressed and released with no other key pressed in between, such as <c>{WIN}</c>
+    /// (which opens the Start menu) or <c>{ALT}</c>. The tap counts as a press of that key with nothing held.
+    /// </summary>
+    public static IReadOnlyList<KeyChord> KeyPresses(IReadOnlyList<InputEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        var presses = new List<KeyChord>();
+        var held = KeyModifiers.None;
+        var tapCandidate = (ushort)0;
+        foreach (var e in events)
+        {
+            var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
+            if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) is var modifier && modifier != KeyModifiers.None)
+            {
+                if (!isUp)
+                {
+                    held |= modifier;
+                    tapCandidate = e.Code;
+                    continue;
+                }
+
+                held &= ~modifier;
+                if (tapCandidate == e.Code)
+                {
+                    presses.Add(new KeyChord(held, InputEventKind.VirtualKey, e.Code));
+                }
+
+                tapCandidate = 0;
+                continue;
+            }
+
+            if (e.Kind != InputEventKind.Mouse && !isUp)
+            {
+                presses.Add(new KeyChord(held, e.Kind, e.Code));
+                tapCandidate = 0;
+            }
+        }
+
+        return presses;
+    }
+
     private static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch
     {
         NativeEnums.VK_CONTROL or NativeEnums.VK_LCONTROL or NativeEnums.VK_RCONTROL => KeyModifiers.Control,

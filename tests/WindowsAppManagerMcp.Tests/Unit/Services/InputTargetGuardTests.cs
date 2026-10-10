@@ -308,6 +308,38 @@ public class InputTargetGuardTests
         CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Keys, SendKeysParser.Parse("^c{TAB}")).Allowed.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("%{TAB}echo pwned{ENTER}")] // Alt+Tab to the previous window, then a command and Enter
+    [InlineData("%{F4}n")]
+    [InlineData("{WIN}cmd{ENTER}")]
+    public void Keyboard_KeysAfterAChordThatMovesTheFocus_AreRefusedEvenWithATarget(string keys)
+    {
+        // Act
+        var result = CreateSut().CheckKeyboard(To(Notepad), KeyboardInputKind.Keys, SendKeysParser.Parse(keys));
+
+        // Assert - checked before the target is activated, from the request alone
+        result.ErrorCode.Should().Be(InputErrorCode.KeysAfterFocusChange);
+        result.Error.Should().Contain("last key").And.Contain("Nothing was sent");
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void Keyboard_UntargetedDestructiveChordWithMoreKeys_IsDestructiveChordNeedsTarget()
+    {
+        _inFront = Notepad;
+
+        CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Keys, SendKeysParser.Parse("%{F4}n"))
+            .ErrorCode.Should().Be(InputErrorCode.DestructiveChordNeedsTarget);
+    }
+
+    [Fact]
+    public void Keyboard_AChordThatMovesTheFocus_AsTheLastKey_IsAllowed()
+    {
+        var result = CreateSut().CheckKeyboard(To(Notepad), KeyboardInputKind.Keys, SendKeysParser.Parse("^a%{TAB}"));
+
+        result.Allowed.Should().BeTrue(result.Error);
+    }
+
     #endregion
 
     #region Probes

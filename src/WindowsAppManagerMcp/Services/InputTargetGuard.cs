@@ -78,6 +78,17 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 target, DescribeForeground());
         }
 
+        // Keys after a chord that hands the keyboard to another window would reach a window nobody checked
+        if (kind == KeyboardInputKind.Keys && keys != null && _options.FindKeysAfterFocusChange(keys) is { } focusChord)
+        {
+            return InputGuardResult.Refuse(InputErrorCode.KeysAfterFocusChange,
+                $"The keys go on after {focusChord}, which hands the keyboard to another window: it switches or closes the " +
+                "window, or opens the Start menu or the window menu. The keys after it would reach a window the guard never " +
+                $"checked, such as the agent's own terminal. Nothing was sent. Make {focusChord} the last key of one send_keys " +
+                "call, then send the rest in a new call (with windowHandle), which is checked again.",
+                target, DescribeForeground());
+        }
+
         // 2. Desktop probes
         if (DesktopRefusal(target) is { } desktop)
         {

@@ -9,6 +9,8 @@ public class DestructiveChordTests
 {
     private const ushort VkF4 = 0x73;
     private const ushort VkW = 0x57;
+    private const ushort VkTab = 0x09;
+    private const ushort VkLwin = 0x5B;
 
     private static InputGuardOptions Options(string? value) =>
         InputGuardOptions.FromEnvironment(name => name == InputGuardOptions.DestructiveChordsVariable ? value : null);
@@ -47,6 +49,67 @@ public class DestructiveChordTests
         SendKeysParser.Parse("#l").First().Should().Be(InputEvent.Unicode('#', 0));
     }
 
+    [Fact]
+    public void KeyPresses_ATappedModifier_IsAPressOfThatKey()
+    {
+        // {WIN} goes down and up with nothing in between: it opens the Start menu
+        SendKeysParser.KeyPresses(SendKeysParser.Parse("{WIN}a")).Should().Equal(
+            new KeyChord(KeyModifiers.None, InputEventKind.VirtualKey, VkLwin),
+            new KeyChord(KeyModifiers.None, InputEventKind.VirtualKey, 0x41));
+    }
+
+    [Fact]
+    public void KeyPresses_AModifierHeldForAKey_IsNotAPressOfItsOwn()
+    {
+        SendKeysParser.KeyPresses(SendKeysParser.Parse("%{TAB}")).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, VkTab));
+        SendKeysParser.KeyPresses(SendKeysParser.Parse("#l", windowsModifier: true)).Should().Equal(
+            new KeyChord(KeyModifiers.Windows, InputEventKind.VirtualKey, 0x4C));
+    }
+
+    #endregion
+
+    #region Keys after a chord that moves the focus
+
+    [Theory]
+    [InlineData("%{TAB}{ENTER}", "%{TAB}")] // Alt+Tab to the previous window, often the agent's terminal
+    [InlineData("%{TAB}echo hi", "%{TAB}")]
+    [InlineData("+%{TAB}x", "%{TAB}")]
+    [InlineData("%{ESC}a", "%{ESC}")]
+    [InlineData("^{ESC}notepad{ENTER}", "^{ESC}")]
+    [InlineData("{WIN}cmd{ENTER}", "{LWIN}")]
+    [InlineData("{RWIN}x", "{RWIN}")]
+    [InlineData("%{SPACE}c", "%{SPACE}")] // the window menu's Close
+    [InlineData("%{F4}n", "%{F4}")] // after a close, the next window gets the keys
+    [InlineData("^w^w", "^w")]
+    [InlineData("a%{TAB}b", "%{TAB}")]
+    public void FindKeysAfterFocusChange_KeysAfterTheChord_FindsIt(string keys, string expectedSpec)
+    {
+        InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().Be(expectedSpec);
+    }
+
+    [Theory]
+    [InlineData("%{TAB}")]
+    [InlineData("^a%{TAB}")]
+    [InlineData("{WIN}")]
+    [InlineData("%{F4}")]
+    [InlineData("^a{DELETE}")]
+    [InlineData("{ALT}{TAB}x")] // Alt is released before Tab: not Alt+Tab
+    [InlineData("^c{ESC}{ENTER}")]
+    public void FindKeysAfterFocusChange_TheChordLastOrNoChord_FindsNothing(string keys)
+    {
+        InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindKeysAfterFocusChange_ConfiguredDestructiveChords_CountToo()
+    {
+        var options = Options("^{F5}");
+
+        options.FindKeysAfterFocusChange(SendKeysParser.Parse("^{F5}x")).Should().Be("^{F5}");
+        options.FindKeysAfterFocusChange(SendKeysParser.Parse("%{TAB}x")).Should().Be("%{TAB}", "the focus chords are fixed");
+    }
+
     #endregion
 
     #region The default list
@@ -60,6 +123,7 @@ public class DestructiveChordTests
     [InlineData("^+w", "^w")] // Ctrl+Shift+W closes the whole browser window
     [InlineData("^q", "^q")]
     [InlineData("^+{ESC}", "^+{ESC}")]
+    [InlineData("^{F4}", "^{F4}")] // closes the document or tab
     [InlineData("abc^w", "^w")] // anywhere in the sequence
     public void FindDestructiveChord_DefaultList_FindsTheChord(string keys, string expectedSpec)
     {
@@ -68,7 +132,6 @@ public class DestructiveChordTests
 
     [Theory]
     [InlineData("{F4}")]
-    [InlineData("^{F4}")]
     [InlineData("w")]
     [InlineData("%w")]
     [InlineData("{ALT}{F4}")]
@@ -84,7 +147,7 @@ public class DestructiveChordTests
     public void Default_ListsTheRoadmapChords()
     {
         InputGuardOptions.Default.DestructiveChords.Select(c => c.Spec)
-            .Should().Equal("%{F4}", "^w", "^q", "^+{ESC}", "#l");
+            .Should().Equal("%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l");
         InputGuardOptions.Default.InvalidChordEntries.Should().BeEmpty();
         InputGuardOptions.Default.DestructiveChordSource.Should().Be(InputGuardOptions.DefaultSource);
     }
@@ -116,8 +179,8 @@ public class DestructiveChordTests
     [Fact]
     public void FromEnvironment_DefaultEntry_KeepsTheDefaultsAndAddsMore()
     {
-        Options("default ^{F4}").DestructiveChords.Select(c => c.Spec)
-            .Should().Equal("%{F4}", "^w", "^q", "^+{ESC}", "#l", "^{F4}");
+        Options("default ^{F5}").DestructiveChords.Select(c => c.Spec)
+            .Should().Equal("%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l", "^{F5}");
     }
 
     [Fact]

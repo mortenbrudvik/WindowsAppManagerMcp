@@ -34,8 +34,9 @@ public class InputSimulationTools
 
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
-        "and is refused only when that is the agent's own terminal or chat window (TargetIsAgentHost)." +
+        "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
         " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image." +
+        " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
         GuardNote;
 
     private const string KeyboardTargetNote =
@@ -104,7 +105,7 @@ public class InputSimulationTools
 
     [McpServerTool(Name = "mouse_move")]
     [Description("Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
-                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost)." + GuardNote)]
+                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint)." + GuardNote)]
     public MouseMoveResult MouseMove(
         [Description(XDescription)]
         int x,
@@ -139,6 +140,7 @@ public class InputSimulationTools
     [McpServerTool(Name = "send_keys")]
     [Description("Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home)." + KeyboardTargetNote +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
+                 " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
                  " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination.")]
     public SendKeysResult SendKeys(
         [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]

@@ -244,5 +244,11 @@ public enum InputErrorCode
     /// not check (it is confined to a window, for example by a game or a remote session, or the user is
     /// moving the mouse).
     /// </summary>
-    CursorNotAtPoint = 32
+    CursorNotAtPoint = 32,
+
+    /// <summary>
+    /// send_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
+    /// the Windows key, Alt+Space or a closing chord), so they would reach a window the guard never checked.
+    /// </summary>
+    KeysAfterFocusChange = 33
 }

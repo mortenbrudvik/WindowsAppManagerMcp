@@ -91,6 +91,21 @@ public class ToolDescriptionTests
     }
 
     [Fact]
+    public void SendKeysDescription_SaysAFocusChangingChordMustBeTheLastKey()
+    {
+        ServerToolCatalog.Description("send_keys").Should().Contain("KeysAfterFocusChange").And.Contain("Alt+Tab");
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("right_click")]
+    [InlineData("double_click")]
+    public void ClickDescription_NamesCursorNotAtPoint(string toolName)
+    {
+        ServerToolCatalog.Description(toolName).Should().Contain("CursorNotAtPoint");
+    }
+
+    [Fact]
     public void FocusWindowDescription_SaysToConfirmWithGetForegroundWindow()
     {
         ServerToolCatalog.Description("focus_window").Should().Contain("get_foreground_window",

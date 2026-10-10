@@ -3275,6 +3275,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
 | `InvalidUri` | [launch_application](#launch_application), launch_applications_batch | The URI is malformed, or a file URI does not name an absolute local or UNC path |
 | `InvalidWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | The working directory contains invalid characters |
+| `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, or its window did not appear |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
