@@ -151,6 +151,80 @@ public class InputGateToolFilterTests
         ran.Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("focus_window")]
+    [InlineData("launch_application")]
+    [InlineData("close_window")]
+    [InlineData("kill_process")]
+    [InlineData("set_window_state")]
+    [InlineData("a_tool_nobody_classified")] // fails safe
+    public async Task WhilePaused_AWindowChangingTool_ReturnsPausedByUser_AndDoesNotRun(string tool)
+    {
+        // Arrange - the user pressed the pause hotkey
+        var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+        var ran = false;
+        var handler = InputGateToolFilter.Filter((_, _) =>
+        {
+            ran = true;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+
+        // Act
+        var result = await handler(CreateRequest(tool, session), CancellationToken.None);
+
+        // Assert
+        ran.Should().BeFalse();
+        result.IsError.Should().BeTrue();
+        var payload = System.Text.Json.JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        payload.GetProperty("errorCode").GetString().Should().Be("PausedByUser");
+        payload.GetProperty("error").GetString().Should().Contain("Ctrl+Alt+Shift+Pause").And.Contain("Do not try to resume");
+    }
+
+    [Theory]
+    [InlineData("take_screenshot")]
+    [InlineData("get_all_windows")]
+    [InlineData("get_control_status")]
+    public async Task WhilePaused_AReadOnlyTool_StillRuns(string tool)
+    {
+        var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+        var ran = false;
+        var handler = InputGateToolFilter.Filter((_, _) =>
+        {
+            ran = true;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+
+        await handler(CreateRequest(tool, session), CancellationToken.None);
+
+        ran.Should().BeTrue("the agent can still look while input is paused");
+    }
+
+    [Fact]
+    public async Task APauseWhileWaitingForTheGate_StopsTheWindowChangingTool()
+    {
+        // Arrange - an input call holds the gate, so focus_window (not paused yet) waits for it
+        var session = new InputSession(new FakeInputWrapper());
+        var ran = false;
+        var handler = InputGateToolFilter.Filter((_, _) =>
+        {
+            ran = true;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        var gate = InputGate.Enter();
+        var call = handler(CreateRequest("focus_window", session), CancellationToken.None).AsTask();
+
+        // Act - the user pauses meanwhile, then the input call ends
+        session.Pause(InputControlSources.Hotkey);
+        gate.Dispose();
+        var result = await call.WaitAsync(Timeout);
+
+        // Assert
+        ran.Should().BeFalse();
+        result.IsError.Should().BeTrue();
+    }
+
     [Fact]
     public void AddInputGateSerialization_RegistersTheFilter()
     {
@@ -163,9 +237,10 @@ public class InputGateToolFilterTests
             .Should().ContainSingle();
     }
 
-    private static RequestContext<CallToolRequestParams> CreateRequest(string tool) =>
+    private static RequestContext<CallToolRequestParams> CreateRequest(string tool, IInputSession? session = null) =>
         new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
         {
-            Params = new CallToolRequestParams { Name = tool }
+            Params = new CallToolRequestParams { Name = tool },
+            Services = session == null ? null : new ServiceCollection().AddSingleton(session).BuildServiceProvider()
         };
 }
