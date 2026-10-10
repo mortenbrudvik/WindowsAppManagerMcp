@@ -17,8 +17,11 @@
 
     Needs the full git history (in GitHub Actions: actions/checkout with fetch-depth: 0).
 
-    The build workflow runs this strictly on v* tags, so a release cannot ship a stale exe, and
-    with -WarnOnly on other pushes, where a stale exe is expected until the next release.
+    The build workflow runs this strictly on v* tags, so a release cannot ship a stale exe, and on
+    pushes and pull requests that change bin/WindowsAppManagerMcp.exe (Test-PluginBinaryChanged in
+    scripts/ReleaseCommon.ps1 decides), so a stale or hand-built exe fails when it is committed.
+    On other pushes and pull requests it runs with -WarnOnly, because a stale exe is expected
+    there until the next release.
 
 .PARAMETER Tag
     The release tag being built (for example v1.12.0). Must equal v<version>.

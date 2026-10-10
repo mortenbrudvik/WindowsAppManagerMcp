@@ -194,6 +194,49 @@ function Get-ChangedBuildInputs([string]$Root, [string]$FromCommit) {
     $files.ToArray()
 }
 
+function New-PluginBinaryChange([bool]$Changed, [string]$Reason) {
+    [pscustomobject]@{ Changed = $Changed; Reason = $Reason }
+}
+
+# Whether a push or pull request changes the committed plugin exe (bin/WindowsAppManagerMcp.exe).
+# The Build workflow checks the exe strictly when it does, and only warns otherwise. Compares $Base
+# with $Head (default HEAD); with -SinceMergeBase it compares the merge base of the two with $Head,
+# which is what a pull request itself changes. When the answer is unknown, Changed is $true, so the
+# check errs on the strict side: $Base is empty, or it is not in this clone (a force push). An
+# all-zero $Base (GitHub's "before" for a newly created branch) means everything in $Head is new,
+# so the exe counts as changed when $Head contains it.
+# Returns [pscustomobject]@{ Changed = [bool]; Reason = [string] }.
+function Test-PluginBinaryChanged([string]$Root, [string]$Base, [string]$Head, [switch]$SinceMergeBase) {
+    $exePath = "bin/$($script:ExeName)"
+    if ([string]::IsNullOrWhiteSpace($Head)) {
+        $Head = 'HEAD'
+    }
+    if ([string]::IsNullOrWhiteSpace($Base)) {
+        return New-PluginBinaryChange $true "No base commit to compare $Head with, so $exePath is checked strictly."
+    }
+    if ($Base -match '^0+$') {
+        if ((Invoke-Git $Root @('cat-file', '-e', "$($Head):$exePath")).ExitCode -eq 0) {
+            return New-PluginBinaryChange $true "$Head is a new branch that contains $exePath, so it is checked strictly."
+        }
+        return New-PluginBinaryChange $false "$Head is a new branch without $exePath."
+    }
+    foreach ($commit in @($Base, $Head)) {
+        if ((Invoke-Git $Root @('cat-file', '-e', "$commit^{commit}")).ExitCode -ne 0) {
+            return New-PluginBinaryChange $true "Commit $commit is not in this clone (force push?), so whether $exePath changed is unknown and it is checked strictly."
+        }
+    }
+
+    $range = $(if ($SinceMergeBase) { @("$Base...$Head") } else { @($Base, $Head) })
+    $diff = Invoke-Git $Root (@('diff', '--name-only') + $range + @('--', $exePath))
+    if ($diff.ExitCode -ne 0) {
+        return New-PluginBinaryChange $true "git diff $($range -join ' ') failed, so whether $exePath changed is unknown and it is checked strictly."
+    }
+    if (@($diff.Output | Where-Object { $_ }).Count -gt 0) {
+        return New-PluginBinaryChange $true "$exePath changed ($($range -join ' ')), so it is checked strictly."
+    }
+    New-PluginBinaryChange $false "$exePath did not change ($($range -join ' ')); a stale exe is only a warning until the next release."
+}
+
 # Uncommitted build inputs (see $BuildInputPaths) in the working tree, as git status --porcelain
 # lines: modified, staged, untracked and ignored files. Ignored files count because MSBuild reads
 # them all the same: a *.csproj.user, a Directory.Build.rsp, or a source file that a .gitignore
