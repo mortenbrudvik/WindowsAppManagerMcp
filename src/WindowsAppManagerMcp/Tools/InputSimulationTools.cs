@@ -42,7 +42,8 @@ public class InputSimulationTools
         "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
         " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
-        " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there." +
+        " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
+        "MouseInUse also when the capture cannot be read (a window just closed): retry." +
         GuardNote;
 
     private const string KeyboardTargetNote =

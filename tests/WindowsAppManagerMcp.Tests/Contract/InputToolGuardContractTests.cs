@@ -29,10 +29,15 @@ public class InputToolGuardContractTests
     private readonly Mock<IForegroundService> _foreground = new();
     private readonly Mock<IProcessSecurityProbe> _security = new();
     private readonly Mock<IHostGuard> _hostGuard = new();
+    private readonly Mock<INativeThreadInputWrapper> _threads = new();
     private nint _inFront;
 
     public InputToolGuardContractTests()
     {
+        // Each window has a thread of its own, and no thread has captured the mouse or opened a menu
+        _threads.Setup(t => t.GetWindowThreadId(It.IsAny<nint>())).Returns((nint window) => (uint)window + 1);
+        _threads.Setup(t => t.GetGuiThreadInfo(It.IsAny<uint>())).Returns(new GuiThreadInfo(0, 0, 0, 0, 0));
+
         Window(Terminal, TerminalPid, "WindowsTerminal", "pwsh");
         Window(Notepad, NotepadPid, "notepad", "Untitled - Notepad");
         _hostGuard.Setup(g => g.IsHostWindow(Terminal)).Returns(true);
@@ -84,7 +89,7 @@ public class InputToolGuardContractTests
         var monitors = TestDataFactory.CreateMockMonitorService(
             [TestDataFactory.CreateMonitorInfo(boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080)]);
         var guard = new InputTargetGuard(
-            _windows.Object, _hitTest.Object, new Mock<INativeThreadInputWrapper>().Object, new Mock<INativeProcessWrapper>().Object,
+            _windows.Object, _hitTest.Object, _threads.Object, new Mock<INativeProcessWrapper>().Object,
             _windowService.Object, _foreground.Object, _security.Object, _hostGuard.Object,
             new TargetPolicy(TargetPolicySettings.Default), InputGuardOptions.Default);
         var service = new InputSimulationService(monitors.Object, _input.Object, guard, new InputSession(_input.Object));
