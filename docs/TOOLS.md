@@ -32,7 +32,7 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window. Closing more than 3 windows in one batch needs `confirm: true`.
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - The user can pause the input of every Windows App Manager server on the desktop at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and every tool that changes windows or starts or stops processes ([focus_window](#focus_window), [close_window](#close_window), [launch_application](#launch_application), ...) return `PausedByUser` and do nothing, and a running input call stops; tools that only read keep working. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
-- Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. No key or mouse button the server presses stays down after a call.
+- Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. Clicks and mouse moves are also refused while a mouse button is held down or another window has captured the mouse (`MouseInUse`): the user is dragging, selecting or has a menu open. No key or mouse button the server presses stays down after a call.
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
 
 ### Target policy
@@ -51,11 +51,11 @@ The policy applies to:
 
 - every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
 - [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
-- [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): a denied window is not moved, resized, restored, maximized, minimized, raised or activated, so the agent cannot bring it on screen;
+- [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): these tools do not move, resize, restore, maximize, minimize, raise or activate a denied window, and focus_window does not activate a denied app's modal dialog for its owner;
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
 
-[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works (the Window Control tools cannot restore or raise them, but an app can still bring its own window forward, for example when it is started again). The UI Automation and browser reading tools are not covered yet.
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area. Keeping such a window minimized limits what the agent can see, but it is not a guarantee: the window tools above do not restore or raise it, yet input still can (a click on its taskbar button, Alt+Tab), and so can the app itself (for example when it is started again with [launch_application](#launch_application)). Restoring an allowed window can also show a denied app's dialog that the window owns. So close such apps, or keep them on another virtual desktop, while the agent works. The UI Automation and browser reading tools are not covered yet.
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart.
 
@@ -312,9 +312,22 @@ Tools for manipulating window position, size, and state.
 
 `bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window).
 
-A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): the agent cannot restore, raise or move it onto the screen.
+A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): these tools do not restore, raise or move it. That does not keep it off the screen by itself; see [Target policy](#target-policy).
 
 Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
+
+**Errors.** move_window, resize_window, set_window_bounds, set_window_state, snap_window and move_window_to_monitor return `success: false` with `error` and `errorCode`:
+
+| Code | Meaning |
+|------|---------|
+| `InvalidHandle` | The handle is not a window |
+| `InvalidSnapPosition` | snap_window: `position` is not one of the positions below |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was changed. Ask the user |
+| `NotResponding` | The window's application did not answer: Windows reports the window as hung (refused at once, nothing was tried), it did not answer within 5 seconds, or an earlier call to the same application is still blocked (refused at once). Nothing was changed by this call, but a call that timed out can still take effect once the application answers, so check the window (for example with [find_windows](#find_windows) and its `handle`) before you act on it. Try again later, or ask the user |
+
+A move, resize or state change that Windows refuses for another reason is `success: false` without `error` or `errorCode`. [focus_window](#focus_window) and [close_window](#close_window) have their own error tables below.
+
+These tools, focus_window, close_window, the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) can change which window is in front, so each waits until a running input call (or another such call) has finished. A call that waits more than 30 seconds gives up with a tool error (`isError: true`, `errorCode: "InputBusy"`) and does nothing; while the user has paused input (see [Pause hotkey](#pause-hotkey)) it returns `PausedByUser` the same way, also when the pause comes while it waits. The wait for a window is bounded too: a hung application holds such a call, and every input call queued behind it, for at most about 5 seconds per application.
 
 ### move_window
 
@@ -474,7 +487,7 @@ Windows' foreground lock usually refuses a background process such as this serve
 A window that the user's [target policy](#target-policy) denies is refused before anything else (`TargetDeniedByPolicy`): it is neither restored nor activated. So is a hidden window (`WindowHidden`), one without the WS_VISIBLE style, such as an app's window hidden in the notification area: keys would go to a window the user cannot see.
 
 1. **already**: the window, or a dialog it owns, is already in front. Nothing is changed.
-2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead, unless the target policy denies the dialog's app (`TargetDeniedByPolicy`).
+2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead, unless the target policy denies the dialog's app (`TargetDeniedByPolicy`; that check comes after the restore).
 3. **setForeground**: SetForegroundWindow.
 4. **attachThreadInput**: if the foreground lock refused, the server's activation thread attaches its input to the foreground window's thread, activates the window and detaches again. Skipped when the foreground window is not responding or runs at a higher integrity level (elevated), where Windows refuses the attach.
 5. **inputUnlock**: last resort, a mouse move of zero distance makes the server the process that received the last input, then SetForegroundWindow again. No key is sent: an Alt press would reach the window in front, often the agent's terminal.
@@ -553,7 +566,7 @@ The window counts as in front when the foreground window is the window itself or
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
 | `WindowHidden` | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area); it was not activated, because keys would go to a window the user cannot see. Show it from the app first, or ask the user |
-| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app, or the app of the modal dialog that would be activated for it; nothing was restored or activated. Ask the user |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app (nothing was restored or activated), or the app of the modal dialog that would be activated for it (nothing was activated, but a minimized window was already restored, which can show that dialog again). Ask the user |
 | `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done; a pause during the activation stops it at the next step. While paused, `focus_window` itself is refused before it runs (`isError`, see [Pause hotkey](#pause-hotkey)). Stop and ask the user |
 | `InvalidHandle` | The handle is not a window |
 
@@ -732,6 +745,14 @@ Move a window to a specific monitor.
 
 Tools for performing multiple window operations efficiently in a single call.
 
+The window batches handle each window on its own, and a window that fails does not stop the batch. The result counts `succeeded` and `failed`, and each item in `results` has `success`, and `error` when it failed ([launch_applications_batch](#launch_applications_batch) works the same way per application; see its section):
+
+- A window that the user's [target policy](#target-policy) denies fails with `errorCode: "TargetDeniedByPolicy"` and is not changed.
+- In set_windows_bounds_batch, snap_windows_batch and set_windows_state_batch, an invalid handle, an unknown snap position and a window whose application does not answer (see `NotResponding` under [Window Control](#window-control): refused at once when Windows reports it hung or an earlier call to it is still blocked, otherwise given up on after 5 seconds) fail with `error` only, without `errorCode`. A placement given up on can still take effect once the application answers.
+- close_windows_batch gives every failed item an `errorCode` (see [close_windows_batch](#close_windows_batch)).
+
+`delayBetweenMs` is the pause between two windows. It is clamped to 0-5000 ms, because a batch holds the input gate the whole time (see [Window Control](#window-control)): a long batch makes input calls wait, and they give up with `InputBusy` after 30 seconds. A batch returns a tool error (`isError: true`) with `InputBusy` or `PausedByUser`, and does nothing, when it could not start.
+
 ### set_windows_bounds_batch
 
 Move and resize multiple windows in a single batch operation.
@@ -740,7 +761,7 @@ Move and resize multiple windows in a single batch operation.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | placements | array | Yes | - | Array of window placements |
-| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
 Each placement object contains:
 | Field | Type | Required | Default | Description |
@@ -790,7 +811,7 @@ Snap multiple windows to predefined positions in a single batch operation.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | placements | array | Yes | - | Array of snap placements |
-| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
 Each placement object contains:
 | Field | Type | Required | Default | Description |
@@ -838,7 +859,7 @@ Set the state (minimize, maximize, restore) of multiple windows in a single batc
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | changes | array | Yes | - | Array of state changes |
-| delayBetweenMs | int | No | 30 | Delay between operations in milliseconds |
+| delayBetweenMs | int | No | 30 | Delay between two windows in milliseconds (clamped to 0-5000) |
 
 Each change object contains:
 | Field | Type | Required | Default | Description |
@@ -884,7 +905,7 @@ Close multiple windows gracefully in a single batch operation. More than 3 windo
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | windows | array | Yes | - | Array of window handles to close |
-| delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+| delayBetweenMs | int | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 | confirm | bool | No | false | Must be true to close more than 3 windows in one batch |
 | force | bool | No | false | Close protected windows too (see [close_window](#close_window)); applies to every window in the batch. Set it only when the user explicitly asked to close those windows |
 
@@ -950,7 +971,7 @@ Launch multiple applications in a single batch operation.
 |-----------|------|----------|---------|-------------|
 | applications | array | Yes | - | Array of applications to launch |
 | waitForWindows | bool | No | false | Wait for windows to appear |
-| waitTimeoutMs | int | No | 5000 | Timeout for waiting (ms) |
+| waitTimeoutMs | int | No | 5000 | How long to wait for each window, in ms (clamped to 0-30000) |
 
 Each application object contains:
 | Field | Type | Required | Default | Description |
@@ -988,7 +1009,7 @@ Each application object contains:
 }
 ```
 
-Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`).
+Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). The applications are started one after another; with `waitForWindows`, each one's window is waited for (up to `waitTimeoutMs`) before the next starts, and the batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
 
 ---
 
@@ -1385,7 +1406,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | interactableOnly | bool | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | visibleOnly | bool | No | true | Only include visible elements |
 | highlightInteractable | bool | No | true | Use brighter colors for enabled elements |
-| timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms (1000-30000) |
+| timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn |
 | maxDimension | int | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 | output | string | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
@@ -1477,7 +1498,9 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 
 > **Note:** `imageBounds` are pixels of the returned image (scaled with it), measured from its top-left corner, which is `capturedRegion`. `screenBounds` are absolute screen coordinates. Use `imageBounds` to find an element in the picture and `screenBounds` to click it. The overlays and `imageBounds` line up with the image with or without the frame.
 
-> **Note:** When the UI element walk fails, `errorCode` is the [get_ui_elements](#get_ui_elements) code, for example `OperationTimedOut` (raise `timeoutMs` or lower `maxDepth`).
+> **Note:** A minimized window is refused with `CaptureFailed` before the UI element walk, as in [capture_window](#capture_window); restore it first (for example with [set_window_state](#set_window_state)). A window whose app the user's [target policy](#target-policy) denies is refused with `TargetDeniedByPolicy` before any pixel or element is read.
+
+> **Note:** When the UI element walk fails, `errorCode` is the [get_ui_elements](#get_ui_elements) code, for example `OperationTimedOut` (raise `timeoutMs` or lower `maxDepth`). A walk that the timeout cut off after it found matching elements is not a failure: the capture is returned with the elements read so far.
 
 > **Note:** The filters work as in [get_ui_elements](#get_ui_elements): `controlTypes` and `interactableOnly` leave out only the elements that fail them, so a Button inside a Pane is still overlaid, while `visibleOnly` leaves out everything inside an offscreen element. An unknown control type name fails the call, and the error lists the valid names.
 
@@ -2047,7 +2070,7 @@ Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to fin
 
 > **Warning:** Pass `windowHandle` with the window you mean. Without it, keyboard input goes to whatever window is in the foreground and clicks to whatever window is at the point; the guard then only keeps the input off the agent's own host, elevated and denied windows. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
-Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing.
+Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, `waitTimeoutMs` per launched application, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
 
 Every input call can be stopped. Cancelling the MCP request (`notifications/cancelled`) stops `type_text` between batches and ends the wait for another call; the request then gets no result. The user's [pause hotkey](#pause-hotkey) stops a running call between batches, and it returns `PausedByUser` with `charactersTyped`. Either way, no key or mouse button stays down: every batch sends its own key-ups and button-ups, and a batch that Windows inserts only partly (a desktop switch or input block in the middle of it) or that fails is followed at once by the up events of what went down.
 
@@ -2511,7 +2534,7 @@ The user's control over the server's input: the [pause hotkey](#pause-hotkey), a
 
 The user can stop the agent's input at any moment with a system-wide hotkey, by default **Ctrl+Alt+Shift+Pause**:
 
-- **Press it once to pause.** Every input tool returns `PausedByUser` and sends nothing. So does every tool that changes windows or starts or stops processes: the [Window Control](#window-control) tools ([focus_window](#focus_window) and [close_window](#close_window) among them), the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) return an error result (`isError: true`) with `errorCode` `PausedByUser` without running. Tools that only read (window lists, screenshots, UI Automation, browser reading, [get_control_status](#get_control_status)) keep working. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far; a window call that was already running finishes. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
+- **Press it once to pause.** Every input tool returns `PausedByUser` and sends nothing. So does every tool that changes windows or starts or stops processes: the [Window Control](#window-control) tools ([focus_window](#focus_window) and [close_window](#close_window) among them), the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) return an error result (`isError: true`) with `errorCode` `PausedByUser` without running, also when they were already waiting for another call to finish. Tools that only read (window lists, screenshots, UI Automation, browser reading, [get_control_status](#get_control_status)) keep working. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far. A window call that was already running finishes, except an activation ([focus_window](#focus_window), a `focus` placement of [apply_layout](#apply_layout), or the input guard bringing a `windowHandle` target to the front), which stops at its next step and reports `PausedByUser`. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
 - **Press it again to resume.** The hotkey always toggles, but a press within 2 seconds of the pause is ignored, so pressing it twice to be sure does not resume. The agent can ask to resume with [resume_input](#resume_input), which resumes only when the user confirms.
 - **It pauses every server.** Each MCP client session starts its own server, and only one process can register the chord. The pause is shared by all of the user's Windows App Manager servers on the desktop: the chord pauses and resumes every one of them, whichever server registered it, and so does a confirmed [resume_input](#resume_input). A server that finds the chord held by another server reports `hotkey.state` `OtherServer`, and registers the chord itself within 2 seconds after that server stops. A server that starts while input is paused starts paused.
 - The agent cannot resume itself: `resume_input` asks the user, and `send_keys` refuses the hotkey's keys (`PauseChordNotAllowed`), which would reach the hotkey like a real key press. The modifiers of the chord are never released for the agent (`releaseHeldModifiers`), since the user may be pressing it.
@@ -2525,7 +2548,7 @@ The chord is set by the user in the server's environment, never by a tool argume
 
 For example, in the MCP server configuration: `"env": { "WAM_PAUSE_HOTKEY": "Ctrl+Alt+F12" }`.
 
-If another program already uses the chord, Windows refuses to register it: [get_control_status](#get_control_status) reports `hotkey.state` `Failed` with the reason, and the server logs a warning when it starts. The server tries again every 2 seconds; to use another chord, set `WAM_PAUSE_HOTKEY` and restart the server. Servers configured with different chords each register their own, and every one of those chords pauses all of them. The shared pause is a named event in the user's logon session: a server running as administrator and one that is not may be unable to share it, and then each one keeps its own pause and only its own chord pauses it (`sharedPause: false`, and a warning in its log).
+If another program already uses the chord, Windows refuses to register it: [get_control_status](#get_control_status) reports `hotkey.state` `Failed` with the reason, and the server logs a warning when it starts. The server tries again every 2 seconds; to use another chord, set `WAM_PAUSE_HOTKEY` and restart the server. If registering fails in another way (Windows refuses the chord for another reason, or the registration throws), the server does not try again, and any key of the chord it had registered is freed, so the hotkey never works while its state says `Failed`. A server that registered the chord marks itself as the chord's holder, so other servers report `OtherServer`; if that mark cannot be made, the hotkey still works and stays `Registered`, and only a server started later reports `Failed` instead of `OtherServer`. Servers configured with different chords each register their own, and every one of those chords pauses all of them. The shared pause is a named event in the user's logon session: a server running as administrator and one that is not may be unable to share it, and then each one keeps its own pause and only its own chord pauses it (`sharedPause: false`, and a warning in its log).
 
 When the server stops, including when the MCP client closes its standard input, it releases any key or button it still holds. A server process that is killed outright cannot release anything. The server does not watch for the user taking over the mouse or keyboard on their own; the hotkey is the way to stop it. A hotkey cannot tell an injected key press from the user's, and the shared pause is a named event any program of the user can open: a program the agent started before the pause could press the chord or resume the shared pause. While input is paused the agent cannot start programs (`launch_application` returns `PausedByUser`).
 
@@ -2656,7 +2679,7 @@ Launch an application by path, name, or protocol URI.
 | arguments | string[] | No | - | Command line arguments |
 | workingDirectory | string | No | - | Working directory for the app |
 | waitForWindow | bool | No | false | Wait for window to appear |
-| waitTimeoutMs | int | No | 5000 | Timeout for waiting (ms) |
+| waitTimeoutMs | int | No | 5000 | How long to wait for the window, in ms (clamped to 0-30000) |
 
 **Example 1:** Launch by name
 > "Open Notepad"
@@ -3118,7 +3141,7 @@ Only the windows that [get_all_windows](#get_all_windows) lists are matched. A w
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
-A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error.
+A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). The result does not list the focus outcomes: a focus that fails adds an `ArrangeFailed` error whose text names the [focus_window](#focus_window) error code (for example `FocusFailed`, `NotResponding` or `PausedByUser`) and the reason, and a focus that succeeds adds nothing. Confirm what is in front with [get_foreground_window](#get_foreground_window) before typing. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error. A window whose application does not answer (see `NotResponding` under [Window Control](#window-control)) is not arranged and adds an `ArrangeFailed` error with the reason; the other placements still run.
 
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
@@ -3145,25 +3168,29 @@ A placement with `focus: true` brings its window to the front with the same veri
 }
 ```
 
-**Response** (one placement has `focus: true`):
+**Response:**
 ```json
 {
   "success": true,
   "presetName": "work-setup",
   "windowsArranged": 3,
   "windowsNotFound": 0,
-  "windowsLaunched": 1,
-  "focus": [
-    {
-      "success": true,
-      "handle": 1311422,
-      "isForeground": true,
-      "method": "setForeground",
-      "foregroundHandle": 1311422,
-      "foregroundTitle": "main.cs - Visual Studio Code",
-      "foregroundProcess": "Code"
-    }
-  ]
+  "windowsLaunched": 1
+}
+```
+
+**Partial response** (the placement with `focus: true` was arranged, but Windows kept another window in front):
+```json
+{
+  "success": false,
+  "presetName": "work-setup",
+  "windowsArranged": 3,
+  "windowsNotFound": 0,
+  "windowsLaunched": 0,
+  "errors": [
+    "Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): SetForegroundWindow was refused (foreground lock); ..."
+  ],
+  "errorCode": "ArrangeFailed"
 }
 ```
 
@@ -3388,7 +3415,9 @@ with a JSON body instead. Its `errorCode` says what kind of failure it was:
 missing argument, `System.Text.Json.JsonException` for a value of the wrong type) and for
 `UnhandledException`. It is left out for errors a tool reports on purpose.
 
-An unknown tool name is still reported as a JSON-RPC protocol error, not as a tool result.
+An unknown tool name is still reported as a JSON-RPC protocol error, not as a tool result, at once and also while input is paused.
+
+The server logs every tool call to stderr (category `WindowsAppManagerMcp.ToolCalls`): its start, and its end with the duration and the outcome (`ok`, `isError` with the `errorCode`, `cancelled`, `protocolError` or the type of an unhandled exception), as a warning when the call took 10 seconds or more. Arguments and results are never logged; a normal result with `success: false` is logged as `ok`. The duration includes the time a call waited for another call to finish, and a call refused while input is paused is logged too.
 
 ### Error code reference
 
@@ -3402,7 +3431,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | Code | Returned by | Meaning |
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window: Windows blocked the close message (Win32 error 5), because the window belongs to a more privileged app |
-| `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
+| `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved or resized (also when its application did not answer in time), or could not be brought to the foreground; `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
@@ -3418,7 +3447,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
-| `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is cloaked (on another virtual desktop, or hidden by its app), so it was not activated |
+| `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | The window is cloaked (on another virtual desktop, or hidden by its app), so it was not activated |
 | `CloseFailed` | [close_window](#close_window), close_windows_batch | Windows did not accept the close message; `error` gives the Win32 error |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch) (`isError: true`) | `confirm` was not true (close_windows_batch: more than 3 windows); nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
@@ -3435,10 +3464,10 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
-| `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
+| `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
-| `InputBusy` | [Input Simulation](#input-simulation) tools | Another input or window call held the input gate for 30 seconds, so nothing was sent; retry when it has finished |
+| `InputBusy` | [Input Simulation](#input-simulation) tools; `isError: true` from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)) | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
@@ -3465,15 +3494,15 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `MouseInUse` | [click](#click), right_click, double_click, mouse_move | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point; nothing (more) was sent |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
-| `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
+| `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools, [resume_input](#resume_input), [release_all_input](#release_all_input) | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
-| `NotResponding` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is not responding, or a call to it did not return in time, so it was not activated |
+| `NotResponding` | [focus_window](#focus_window), move_window, resize_window, set_window_bounds, set_window_state, snap_window, move_window_to_monitor (see [Window Control](#window-control)), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)); the window batches and apply_layout's placements report it in `error` text only | The window's application did not answer: Windows reports the window as hung, it did not answer within 5 seconds (focus_window: within its activation time), or an earlier call to it is still blocked. Nothing was changed or activated by this call, but a call that timed out can still take effect once the application answers |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | Unexpected error while reading; see `error` |
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
-| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); `isError: true` from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)); [focus_window](#focus_window) and [apply_layout](#apply_layout) (in `focus`) when the pause comes during the activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
+| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); `isError: true` from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)); [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
@@ -3485,10 +3514,10 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
-| `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
+| `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput or SetCursorPos failed); release_all_input: some keys or buttons could not be released (`stillHeld`) |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except that focus_window may already have restored a minimized window whose modal dialog the policy denies |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
@@ -3504,5 +3533,5 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
-| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
+| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
 | `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

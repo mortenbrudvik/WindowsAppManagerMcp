@@ -1910,12 +1910,17 @@ Rules for new tests:
   declares a P/Invoke that starts or terminates processes directly, such as `CreateProcess`,
   `ShellExecute` or `TerminateProcess` (`NoPlatformInvoke_StartsOrTerminatesProcesses`). New
   process code goes through `INativeProcessWrapper`.
-- `NativeCallGuardTests` also works as an allow-list. Outside `NativeWindowWrapper`,
-  `NativeInputWrapper` and `NativeProcessWrapper`, code may call only the read-only
+- `NativeCallGuardTests` also works as an allow-list. Outside the action wrappers the tests always
+  replace (`NativeWindowWrapper`, `NativeInputWrapper`, `NativeProcessWrapper`,
+  `NativeThreadInputWrapper` and `NativeHotkeyWrapper`), code may call only the read-only
   `NativeMethods` APIs listed in `ReadOnlyNativeApis`, and P/Invoke declarations must live in
-  `NativeMethods`. Outside `UIAutomationWrapper`, UI Automation elements, patterns and text ranges
-  may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`, `SetValue`, `Toggle`, `Select`,
-  `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
+  `NativeMethods`. The queries of `NativeWindowWrapper` that `ReadOnlyNativeWindowWrapper` forwards
+  may reach only those APIs and the window reads in `WindowQueryNativeApis`, followed through their
+  lambdas and helpers. `AttachThreadInput` is pinned to `NativeThreadInputWrapper`, and the last Win32
+  error is read only inside the Native wrapper that made the call (also through framework members
+  that read it, such as `new Win32Exception()`). Outside `UIAutomationWrapper`, UI Automation
+  elements, patterns and text ranges may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`,
+  `SetValue`, `Toggle`, `Select`, `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
   until it goes through a mockable wrapper or is reviewed onto a list.
 - Never register a real global hotkey, and never open the real shared pause. The pause hotkey (roadmap
   M1.10) registers its chord, and the input session opens the pause every server on the desktop shares
@@ -1926,14 +1931,26 @@ Rules for new tests:
   service with the real wrapper. A session that is not shared keeps its pause to itself, so
   `new InputSession(...)` touches nothing; `FakeDesktopPauseFlag` stands in for the shared pause.
   `HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper` pins the RegisterHotKey and GetMessage calls to
-  that wrapper, and the E2E `WrapperCatalog` classifies its members, and the shared pause's Set and
-  Reset, as `GlobalHotkey`, which no tier allows.
+  that wrapper. `NamedWaitHandles_AreOnlyOpenedByNativeHotkeyWrapper` pins to it every constructor of a
+  `WaitHandle` type (`EventWaitHandle`, `Mutex`, `Semaphore`) that takes a name, every `OpenExisting` and
+  `TryOpenExisting`, the `System.Threading.AccessControl` factories (`EventWaitHandleAcl`, `MutexAcl`,
+  `SemaphoreAcl`) and any method that returns a wait handle and takes a string, and
+  `TheNamesOfTheSharedPauseAndTheChordMarks_AreOnlyUsedByNativeHotkeyWrapper` pins the names of the shared
+  pause and the chord marks themselves, so no other code can open the objects every server on the
+  desktop shares. The E2E `WrapperCatalog` classifies the wrapper's members, and the shared pause's Set
+  and Reset, as `GlobalHotkey`, which no tier allows.
 - For the input session (pause, held keys, stuck-input recovery), use `FakeInputWrapper`: it records
   every SendInput batch, keeps a key state the way Windows does (`Press()` and `Lift()` stand in for
   the user's fingers), and can insert fewer events than asked, throw or block, so short counts,
   exceptions and a pause in the middle of a batch can be tested without touching the desktop.
 - The guards scan only the server assembly. They do not see code in the test project, so the
   rules above are up to you there.
+- Keep timing tests far from the times they tell apart, because the default run is parallel and CI
+  runners are slow: run a step whose timing matters on a dedicated thread, not on the thread pool;
+  bound a time by what the test measured (for example the logged start of a call), not by the value
+  passed to `Task.Delay`; and give a call that must answer before a deadline a deadline far above thread
+  start-up (seconds, not 100 ms). Prefer a fake clock (`ManualClock`) or an explicit signal from the code
+  under test over sleeping.
 
 ### End-to-end tests against the fixture app
 
@@ -1977,13 +1994,20 @@ that adds wrapper members, classify them there.
   throw `E2EGuardException` before they reach the wrapper.
 - In the input tier the server can act only on the fixture process:
   - keyboard input goes out only while a fixture window is in front;
-  - mouse input goes out only while the cursor is over a fixture window;
+  - mouse input goes out only while the cursor is over a fixture window, and a batch that moves the
+    pointer (a click carries an absolute move to its point) only when the move ends over a fixture window;
   - window calls go through only when every window they name is a fixture window;
   - closes and kills apply only to the fixture process, checked by id and process name.
 
+  Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
+  moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server may
+  attach its own calling thread's input to another thread (`AttachThreadInput`, never two other threads
+  to each other), because the window calls it makes while attached are checked as window actions.
+
   The check runs before every `SendInput` batch, so a window that comes to the front mid-text stops
-  the typing. This stands in for the server's own target guard (roadmap M1.1 and M1.5) until it
-  exists.
+  the typing. It is a second, independent layer under the server's own input guard (roadmap M1.1 and
+  M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
+  `FixtureInputGuardTests` checks the server's guard itself against the fixture.
 - In both tiers, starting a process (including `where.exe`) is refused. CDP (`ICdpService`) refuses
   every call, because it talks to a browser's debug port over the network, outside the native
   wrappers, and no fixture has one yet.
