@@ -15,6 +15,9 @@ public class ScreenshotService : IScreenshotService
     public static readonly string DefaultCaptureFolder =
         Path.Combine(Path.GetTempPath(), "WindowsAppManagerMcp", "captures");
 
+    /// <summary>How wide capture_with_elements' overlay lines are in the returned image, in pixels.</summary>
+    private const float OutputOverlayLineWidth = 2f;
+
     private readonly IScreenCaptureWrapper _captureWrapper;
     private readonly IMonitorService _monitorService;
 
@@ -123,6 +126,7 @@ public class ScreenshotService : IScreenshotService
 
             var annotationStopwatch = Stopwatch.StartNew();
             var annotations = new List<AnnotatedElement>();
+            var penWidth = OverlayPenWidth(capture, request);
             var rendered = Render(capture, request, bitmap =>
             {
                 using var graphics = Graphics.FromImage(bitmap);
@@ -131,7 +135,7 @@ public class ScreenshotService : IScreenshotService
                 // Element bounds are screen pixels; the image starts at the capture's screen origin,
                 // which is the client area's corner when the frame is left out.
                 DrawElementOverlays(graphics, elements, capture.ScreenOriginX, capture.ScreenOriginY,
-                    capture.Width, capture.Height, highlightInteractable, annotations);
+                    capture.Width, capture.Height, highlightInteractable, penWidth, annotations);
             });
 
             IReadOnlyList<AnnotatedElement> finalAnnotations = rendered.IsScaled
@@ -277,6 +281,18 @@ public class ScreenshotService : IScreenshotService
             height,
             isScaled,
             filePath);
+    }
+
+    /// <summary>
+    /// The overlay pen width at full resolution. Overlays are drawn before the image is scaled down,
+    /// so the pen is widened by the scale factor (the larger of the two axes) to stay about
+    /// <see cref="OutputOverlayLineWidth"/> pixels wide in the returned image instead of a faint pixel.
+    /// </summary>
+    private static float OverlayPenWidth(CaptureResult capture, CaptureRequest request)
+    {
+        var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
+        var scale = Math.Max((float)capture.Width / outputWidth, (float)capture.Height / outputHeight);
+        return OutputOverlayLineWidth * Math.Max(1f, scale);
     }
 
     private static CapturedRegion CapturedRegionOf(CaptureResult capture) =>
@@ -464,11 +480,12 @@ public class ScreenshotService : IScreenshotService
         int imageWidth,
         int imageHeight,
         bool highlightInteractable,
+        float penWidth,
         List<AnnotatedElement> annotations)
     {
         foreach (var element in elements)
         {
-            DrawElementOverlay(graphics, element, originX, originY, imageWidth, imageHeight, highlightInteractable, annotations);
+            DrawElementOverlay(graphics, element, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
         }
     }
 
@@ -480,6 +497,7 @@ public class ScreenshotService : IScreenshotService
         int imageWidth,
         int imageHeight,
         bool highlightInteractable,
+        float penWidth,
         List<AnnotatedElement> annotations)
     {
         // Elements smaller than 2 pixels, or without bounds, get no overlay; their children still can.
@@ -493,7 +511,7 @@ public class ScreenshotService : IScreenshotService
             if (visible.Width > 0 && visible.Height > 0)
             {
                 var (color, colorName) = GetOverlayColor(element.ControlType, element.IsEnabled, highlightInteractable);
-                using var pen = new Pen(color, 2);
+                using var pen = new Pen(color, penWidth);
                 graphics.DrawRectangle(pen, visible);
 
                 annotations.Add(new AnnotatedElement(
@@ -510,7 +528,7 @@ public class ScreenshotService : IScreenshotService
 
         if (element.Children != null)
         {
-            DrawElementOverlays(graphics, element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, annotations);
+            DrawElementOverlays(graphics, element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
         }
     }
 

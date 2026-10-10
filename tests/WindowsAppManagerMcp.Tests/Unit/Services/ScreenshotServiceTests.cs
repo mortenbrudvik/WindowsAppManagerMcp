@@ -525,6 +525,28 @@ public class ScreenshotServiceTests
     }
 
     [Fact]
+    public void CaptureWindowWithElements_ScaledDown_KeepsTheOverlayLinesAboutTwoPixelsWide()
+    {
+        // Arrange - a black 3136 x 400 window, scaled by half to the default 1568 long edge, with a
+        // button whose left edge is at image x 400 (output x 200)
+        var handle = new nint(12345);
+        _mockCaptureWrapper.Setup(c => c.CaptureWindow(handle, true))
+            .Returns(new CaptureResult(new byte[3136 * 400 * 4], 3136, 400, 0, 0, "PrintWindow"));
+        var sut = CreateSut();
+
+        // Act
+        var capture = sut.CaptureWindowWithElements(handle, null, [ElementAt(400, 100, 800, 200)], includeFrame: true,
+            highlightInteractable: true, new CaptureOptions { Format = "png" });
+
+        // Assert - a 2-pixel line drawn at full resolution would end up one faint pixel wide
+        capture.Metadata.Width.Should().Be(1568);
+        using var image = new System.Drawing.Bitmap(new MemoryStream(capture.Image!.Data));
+        var greenAcrossTheLeftEdge = Enumerable.Range(190, 21).Select(x => (int)image.GetPixel(x, 100).G).ToList();
+        greenAcrossTheLeftEdge.Count(g => g >= 100).Should().BeGreaterThanOrEqualTo(2,
+            "the overlay must stay visible after scaling (green values across the edge: {0})", string.Join(",", greenAcrossTheLeftEdge));
+    }
+
+    [Fact]
     public void CaptureWindowWithElements_WithInvalidHandle_ReturnsInvalidHandle()
     {
         // Arrange
