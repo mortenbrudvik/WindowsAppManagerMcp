@@ -1,13 +1,18 @@
 using System.Diagnostics;
+using System.Reflection;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
 /// Unit tests for ProcessService.
-/// Tests T4.2-T4.4 from BACKLOG-TECHNICAL.md.
+/// Tests T4.1-T4.5 from BACKLOG-TECHNICAL.md.
 ///
-/// Note: LaunchApplication tests (T4.1) are limited due to side effects
-/// of actually launching processes. Those are better suited for integration tests.
+/// Desktop safety: ProcessService starts processes with Process.Start and has no launcher
+/// seam, so by default this class cannot start anything. The default validation mock accepts
+/// every executable but sanitizes it to an empty file name, and Process.Start throws
+/// InvalidOperationException for an empty file name before it calls into the OS. Tests that
+/// really launch an application call <see cref="AllowRealLaunches"/> and are marked
+/// [DesktopFact], so they only run when WAM_ALLOW_DESKTOP_TESTS=1.
 /// </summary>
 public class ProcessServiceTests
 {
@@ -21,9 +26,10 @@ public class ProcessServiceTests
         _mockValidationService = new Mock<IInputValidationService>();
         _mockBrowserDetection = TestDataFactory.CreateMockBrowserDetectionService();
 
-        // Set up default validation to pass through
+        // Default validation accepts the executable but hands Process.Start an empty file
+        // name, so LaunchApplication runs all of its logic without starting a process.
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
-            .Returns<string>(exe => new ExecutableValidationResult(true, SanitizedExecutable: exe));
+            .Returns(new ExecutableValidationResult(true, SanitizedExecutable: string.Empty));
         _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
             .Returns<string?>(dir => new PathValidationResult(true, SanitizedPath: dir));
     }
@@ -33,16 +39,27 @@ public class ProcessServiceTests
         _mockValidationService.Object,
         _mockBrowserDetection.Object);
 
+    /// <summary>
+    /// Lets validation pass executables through unchanged, so LaunchApplication starts real
+    /// processes. Only for [DesktopFact] tests.
+    /// </summary>
+    private void AllowRealLaunches()
+    {
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns<string>(exe => new ExecutableValidationResult(true, SanitizedExecutable: exe));
+    }
+
     #region T4.1: LaunchApplication Integration Tests
 
     /// <summary>
     /// T4.1.1: Test LaunchApplication with valid executable returns success.
-    /// Uses notepad.exe which is available on all Windows systems.
+    /// Desktop test: launches a real notepad.exe.
     /// </summary>
-    [Fact]
+    [DesktopFact]
     public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
     {
         // Arrange
+        AllowRealLaunches();
         var sut = CreateSut();
         Process? launchedProcess = null;
 
@@ -103,10 +120,14 @@ public class ProcessServiceTests
         result.ErrorCode.Should().NotBeNullOrEmpty();
     }
 
-    [Fact]
+    /// <summary>
+    /// Desktop test: launches a real notepad.exe and waits for its window.
+    /// </summary>
+    [DesktopFact]
     public void LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
     {
         // Arrange
+        AllowRealLaunches();
         var sut = CreateSut();
         Process? launchedProcess = null;
 
@@ -181,6 +202,27 @@ public class ProcessServiceTests
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Be("Invalid working directory");
         result.ErrorCode.Should().Be("InvalidWorkingDirectory");
+    }
+
+    [Fact]
+    public void LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
+    {
+        // Arrange - empty sanitized file name makes Process.Start throw without launching
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns(new ExecutableValidationResult(true, SanitizedExecutable: string.Empty, Warning: "exe warning"));
+        _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
+            .Returns(new PathValidationResult(true, Warning: "dir warning"));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("app.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ProcessId.Should().BeNull();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
+        result.ErrorMessage.Should().NotBeNullOrEmpty();
+        result.Warning.Should().Be("exe warning; dir warning");
     }
 
     #endregion
@@ -395,7 +437,8 @@ public class ProcessServiceTests
         // Arrange
         var sut = CreateSut();
 
-        // Act - Use a very high PID that's unlikely to exist
+        // Act - Windows process IDs are multiples of 4 and Process.GetProcessById matches
+        // exactly, so no process can have this ID and nothing is terminated.
         var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
 
         // Assert
@@ -403,42 +446,54 @@ public class ProcessServiceTests
         result.ErrorCode.Should().Be("ProcessNotFound");
     }
 
+    /// <summary>
+    /// Verifies the protected-process set directly instead of calling KillProcess on the real
+    /// System, csrss, lsass, svchost and winlogon processes: if the guard ever regressed, that
+    /// would try to terminate them, which crashes Windows when the run is elevated.
+    /// </summary>
     [Theory]
     [InlineData("System")]
+    [InlineData("smss")]
     [InlineData("csrss")]
+    [InlineData("wininit")]
+    [InlineData("services")]
     [InlineData("lsass")]
     [InlineData("svchost")]
     [InlineData("winlogon")]
+    [InlineData("dwm")]
+    [InlineData("explorer")]
     public void KillProcess_ProtectedProcessNames_AreInProtectedList(string processName)
     {
-        // This test verifies that the protected process list includes critical system processes
-        // We can't easily test killing them (they require elevated privileges and we shouldn't try)
-        // Instead we verify the implementation has them in the protected list
-
-        // Arrange - find a real process with this name (if it exists)
-        var sut = CreateSut();
-        var processes = Process.GetProcessesByName(processName);
-
-        if (processes.Length == 0)
-        {
-            // Process not running, skip this test case
-            return;
-        }
-
-        using var process = processes[0];
-
         // Act
-        var result = sut.KillProcess(process.Id, confirm: true);
+        var protectedNames = GetProtectedProcessNames();
 
-        // Assert - should be protected
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be("ProtectedProcess");
-        result.ProcessName.Should().Be(processName);
+        // Assert
+        protectedNames.Contains(processName).Should().BeTrue();
+        protectedNames.Contains(processName.ToUpperInvariant()).Should().BeTrue(
+            "process names must match case-insensitively");
+    }
+
+    private static ISet<string> GetProtectedProcessNames()
+    {
+        var field = typeof(ProcessService)
+            .GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+            .SingleOrDefault(f => f.Name.Contains("Protected", StringComparison.OrdinalIgnoreCase)
+                                  && typeof(ISet<string>).IsAssignableFrom(f.FieldType));
+
+        field.Should().NotBeNull(
+            "ProcessService should keep its protected process names in a static ISet<string>; " +
+            "update this test if the protected-process check moved");
+
+        return (ISet<string>)field!.GetValue(null)!;
     }
 
     #endregion
 
     #region Browser --new-window Injection Tests
+
+    // These tests use the default validation mock, so Process.Start receives an empty file
+    // name and throws: no browser or Notepad window is opened. Each test asserts the
+    // LaunchException result to prove that nothing was started.
 
     [Fact]
     public void LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
@@ -454,10 +509,11 @@ public class ProcessServiceTests
             _mockValidationService.Object,
             mockBrowserDetection.Object);
 
-        // Act - will fail to launch since we're not in a browser, but we can verify detection was called
-        sut.LaunchApplication("chrome.exe", ["https://example.com"]);
+        // Act
+        var result = sut.LaunchApplication("chrome.exe", ["https://example.com"]);
 
-        // Assert - verify browser detection service was called
+        // Assert - nothing was launched, and browser detection was consulted
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
         mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]>()), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag("chrome.exe"), Times.Once);
@@ -476,9 +532,10 @@ public class ProcessServiceTests
             mockBrowserDetection.Object);
 
         // Act
-        sut.LaunchApplication("notepad.exe", ["https://example.com"]);
+        var result = sut.LaunchApplication("notepad.exe", ["https://example.com"]);
 
-        // Assert - should check if it's a browser, but not get the new window flag
+        // Assert - nothing was launched; checked for a browser, but no new window flag
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
         mockBrowserDetection.Verify(b => b.IsBrowser("notepad.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
     }
@@ -497,9 +554,10 @@ public class ProcessServiceTests
             mockBrowserDetection.Object);
 
         // Act
-        sut.LaunchApplication("chrome.exe", ["--incognito"]);
+        var result = sut.LaunchApplication("chrome.exe", ["--incognito"]);
 
-        // Assert - should check browser and URL, but not get flag since no URL
+        // Assert - nothing was launched; checked browser and URL, but no flag since no URL
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
         mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]?>()), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
