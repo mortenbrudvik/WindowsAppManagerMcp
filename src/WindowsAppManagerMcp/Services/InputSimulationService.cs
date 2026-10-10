@@ -18,13 +18,6 @@ public class InputSimulationService : IInputSimulationService
     /// </summary>
     public const int TypeTextBatchSize = 32;
 
-    /// <summary>
-    /// Serializes input across the whole process. The MCP SDK runs tool calls concurrently, so
-    /// without this gate two type_text calls would interleave their characters, and a mouse move
-    /// could land between a click's cursor move and its button press.
-    /// </summary>
-    private static readonly object InputGate = new();
-
     private readonly IMonitorService _monitorService;
     private readonly INativeInputWrapper _inputWrapper;
     private readonly IInputTargetGuard _guard;
@@ -117,25 +110,23 @@ public class InputSimulationService : IInputSimulationService
 
         foreach (var batch in Batches(text, delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
         {
-            if (charactersTyped > 0)
+            if (charactersTyped > 0 && delayBetweenKeysMs > 0)
             {
-                if (delayBetweenKeysMs > 0)
-                {
-                    Thread.Sleep(delayBetweenKeysMs);
-                }
-
-                // Before every later batch: still the same window, or a dialog of the target?
-                var recheck = _guard.RecheckKeyboard(approved);
-                if (!recheck.Allowed)
-                {
-                    return Finish(new TypeTextResult(false, text, charactersTyped,
-                        $"Typing stopped after {charactersTyped} of {text.Length} characters, which went to " +
-                        $"{Describe(approved.ReceivingWindow)}. {recheck.Error}",
-                        recheck.ErrorCode), recheck);
-                }
-
-                approved = recheck;
+                Thread.Sleep(delayBetweenKeysMs);
             }
+
+            // Right before every batch, the first one too: still the same window, or a dialog of the target?
+            var recheck = _guard.RecheckKeyboard(approved);
+            if (!recheck.Allowed)
+            {
+                var typedSoFar = charactersTyped == 0
+                    ? "Nothing was typed."
+                    : $"Typing stopped after {charactersTyped} of {text.Length} characters, which went to {Describe(approved.ReceivingWindow)}.";
+                return Finish(new TypeTextResult(false, text, charactersTyped, $"{typedSoFar} {recheck.Error}", recheck.ErrorCode),
+                    recheck);
+            }
+
+            approved = recheck;
 
             var inputs = new List<InputEvent>(batch.Length * 2);
             foreach (var character in batch)
@@ -201,6 +192,14 @@ public class InputSimulationService : IInputSimulationService
             return Finish(new SendKeysResult(false, keys, approved.Error, approved.ErrorCode), approved);
         }
 
+        // Right before the keys: the window in front may have changed while the guard read it
+        var recheck = _guard.RecheckKeyboard(approved);
+        if (!recheck.Allowed)
+        {
+            return Finish(new SendKeysResult(false, keys, $"Nothing was sent. {recheck.Error}", recheck.ErrorCode), recheck);
+        }
+
+        approved = recheck;
         var result = _inputWrapper.SendInput(inputs);
         if (result != inputs.Count)
         {
@@ -419,17 +418,10 @@ public class InputSimulationService : IInputSimulationService
     };
 
     /// <summary>
-    /// Holds the process-wide input gate until the returned scope is disposed, so the input one
-    /// call sends is never interleaved with input from a concurrent call.
+    /// Holds the process-wide <see cref="InputGate"/> until the returned scope is disposed. The MCP SDK runs
+    /// tool calls concurrently: without the gate two type_text calls would interleave their characters, a
+    /// mouse move could land between a click's cursor move and its button press, and a parallel focus_window
+    /// could change the foreground between the guard's check and the input.
     /// </summary>
-    private static InputGateScope EnterInputGate()
-    {
-        Monitor.Enter(InputGate);
-        return new InputGateScope();
-    }
-
-    private readonly struct InputGateScope : IDisposable
-    {
-        public void Dispose() => Monitor.Exit(InputGate);
-    }
+    private static IDisposable EnterInputGate() => InputGate.Enter();
 }

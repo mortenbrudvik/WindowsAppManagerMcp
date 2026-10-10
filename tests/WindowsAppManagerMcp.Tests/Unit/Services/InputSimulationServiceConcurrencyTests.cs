@@ -83,6 +83,32 @@ public class InputSimulationServiceConcurrencyTests
     }
 
     [Fact]
+    public async Task FocusWindow_DuringTypeText_WaitsUntilTypingFinishes()
+    {
+        // Arrange - focus_window as the server runs it: through the input gate filter
+        var wrapper = new HoldingInputWrapper();
+        var sut = CreateSut(wrapper);
+        var operationsWhenFocusRan = -1;
+        var focusWindow = WindowsAppManagerMcp.Infrastructure.InputGateToolFilter.Filter((_, _) =>
+        {
+            operationsWhenFocusRan = wrapper.Operations.Count;
+            return ValueTask.FromResult(new ModelContextProtocol.Protocol.CallToolResult());
+        });
+        var request = new ModelContextProtocol.Server.RequestContext<ModelContextProtocol.Protocol.CallToolRequestParams>(
+            new Mock<ModelContextProtocol.Server.McpServer>().Object,
+            new ModelContextProtocol.Protocol.JsonRpcRequest { Method = ModelContextProtocol.Protocol.RequestMethods.ToolsCall })
+        {
+            Params = new ModelContextProtocol.Protocol.CallToolRequestParams { Name = "focus_window" }
+        };
+
+        // Act - the agent races focus_window (its own terminal) against type_text
+        await RunOverlapping(wrapper, () => sut.TypeText(As), () => focusWindow(request, CancellationToken.None).AsTask().Wait());
+
+        // Assert - it could not change the foreground between the guard's check and the typed text
+        operationsWhenFocusRan.Should().Be(2, "both batches of the text were sent before focus_window ran");
+    }
+
+    [Fact]
     public async Task Calls_OnSeparateServiceInstances_AreSerializedProcessWide()
     {
         // Arrange

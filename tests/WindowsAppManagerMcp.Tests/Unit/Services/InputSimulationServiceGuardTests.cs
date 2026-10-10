@@ -240,7 +240,7 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void TypeText_LongText_GoesInBatchesOf32Characters_WithARecheckBeforeEachLaterBatch()
+    public void TypeText_LongText_GoesInBatchesOf32Characters_WithARecheckRightBeforeEachBatch()
     {
         // Arrange
         var text = new string('x', 70);
@@ -252,18 +252,18 @@ public class InputSimulationServiceGuardTests
         result.Success.Should().BeTrue();
         result.CharactersTyped.Should().Be(70);
         _batches.Select(b => b.Count).Should().Equal(64, 64, 12);
-        _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(2));
+        _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(3));
         InputSimulationService.TypeTextBatchSize.Should().Be(32);
     }
 
     [Fact]
     public void TypeText_ForegroundChangesMidway_StopsWithTargetLostFocusAndTheCharactersTyped()
     {
-        // Arrange - the second re-check (before characters 65-96) finds another window in front
+        // Arrange - the third re-check (before characters 65-96) finds another window in front
         var rechecks = 0;
         _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
             .Returns((InputGuardResult approved) =>
-                ++rechecks == 1 ? approved : Refused(InputErrorCode.TargetLostFocus, Notepad));
+                ++rechecks <= 2 ? approved : Refused(InputErrorCode.TargetLostFocus, Notepad));
         var text = new string('x', 100);
 
         // Act
@@ -280,6 +280,23 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
+    public void TypeText_ForegroundChangesBetweenTheCheckAndTheFirstBatch_NothingIsTyped()
+    {
+        // Arrange - a window came to the front while the guard was reading the target
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns(Refused(InputErrorCode.TargetLostFocus, Notepad));
+
+        // Act
+        var result = CreateSut().TypeText("echo pwned\r");
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
+        result.CharactersTyped.Should().Be(0);
+        result.Error.Should().StartWith("Nothing was typed.");
+        VerifyNothingSent();
+    }
+
+    [Fact]
     public void TypeText_WithADelay_SendsOneCharacterPerBatch_AndRechecksBeforeEach()
     {
         // Act
@@ -289,7 +306,7 @@ public class InputSimulationServiceGuardTests
         result.Success.Should().BeTrue();
         _batches.Should().HaveCount(3);
         _batches[0].Should().Equal(InputEvent.Unicode('a', KeyDown), InputEvent.Unicode('a', KeyUp));
-        _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(2));
+        _guard.Verify(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -353,6 +370,39 @@ public class InputSimulationServiceGuardTests
         result.ErrorCode.Should().Be(code);
         result.ReceivingWindow.Should().Be(Terminal);
         VerifyNothingSent();
+    }
+
+    [Fact]
+    public void SendKeys_ForegroundChangesBetweenTheCheckAndTheKeys_NothingIsSent()
+    {
+        // Arrange
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns(Refused(InputErrorCode.TargetLostFocus, Terminal));
+
+        // Act
+        var result = CreateSut().SendKeys("{ENTER}", InputTarget.Window(0x200));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetLostFocus);
+        result.Error.Should().StartWith("Nothing was sent.");
+        result.ReceivingWindow.Should().Be(Terminal);
+        VerifyNothingSent();
+    }
+
+    [Fact]
+    public void SendKeys_RechecksRightBeforeTheKeys()
+    {
+        var order = new List<string>();
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Callback(() => order.Add("recheck"))
+            .Returns((InputGuardResult approved) => approved);
+        _input.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
+            .Callback(() => order.Add("keys"))
+            .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
+
+        CreateSut().SendKeys("{ENTER}");
+
+        order.Should().Equal("recheck", "keys");
     }
 
     [Fact]

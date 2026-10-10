@@ -120,8 +120,12 @@ public static class ServiceRegistration
         ArgumentNullException.ThrowIfNull(builder);
 
         return builder
+            // Tools that can change which window is in front run inside the input gate, so they cannot
+            // change it between an input call's guard check and its input
+            .AddInputGateSerialization()
             // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
-            // instead of the SDK's opaque "An error occurred invoking '<tool>'."
+            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added last, so it is the
+            // outermost filter (see McpServerOptions.Filters): its call log includes the wait for the gate
             .AddToolErrorReporting()
             .WithTools<WindowFinderTools>()
             .WithTools<WindowManagerTools>()
