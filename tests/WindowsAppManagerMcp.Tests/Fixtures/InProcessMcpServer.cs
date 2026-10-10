@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -54,18 +55,27 @@ public sealed class InProcessMcpServer : IAsyncDisposable
 
     private readonly IHost _host;
     private readonly PipeWriter _serverInput;
+    private readonly MessageRecordingStream _serverOutput;
 
-    private InProcessMcpServer(IHost host, McpClient client, CapturingLoggerProvider logs, PipeWriter serverInput)
+    private InProcessMcpServer(
+        IHost host, McpClient client, CapturingLoggerProvider logs, PipeWriter serverInput, MessageRecordingStream serverOutput)
     {
         _host = host;
         Client = client;
         Logs = logs;
         _serverInput = serverInput;
+        _serverOutput = serverOutput;
     }
 
     public McpClient Client { get; }
 
     public CapturingLoggerProvider Logs { get; }
+
+    /// <summary>
+    /// Every JSON-RPC message the server has written, in the order it wrote them. The SDK client hands notifications
+    /// to their handlers concurrently, so a test that checks the order of notifications reads it here.
+    /// </summary>
+    public IReadOnlyList<string> ServerMessages => _serverOutput.Messages;
 
     /// <summary>The server's services, for checking what it did.</summary>
     public IServiceProvider Services => _host.Services;
@@ -98,6 +108,7 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     {
         var clientToServer = new Pipe();
         var serverToClient = new Pipe();
+        var serverOutput = new MessageRecordingStream(serverToClient.Writer.AsStream());
         var logs = new CapturingLoggerProvider();
 
         var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
@@ -107,7 +118,7 @@ public sealed class InProcessMcpServer : IAsyncDisposable
 
         var mcp = builder.Services
             .AddMcpServer(options => options.ServerInfo = new() { Name = "in-process-test", Version = "1.0.0" })
-            .WithStreamServerTransport(clientToServer.Reader.AsStream(), serverToClient.Writer.AsStream())
+            .WithStreamServerTransport(clientToServer.Reader.AsStream(), serverOutput)
             .WithTools(tools);
         configure?.Invoke(mcp);
         configureServices?.Invoke(builder.Services);
@@ -126,7 +137,7 @@ public sealed class InProcessMcpServer : IAsyncDisposable
                 clientOptions,
                 cancellationToken: connectTimeout.Token);
 
-            return new InProcessMcpServer(host, client, logs, clientToServer.Writer);
+            return new InProcessMcpServer(host, client, logs, clientToServer.Writer, serverOutput);
         }
         catch
         {
@@ -196,6 +207,90 @@ public sealed class InProcessMcpServer : IAsyncDisposable
             {
                 _host.Dispose();
             }
+        }
+    }
+}
+
+/// <summary>
+/// The server's output stream, recording each newline-delimited JSON-RPC message the server writes.
+/// </summary>
+internal sealed class MessageRecordingStream(Stream inner) : Stream
+{
+    private readonly object _lock = new();
+    private readonly StringBuilder _pending = new();
+    private readonly List<string> _messages = [];
+
+    public IReadOnlyList<string> Messages
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _messages.ToList();
+            }
+        }
+    }
+
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() => inner.Flush();
+
+    public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        Record(buffer.AsSpan(offset, count));
+        inner.Write(buffer, offset, count);
+    }
+
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        Record(buffer.Span);
+        return inner.WriteAsync(buffer, cancellationToken);
+    }
+
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+        WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            inner.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private void Record(ReadOnlySpan<byte> bytes)
+    {
+        lock (_lock)
+        {
+            _pending.Append(Encoding.UTF8.GetString(bytes));
+            var text = _pending.ToString();
+            var end = text.LastIndexOf('\n');
+            if (end < 0)
+            {
+                return;
+            }
+
+            _messages.AddRange(text[..end].Split('\n').Select(m => m.TrimEnd('\r')).Where(m => m.Length > 0));
+            _pending.Clear().Append(text[(end + 1)..]);
         }
     }
 }

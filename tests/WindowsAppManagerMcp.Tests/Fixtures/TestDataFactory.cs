@@ -686,12 +686,13 @@ public static class TestDataFactory
             error: error,
             errorCode: errorCode);
 
-        mock.Setup(s => s.GetUIElements(
+        mock.Setup(s => s.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
                 It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(result);
+            .ReturnsAsync(result);
 
         return mock;
     }

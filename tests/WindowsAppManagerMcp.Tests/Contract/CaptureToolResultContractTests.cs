@@ -131,8 +131,8 @@ public class CaptureToolResultContractTests
     {
         // Arrange - one button inside the window captured at (-1700, 220)
         var button = new UIElementInfo("OK", "Button", "ok", new BoundsDto(-1600, 300, 80, 30), IsEnabled: true, IsOffscreen: false);
-        _uiElementService.Setup(u => u.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()))
-            .Returns(TestDataFactory.CreateUIElementResult(elements: [button]));
+        _uiElementService.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [button]));
         await using var server = await StartServerAsync();
 
         // Act

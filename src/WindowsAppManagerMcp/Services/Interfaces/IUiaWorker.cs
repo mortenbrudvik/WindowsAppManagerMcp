@@ -4,12 +4,13 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// Runs UI Automation reads with a hard deadline. A UI Automation call blocks until the target
 /// process answers, and an application that hangs (or a provider stuck in FromPoint) can block it
 /// far longer than any tool timeout. The worker runs the read on its own thread and stops waiting
-/// when the deadline passes, so the tool call still returns.
+/// when the deadline passes, so the tool call still returns. The caller waits asynchronously: no
+/// thread of the caller (a thread-pool thread of the MCP server) is blocked while the read runs.
 /// </summary>
 public interface IUiaWorker
 {
     /// <summary>
-    /// Runs <paramref name="read"/> on a worker thread and waits for it.
+    /// Runs <paramref name="read"/> on a worker thread; the task completes when it returns or at the deadline.
     /// </summary>
     /// <param name="targetProcessId">The process whose UI the read reads (the owner of the window, of
     /// the window at the point, or of the foreground window; for a UWP frame window the app's own
@@ -29,7 +30,7 @@ public interface IUiaWorker
     /// same target, or too many reads overall, are still stuck: the target application is probably
     /// not responding.</exception>
     /// <remarks>An exception thrown by <paramref name="read"/> is rethrown unchanged.</remarks>
-    T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace);
+    Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace);
 }
 
 /// <summary>

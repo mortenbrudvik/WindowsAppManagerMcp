@@ -157,15 +157,15 @@ public sealed class ContractServices : IDisposable
 
         var tree = TypicalDesktop.UiTree();
         UiElements.Setup(u => u.IsAvailable()).Returns(true);
-        UiElements.Setup(u => u.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()))
-            .Returns((nint handle, int depth, UIElementFilter? _, CancellationToken _) => new UIElementResult(
+        UiElements.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
+            .ReturnsAsync((nint handle, int depth, UIElementFilter? _, IProgress<OperationProgress>? _, CancellationToken _) => new UIElementResult(
                 true, handle, notepad.Title, tree, TypicalDesktop.Count(tree), depth, 184.5, DepthReached: 3));
 
-        Inspection.Setup(i => i.GetFocusedElement(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns(new FocusedElementResult(true, TypicalDesktop.FocusedEdit, TypicalDesktop.NotepadHandle, notepad.Title,
+        Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FocusedElementResult(true, TypicalDesktop.FocusedEdit, TypicalDesktop.NotepadHandle, notepad.Title,
                 notepad.ProcessId, notepad.ProcessName, 12.5));
-        Inspection.Setup(i => i.GetElementAtPoint(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
+        Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
                 Enumerable.Range(1, ancestors).Select(i => new UIElementAncestor($"Pane {i}", "Pane", $"pane{i}", "Grid", new BoundsDto(0, 0, 1280, 720))).ToList(),
                 TypicalDesktop.NotepadHandle, notepad.Title, notepad.ProcessId, notepad.ProcessName, 9.75));
@@ -265,13 +265,13 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((string name, CancellationToken _) =>
                 new LayoutDeleteResult(false, name, $"Layout preset '{name}' was not found", nameof(LayoutErrorCode.PresetNotFound)));
 
-        UiElements.Setup(u => u.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()))
-            .Returns((nint handle, int _, UIElementFilter? _, CancellationToken _) =>
+        UiElements.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
+            .ReturnsAsync((nint handle, int _, UIElementFilter? _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 new UIElementResult(false, handle, null, null, 0, 0, 1.5, invalid, UIElementErrorCode.InvalidHandle));
-        Inspection.Setup(i => i.GetFocusedElement(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns(new FocusedElementResult(false, null, null, null, null, null, 5000, "UI Automation did not answer", UIElementErrorCode.OperationTimedOut));
-        Inspection.Setup(i => i.GetElementAtPoint(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
+        Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FocusedElementResult(false, null, null, null, null, null, 5000, "UI Automation did not answer", UIElementErrorCode.OperationTimedOut));
+        Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));
 
         const string host = "The input would go to the agent's own terminal";

@@ -378,18 +378,18 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void CaptureWithElements_DeniedProcess_IsRefused_BeforeItsElementsAreRead()
+    public async Task CaptureWithElements_DeniedProcess_IsRefused_BeforeItsElementsAreRead()
     {
         // Arrange
         var sut = CreateScreenshotTools(0x300, "KeePass");
 
         // Act
-        var result = sut.CaptureWithElements(0x300);
+        var result = await sut.CaptureWithElements(0x300);
 
         // Assert
         result.IsError.Should().BeTrue();
         Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
-        _elements.Verify(e => e.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()), Times.Never);
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
             It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
     }

@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.E2ETests.Harness;
 /// public void Something()
 /// {
 ///     using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
-///     var tree = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+///     var tree = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 /// }
 /// </code>
 /// </example>
