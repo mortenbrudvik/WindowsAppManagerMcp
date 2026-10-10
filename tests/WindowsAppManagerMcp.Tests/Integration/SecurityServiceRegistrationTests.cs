@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using WindowsAppManagerMcp.Infrastructure;
@@ -52,5 +53,16 @@ public sealed class SecurityServiceRegistrationTests : IDisposable
 
         // Assert
         startup.HostGuard.Should().BeSameAs(_provider.GetRequiredService<IHostGuard>());
+    }
+
+    [Fact]
+    public void KillProcess_AsksTheHostGuard()
+    {
+        // The host guard parameter is optional for tests, so check that the container fills it in
+        var processService = _provider.GetRequiredService<IProcessService>();
+
+        processService.GetType().GetField("_hostGuard", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(processService)
+            .Should().BeSameAs(_provider.GetRequiredService<IHostGuard>());
     }
 }

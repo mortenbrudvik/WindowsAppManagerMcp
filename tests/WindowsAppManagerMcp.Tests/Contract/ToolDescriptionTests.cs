@@ -210,6 +210,35 @@ public class ToolDescriptionTests
             .And.Contain("focus_window", "an agent that wants to type into the window must activate it first");
     }
 
+    /// <summary>
+    /// These tools restore a minimized window with SW_RESTORE before placing it, and SW_RESTORE activates
+    /// (WindowService.SetWindowBounds and MoveWindowToMonitor); move_window_to_monitor's 'maximize' uses
+    /// SW_MAXIMIZE, which activates and ignores bringToFront. The descriptions must not promise more.
+    /// </summary>
+    [Theory]
+    [InlineData("set_window_bounds")]
+    [InlineData("snap_window")]
+    [InlineData("move_window_to_monitor")]
+    [InlineData("set_windows_bounds_batch.placements")]
+    [InlineData("snap_windows_batch.placements")]
+    public void BringToFrontDescription_NamesTheCasesThatStillActivate(string source)
+    {
+        var text = source.Contains('.')
+            ? ServerToolCatalog.AllDescriptions().Single(d => d.Source == source).Text
+            : ParameterDescription(source, "bringToFront");
+
+        text.Should().Contain("minimized").And.Contain("can activate it");
+        if (source == "move_window_to_monitor")
+            text.Should().Contain("'maximize'");
+    }
+
+    [Fact]
+    public void MoveWindowBringToFrontDescription_HasNoActivatingCase()
+    {
+        // move_window only calls SetWindowPos (SWP_NOACTIVATE), never ShowWindow
+        ParameterDescription("move_window", "bringToFront").Should().NotContain("minimized");
+    }
+
     [Theory]
     [InlineData("close_windows_batch")]
     [InlineData("close_windows_batch.confirm")]

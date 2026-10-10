@@ -184,7 +184,11 @@ public enum ProcessErrorCode
     /// <summary>The process name did not match expectedProcessName (the PID may have been reused). Nothing was done.</summary>
     ProcessNameMismatch = 10,
 
-    /// <summary>The process is an ancestor of this server (for example the terminal or editor hosting the agent).</summary>
+    /// <summary>
+    /// The process belongs to the agent's host (IHostGuard.IsHostProcess: an ancestor of this server such as the
+    /// terminal or editor hosting the agent, the console host's process, or the startup foreground window's
+    /// process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
+    /// </summary>
     CannotTerminateHost = 11,
 
     /// <summary>Forced termination was requested, but the process had not exited when the wait ended.</summary>

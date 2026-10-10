@@ -43,7 +43,8 @@ public interface IForegroundService
     /// <summary>
     /// True when <paramref name="handle"/> (its top-level window) or a window it owns, such as a dialog,
     /// is the foreground window right now: the target is in the foreground window's owner chain, so WPF
-    /// and WinForms dialogs count too. The same rule <see cref="EnsureForeground"/> verifies with. Only
+    /// and WinForms dialogs count too (WindowOwnerChain, the owner rule the close and input guards use).
+    /// The same rule <see cref="EnsureForeground"/> verifies with. Only
     /// reads, on the calling thread, so it is cheap enough to check again before every input batch.
     /// </summary>
     bool IsInFront(nint handle);

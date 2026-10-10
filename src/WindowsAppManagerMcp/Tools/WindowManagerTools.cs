@@ -84,7 +84,7 @@ public class WindowManagerTools
         int width,
         [Description("New height in pixels")]
         int height,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true")]
+        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true")]
         bool bringToFront = true)
     {
         var hwnd = (nint)handle;
@@ -228,7 +228,7 @@ public class WindowManagerTools
         string position,
         [Description("Target monitor index (0-based). Defaults to current monitor if not specified.")]
         int? monitorIndex = null,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true")]
+        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true")]
         bool bringToFront = true)
     {
         var hwnd = (nint)handle;
@@ -261,7 +261,7 @@ public class WindowManagerTools
         int monitorIndex,
         [Description("Position on monitor: 'center', 'topleft', 'topright', 'bottomleft', 'bottomright', 'maximize', or 'restore' (default: center)")]
         string positioning = "center",
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true")]
+        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it; positioning 'maximize' ignores bringToFront and can activate it too. Default: true")]
         bool bringToFront = true)
     {
         var hwnd = (nint)handle;
@@ -282,7 +282,7 @@ public class WindowManagerTools
     [McpServerTool(Name = "set_windows_bounds_batch")]
     [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls.")]
     public BatchWindowResult SetWindowsBoundsBatch(
-        [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it)")]
+        [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowBoundsPlacement[] placements,
         [Description("Delay between operations in milliseconds (default: 50)")]
         int delayBetweenMs = 50)
@@ -314,7 +314,7 @@ public class WindowManagerTools
     [McpServerTool(Name = "snap_windows_batch")]
     [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls.")]
     public BatchWindowResult SnapWindowsBatch(
-        [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it)")]
+        [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowSnapPlacement[] placements,
         [Description("Delay between operations in milliseconds (default: 50)")]
         int delayBetweenMs = 50)

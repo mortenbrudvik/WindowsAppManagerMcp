@@ -1837,7 +1837,10 @@ client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomation
 which runs them one at a time: the client's first call in a process fails with E_FAIL when two
 threads make it at once. `RealUiAutomationCollectionTests` scans the test assembly and fails for a
 class that calls the real client (the production `UiaTree` or `UIAutomationWrapper`,
-`UiaClientStartup.Shared` or `AutomationElement`) outside that collection.
+`UiaClientStartup.Shared` or `AutomationElement`) outside that collection, directly or through a
+helper in the test assembly (a fixture factory, another class's helper, their lambdas, async
+bodies and static constructors). Calls through an interface or a virtual method are not followed,
+so keep real-client factories non-virtual.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked with a

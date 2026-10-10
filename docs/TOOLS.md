@@ -309,7 +309,9 @@ Here the window in front is the editor the agent runs in, so it carries `isAgent
 
 Tools for manipulating window position, size, and state.
 
-`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window). Restoring a minimized window (set_window_bounds, snap_window, move_window_to_monitor) can still activate it.
+`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window).
+
+Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
 
 ### move_window
 
@@ -692,7 +694,7 @@ Move a window to a specific monitor.
 - `topright` - Top-right corner
 - `bottomleft` - Bottom-left corner
 - `bottomright` - Bottom-right corner
-- `maximize` - Maximize on target monitor
+- `maximize` - Maximize on target monitor. This can activate the window, and `bringToFront` is ignored (see [Window Control](#window-control))
 - `restore` - Keep current size, move to monitor
 
 **Example:**
@@ -741,7 +743,7 @@ Each placement object contains:
 | y | int | Yes | - | Y coordinate |
 | width | int | Yes | - | Width in pixels |
 | height | int | Yes | - | Height in pixels |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Position Notepad and Calculator side by side"
@@ -789,7 +791,7 @@ Each placement object contains:
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see snap_window) |
 | monitorIndex | int | No | current | Target monitor |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Snap VS Code to left half and Terminal to right half"
@@ -2802,7 +2804,7 @@ Close or terminate a process by ID (requires confirmation).
 
 To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
 
-**Force mode** returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
+**Force mode** checks the whole process tree first, because it ends every process in it: if a child process is refused by the [target policy](#target-policy) (`TargetDeniedByPolicy`) or belongs to the agent's host (`CannotTerminateHost`), nothing is terminated and the error names the child. A graceful close asks only the process's own main window to close, so it does not check the children. Force mode returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
 
 **Example 1:** Close gracefully
 > "Close Notepad (PID 12456)"
@@ -2873,7 +2875,7 @@ To end the process anyway, call again with `forceKill: true`. This ends the proc
 | `ProcessNotFound` | No such process (it may have exited) |
 | `ProtectedProcess` | Protected system or shell process (see below) |
 | `CannotTerminateSelf` | The PID is this server |
-| `CannotTerminateHost` | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
+| `CannotTerminateHost` | The PID belongs to the agent's host: an ancestor of this server such as the terminal or editor hosting the agent, the process that shows the server's console, or the app that was in front when the server started. With `forceKill: true`, also when one of its child processes does (a forced kill ends the whole process tree; the error names the child). Nothing was done |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process, or, with `forceKill: true`, one of its child processes (a forced kill ends the whole process tree; the error names the child). `forceKill` does not override it; nothing was done |
 | `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `NoClosableWindow` | Graceful mode: no closable main window; process left running |
@@ -3395,7 +3397,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
-| `CannotTerminateHost` | [kill_process](#kill_process) | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
+| `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
 | `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels, for example because the window is minimized; `error` has the reason |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |

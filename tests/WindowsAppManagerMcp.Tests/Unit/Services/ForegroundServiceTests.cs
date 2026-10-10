@@ -165,7 +165,6 @@ public class ForegroundServiceTests
         outcome.BlockingPopup.Should().Be(Dialog);
         outcome.BlockingPopupTitle.Should().Be("Dialog");
         _windows.Verify(w => w.GetAncestor(Dialog, WindowAncestor.RootOwner), Times.AtLeastOnce);
-        _windows.Verify(w => w.GetWindow(Dialog, GW_OWNER), Times.Never, "a root owner equal to the target is enough");
         _calls.Should().BeEmpty();
     }
 
@@ -828,6 +827,29 @@ public class ForegroundServiceTests
         terminalInFront.Should().BeFalse();
         _calls.Should().BeEmpty();
         _activationThread.Calls.Should().Be(0, "a read needs no hop to the activation thread");
+    }
+
+    [Fact]
+    public void IsInFront_CountsExactlyTheWindowsOfTheSharedOwnerChain()
+    {
+        // Arrange - the close guard, the host guard and the input guard's mouse rule decide with
+        // WindowOwnerChain; activation and the input guard's keyboard re-check must agree with them
+        var sut = CreateSut();
+        var windows = new[] { Target, Terminal, Dialog, OtherDialog, WpfDialog, WpfNestedDialog };
+
+        foreach (var foreground in windows)
+        {
+            _foreground = foreground;
+            foreach (var target in windows)
+            {
+                // Act
+                var inFront = sut.IsInFront(target);
+
+                // Assert
+                inFront.Should().Be(WindowOwnerChain.IsOwnedBy(_windows.Object, foreground, target),
+                    $"{Name(foreground)} is in front and the target is {Name(target)}");
+            }
+        }
     }
 
     [Fact]
