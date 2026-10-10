@@ -105,7 +105,7 @@ public class ToolResultSerializationTests
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.WithTools(tools));
 
         // Act - goes through the SDK's own argument binding and result serialization.
-        var result = await server.Client.CallToolAsync("launch_browser_with_debug");
+        var result = await server.CallToolAsync("launch_browser_with_debug");
 
         // Assert
         var text = result.Content.OfType<TextContentBlock>().Single().Text;
