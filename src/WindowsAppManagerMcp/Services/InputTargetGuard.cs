@@ -489,10 +489,16 @@ public sealed class InputTargetGuard : IInputTargetGuard
     /// <summary>
     /// True when <paramref name="window"/> is a modal dialog within <paramref name="anchorRoot"/>'s windows: one
     /// of its owners, up to and including <paramref name="anchorRoot"/>, is disabled. A modeless dialog leaves
-    /// its owner enabled.
+    /// its owner enabled. The anchor itself is never a modal dialog over itself, even when it is a modal
+    /// dialog of another window (a target that is a Save As dialog).
     /// </summary>
     private bool IsModalOver(nint window, nint anchorRoot)
     {
+        if (window == anchorRoot)
+        {
+            return false;
+        }
+
         foreach (var owner in WindowOwnerChain.SelfAndOwners(_windows, window).Skip(1))
         {
             if (IsDisabled(owner))

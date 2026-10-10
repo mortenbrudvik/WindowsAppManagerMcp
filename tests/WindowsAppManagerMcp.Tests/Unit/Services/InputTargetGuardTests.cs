@@ -813,6 +813,30 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void RecheckKeyboard_TargetIsAModalDialog_FocusComesBackToIt_Continues()
+    {
+        // Arrange - the target is Notepad's modal Save As dialog (Notepad is disabled); typing went into a
+        // modeless window of the dialog, then the dialog itself came back to the front
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        var help = new nint(0x260);
+        Window(help, NotepadPid, "notepad", "Help", owner: NotepadDialog);
+        var sut = CreateSut();
+        var approved = sut.CheckKeyboard(To(NotepadDialog), KeyboardInputKind.Text, null);
+        approved.Allowed.Should().BeTrue(approved.Error);
+        _inFront = help;
+        approved = sut.RecheckKeyboard(approved);
+        approved.Allowed.Should().BeTrue(approved.Error);
+        _inFront = NotepadDialog;
+
+        // Act
+        var result = sut.RecheckKeyboard(approved);
+
+        // Assert - the dialog is the target, not a modal dialog over it
+        result.Allowed.Should().BeTrue(result.Error);
+        result.Receiving.Should().Be(NotepadDialog);
+    }
+
+    [Fact]
     public void RecheckKeyboard_NoTarget_AModalDialogTheUserHadInFront_OpenedAModelessChild_Continues()
     {
         // Arrange - the window in front at the start was itself a modal dialog (its owner is disabled)
