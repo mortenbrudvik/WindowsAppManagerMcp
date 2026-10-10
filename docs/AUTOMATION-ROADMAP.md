@@ -2,7 +2,7 @@
 
 This roadmap covers improving and extending the automation capabilities of Windows App Manager MCP. It comes from an automated feature review on 2026-10-10: two independent multi-agent review runs. Each run had seven subsystem reviewers, an adversarial verifier per subsystem, an external landscape scan, a roadmap synthesizer and a critic. The two runs were then merged into this document. The review was static: no tests or binaries were run.
 
-**Findings:** 120 distinct verified defects (2 critical, 19 high, 62 medium, 37 low). Both runs independently found 90 of them. M0 fixes or partly fixes 35 (34 when it shipped, plus D-PAL-15, whose fix was recorded later), and M1 fixes 25 and partly fixes 12; 50 are still open. The full register, with a status column, is in the [appendix](#appendix-defect-register). File and line references are as of commit `309c821`.
+**Findings:** 120 distinct verified defects (2 critical, 19 high, 62 medium, 37 low). Both runs independently found 90 of them. M0 fixes or partly fixes 36 (34 when it shipped, plus D-PAL-15 and D-PAL-23, whose M0 fixes were recorded later), and M1 fixes 25 and partly fixes 12; 50 are still open. The full register, with a status column, is in the [appendix](#appendix-defect-register). File and line references are as of commit `309c821`.
 
 Task status is tracked in [BACKLOG.md](../BACKLOG.md) (Phase 13). This document holds the design notes.
 
@@ -119,12 +119,12 @@ Stop the skill and docs from teaching the failure that already closed the user's
 
 The model sees real pixels it can click from accurately. Keyboard and mouse input cannot reach the agent's own host, a shell window, an elevated or deny-listed window, or an unintended target. Every input result reports where it actually went. The user can pause everything with a hotkey. A desktop-safe suite against a self-owned fixture app validates the real foreground, UIPI and capture behaviour.
 
-M1 is complete on the integration branch `m1-see-and-type-safely`: all 12 items, their review follow-ups (`m1-wave1-followups`, `m1-wave2-followups`, `m1-wave3-followups`), the fixes from a final review of the integrated branch (`m1-fix-concurrency`, `m1-fix-guards`) and a docs pass. The server serves 47 tools (42 in 1.12.0). The safe suite (desktop tests skipped) has 2818 unit, contract and integration tests and 167 E2E harness tests; the gated fixture scenarios run only with the opt-in, locally or through e2e.yml on demand.
+M1 is complete on the integration branch `m1-see-and-type-safely`: all 12 items, their review follow-ups (`m1-wave1-followups`, `m1-wave2-followups`, `m1-wave3-followups`), the fixes from a final review of the integrated branch (`m1-fix-concurrency`, `m1-fix-guards`), a docs pass and the fixes for the code gaps it found (`m1-last-fixes`). The server serves 47 tools (42 in 1.12.0). The safe suite (desktop tests skipped) has 2839 unit, contract and integration tests and 167 E2E harness tests; the gated fixture scenarios run only with the opt-in, locally or through e2e.yml on demand.
 
 - M1 is not released yet. On the branch, bin/WindowsAppManagerMcp.exe is still the 1.12.0 build (42 tools, no input guard, no pause hotkey); the release step after the merge rebuilds it (scripts/Set-Version.ps1, then scripts/Publish-Plugin.ps1), as for M0. The skill and docs on the branch describe the source, so the merge to main and the release belong together: an old exe ignores the windowHandle argument the new skill tells agents to pass.
 - The final review found that a hung application could hold the input gate, and with it every input and window tool, indefinitely (D-WIN-12, made worse by the gate). `m1-fix-concurrency` bounds every wait inside and for the gate (M1.10 follow-ups), and `m1-fix-guards` closes gaps in the guards: the target policy for every window change, hidden windows, the menu Esc and the pause chord's modifiers, chord spellings, the agent's console server, unreadable process trees, mouse capture and held buttons, minimized captures and the partial UI Automation tree (see the items below).
 - Deliberate trade-offs, recorded under M1.5 and M1.10: with the default pause chord the agent can release only a stuck Windows key, and a mouse button that the server did not press blocks clicks and moves until the user presses and releases it.
-- Moved on: get_server_info and server instructions (M2.11), window selectors (M2.4), tool annotations (M2.10), asynchronous and verified geometry calls (M2.3), capture health for hidden, cloaked and hung windows (M2.9), cached UI Automation walks (M3.1), the capture registry and image-space clicks (M3.11), the WebView2 fixture pane (M3.3) and the in-process MCP contract tests (M2.12). Gaps the M1 docs pass found in the code are listed as known gaps under the items they belong to (M1.3, M1.5, M1.7, M1.10).
+- Moved on: get_server_info and server instructions (M2.11), window selectors (M2.4), tool annotations (M2.10), asynchronous and verified geometry calls (M2.3), capture health for hidden, cloaked and hung windows (M2.9), cached UI Automation walks (M3.1), the capture registry and image-space clicks (M3.11), the WebView2 fixture pane (M3.3) and the in-process MCP contract tests (M2.12). The gaps the M1 docs pass found in the code are fixed on `m1-last-fixes`; the notes under M1.3, M1.5, M1.7 and M1.10 say what they were.
 
 ### M1.1 Default host-window input guard
 
@@ -1065,7 +1065,7 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 | D-PAL-20 | low | Launch & layouts | list_processes(includeWindowless:true) reports WindowCount=0 for every process | `src/WindowsAppManagerMcp/Services/ProcessService.cs:114` | both | open |
 | D-PAL-21 | low | Launch & layouts | kill_process acts on a bare PID with no identity check (PID reuse) | `src/WindowsAppManagerMcp/Services/ProcessService.cs:288` | both | fixed (M0) |
 | D-PAL-22 | low | Launch & layouts | kill_process protected list omits shell-infrastructure processes and the agent's own host | `src/WindowsAppManagerMcp/Services/ProcessService.cs:226` | r2 | partly fixed (M0), fixed (M1) |
-| D-PAL-23 | low | Launch & layouts | Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode | `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs:30` | both | partly fixed (M1) |
+| D-PAL-23 | low | Launch & layouts | Launch waits are synchronous Thread.Sleep loops with no timeout cap or cancellation; batch waits run sequentially and drop ErrorCode | `src/WindowsAppManagerMcp/Tools/AppLauncherTools.cs:30` | both | partly fixed (M0, M1) |
 | D-PAL-24 | low | Launch & layouts | file:// is allowed as a 'safe' protocol, bypassing every executable check | `src/WindowsAppManagerMcp/Services/InputValidationService.cs:37` | r1 | fixed (M0) |
 | D-PAL-25 | low | Launch & layouts | apply_layout ignores the result of FocusWindow for focus placements | `src/WindowsAppManagerMcp/Services/LayoutService.cs:260` | r2 | partly fixed (M1) |
 | D-SCR-10 | low | Screenshots | The undefined high byte of GDI pixels is copied into an ARGB bitmap, producing transparent PNG pixels | `src/WindowsAppManagerMcp/Services/ScreenshotService.cs:560` | both | fixed (M1) |
@@ -1648,7 +1648,8 @@ Run ids such as `r1:WC-1` and `r2:WC-1` trace each entry back to the raw review 
 
 - Impact: A large timeout or a batch of handoff launchers takes N x timeout and outlives the client's request timeout, notifications/cancelled cannot stop it, and batch failures cannot be branched on by code.
 - Fix: Make launch async with the SDK CancellationToken, clamp waitTimeoutMs, wait for batch items concurrently against one deadline, and add ErrorCode to LaunchResultItem.
-- M1: partly fixed on `m1-fix-concurrency`: waitTimeoutMs is clamped to 0-30000 and batch items carry errorCode; the waits are still synchronous, sequential and not cancellable
+- M0: partly fixed on `m0-launch-and-kill` (shipped in 1.12.0): batch items carry errorCode
+- M1: partly fixed on `m1-fix-concurrency`: waitTimeoutMs is clamped to 0-30000; the waits are still synchronous, sequential and not cancellable
 
 **D-PAL-24: file:// is allowed as a 'safe' protocol, bypassing every executable check** (low, `src/WindowsAppManagerMcp/Services/InputValidationService.cs:37`, r1:pro-m7)
 

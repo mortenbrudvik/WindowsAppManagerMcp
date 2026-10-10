@@ -14,8 +14,9 @@ public class WindowManagerTools
     /// <summary>The errors of the single-window change tools (move, resize, bounds, state, snap, move to a monitor).</summary>
     private const string WindowChangeErrors =
         " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); " +
-        "NotResponding (the window's app is hung, did not answer within 5 s, or an earlier call to it is still blocked; a call " +
-        "that timed out can still take effect once the app answers, so check the window before acting on it).";
+        "NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that " +
+        "do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still " +
+        "take effect once the app answers, so check the window before acting on it).";
 
     /// <summary>The per-window errors of the window batches.</summary>
     private const string BatchErrors =
