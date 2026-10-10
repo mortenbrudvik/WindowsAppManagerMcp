@@ -537,16 +537,17 @@ public class ProcessService : IProcessService
     /// </summary>
     private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
     {
-        string? warning = null;
+        AggregateException? treeFailures = null;
         try
         {
             process.Kill(entireProcessTree: true);
         }
-        catch (AggregateException ex) when (!IsAccessDenied(ex))
+        catch (AggregateException ex)
         {
-            // The runtime reports processes in the tree it could not terminate; the root may still be gone
-            warning = "Some child processes could not be terminated: " +
-                      string.Join("; ", ex.InnerExceptions.Select(e => e.Message));
+            // Kill(entireProcessTree: true) tries the root and every descendant, then reports all
+            // failures together without saying which process failed. Whether the root is gone,
+            // which decides the outcome, is checked below.
+            treeFailures = ex;
         }
         catch (InvalidOperationException) when (HasExitedSafe(process))
         {
@@ -556,6 +557,13 @@ public class ProcessService : IProcessService
         {
             return KillFailureFromException(ex, processId, processName);
         }
+
+        var accessDenied = treeFailures != null && IsAccessDenied(treeFailures);
+        var warning = treeFailures == null
+            ? null
+            : "Some child processes could not be terminated and may still be running" +
+              (accessDenied ? " (access denied: they probably run elevated or as another user)" : "") +
+              ": " + string.Join("; ", treeFailures.InnerExceptions.Select(e => e.Message));
 
         bool exited;
         try
@@ -570,6 +578,17 @@ public class ProcessService : IProcessService
         if (exited)
         {
             return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Forced: true, Exited: true, Warning: warning);
+        }
+
+        if (accessDenied)
+        {
+            // The root is still running, so the denial most likely came from the root itself
+            return KillFailureFromException(treeFailures!, processId, processName) with
+            {
+                Forced = true,
+                Warning = "Termination was attempted for the whole process tree, so some of its child processes may " +
+                          "have been terminated even though the process itself is still running."
+            };
         }
 
         return new KillResult(

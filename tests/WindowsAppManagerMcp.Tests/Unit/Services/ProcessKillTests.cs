@@ -295,6 +295,52 @@ public class ProcessKillTests
         result.Warning.Should().Contain("child processes");
     }
 
+    /// <summary>
+    /// .NET 8's Kill(entireProcessTree: true) catches the failure for the root and for each child,
+    /// keeps going, and throws one AggregateException at the end. An elevated child that denies
+    /// access therefore arrives as AggregateException(Win32Exception(5)) even though the root
+    /// was terminated.
+    /// </summary>
+    [Fact]
+    public void KillProcess_Force_ChildAccessDeniedButRootExited_ReportsRootTerminatedWithWarning()
+    {
+        // Arrange
+        _mockProcess.Setup(p => p.Kill(true))
+            .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(5)));
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Forced.Should().BeTrue();
+        result.Exited.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.ErrorMessage.Should().BeNull();
+        result.Warning.Should().Contain("child processes").And.Contain("still be running").And.Contain("elevated");
+    }
+
+    [Fact]
+    public void KillProcess_Force_AccessDeniedInTreeAndRootStillRunning_ReportsAccessDeniedAfterForcedAttempt()
+    {
+        // Arrange - the root itself is elevated; its children may have been terminated
+        _mockProcess.Setup(p => p.Kill(true))
+            .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(5)));
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.AccessDenied));
+        result.ErrorMessage.Should().Contain("elevated");
+        result.Forced.Should().BeTrue();
+        result.Exited.Should().BeFalse();
+        result.Warning.Should().Contain("child processes may have been terminated");
+    }
+
     [Fact]
     public void KillProcess_Force_KillThrowsUnexpectedly_ReportsTerminationException()
     {

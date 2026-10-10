@@ -2023,7 +2023,7 @@ Close or terminate a process by ID (requires confirmation).
 
 To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
 
-**Force mode** returns `success: true` only after the process has actually exited. Otherwise it returns `TerminationNotConfirmed`.
+**Force mode** returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
 
 **Example 1:** Close gracefully
 > "Close Notepad (PID 12456)"
