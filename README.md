@@ -13,7 +13,8 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
 - **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
-- **Input Simulation** - Click, right-click, double-click, and move mouse cursor
+- **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations
+- **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs
 - **Process Management** - List running processes, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
@@ -82,7 +83,7 @@ page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see O
 framework-dependent build and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
 is pushed; no release was published for the tags up to v1.11.0, so until the next tag use Option 3.
 
-## Available Tools (38)
+## Available Tools (42)
 
 | Category | Tools |
 |----------|-------|
@@ -92,6 +93,7 @@ is pushed; no release was published for the tags up to v1.11.0, so until the nex
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements` |
+| Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
@@ -142,7 +144,13 @@ Once configured, you can ask Claude to:
 - "Type 'Hello World' into the text field"
 - "Press Ctrl+C to copy"
 - "Press Enter to confirm"
-- "Press Alt+F4 to close the window"
+
+> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. Agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+
+### Browser Reading
+- "What page is open in Chrome?"
+- "Read the text of the page open in Edge"
+- "Launch Chrome with a debug port and read the full text of this JavaScript-heavy page"
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"
@@ -259,6 +267,7 @@ WindowsAppManagerMcp/
 - **Protected Processes** - System-critical processes cannot be terminated
 - **Confirmation Required** - Process termination requires explicit confirmation
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
+- **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.
 
 ## Requirements
 

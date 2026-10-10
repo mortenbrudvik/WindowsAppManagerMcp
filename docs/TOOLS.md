@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 38 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 42 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,10 +12,32 @@ A comprehensive guide to all 38 MCP tools for managing Windows applications, win
 | [Monitor Info](#monitor-info) | get_monitors, get_primary_monitor | 2 |
 | [Screenshot](#screenshot) | list_screens, take_screenshot, capture_region, capture_window, capture_with_elements | 5 |
 | [UI Automation](#ui-automation) | get_ui_elements | 1 |
+| [Browser Reading](#browser-reading) | get_browser_url, get_browser_content, get_active_browser_url, launch_browser_with_debug | 4 |
 | [Input Simulation](#input-simulation) | click, right_click, double_click, mouse_move, type_text, send_keys | 6 |
 | [App Launch](#app-launch) | launch_application, list_processes, kill_process | 3 |
 | [Layout Presets](#layout-presets) | list_layouts, get_layout, save_layout, apply_layout, delete_layout | 5 |
 | [Browser Reading](#browser-reading) | get_browser_url, get_browser_content, get_active_browser_url | 3 |
+
+---
+
+## Safety and Coordinates
+
+### Input safety
+
+The input tools send real mouse and keyboard input to the user's desktop.
+
+- `type_text` and `send_keys` have no target window. They type into whatever window is in the foreground, and that is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before every `type_text` or `send_keys` call and check that `handle` is the intended window. If it is not, call `focus_window` and check again. Windows can refuse focus changes, so do not trust `focus_window` alone.
+- Never send destructive key chords without that check. Examples: Alt+F4 (`%{F4}`), Ctrl+W, Ctrl+Q, Ctrl+A followed by Delete, or Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
+- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4.
+- `click`, `right_click` and `double_click` act on whatever is at the given point. Bring the target window to the front and confirm it with `get_foreground_window` before clicking.
+- After each action, check the result before the next step.
+
+### Coordinate space
+
+- All screen coordinates are physical pixels on the virtual desktop. This covers input `x`/`y`, window `bounds`, UI element `bounds` and `screenBounds`, monitor `bounds`/`workArea` and `capture_region` arguments. The server is per-monitor DPI aware, so do not multiply by `scaleFactor`.
+- The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates (see the [get_monitors](#get_monitors) example).
+- Monitor indices are 0-based, and index 0 is not necessarily the primary monitor. Use `primaryIndex` or `isPrimary`.
+- When `maxWidth` scales a screenshot down, image pixels no longer match screen pixels. Use `screenBounds` (from `capture_with_elements`) or `bounds` (from `get_ui_elements`) for clicks, not positions measured on the image.
 
 ---
 
@@ -57,7 +79,7 @@ Find windows matching specific criteria.
     "processName": "chrome",
     "processId": 12456,
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 0
   },
@@ -67,7 +89,7 @@ Find windows matching specific criteria.
     "processName": "chrome",
     "processId": 12456,
     "bounds": { "x": 100, "y": 100, "width": 1200, "height": 800 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 1
   }
@@ -104,7 +126,7 @@ List all visible top-level windows on the system.
     "processName": "Code",
     "processId": 8432,
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-    "state": "Maximized",
+    "state": "maximized",
     "isVisible": true,
     "monitorIndex": 0
   },
@@ -114,7 +136,7 @@ List all visible top-level windows on the system.
     "processName": "WindowsTerminal",
     "processId": 15672,
     "bounds": { "x": 960, "y": 0, "width": 960, "height": 1040 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 1
   }
@@ -147,7 +169,7 @@ Get information about the currently focused window.
   "processName": "Code",
   "processId": 8432,
   "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-  "state": "Maximized",
+  "state": "maximized",
   "isVisible": true,
   "monitorIndex": 0
 }
@@ -297,7 +319,7 @@ Minimize, maximize, or restore a window.
 ```json
 {
   "success": true,
-  "newState": "Maximized"
+  "newState": "maximized"
 }
 ```
 
@@ -803,7 +825,13 @@ Get information about the primary display.
 
 ## Screenshot
 
-Tools for capturing screenshots of screens, regions, and windows. Screenshots are returned as base64-encoded image data, enabling AI to visually orient and understand what's on screen.
+Tools for capturing screenshots of screens, regions, and windows.
+
+**How images are returned:** every capture tool returns its result as JSON text. By default the image is a base64 string in `imageData`. It is not sent as MCP image content, so a model cannot see the picture by reading that string, and a full-resolution PNG can be several megabytes of text. To keep results usable:
+
+- Pass `saveToFile: true` to write the image to disk instead. `imageData` is then null and `filePath` holds the path: `outputPath` if given, otherwise an auto-named `screenshot_<timestamp>_<id>.png` (or `.jpg`) in the temp directory. Open that file with an image viewer; in Claude Code, the Read tool displays images.
+- Pass `maxWidth` to scale wide images down proportionally (narrower images are unchanged), and `format: "jpeg"` for smaller files. `width` and `height` are the output image size. `originalWidth` and `originalHeight` are set only when the image was scaled down. `maxWidth` must be a positive number.
+- If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image data.
 
 ### list_screens
 
@@ -876,6 +904,9 @@ Capture a screenshot of a specific monitor.
 | monitorIndex | int | No | primary | Monitor index (0-based). Defaults to primary monitor. |
 | format | string | No | "png" | Image format: "png" (lossless) or "jpeg" (smaller) |
 | quality | int | No | 85 | JPEG quality (1-100). Only used when format is "jpeg". |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Take a screenshot of the primary monitor"
@@ -915,6 +946,36 @@ Capture a screenshot of a specific monitor.
 }
 ```
 
+**Example: small JPEG saved to a file**
+> "Take a screenshot I can open, and keep it small"
+
+```json
+{
+  "name": "take_screenshot",
+  "arguments": {
+    "format": "jpeg",
+    "maxWidth": 1280,
+    "saveToFile": true
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageFormat": "jpeg",
+  "width": 1280,
+  "height": 720,
+  "capturedRegion": { "x": 0, "y": 0, "width": 3840, "height": 2160 },
+  "monitorIndex": 1,
+  "scaleFactor": 1.5,
+  "filePath": "C:\\Users\\me\\AppData\\Local\\Temp\\screenshot_20260110_101500_3f2a9c0d4b8e4f6a9d1c2b3a4e5f6a7b.jpg",
+  "originalWidth": 3840,
+  "originalHeight": 2160
+}
+```
+
 ---
 
 ### capture_region
@@ -930,6 +991,9 @@ Capture a screenshot of an arbitrary screen region.
 | height | int | Yes | - | Height of the region in pixels |
 | format | string | No | "png" | Image format: "png" or "jpeg" |
 | quality | int | No | 85 | JPEG quality (1-100) |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Capture a 800x600 region starting at position 100, 200"
@@ -973,6 +1037,9 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | includeFrame | bool | No | true | Include window frame/decoration (title bar, borders) |
 | format | string | No | "png" | Image format: "png" or "jpeg" |
 | quality | int | No | 85 | JPEG quality (1-100) |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Capture the VS Code window"
@@ -1034,6 +1101,9 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | visibleOnly | bool | No | true | Only include visible elements |
 | highlightInteractable | bool | No | true | Use brighter colors for enabled elements |
 | timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 
 **Color Coding:**
 | Control Type | Color |
@@ -1113,7 +1183,9 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 }
 ```
 
-> **Note:** The `imageBounds` coordinates are relative to the captured image, while `screenBounds` are absolute screen coordinates. Use `imageBounds` for visual reference and `screenBounds` for click automation.
+> **Note:** The `imageBounds` coordinates are relative to the output image (scaled when `maxWidth` shrinks it), while `screenBounds` are absolute screen coordinates. Use `imageBounds` for visual reference and `screenBounds` for click automation.
+
+> **Note:** `controlTypes` currently has the same limitation as in [get_ui_elements](#get_ui_elements): matching elements inside non-matching containers are left out.
 
 ---
 
@@ -1141,6 +1213,8 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 AppBar, Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
 
 AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's localized control type, so on a non-English Windows they may appear under a localized name. An element with no recognizable type is reported as `Unknown`.
+
+> **Note:** The `controlTypes` filter currently keeps an element only if every container above it (below the window) also matches the filter. Matching elements nested inside non-matching containers, such as a Button inside a Pane or a MenuItem inside a MenuBar, are left out. If a filtered call returns fewer elements than expected, call again without `controlTypes` and filter the result yourself, or narrow it with `interactableOnly`, `minWidth` and `minHeight`.
 
 **Example:**
 > "Get all UI elements from the Notepad window"
@@ -1225,9 +1299,207 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 
 ---
 
+## Browser Reading
+
+Tools for reading the URL and page text of a browser window without screenshots. They work with Chrome, Edge, Firefox, Brave, Opera, Vivaldi and other Chromium- or Firefox-based browsers.
+
+**How the browser is read:**
+
+- **UI Automation (default):** the URL is read from the address bar and the text from the page's accessibility tree. The URL is the text shown in the address bar, so the scheme (`https://`) can be missing.
+- **CDP (Chrome DevTools Protocol):** used when you pass `cdpPort` and a browser started with that remote debugging port is listening on localhost, for example one started by [launch_browser_with_debug](#launch_browser_with_debug). The server matches the window to a tab by title and reads the page with `document.body.innerText` (or the full HTML when `textOnly` is false), so JavaScript-rendered content is included. When CDP cannot be used, the tools fall back to UI Automation.
+
+For clicking, form filling and multi-step navigation inside web pages, a dedicated browser automation tool (such as Playwright MCP) is a better fit.
+
+### get_browser_url
+
+Get the current URL from a browser window's address bar.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port` (for example 9222) |
+
+**Example:**
+> "What page is open in Chrome?"
+
+```json
+{
+  "name": "get_browser_url",
+  "arguments": {
+    "handle": 2884384
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "browserType": "chrome",
+  "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Google Chrome",
+  "errorCode": "None"
+}
+```
+
+---
+
+### get_active_browser_url
+
+Get the URL from the foreground browser window. This combines get_foreground_window and get_browser_url.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port` |
+
+**Example:**
+> "What URL am I looking at?"
+
+```json
+{
+  "name": "get_active_browser_url",
+  "arguments": {}
+}
+```
+
+**Response:** Same shape as [get_browser_url](#get_browser_url).
+
+**Error Response** (the foreground window is not a browser):
+```json
+{
+  "success": false,
+  "error": "Foreground window 'WindowsTerminal' is not a browser",
+  "errorCode": "NoBrowserInForeground"
+}
+```
+
+> **Note:** When an agent calls this tool, the foreground window is often the agent's own terminal or chat window. Prefer get_browser_url with a handle from find_windows.
+
+---
+
+### get_browser_content
+
+Extract the text (or, through CDP, the HTML) of the page shown in a browser window.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | long | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| maxLength | int | No | all | Maximum number of characters to return; longer content is cut off |
+| textOnly | bool | No | true | Return text only. With CDP, false returns the full HTML. UI Automation always returns text |
+| cdpPort | int | No | - | CDP port of a browser started with `--remote-debugging-port`; includes JavaScript-rendered content |
+
+**Example 1:** Read the visible text
+> "Read the page open in Edge"
+
+```json
+{
+  "name": "get_browser_content",
+  "arguments": {
+    "handle": 2884384,
+    "maxLength": 5000
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "content": "Skip to content\nmortenbrudvik / WindowsAppManagerMcp\n...",
+  "url": "github.com/mortenbrudvik/WindowsAppManagerMcp",
+  "browserType": "edge",
+  "pageTitle": "mortenbrudvik/WindowsAppManagerMcp - Microsoft Edge",
+  "contentLength": 5000,
+  "errorCode": "None"
+}
+```
+
+**Example 2:** Read the HTML of a page in a debug browser
+> "Get the HTML of the page in the debug browser"
+
+```json
+{
+  "name": "get_browser_content",
+  "arguments": {
+    "handle": 3342410,
+    "cdpPort": 9222,
+    "textOnly": false,
+    "maxLength": 20000
+  }
+}
+```
+
+**Error Codes** (get_browser_url, get_active_browser_url and get_browser_content):
+| Code | Description |
+|------|-------------|
+| `InvalidHandle` | Window handle is invalid |
+| `NotABrowser` | The window's process is not a recognized browser |
+| `UrlBarNotFound` | The address bar could not be found or read |
+| `ContentExtractionFailed` | No content could be extracted |
+| `AutomationUnavailable` | UI Automation is not available |
+| `NoBrowserInForeground` | The foreground window is not a browser (get_active_browser_url) |
+| `OperationException` | Unexpected error; see `error` |
+
+---
+
+### launch_browser_with_debug
+
+Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, so that get_browser_content and get_browser_url can use `cdpPort`.
+
+> **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser is closed. Launch it only when you need CDP, and close it with [close_window](#close_window) when you are done.
+
+By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| browser | string | No | "chrome" | Browser to launch: "chrome", "edge" or "brave" |
+| url | string | No | - | URL to open |
+| port | int | No | 9222 | CDP debug port. Pass the same value as `cdpPort` to the reading tools |
+| userDataDir | string | No | new temp folder | Profile folder for the browser instance |
+
+**Example:**
+> "Open example.com in a Chrome I can read with CDP"
+
+```json
+{
+  "name": "launch_browser_with_debug",
+  "arguments": {
+    "browser": "chrome",
+    "url": "https://example.com"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "processId": 18320,
+  "windowHandle": 3342410,
+  "cdpPort": 9222,
+  "userDataDir": "C:\\Users\\me\\AppData\\Local\\Temp\\browser-debug-6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"
+}
+```
+
+**Error Codes:**
+| Code | Description |
+|------|-------------|
+| `UnsupportedBrowser` | `browser` is not chrome, edge or brave |
+| `BrowserNotFound` | The browser was not found in Program Files or on PATH |
+| `PortInUse` | The port is already in use; pick another port |
+| `DebugLaunchFailed` | The browser could not be started. A launch_application error code can also appear here |
+
+---
+
 ## Input Simulation
 
-Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Keyboard input is sent to the currently focused window.
+Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Coordinates are physical virtual-desktop pixels and can be negative (see [Coordinate space](#coordinate-space)).
+
+> **Warning:** Keyboard input is sent to whatever window is in the foreground, which is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before `type_text` or `send_keys` and confirm the target. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
 Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time.
 
@@ -1399,7 +1671,7 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 
 ### type_text
 
-Type text by simulating keyboard input. Text is sent to the currently focused window using Unicode characters, supporting any language.
+Type text by simulating keyboard input. Text is sent to the foreground window using Unicode characters, supporting any language. There is no target window parameter, so confirm the foreground window with `get_foreground_window` first.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1456,7 +1728,7 @@ Type text by simulating keyboard input. Text is sent to the currently focused wi
 
 ### send_keys
 
-Send key combinations to the focused window. Supports special keys and modifier combinations using SendKeys-style syntax.
+Send key combinations to the foreground window. Supports special keys and modifier combinations using SendKeys-style syntax. There is no target window parameter, so confirm the foreground window with `get_foreground_window` first, and never send chords that close, quit or delete (such as Alt+F4) without that check.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -1469,7 +1741,7 @@ Send key combinations to the focused window. Supports special keys and modifier 
 |--------|-------------|---------|
 | `{KEY}` | Special key by name | `{ENTER}`, `{TAB}`, `{F1}` |
 | `^` | Control modifier | `^c` = Ctrl+C |
-| `%` | Alt modifier | `%{F4}` = Alt+F4 |
+| `%` | Alt modifier | `%f` = Alt+F |
 | `+` | Shift modifier | `+{HOME}` = Shift+Home |
 | Regular characters | Sent directly | `abc` types "abc" |
 
@@ -1527,6 +1799,8 @@ Send key combinations to the focused window. Supports special keys and modifier 
 **Example 3:** Select all and delete (Ctrl+A, Delete)
 > "Clear all text in the field"
 
+This deletes everything in the focused control. Send it only after `get_foreground_window` confirms the target window and the right field has focus.
+
 ```json
 {
   "name": "send_keys",
@@ -1536,19 +1810,9 @@ Send key combinations to the focused window. Supports special keys and modifier 
 }
 ```
 
-**Example 4:** Close window (Alt+F4)
-> "Close the current window"
+> **Closing a window:** do not send Alt+F4 (`%{F4}`). It closes whatever window is in the foreground, which may be the agent's own terminal. Use [close_window](#close_window) with the window's handle instead.
 
-```json
-{
-  "name": "send_keys",
-  "arguments": {
-    "keys": "%{F4}"
-  }
-}
-```
-
-**Example 5:** Select to beginning (Shift+Home)
+**Example 4:** Select to beginning (Shift+Home)
 > "Select text from cursor to beginning of line"
 
 ```json
@@ -1560,7 +1824,7 @@ Send key combinations to the focused window. Supports special keys and modifier 
 }
 ```
 
-**Example 6:** Multiple modifiers (Ctrl+Shift+End)
+**Example 5:** Multiple modifiers (Ctrl+Shift+End)
 > "Select from cursor to end of document"
 
 ```json
@@ -2347,17 +2611,25 @@ find_windows { "processName": "notepad" }
 
 2. Get UI elements with bounding boxes:
 ```
-get_ui_elements { "handle": 12345, "controlTypes": "Button,MenuItem" }
+get_ui_elements { "handle": 12345, "interactableOnly": true }
 ```
 
 3. Find the target element in the response and calculate center:
    - Element bounds: `{ "x": 100, "y": 200, "width": 80, "height": 30 }`
    - Center: x = 100 + 80/2 = 140, y = 200 + 30/2 = 215
 
-4. Click the element:
+4. Bring the window to the front and confirm it (check that the returned `handle` is 12345):
+```
+focus_window { "handle": 12345 }
+get_foreground_window {}
+```
+
+5. Click the element:
 ```
 click { "x": 140, "y": 215 }
 ```
+
+6. Verify the result, for example with `get_ui_elements`, a capture or `get_foreground_window`.
 
 ### Keyboard Automation Workflow
 
@@ -2371,12 +2643,17 @@ focus_window { "handle": 12345 }
 click { "x": 500, "y": 300 }
 ```
 
-3. Type text into the field:
+3. Confirm the foreground window before typing. Stop if `handle` is not 12345:
+```
+get_foreground_window {}
+```
+
+4. Type text into the field:
 ```
 type_text { "text": "Hello World" }
 ```
 
-4. Use keyboard shortcuts:
+5. Use keyboard shortcuts (check `get_foreground_window` again if anything else could have taken focus):
 ```
 send_keys { "keys": "^a" }       // Select all
 send_keys { "keys": "^c" }       // Copy
@@ -2396,22 +2673,26 @@ focus_window { "handle": 12345 }
 // 2. Click first field
 click { "x": 500, "y": 100 }
 
-// 3. Type name
+// 3. Confirm the form window is in front (handle 12345) before typing
+get_foreground_window {}
+
+// 4. Type name
 type_text { "text": "John Doe" }
 
-// 4. Tab to next field
+// 5. Tab to next field
 send_keys { "keys": "{TAB}" }
 
-// 5. Type email
+// 6. Type email
 type_text { "text": "john@example.com" }
 
-// 6. Tab to next field
+// 7. Tab to next field
 send_keys { "keys": "{TAB}" }
 
-// 7. Type message
+// 8. Type message
 type_text { "text": "This is my message" }
 
-// 8. Submit form
+// 9. Confirm the form window is still in front, then submit
+get_foreground_window {}
 send_keys { "keys": "{ENTER}" }
 ```
 
