@@ -9,6 +9,9 @@ namespace WindowsAppManagerMcp.Native;
 /// </summary>
 /// <remarks>
 /// <para>Each property read is one cross-process call; nothing is cached yet (M3.1).</para>
+/// <para>The entry points (IsAvailable, FromHandle, FromPoint, GetFocusedElement) first pass
+/// <see cref="UiaClientStartup"/>, because the client's first call in a process fails when several
+/// threads make it at once.</para>
 /// <para>The managed client cannot name the control types added in Windows 8 (AppBar,
 /// SemanticZoom) and cannot read their raw ids, so <see cref="UiaControlTypes.GetName"/> falls back
 /// to the localized control type. The UIA3 adapter planned in M3.2 can read the ids.</para>
@@ -27,11 +30,25 @@ public sealed class UiaTree : IUiaTree
         (AutomationElement.IsRangeValuePatternAvailableProperty, "RangeValue"),
     ];
 
+    private readonly UiaClientStartup _startup;
+
+    public UiaTree()
+        : this(UiaClientStartup.Shared)
+    {
+    }
+
+    /// <summary>Creates the adapter with its own start gate (tests).</summary>
+    public UiaTree(UiaClientStartup startup)
+    {
+        _startup = startup ?? throw new ArgumentNullException(nameof(startup));
+    }
+
     /// <inheritdoc />
     public bool IsAvailable()
     {
         try
         {
+            _startup.EnsureStarted();
             return AutomationElement.RootElement != null;
         }
         catch (Exception)
@@ -43,6 +60,7 @@ public sealed class UiaTree : IUiaTree
     /// <inheritdoc />
     public IUiaNode? FromHandle(nint windowHandle)
     {
+        _startup.EnsureStarted();
         try
         {
             return Wrap(AutomationElement.FromHandle(windowHandle));
@@ -55,11 +73,18 @@ public sealed class UiaTree : IUiaTree
     }
 
     /// <inheritdoc />
-    public IUiaNode? FromPoint(int x, int y) =>
-        Translate(() => Wrap(AutomationElement.FromPoint(new System.Windows.Point(x, y))));
+    public IUiaNode? FromPoint(int x, int y)
+    {
+        _startup.EnsureStarted();
+        return Translate(() => Wrap(AutomationElement.FromPoint(new System.Windows.Point(x, y))));
+    }
 
     /// <inheritdoc />
-    public IUiaNode? GetFocusedElement() => Translate(() => Wrap(AutomationElement.FocusedElement));
+    public IUiaNode? GetFocusedElement()
+    {
+        _startup.EnsureStarted();
+        return Translate(() => Wrap(AutomationElement.FocusedElement));
+    }
 
     /// <inheritdoc />
     public IUiaNode? GetParent(IUiaNode node)
