@@ -1851,6 +1851,10 @@ Rules for new tests:
 - Never call `KillProcess` on a real system process, even to check that the guard refuses it.
 - A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
   test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
+- `NativeCallGuardTests` scans the server assembly and fails if anything other than
+  `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
+  `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
+  `ProcessService` calls `Process.Start`, `Kill` or `CloseMainWindow`.
 
 ### Visual Studio
 
