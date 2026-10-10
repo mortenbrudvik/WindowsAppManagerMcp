@@ -174,5 +174,35 @@ public enum BrowserErrorCode
     PortInUse = 12,
 
     /// <summary>Failed to launch browser with debug mode.</summary>
-    DebugLaunchFailed = 13
+    DebugLaunchFailed = 13,
+
+    // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
+    // browser error codes can be added above without renumbering.
+
+    /// <summary>The CDP endpoint could not be reached or did not answer like a DevTools endpoint.</summary>
+    CdpUnavailable = 30,
+
+    /// <summary>The browser or page did not answer a CDP request within the timeout.</summary>
+    CdpTimeout = 31,
+
+    /// <summary>No CDP tab could be matched to the window.</summary>
+    CdpTargetNotFound = 32,
+
+    /// <summary>More than one CDP tab matches the window, so the right one cannot be chosen.</summary>
+    CdpTargetAmbiguous = 33,
+
+    /// <summary>The CDP port is owned by a different process than the window.</summary>
+    CdpPortOwnerMismatch = 34,
+
+    /// <summary>The page has a JavaScript dialog (alert/confirm/prompt/beforeunload) open.</summary>
+    CdpDialogOpen = 35,
+
+    /// <summary>The page threw an exception or the browser rejected the evaluation.</summary>
+    CdpEvaluationFailed = 36,
+
+    /// <summary>The CDP connection closed early or returned a response that could not be read.</summary>
+    CdpProtocolError = 37,
+
+    /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
+    HtmlRequiresCdp = 38
 }
