@@ -84,7 +84,8 @@ public static class ServiceRegistration
     /// <summary>
     /// The server's log levels: Warning and above for everything, plus the per-call lines of
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
-    /// at Information. Program.cs writes them to stderr; stdout carries the MCP protocol.
+    /// and the agent host that <see cref="HostGuard"/> records once at start, at Information.
+    /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
     public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
     {
@@ -92,7 +93,8 @@ public static class ServiceRegistration
 
         return logging
             .SetMinimumLevel(LogLevel.Warning)
-            .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information);
+            .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information)
+            .AddFilter(typeof(HostGuard).FullName, LogLevel.Information);
     }
 
     /// <summary>

@@ -177,10 +177,13 @@ public class ToolCallLoggingTests
         var callLogger = factory.CreateLogger(ToolErrorReporting.CallLoggerCategory);
         var errorLogger = factory.CreateLogger("WindowsAppManagerMcp.ToolErrors");
         var otherLogger = factory.CreateLogger("Microsoft.Hosting.Lifetime");
+        var hostGuardLogger = factory.CreateLogger<HostGuard>();
 
         // Assert
         callLogger.IsEnabled(LogLevel.Information).Should().BeTrue();
         callLogger.IsEnabled(LogLevel.Debug).Should().BeFalse();
+        hostGuardLogger.IsEnabled(LogLevel.Information).Should().BeTrue("the recorded agent host explains later refusals");
+        hostGuardLogger.IsEnabled(LogLevel.Debug).Should().BeFalse();
         errorLogger.IsEnabled(LogLevel.Information).Should().BeFalse();
         errorLogger.IsEnabled(LogLevel.Warning).Should().BeTrue();
         otherLogger.IsEnabled(LogLevel.Information).Should().BeFalse();
