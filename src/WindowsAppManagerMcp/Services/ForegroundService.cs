@@ -39,9 +39,6 @@ public sealed class ForegroundService : IForegroundService
     /// <summary>The longest total wait, in milliseconds.</summary>
     public const int MaxTimeoutMs = 10_000;
 
-    /// <summary>Owner chains are short; this only stops a loop on a corrupt chain.</summary>
-    private const int MaxOwnerChainLength = 32;
-
     /// <summary>WS_DISABLED in GWL_STYLE: the window takes no input, usually because a modal dialog is open.</summary>
     private const long WsDisabled = 0x08000000;
 
@@ -322,45 +319,20 @@ public sealed class ForegroundService : IForegroundService
 
     /// <summary>
     /// True when <paramref name="foreground"/> is <paramref name="root"/> or a window it owns, directly
-    /// or through other owned windows: <paramref name="root"/> is in the foreground window's owner chain
-    /// (GW_OWNER). The walk goes up from the foreground window only, so a dialog target's owner and its
-    /// sibling dialogs never count as the dialog.
+    /// or through other owned windows: <paramref name="root"/> is in the foreground window's owner chain.
+    /// The walk goes up from the foreground window only, so a dialog target's owner and its sibling
+    /// dialogs never count as the dialog.
     /// </summary>
     /// <remarks>
-    /// GA_ROOTOWNER is only a fast positive. It walks GetParent, which returns the owner only for WS_POPUP
-    /// windows: a Win32 dialog resolves to its owner, but a WPF or WinForms owned window (overlapped,
-    /// owned through GWLP_HWNDPARENT) resolves to itself. So a root owner equal to the target proves
-    /// ownership, and any other root owner proves nothing; the owner chain decides.
+    /// The chain is <see cref="WindowOwnerChain"/>, the rule the close guard, the host guard and the input
+    /// guard's mouse rule use, so activation, input and close agree on which windows belong to a window.
+    /// It follows GW_OWNER as well as GA_ROOTOWNER: GA_ROOTOWNER walks GetParent, which returns the owner
+    /// only for WS_POPUP windows, so a WPF or WinForms owned window (overlapped, owned through
+    /// GWLP_HWNDPARENT) is its own root owner and only GW_OWNER leads to the target.
     /// </remarks>
-    private bool IsInFront(nint root, nint foreground)
-    {
-        if (foreground == nint.Zero)
-        {
-            return false;
-        }
-
-        if (foreground == root || RootOwnerOf(foreground) == root)
-        {
-            return true;
-        }
-
-        var owner = foreground;
-        for (var i = 0; i < MaxOwnerChainLength; i++)
-        {
-            owner = _windows.GetWindow(owner, NativeEnums.GW_OWNER);
-            if (owner == nint.Zero)
-            {
-                return false;
-            }
-
-            if (owner == root)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private bool IsInFront(nint root, nint foreground) =>
+        foreground != nint.Zero &&
+        (foreground == root || WindowOwnerChain.IsOwnedBy(_windows, foreground, root));
 
     private bool IsInMenuMode(nint window) =>
         window != nint.Zero && _threads.GetGuiThreadInfo(_threads.GetWindowThreadId(window)) is { IsInMenuMode: true };
@@ -448,12 +420,6 @@ public sealed class ForegroundService : IForegroundService
     {
         var root = _windows.GetAncestor(handle, WindowAncestor.Root);
         return root == nint.Zero ? handle : root;
-    }
-
-    private nint RootOwnerOf(nint window)
-    {
-        var rootOwner = _windows.GetAncestor(window, WindowAncestor.RootOwner);
-        return rootOwner == nint.Zero ? window : rootOwner;
     }
 
     private bool IsDisabled(nint window) => (_windows.GetWindowLongPtr(window, NativeEnums.GWL_STYLE) & WsDisabled) != 0;
