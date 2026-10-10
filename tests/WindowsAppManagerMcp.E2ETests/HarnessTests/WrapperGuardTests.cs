@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -8,14 +9,14 @@ namespace WindowsAppManagerMcp.E2ETests.HarnessTests;
 
 /// <summary>
 /// The guards the harness puts in front of the server's native wrappers, tested with mocked wrappers
-/// and a fake desktop. Nothing here reaches a real window or sends input.
+/// and a fake desktop. Nothing here reaches a real window, a real process or sends input.
 /// </summary>
 public class WrapperGuardTests
 {
-    private const int FixturePid = 4242;
-    private const int OtherPid = 777;
-    private static readonly nint FixtureWindow = 0x1000;
-    private static readonly nint OtherWindow = 0x2000;
+    private const int FixturePid = FakeDesktop.FixturePid;
+    private const int OtherPid = FakeDesktop.OtherPid;
+    private static readonly nint FixtureWindow = FakeDesktop.FixtureWindow;
+    private static readonly nint OtherWindow = FakeDesktop.OtherWindow;
 
     /// <summary>Members a later wave might add to a wrapper, to check that the guard fails closed.</summary>
     public interface IFutureWrapperMembers
@@ -23,44 +24,40 @@ public class WrapperGuardTests
         bool AttachThreadInput(uint attachThreadId, uint attachToThreadId, bool attach);
 
         void ReleaseHeldKeys();
+
+        /// <summary>Acts, despite a name that reads like a capture.</summary>
+        nint CaptureMouse(nint hWnd);
+
+        bool SetWindowOrder(nint hWnd, nint hWndInsertAfter);
     }
 
-    #region Read classification
-
-    [Theory]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.EnumWindows), true)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.GetWindowRect), true)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.IsWindow), true)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.GetForegroundWindow), true)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.SetForegroundWindow), false)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.BringWindowToTop), false)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.SetWindowPos), false)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.ShowWindow), false)]
-    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.PostMessage), false)]
-    [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.GetCursorPos), true)]
-    [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.SendInput), false)]
-    [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.SetCursorPos), false)]
-    [InlineData(typeof(IUIAutomationWrapper), nameof(IUIAutomationWrapper.TryGetElementFromHandle), true)]
-    [InlineData(typeof(IScreenCaptureWrapper), nameof(IScreenCaptureWrapper.CaptureWindow), true)]
-    [InlineData(typeof(IFutureWrapperMembers), nameof(IFutureWrapperMembers.AttachThreadInput), false)]
-    [InlineData(typeof(IFutureWrapperMembers), nameof(IFutureWrapperMembers.ReleaseHeldKeys), false)]
-    public void IsRead_ClassifiesWrapperMembersByName(Type type, string method, bool expected)
-    {
-        WrapperGuard.IsRead(type.GetMethod(method)!).Should().Be(expected);
-    }
+    #region Which interfaces are guarded
 
     [Theory]
     [InlineData(typeof(INativeWindowWrapper), true)]
     [InlineData(typeof(INativeInputWrapper), true)]
     [InlineData(typeof(INativeProcessWrapper), true)]
+    [InlineData(typeof(IProcessHandle), true)]
+    [InlineData(typeof(INativeMonitorWrapper), true)]
+    [InlineData(typeof(ITcpPortOwnerResolver), true)]
     [InlineData(typeof(IUIAutomationWrapper), true)]
     [InlineData(typeof(IScreenCaptureWrapper), true)]
     [InlineData(typeof(IWindowService), false)]
     [InlineData(typeof(IInputSimulationService), false)]
+    [InlineData(typeof(IExecutableResolver), false)]
+    [InlineData(typeof(ICdpService), false)]
     [InlineData(typeof(IFutureWrapperMembers), false)]
     public void IsNativeWrapper_RecognizesTheServersWrapperInterfaces(Type type, bool expected)
     {
         WrapperGuard.IsNativeWrapper(type).Should().Be(expected);
+    }
+
+    [Fact]
+    public void GuardException_IsNotAnInvalidOperationException()
+    {
+        // The server reads some InvalidOperationExceptions as "the process has exited" (kill_process then
+        // reports success); a refusal must never be mistaken for that.
+        typeof(E2EGuardException).Should().NotBeAssignableTo<InvalidOperationException>();
     }
 
     #endregion
@@ -133,6 +130,62 @@ public class WrapperGuardTests
         var act = () => guarded.GetWindowText(FixtureWindow);
 
         act.Should().Throw<InvalidOperationException>().WithMessage("boom");
+    }
+
+    [Fact]
+    public void ReadOnlyGuard_RefusesAMemberTheCatalogDoesNotClassify_EvenWithAReadLikeName()
+    {
+        // Arrange - a strict mock throws MockException if the call gets through
+        var inner = new Mock<IFutureWrapperMembers>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+
+        // Act
+        var act = () => guarded.CaptureMouse(FixtureWindow);
+
+        // Assert
+        act.Should().Throw<E2EGuardException>().WithMessage("*does not know*CaptureMouse*WrapperCatalog*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void ReadOnlyGuard_RefusesProcessStarts()
+    {
+        var inner = new Mock<INativeProcessWrapper>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+
+        var start = () => guarded.StartProcess(new ProcessStartInfo("app.exe"));
+        var where = () => guarded.FindWithWhereExe("app.exe");
+
+        start.Should().Throw<E2EGuardException>().WithMessage("*StartProcess*DesktopNoInput*");
+        where.Should().Throw<E2EGuardException>().WithMessage("*FindWithWhereExe*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void ReadOnlyGuard_GuardsTheProcessHandleOpenProcessReturns()
+    {
+        // Arrange
+        var handle = ProcessHandle(FixturePid, FixtureContract.ProcessName);
+        handle.Setup(h => h.Dispose());
+        var inner = new Mock<INativeProcessWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.OpenProcess(FixturePid)).Returns(handle.Object);
+        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+
+        // Act
+        var opened = guarded.OpenProcess(FixturePid)!;
+        var name = opened.ProcessName;
+        var close = () => opened.CloseMainWindow();
+        var kill = () => opened.Kill(entireProcessTree: false);
+        opened.Dispose();
+
+        // Assert - reads and releasing the handle pass, closing and killing do not
+        opened.Should().BeAssignableTo<GuardProxy>();
+        name.Should().Be(FixtureContract.ProcessName);
+        close.Should().Throw<E2EGuardException>().WithMessage("*IProcessHandle.CloseMainWindow*");
+        kill.Should().Throw<E2EGuardException>().WithMessage("*IProcessHandle.Kill*");
+        handle.Verify(h => h.Dispose(), Times.Once);
+        handle.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        handle.Verify(h => h.CloseMainWindow(), Times.Never);
     }
 
     #endregion
@@ -273,22 +326,132 @@ public class WrapperGuardTests
     }
 
     [Fact]
-    public void FixtureOnlyPolicy_RefusesAnInputMemberItDoesNotKnow()
+    public void FixtureOnlyPolicy_RefusesAMemberTheCatalogDoesNotClassify()
     {
-        // A later wave may add members to INativeInputWrapper; they stay refused until the policy knows them
+        // A later wave may add members to a wrapper; they stay refused until someone classifies them
         var policy = FixtureOnly(new FakeDesktop { Foreground = FixtureWindow });
-        var method = typeof(IFutureWrapperMembers).GetMethod(nameof(IFutureWrapperMembers.ReleaseHeldKeys))!;
+        var method = Method(nameof(IFutureWrapperMembers.ReleaseHeldKeys));
 
-        policy.Check(typeof(INativeInputWrapper), method, []).Should().Contain("does not know");
+        policy.Check(new WrapperCall(typeof(INativeInputWrapper), method, [], null, Member: null))
+            .Should().Contain("does not know");
     }
 
     [Fact]
-    public void FixtureOnlyPolicy_RefusesAWindowMemberThatNamesNoWindow()
+    public void FixtureOnlyPolicy_RefusesAnInputMemberItHasNoRuleFor()
+    {
+        // Classified as input, but the policy cannot tell where it would land
+        var policy = FixtureOnly(new FakeDesktop { Foreground = FixtureWindow });
+        var method = Method(nameof(IFutureWrapperMembers.ReleaseHeldKeys));
+
+        policy.Check(new WrapperCall(typeof(INativeInputWrapper), method, [], null, WrapperMember.Input))
+            .Should().Contain("does not know");
+    }
+
+    [Fact]
+    public void FixtureOnlyPolicy_RefusesAWindowActionThatNamesNoWindow()
     {
         var policy = FixtureOnly(new FakeDesktop());
-        var method = typeof(IFutureWrapperMembers).GetMethod(nameof(IFutureWrapperMembers.AttachThreadInput))!;
+        var method = Method(nameof(IFutureWrapperMembers.AttachThreadInput));
 
-        policy.Check(typeof(INativeWindowWrapper), method, [1u, 2u, true]).Should().Contain("names no window");
+        policy.Check(new WrapperCall(typeof(INativeWindowWrapper), method, [1u, 2u, true], null, WrapperMember.WindowAction()))
+            .Should().Contain("names no window");
+    }
+
+    [Fact]
+    public void FixtureOnlyPolicy_ChecksEveryWindowAWindowActionNames()
+    {
+        // Arrange - a call that names two windows; the second one must be checked too
+        var policy = FixtureOnly(new FakeDesktop());
+        var method = Method(nameof(IFutureWrapperMembers.SetWindowOrder));
+        var member = WrapperMember.WindowAction("hWnd", "hWndInsertAfter");
+
+        // Act
+        var bothFixture = policy.Check(new WrapperCall(typeof(INativeWindowWrapper), method, [FixtureWindow, FixtureWindow], null, member));
+        var secondOther = policy.Check(new WrapperCall(typeof(INativeWindowWrapper), method, [FixtureWindow, OtherWindow], null, member));
+
+        // Assert
+        bothFixture.Should().BeNull();
+        secondOther.Should().Contain("hWndInsertAfter").And.Contain("not the fixture");
+    }
+
+    [Fact]
+    public void FixtureOnlyPolicy_RefusesAWindowActionWhoseWindowParameterDoesNotExist()
+    {
+        var policy = FixtureOnly(new FakeDesktop());
+        var method = Method(nameof(IFutureWrapperMembers.SetWindowOrder));
+
+        policy.Check(new WrapperCall(typeof(INativeWindowWrapper), method, [FixtureWindow, FixtureWindow], null,
+                WrapperMember.WindowAction("hwndParent")))
+            .Should().Contain("no window handle parameter 'hwndParent'");
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesProcessStarts()
+    {
+        var inner = new Mock<INativeProcessWrapper>(MockBehavior.Strict);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(new FakeDesktop { Foreground = FixtureWindow }));
+
+        var start = () => guarded.StartProcess(new ProcessStartInfo(FixtureContract.ProcessName + ".exe"));
+        var where = () => guarded.FindWithWhereExe("app.exe");
+
+        start.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
+        where.Should().Throw<E2EGuardException>().WithMessage("*may not start processes*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_ClosesAndKillsTheFixtureProcess()
+    {
+        // Arrange
+        var handle = ProcessHandle(FixturePid, FixtureContract.ProcessName);
+        handle.Setup(h => h.CloseMainWindow()).Returns(true);
+        handle.Setup(h => h.Kill(false));
+        var guarded = OpenGuarded(handle.Object, FixtureOnly(new FakeDesktop()));
+
+        // Act
+        var closed = guarded.CloseMainWindow();
+        guarded.Kill(entireProcessTree: false);
+
+        // Assert
+        closed.Should().BeTrue();
+        handle.Verify(h => h.Kill(false), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(OtherPid, "notepad")]
+    [InlineData(FixturePid, "notepad")] // the fixture's pid, reused by another process after the fixture exited
+    public void FixtureOnlyGuard_RefusesClosingOrKillingAnyOtherProcess(int processId, string processName)
+    {
+        // Arrange
+        var handle = ProcessHandle(processId, processName);
+        var guarded = OpenGuarded(handle.Object, FixtureOnly(new FakeDesktop()));
+
+        // Act
+        var close = () => guarded.CloseMainWindow();
+        var kill = () => guarded.Kill(entireProcessTree: true);
+
+        // Assert
+        close.Should().Throw<E2EGuardException>().WithMessage($"*process {processId} '{processName}' is not the fixture*");
+        kill.Should().Throw<E2EGuardException>();
+        handle.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
+        handle.Verify(h => h.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesKillingAProcessItCannotIdentify()
+    {
+        // Arrange - the process exited, so its name can no longer be read
+        var handle = new Mock<IProcessHandle>(MockBehavior.Strict);
+        handle.SetupGet(h => h.Id).Returns(FixturePid);
+        handle.SetupGet(h => h.ProcessName).Throws(new InvalidOperationException("No process is associated with this object."));
+        var guarded = OpenGuarded(handle.Object, FixtureOnly(new FakeDesktop()));
+
+        // Act
+        var kill = () => guarded.Kill(entireProcessTree: false);
+
+        // Assert
+        kill.Should().Throw<E2EGuardException>().WithMessage("*cannot tell which process*");
+        handle.Verify(h => h.Kill(It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
@@ -297,6 +460,52 @@ public class WrapperGuardTests
         var act = () => new FixtureOnlyCallPolicy(new FakeDesktop(), 0);
 
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    #endregion
+
+    #region Refused services
+
+    [Fact]
+    public void RefusingGuard_RefusesEveryCall()
+    {
+        var cdp = (ICdpService)WrapperGuard.CreateRefusing(typeof(ICdpService), "no CDP target in E2E tests");
+
+        Action targets = () => _ = cdp.GetPageTargetsAsync(9222, TimeSpan.FromSeconds(1));
+        Action find = () => _ = cdp.FindTargetForWindowAsync(9222, 1, "title", TimeSpan.FromSeconds(1));
+
+        targets.Should().Throw<E2EGuardException>().WithMessage("*ICdpService.GetPageTargetsAsync*no CDP target*");
+        find.Should().Throw<E2EGuardException>();
+    }
+
+    [Fact]
+    public void RefuseService_ReplacesTheRegistrationWithoutCreatingTheService()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var created = false;
+        services.AddSingleton<ICdpService>(_ =>
+        {
+            created = true;
+            return Mock.Of<ICdpService>(MockBehavior.Strict);
+        });
+
+        // Act
+        WrapperGuard.RefuseService(services, typeof(ICdpService), "refused");
+        using var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<ICdpService>();
+
+        // Assert
+        resolved.Should().BeAssignableTo<GuardProxy>();
+        created.Should().BeFalse();
+    }
+
+    [Fact]
+    public void RefuseService_FailsWhenTheServiceIsNotRegistered()
+    {
+        var act = () => WrapperGuard.RefuseService(new ServiceCollection(), typeof(ICdpService), "refused");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*not registered*");
     }
 
     #endregion
@@ -329,30 +538,22 @@ public class WrapperGuardTests
 
     private static FixtureOnlyCallPolicy FixtureOnly(IDesktopProbe desktop) => new(desktop, FixturePid);
 
-    /// <summary>A desktop with one fixture window and one other window.</summary>
-    private sealed class FakeDesktop : IDesktopProbe
+    private static MethodInfo Method(string name) => typeof(IFutureWrapperMembers).GetMethod(name)!;
+
+    /// <summary>A strict process handle mock that answers who it is and nothing else.</summary>
+    private static Mock<IProcessHandle> ProcessHandle(int processId, string processName)
     {
-        public nint Foreground { get; set; }
+        var handle = new Mock<IProcessHandle>(MockBehavior.Strict);
+        handle.SetupGet(h => h.Id).Returns(processId);
+        handle.SetupGet(h => h.ProcessName).Returns(processName);
+        return handle;
+    }
 
-        public (int X, int Y)? Cursor { get; set; } = (0, 0);
-
-        public nint WindowAtCursor { get; set; }
-
-        public Dictionary<(int X, int Y), nint> WindowsAtPoints { get; } = new();
-
-        public nint GetForegroundWindow() => Foreground;
-
-        public nint WindowFromPoint(int x, int y) =>
-            WindowsAtPoints.TryGetValue((x, y), out var window) ? window
-            : Cursor == (x, y) ? WindowAtCursor
-            : 0;
-
-        public (int X, int Y)? GetCursorPos() => Cursor;
-
-        public int GetWindowProcessId(nint hwnd) =>
-            hwnd == FixtureWindow ? FixturePid : hwnd == OtherWindow ? OtherPid : 0;
-
-        public string GetWindowTitle(nint hwnd) =>
-            hwnd == FixtureWindow ? "Fixture window" : hwnd == OtherWindow ? "Other window" : "";
+    /// <summary>The guarded handle the server gets when it opens <paramref name="handle"/>'s process.</summary>
+    private static IProcessHandle OpenGuarded(IProcessHandle handle, IWrapperCallPolicy policy)
+    {
+        var wrapper = new Mock<INativeProcessWrapper>(MockBehavior.Strict);
+        wrapper.Setup(w => w.OpenProcess(It.IsAny<int>())).Returns(handle);
+        return WrapperGuard.Create(wrapper.Object, policy).OpenProcess(handle.Id)!;
     }
 }

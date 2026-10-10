@@ -1,0 +1,152 @@
+using System.Reflection;
+
+namespace WindowsAppManagerMcp.E2ETests.Harness;
+
+/// <summary>What a native wrapper member does, as far as the E2E guard is concerned.</summary>
+public enum WrapperCallKind
+{
+    /// <summary>Reads desktop, window, monitor or process state and changes nothing.</summary>
+    Read,
+
+    /// <summary>Changes a window: moves, sizes, shows or activates it, or posts it a message.</summary>
+    WindowAction,
+
+    /// <summary>Sends keyboard or mouse input, or moves the cursor.</summary>
+    Input,
+
+    /// <summary>Closes or terminates the process behind a process handle.</summary>
+    ProcessAction,
+
+    /// <summary>Starts a process.</summary>
+    ProcessStart
+}
+
+/// <summary>
+/// One classified wrapper member. For a <see cref="WrapperCallKind.WindowAction"/>,
+/// <see cref="WindowParameters"/> names every parameter that is a window handle (all of them must name
+/// fixture windows) and <see cref="OtherHandleParameters"/> names the handle-sized parameters that are
+/// not windows (message parameters), so that every nint parameter is accounted for.
+/// </summary>
+public sealed record WrapperMember(
+    WrapperCallKind Kind,
+    IReadOnlyList<string> WindowParameters,
+    IReadOnlyList<string> OtherHandleParameters)
+{
+    public static WrapperMember Read { get; } = new(WrapperCallKind.Read, [], []);
+
+    public static WrapperMember Input { get; } = new(WrapperCallKind.Input, [], []);
+
+    public static WrapperMember ProcessAction { get; } = new(WrapperCallKind.ProcessAction, [], []);
+
+    public static WrapperMember ProcessStart { get; } = new(WrapperCallKind.ProcessStart, [], []);
+
+    public static WrapperMember WindowAction(params string[] windowParameters) =>
+        new(WrapperCallKind.WindowAction, windowParameters, []);
+}
+
+/// <summary>
+/// The explicit classification of every member of every native wrapper interface of the server. The
+/// guard looks members up here; a member that is not listed is refused in every tier, so a member a
+/// later change adds (even one with a read-like name) is refused until someone classifies it.
+/// WrapperCatalogTests fail when a wrapper member of the server is missing here.
+/// </summary>
+public static class WrapperCatalog
+{
+    private static readonly IReadOnlyDictionary<Type, IReadOnlyDictionary<string, WrapperMember>> Catalog =
+        new Dictionary<Type, IReadOnlyDictionary<string, WrapperMember>>
+        {
+            [typeof(INativeWindowWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeWindowWrapper.EnumWindows)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsWindowVisible)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsWindow)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsIconic)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.IsZoomed)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindowText)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindowThreadProcessId)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetWindowRect)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetForegroundWindow)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetCurrentProcessId)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetProcessName)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.SetWindowPos)] = WrapperMember.WindowAction("hWnd"),
+                [nameof(INativeWindowWrapper.ShowWindow)] = WrapperMember.WindowAction("hWnd"),
+                [nameof(INativeWindowWrapper.SetForegroundWindow)] = WrapperMember.WindowAction("hWnd"),
+                [nameof(INativeWindowWrapper.BringWindowToTop)] = WrapperMember.WindowAction("hWnd"),
+                [nameof(INativeWindowWrapper.PostMessage)] = WrapperMember.WindowAction("hWnd") with
+                {
+                    OtherHandleParameters = ["wParam", "lParam"]
+                }
+            },
+            [typeof(INativeInputWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeInputWrapper.GetCursorPos)] = WrapperMember.Read,
+                [nameof(INativeInputWrapper.SetCursorPos)] = WrapperMember.Input,
+                [nameof(INativeInputWrapper.SendInput)] = WrapperMember.Input
+            },
+            [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // The element comes back as an object the services only read: acting UIA pattern calls
+                // outside the Native wrappers are forbidden by NativeCallGuardTests.
+                [nameof(IUIAutomationWrapper.TryGetElementFromHandle)] = WrapperMember.Read,
+                [nameof(IUIAutomationWrapper.GetBrowserUrl)] = WrapperMember.Read,
+                [nameof(IUIAutomationWrapper.GetWindowTitle)] = WrapperMember.Read,
+                [nameof(IUIAutomationWrapper.GetBrowserContent)] = WrapperMember.Read,
+                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read
+            },
+            [typeof(IScreenCaptureWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IScreenCaptureWrapper.CaptureScreenRegion)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.CaptureWindow)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.GetVirtualScreenBounds)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read
+            },
+            [typeof(INativeMonitorWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeMonitorWrapper.EnumerateMonitors)] = WrapperMember.Read,
+                // find_windows looks up the monitor of every window, fixture or not
+                [nameof(INativeMonitorWrapper.MonitorFromWindow)] = WrapperMember.Read,
+                [nameof(INativeMonitorWrapper.MonitorFromPoint)] = WrapperMember.Read
+            },
+            [typeof(ITcpPortOwnerResolver)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(ITcpPortOwnerResolver.GetListeningProcessId)] = WrapperMember.Read
+            },
+            [typeof(INativeProcessWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeProcessWrapper.StartProcess)] = WrapperMember.ProcessStart,
+                // Runs where.exe: a process start, even though it only looks something up
+                [nameof(INativeProcessWrapper.FindWithWhereExe)] = WrapperMember.ProcessStart,
+                // Opening a process only reads; the handle it returns is guarded in turn
+                [nameof(INativeProcessWrapper.OpenProcess)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.IsAncestorOfCurrentProcess)] = WrapperMember.Read
+            },
+            [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IProcessHandle.Id)] = WrapperMember.Read,
+                ["get_" + nameof(IProcessHandle.ProcessName)] = WrapperMember.Read,
+                ["get_" + nameof(IProcessHandle.HasExited)] = WrapperMember.Read,
+                [nameof(IProcessHandle.RefreshMainWindowHandle)] = WrapperMember.Read,
+                [nameof(IProcessHandle.WaitForExit)] = WrapperMember.Read,
+                // Releases the handle the server holds; the process is not affected
+                [nameof(IDisposable.Dispose)] = WrapperMember.Read,
+                [nameof(IProcessHandle.CloseMainWindow)] = WrapperMember.ProcessAction,
+                [nameof(IProcessHandle.Kill)] = WrapperMember.ProcessAction
+            }
+        };
+
+    /// <summary>The wrapper interfaces the catalog classifies.</summary>
+    public static IReadOnlyCollection<Type> Interfaces { get; } = Catalog.Keys.ToArray();
+
+    /// <summary>The classified members of <paramref name="serviceType"/>, by member name.</summary>
+    public static IReadOnlyDictionary<string, WrapperMember> MembersOf(Type serviceType) =>
+        Catalog.TryGetValue(serviceType, out var members) ? members : new Dictionary<string, WrapperMember>();
+
+    /// <summary>
+    /// How <paramref name="method"/>, called on <paramref name="serviceType"/>, is classified; null when it
+    /// is not, and the guard must refuse it.
+    /// </summary>
+    public static WrapperMember? Find(Type serviceType, MethodInfo method) =>
+        Catalog.TryGetValue(serviceType, out var members) && members.TryGetValue(method.Name, out var member)
+            ? member
+            : null;
+}
