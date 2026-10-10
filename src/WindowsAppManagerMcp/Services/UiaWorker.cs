@@ -3,8 +3,8 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// Runs each UI Automation read on a new background MTA thread and waits for it until the
-/// deadline. A read that misses the deadline is abandoned, not cancelled: a thread blocked in a
+/// Runs each UI Automation read on a new background MTA thread and waits for it, asynchronously, until
+/// the deadline. A read that misses the deadline is abandoned, not cancelled: a thread blocked in a
 /// cross-process UI Automation call cannot be interrupted, and it must never be reused for the next
 /// read. Abandoned reads are counted until they return, per target process: while
 /// <see cref="MaxStuckCallsPerTarget"/> reads of one application are outstanding, new reads of that
@@ -69,7 +69,7 @@ public sealed class UiaWorker : IUiaWorker
     }
 
     /// <inheritdoc />
-    public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+    public async Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
     {
         ArgumentNullException.ThrowIfNull(read);
         ArgumentOutOfRangeException.ThrowIfLessThan(grace, TimeSpan.Zero);
@@ -87,7 +87,7 @@ public sealed class UiaWorker : IUiaWorker
         thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
 
-        if (call.WaitUntilDone(cancellationToken, grace))
+        if (await call.WaitUntilDoneAsync(cancellationToken, grace).ConfigureAwait(false))
         {
             return call.GetResult();
         }
@@ -192,23 +192,23 @@ public sealed class UiaWorker : IUiaWorker
         /// Waits until the read returns, or until <paramref name="token"/> is cancelled and then
         /// <paramref name="grace"/> has passed. False when the read is still running.
         /// </summary>
-        public bool WaitUntilDone(CancellationToken token, TimeSpan grace)
+        public async Task<bool> WaitUntilDoneAsync(CancellationToken token, TimeSpan grace)
         {
             var task = _outcome.Task;
             try
             {
-                task.Wait(token);
-                return true;
+                await task.WaitAsync(token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            catch (OperationCanceledException) when (!task.IsCompleted && token.IsCancellationRequested)
             {
-                return WaitQuietly(task, grace);
+                return await WaitQuietlyAsync(task, grace).ConfigureAwait(false);
             }
-            catch (AggregateException)
+            catch (Exception) when (task.IsCompleted)
             {
-                // The read threw; GetResult rethrows its exception
-                return true;
+                // The read threw (or returned just as the token was cancelled); GetResult rethrows its exception
             }
+
+            return true;
         }
 
         /// <summary>Marks the read as abandoned. False when it returned first.</summary>
@@ -217,16 +217,22 @@ public sealed class UiaWorker : IUiaWorker
         /// <summary>The read's result, or its exception rethrown unchanged.</summary>
         public T GetResult() => _outcome.Task.GetAwaiter().GetResult();
 
-        private static bool WaitQuietly(Task task, TimeSpan grace)
+        private static async Task<bool> WaitQuietlyAsync(Task task, TimeSpan grace)
         {
             try
             {
-                return task.Wait(grace);
+                await task.WaitAsync(grace).ConfigureAwait(false);
             }
-            catch (AggregateException)
+            catch (TimeoutException) when (!task.IsCompleted)
             {
-                return true;
+                return false;
             }
+            catch (Exception) when (task.IsCompleted)
+            {
+                // The read threw; GetResult rethrows its exception
+            }
+
+            return true;
         }
     }
 }

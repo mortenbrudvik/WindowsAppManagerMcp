@@ -61,13 +61,13 @@ public class ElementInspectionServiceTests
     #region get_focused_element
 
     [Fact]
-    public void GetFocusedElement_ReturnsTheElementWithItsWindowAndProcess()
+    public async Task GetFocusedElement_ReturnsTheElementWithItsWindowAndProcess()
     {
         // Arrange
         _tree.Focused = BuildForm();
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -95,13 +95,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_RunsOnTheWorkerWithTheTimeout()
+    public async Task GetFocusedElement_RunsOnTheWorkerWithTheTimeout()
     {
         // Arrange
         _tree.Focused = BuildForm();
 
         // Act
-        CreateSut().GetFocusedElement(Timeout);
+        await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         _worker.Calls.Should().Be(1);
@@ -109,29 +109,29 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_CountsTheReadAgainstTheForegroundWindowsProcess()
+    public async Task GetFocusedElement_CountsTheReadAgainstTheForegroundWindowsProcess()
     {
         // Arrange - keyboard focus is in the foreground window
         _tree.Focused = BuildForm();
         _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
 
         // Act
-        CreateSut().GetFocusedElement(Timeout);
+        await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         _worker.LastTargetProcessId.Should().Be(4242);
     }
 
     [Fact]
-    public void GetFocusedElement_WhileEarlierReadsOfTheApplicationAreStuck_ReturnsOperationTimedOutWithoutWaiting()
+    public async Task GetFocusedElement_WhileEarlierReadsOfTheApplicationAreStuck_ReturnsOperationTimedOutWithoutWaiting()
     {
         // Arrange
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
 
         // Act
-        var result = CreateSut(worker.Object).GetFocusedElement(Timeout);
+        var result = await CreateSut(worker.Object).GetFocusedElementAsync(Timeout);
 
         // Assert - nothing was waited for, so the message does not claim a wait
         result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
@@ -139,7 +139,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_PasswordField_NeverReadsTheValue()
+    public async Task GetFocusedElement_PasswordField_NeverReadsTheValue()
     {
         // Arrange
         _tree.Focused = BuildForm(new FakeUiaNode("Edit", "Password")
@@ -151,7 +151,7 @@ public class ElementInspectionServiceTests
         });
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -161,13 +161,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WithoutTheValuePattern_DoesNotReadTheValue()
+    public async Task GetFocusedElement_WithoutTheValuePattern_DoesNotReadTheValue()
     {
         // Arrange
         _tree.Focused = BuildForm(new FakeUiaNode("Button", "Next") { ActionPatterns = ["Invoke"], Value = "ignored" });
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Element!.Value.Should().BeNull();
@@ -175,13 +175,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_LongValue_IsCutTo200Characters()
+    public async Task GetFocusedElement_LongValue_IsCutTo200Characters()
     {
         // Arrange
         _tree.Focused = BuildForm(new FakeUiaNode("Document", "Body") { ActionPatterns = ["Value"], Value = new string('a', 500) });
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Element!.Value.Should().HaveLength(ElementInspectionService.MaxValueLength);
@@ -189,14 +189,14 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_LongValue_IsNotCutInsideASurrogatePair()
+    public async Task GetFocusedElement_LongValue_IsNotCutInsideASurrogatePair()
     {
         // Arrange - an emoji (two UTF-16 code units) straddles the 200-character limit
         var value = new string('a', ElementInspectionService.MaxValueLength - 1) + "😀" + "tail";
         _tree.Focused = BuildForm(new FakeUiaNode("Edit", "Chat") { ActionPatterns = ["Value"], Value = value });
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Element!.Value.Should().Be(new string('a', ElementInspectionService.MaxValueLength - 1));
@@ -204,7 +204,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_ElementInsideATopLevelWindowElement_UsesThatWindow()
+    public async Task GetFocusedElement_ElementInsideATopLevelWindowElement_UsesThatWindow()
     {
         // Arrange - the element is directly in the window, which has the handle itself
         var field = new FakeUiaNode("Edit", "Search") { ProcessId = 4242 };
@@ -212,20 +212,20 @@ public class ElementInspectionServiceTests
         _tree.Focused = field;
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.WindowHandle.Should().Be(TopLevel);
     }
 
     [Fact]
-    public void GetFocusedElement_WithoutAWindowAbove_ReportsNoWindowButTheElementsProcess()
+    public async Task GetFocusedElement_WithoutAWindowAbove_ReportsNoWindowButTheElementsProcess()
     {
         // Arrange - no element up the chain has a window handle
         _tree.Focused = new FakeUiaNode("Edit", "Floating") { ProcessId = 777 };
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -236,7 +236,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenTheWindowSearchFails_StillReturnsTheElement()
+    public async Task GetFocusedElement_WhenTheWindowSearchFails_StillReturnsTheElement()
     {
         // Arrange
         var field = BuildForm();
@@ -244,7 +244,7 @@ public class ElementInspectionServiceTests
         field.ParentException = FakeUiaTree.Vanished();
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -253,10 +253,10 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenNothingHasFocus_ReturnsElementNotFound()
+    public async Task GetFocusedElement_WhenNothingHasFocus_ReturnsElementNotFound()
     {
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -265,13 +265,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenTheElementVanishesWhileRead_ReturnsElementAccessFailed()
+    public async Task GetFocusedElement_WhenTheElementVanishesWhileRead_ReturnsElementAccessFailed()
     {
         // Arrange
         _tree.Focused = BuildForm(new FakeUiaNode("Edit", "Gone") { ReadException = FakeUiaTree.Vanished() });
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -279,13 +279,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenTheProviderFails_ReturnsOperationException()
+    public async Task GetFocusedElement_WhenTheProviderFails_ReturnsOperationException()
     {
         // Arrange
         _tree.FocusedException = new System.Runtime.InteropServices.COMException("provider failed");
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -294,28 +294,28 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
+    public async Task GetFocusedElement_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
     {
         // Arrange
         _tree.Available = false;
 
         // Act
-        var result = CreateSut().GetFocusedElement(Timeout);
+        var result = await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert
         result.ErrorCode.Should().Be(UIElementErrorCode.AutomationUnavailable);
     }
 
     [Fact]
-    public void GetFocusedElement_WhenUiAutomationDoesNotAnswerInTime_ReturnsOperationTimedOut()
+    public async Task GetFocusedElement_WhenUiAutomationDoesNotAnswerInTime_ReturnsOperationTimedOut()
     {
         // Arrange
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new TimeoutException("UI Automation did not answer in time."));
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new TimeoutException("UI Automation did not answer in time."));
 
         // Act
-        var result = CreateSut(worker.Object).GetFocusedElement(Timeout);
+        var result = await CreateSut(worker.Object).GetFocusedElementAsync(Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -324,20 +324,20 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_WhenTheCallIsCancelled_ThrowsInsteadOfReportingATimeout()
+    public async Task GetFocusedElement_WhenTheCallIsCancelled_ThrowsInsteadOfReportingATimeout()
     {
         // Arrange
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new TimeoutException());
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, FocusedElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new TimeoutException());
 
         // Act
-        var act = () => CreateSut(worker.Object).GetFocusedElement(Timeout, cancelled.Token);
+        var act = () => CreateSut(worker.Object).GetFocusedElementAsync(Timeout, cancelled.Token);
 
         // Assert - the SDK reports a cancelled request itself
-        act.Should().Throw<OperationCanceledException>();
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     #endregion
@@ -345,7 +345,7 @@ public class ElementInspectionServiceTests
     #region get_element_at_point
 
     [Fact]
-    public void GetElementAtPoint_ReturnsTheElementAncestorsAndWindowAtThePoint()
+    public async Task GetElementAtPoint_ReturnsTheElementAncestorsAndWindowAtThePoint()
     {
         // Arrange
         var field = BuildForm();
@@ -353,7 +353,7 @@ public class ElementInspectionServiceTests
         _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, ancestors: 3, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, ancestors: 3, Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -375,21 +375,21 @@ public class ElementInspectionServiceTests
     [InlineData(2, 2)]
     [InlineData(10, 3)]
     [InlineData(-1, 0)]
-    public void GetElementAtPoint_ReturnsAtMostTheRequestedAncestorsAndNeverAboveTheTopLevelWindow(int requested, int expected)
+    public async Task GetElementAtPoint_ReturnsAtMostTheRequestedAncestorsAndNeverAboveTheTopLevelWindow(int requested, int expected)
     {
         // Arrange
         var field = BuildForm();
         _tree.AtPoint = (_, _) => field;
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, requested, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, requested, Timeout);
 
         // Assert
         result.Ancestors.Should().HaveCount(expected);
     }
 
     [Fact]
-    public void GetElementAtPoint_ClampsAncestorsToTen()
+    public async Task GetElementAtPoint_ClampsAncestorsToTen()
     {
         // Arrange - a chain of 15 groups
         var leaf = new FakeUiaNode("Button", "Deep");
@@ -404,14 +404,14 @@ public class ElementInspectionServiceTests
         _tree.AtPoint = (_, _) => leaf;
 
         // Act
-        var result = CreateSut().GetElementAtPoint(10, 10, 50, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(10, 10, 50, Timeout);
 
         // Assert
         result.Ancestors.Should().HaveCount(ElementInspectionService.MaxAncestors);
     }
 
     [Fact]
-    public void GetElementAtPoint_WhenAnAncestorCannotBeRead_ReturnsTheAncestorsReadSoFar()
+    public async Task GetElementAtPoint_WhenAnAncestorCannotBeRead_ReturnsTheAncestorsReadSoFar()
     {
         // Arrange
         var field = BuildForm();
@@ -419,7 +419,7 @@ public class ElementInspectionServiceTests
         _tree.AtPoint = (_, _) => field;
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 3, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 3, Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -427,14 +427,14 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetElementAtPoint_OnASecondMonitorWithNegativeCoordinates_Works()
+    public async Task GetElementAtPoint_OnASecondMonitorWithNegativeCoordinates_Works()
     {
         // Arrange
         var field = BuildForm();
         _tree.AtPoint = (x, y) => (x, y) == (-1000, -100) ? field : null;
 
         // Act
-        var result = CreateSut().GetElementAtPoint(-1000, -100, 0, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(-1000, -100, 0, Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -446,10 +446,10 @@ public class ElementInspectionServiceTests
     [InlineData(1920, 0)]
     [InlineData(100, -1)]
     [InlineData(-2561, 0)]
-    public void GetElementAtPoint_OffEveryMonitor_ReturnsCoordinatesOutOfBoundsWithoutReadingUiAutomation(int x, int y)
+    public async Task GetElementAtPoint_OffEveryMonitor_ReturnsCoordinatesOutOfBoundsWithoutReadingUiAutomation(int x, int y)
     {
         // Act
-        var result = CreateSut().GetElementAtPoint(x, y, 3, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(x, y, 3, Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -460,7 +460,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetElementAtPoint_WhenNoWindowIsHit_FallsBackToTheElementsWindow()
+    public async Task GetElementAtPoint_WhenNoWindowIsHit_FallsBackToTheElementsWindow()
     {
         // Arrange - a defensive path: WindowFromPoint practically always hits a window, at least the desktop
         var field = BuildForm();
@@ -468,14 +468,14 @@ public class ElementInspectionServiceTests
         _hitTest.Setup(h => h.WindowFromPoint(It.IsAny<int>(), It.IsAny<int>())).Returns(nint.Zero);
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 0, Timeout);
 
         // Assert
         result.WindowHandle.Should().Be(TopLevel);
     }
 
     [Fact]
-    public void GetElementAtPoint_WhenTheHitTestFails_FallsBackToTheElementsWindow()
+    public async Task GetElementAtPoint_WhenTheHitTestFails_FallsBackToTheElementsWindow()
     {
         // Arrange
         var field = BuildForm();
@@ -483,7 +483,7 @@ public class ElementInspectionServiceTests
         _hitTest.Setup(h => h.WindowFromPoint(It.IsAny<int>(), It.IsAny<int>())).Throws(new InvalidOperationException("hit test"));
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 0, Timeout);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -492,7 +492,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetElementAtPoint_CountsTheReadAgainstTheProcessOfTheWindowAtThePoint()
+    public async Task GetElementAtPoint_CountsTheReadAgainstTheProcessOfTheWindowAtThePoint()
     {
         // Arrange - the window is hit-tested before the read, which can hang in that window's application
         var field = BuildForm();
@@ -500,17 +500,17 @@ public class ElementInspectionServiceTests
         _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
 
         // Act
-        CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+        await CreateSut().GetElementAtPointAsync(150, 210, 0, Timeout);
 
         // Assert
         _worker.LastTargetProcessId.Should().Be(4242);
     }
 
     [Fact]
-    public void GetElementAtPoint_WithNoElementThere_ReturnsElementNotFound()
+    public async Task GetElementAtPoint_WithNoElementThere_ReturnsElementNotFound()
     {
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 3, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 3, Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -518,15 +518,15 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetElementAtPoint_WhenUiAutomationDoesNotAnswerInTime_ReturnsOperationTimedOut()
+    public async Task GetElementAtPoint_WhenUiAutomationDoesNotAnswerInTime_ReturnsOperationTimedOut()
     {
         // Arrange - FromPoint can hang on an unresponsive provider
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, ElementAtPointResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new TimeoutException("UI Automation did not answer in time."));
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, ElementAtPointResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new TimeoutException("UI Automation did not answer in time."));
 
         // Act
-        var result = CreateSut(worker.Object).GetElementAtPoint(150, 210, 3, Timeout);
+        var result = await CreateSut(worker.Object).GetElementAtPointAsync(150, 210, 3, Timeout);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -535,13 +535,13 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetElementAtPoint_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
+    public async Task GetElementAtPoint_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
     {
         // Arrange
         _tree.Available = false;
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 3, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 3, Timeout);
 
         // Assert
         result.ErrorCode.Should().Be(UIElementErrorCode.AutomationUnavailable);
@@ -570,7 +570,7 @@ public class ElementInspectionServiceTests
     }
 
     [Fact]
-    public void GetFocusedElement_InAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
+    public async Task GetFocusedElement_InAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
     {
         // Arrange
         AddUwpApp();
@@ -578,14 +578,14 @@ public class ElementInspectionServiceTests
         _tree.Focused = new FakeUiaNode("Edit", "Display") { ProcessId = UwpAppPid };
 
         // Act
-        CreateSut().GetFocusedElement(Timeout);
+        await CreateSut().GetFocusedElementAsync(Timeout);
 
         // Assert - otherwise two stuck reads of one hung UWP app would block reads of every other UWP app
         _worker.LastTargetProcessId.Should().Be(UwpAppPid);
     }
 
     [Fact]
-    public void GetElementAtPoint_OverAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
+    public async Task GetElementAtPoint_OverAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
     {
         // Arrange
         AddUwpApp();
@@ -593,7 +593,7 @@ public class ElementInspectionServiceTests
         _tree.AtPoint = (_, _) => new FakeUiaNode("Button", "Seven") { ProcessId = UwpAppPid };
 
         // Act
-        var result = CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 0, Timeout);
 
         // Assert
         _worker.LastTargetProcessId.Should().Be(UwpAppPid);

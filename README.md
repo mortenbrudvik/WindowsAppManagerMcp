@@ -90,6 +90,7 @@ The release zip is built by CI from the tagged sources. It is not a copy of the 
 so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
+<!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
 ## Available Tools (47)
 
 | Category | Tools |
@@ -100,11 +101,12 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
-| Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
+| Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
+<!-- tools:end tool-table -->
 
 See [docs/TOOLS.md](docs/TOOLS.md) for complete documentation with examples.
 
@@ -265,6 +267,12 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
 - **About 3,000 tests** covering unit, contract and integration scenarios (and end-to-end harness tests), about 75% line coverage
+- **Contract tests** call every tool over MCP through an in-process server, hold each typical result to a
+  token budget, and compare the tools/list the server sends with a checked-in snapshot
+  (`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
+  docs/TOOLS.md and the plugin skill are generated from it. After a deliberate change to the tools, run the
+  tests once with `UPDATE_SNAPSHOTS=1` to regenerate both, and review the diff
+  (see [TESTING.md](TESTING.md#tool-surface-snapshot))
 - By default a test run sends no keyboard or mouse input, launches or kills no
   processes, and does not move, focus or close your windows (some tests only read
   system state, such as the window, monitor and process lists)

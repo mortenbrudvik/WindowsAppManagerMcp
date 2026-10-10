@@ -22,14 +22,14 @@ public class ServerFilterPipelineTests
     [Fact]
     public async Task TheSdk_RunsTheFirstFilterAddedAsTheOutermost()
     {
-        // The order AddWindowsAppManagerTools relies on. The SDK's XML documentation of McpServerOptions.Filters says
-        // the opposite ("the last filter added will be the outermost"), so this pins what the SDK really does.
+        // The order AddWindowsAppManagerTools relies on. SDK 0.5's XML documentation of McpServerOptions.Filters said
+        // the opposite ("the last filter added will be the outermost"); 2.x documents this order. Pinned all the same.
         var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
         await using var server = await InProcessMcpServer.StartAsync(
             [McpServerTool.Create(() => order.Enqueue("tool"), new McpServerToolCreateOptions { Name = UnclassifiedTool })],
             builder => builder
-                .AddCallToolFilter(Recording("first", order))
-                .AddCallToolFilter(Recording("second", order)));
+                .WithRequestFilters(filters => filters.AddCallToolFilter(Recording("first", order)))
+                .WithRequestFilters(filters => filters.AddCallToolFilter(Recording("second", order))));
 
         await server.CallToolAsync(UnclassifiedTool);
 

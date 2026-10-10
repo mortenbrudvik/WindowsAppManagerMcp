@@ -68,13 +68,13 @@ public class ProcessServiceTests
     /// T4.1.1: Test LaunchApplication with valid executable returns success.
     /// </summary>
     [Fact]
-    public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
+    public async Task LaunchApplication_WithValidExecutable_ReturnsSuccess()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: false);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", waitForWindow: false);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -93,7 +93,7 @@ public class ProcessServiceTests
     /// T4.1.2: Test LaunchApplication with invalid executable returns failure.
     /// </summary>
     [Fact]
-    public void LaunchApplication_WithInvalidExecutable_ReturnsFailure()
+    public async Task LaunchApplication_WithInvalidExecutable_ReturnsFailure()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -104,7 +104,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("nonexistent_app_xyz123.exe");
+        var result = await sut.LaunchApplicationAsync("nonexistent_app_xyz123.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -115,7 +115,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
+    public async Task LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
     {
         // Arrange - the main window appears on the second poll
         _mockLaunchedProcess.SetupSequence(p => p.RefreshMainWindowHandle())
@@ -124,7 +124,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -134,7 +134,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WithWaitForWindow_UsesWindowOfProcessWhenNoMainWindow()
+    public async Task LaunchApplication_WithWaitForWindow_UsesWindowOfProcessWhenNoMainWindow()
     {
         // Arrange - no main window, but the window service sees a window owned by the process
         var window = TestDataFactory.CreateWindowInfo(handleValue: 0x5678, processId: LaunchedProcessId);
@@ -144,11 +144,106 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
 
         // Assert
         result.Success.Should().BeTrue();
         result.WindowHandle.Should().Be(new nint(0x5678));
+    }
+
+    [Fact]
+    public async Task LaunchApplication_CancelledWhileWaitingForTheWindow_StopsWaitingAndThrows()
+    {
+        // Arrange - the window never appears, and the call is cancelled during the 30-second wait
+        _mockLaunchedProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(nint.Zero);
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var stopwatch = Stopwatch.StartNew();
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 30000, cancellationToken: call.Token);
+
+        // Assert - the cancellation is reported as such, not as a LaunchException result; the program was started
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10), "the wait ends with the call, not at its timeout");
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_CancelledBeforeTheStart_StartsNothing()
+    {
+        // Arrange
+        using var call = new CancellationTokenSource();
+        call.Cancel();
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationAsync("notepad.exe", cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ReportsProgressAfterEachApplication()
+    {
+        // Arrange - the second application is refused by validation, the others start
+        _mockValidationService.Setup(v => v.ValidateExecutable("bad.exe"))
+            .Returns(new ExecutableValidationResult(false, Error: "not allowed", ErrorCode: "InvalidPath"));
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+            [("notepad.exe", null, null), ("bad.exe", null, null), ("calc.exe", null, null)], progress: progress);
+
+        // Assert - "i of n" after every application, started or not
+        results.Select(r => r.Success).Should().Equal(true, false, true);
+        progress.Reports.Select(p => (p.Completed, p.Total)).Should().Equal((1, 3), (2, 3), (3, 3));
+        progress.Reports.Select(p => p.Message).Should().Equal(
+            "1 of 3: notepad.exe started",
+            "2 of 3: bad.exe was not started (InvalidPath)",
+            "3 of 3: calc.exe started");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_WithWaitForWindows_SaysWhetherEachWindowAppeared()
+    {
+        // Arrange - the window of the first application appears; the second never shows one within its wait
+        _mockLaunchedProcess.SetupSequence(p => p.RefreshMainWindowHandle())
+            .Returns(new nint(0x1234))
+            .Returns(nint.Zero);
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync(
+            [("notepad.exe", null, null), ("calc.exe", null, null)], waitForWindows: true, waitTimeoutMs: 150, progress: progress);
+
+        // Assert
+        progress.Reports.Select(p => p.Message).Should().Equal(
+            "1 of 2: notepad.exe started, its window appeared",
+            "2 of 2: calc.exe started, no window appeared in time");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_WhenCancelled_StartsNoFurtherApplication()
+    {
+        // Arrange - the call is cancelled once the first application has started
+        using var call = new CancellationTokenSource();
+        var progress = new CancellingProgress(call);
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationsBatchAsync(
+            [("notepad.exe", null, null), ("calc.exe", null, null), ("mspaint.exe", null, null)],
+            progress: progress, cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
+    }
+
+    /// <summary>Cancels <paramref name="call"/> at the first progress report.</summary>
+    private sealed class CancellingProgress(CancellationTokenSource call) : IProgress<OperationProgress>
+    {
+        public void Report(OperationProgress value) => call.Cancel();
     }
 
     #endregion
@@ -156,7 +251,7 @@ public class ProcessServiceTests
     #region LaunchApplication Error Code Tests
 
     [Fact]
-    public void LaunchApplication_WhenValidationFails_ReturnsErrorCode()
+    public async Task LaunchApplication_WhenValidationFails_ReturnsErrorCode()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -164,7 +259,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("..\\..\\cmd.exe");
+        var result = await sut.LaunchApplicationAsync("..\\..\\cmd.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -174,7 +269,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
+    public async Task LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
@@ -182,7 +277,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", workingDirectory: "invalid|path");
+        var result = await sut.LaunchApplicationAsync("notepad.exe", workingDirectory: "invalid|path");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -192,7 +287,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
+    public async Task LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -204,7 +299,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("app.exe");
+        var result = await sut.LaunchApplicationAsync("app.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -215,14 +310,14 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WhenNoProcessIsStarted_ReturnsProcessStartFailed()
+    public async Task LaunchApplication_WhenNoProcessIsStarted_ReturnsProcessStartFailed()
     {
         // Arrange - ShellExecute handed the request over without creating a process
         _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("app.exe");
+        var result = await sut.LaunchApplicationAsync("app.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -440,13 +535,13 @@ public class ProcessServiceTests
     #region T4.5: KillProcess Tests
 
     [Fact]
-    public void KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
+    public async Task KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(1234, confirm: false);
+        var result = await sut.KillProcessAsync(1234, confirm: false);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -455,13 +550,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(0, confirm: true);
+        var result = await sut.KillProcessAsync(0, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -469,13 +564,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(-1, confirm: true);
+        var result = await sut.KillProcessAsync(-1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -483,14 +578,14 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
+    public async Task KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
     {
         // Arrange
         var sut = CreateSut();
         var currentPid = Environment.ProcessId;
 
         // Act
-        var result = sut.KillProcess(currentPid, confirm: true);
+        var result = await sut.KillProcessAsync(currentPid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -499,13 +594,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
+    public async Task KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
     {
         // Arrange - the mocked process seam finds no process with this ID
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
+        var result = await sut.KillProcessAsync(int.MaxValue - 1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -561,7 +656,7 @@ public class ProcessServiceTests
     // The mocked process seam records the start info instead of opening a browser or Notepad.
 
     [Fact]
-    public void LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
+    public async Task LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -571,7 +666,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("chrome.exe", ["https://example.com"]);
+        var result = await sut.LaunchApplicationAsync("chrome.exe", ["https://example.com"]);
 
         // Assert - browser detection was consulted and the flag goes before the URL
         result.Success.Should().BeTrue();
@@ -582,7 +677,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_NonBrowserWithUrl_DoesNotGetNewWindowFlag()
+    public async Task LaunchApplication_NonBrowserWithUrl_DoesNotGetNewWindowFlag()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -590,7 +685,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", ["https://example.com"]);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", ["https://example.com"]);
 
         // Assert - checked for a browser, but no new window flag
         result.Success.Should().BeTrue();
@@ -600,7 +695,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_BrowserWithoutUrl_DoesNotGetNewWindowFlag()
+    public async Task LaunchApplication_BrowserWithoutUrl_DoesNotGetNewWindowFlag()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -609,7 +704,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("chrome.exe", ["--incognito"]);
+        var result = await sut.LaunchApplicationAsync("chrome.exe", ["--incognito"]);
 
         // Assert - checked browser and URL, but no flag since no URL
         result.Success.Should().BeTrue();
@@ -624,13 +719,13 @@ public class ProcessServiceTests
     #region LaunchBrowserWithDebug Tests
 
     [Fact]
-    public void LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
+    public async Task LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug("firefox");
+        var result = await sut.LaunchBrowserWithDebugAsync("firefox");
 
         // Assert
         result.Success.Should().BeFalse();

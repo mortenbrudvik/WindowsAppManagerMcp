@@ -285,7 +285,7 @@ public class ToolErrorReportingTests
         // Assert
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
-        options.Filters.CallToolFilters.Should().ContainSingle();
+        options.Filters.Request.CallToolFilters.Should().ContainSingle();
     }
 
     private static Task<InProcessMcpServer> StartServerAsync() =>
@@ -325,10 +325,8 @@ public class ToolErrorReportingTests
     private static int ThrowsJsonException() => JsonSerializer.Deserialize<int>("\"not a number\"");
 
     private static RequestContext<CallToolRequestParams> CreateRequest() =>
-        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
-        {
-            Params = new CallToolRequestParams { Name = "some_tool" }
-        };
+        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall },
+            new CallToolRequestParams { Name = "some_tool" });
 
     public record HandleResult(nint? Handle);
 }

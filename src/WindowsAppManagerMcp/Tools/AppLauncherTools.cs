@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -23,7 +25,7 @@ public class AppLauncherTools
 
     [McpServerTool(Name = "launch_application")]
     [Description("Launch an application by executable path, name, or protocol URI. Returns process ID and optionally the window handle if waitForWindow is true.")]
-    public LaunchResultDto LaunchApplication(
+    public async Task<LaunchResultDto> LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com')")]
         string executable,
         [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.")]
@@ -33,14 +35,16 @@ public class AppLauncherTools
         [Description("Whether to wait for the application window to appear before returning (default: false)")]
         bool waitForWindow = false,
         [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default)
     {
-        var result = _processService.LaunchApplication(
+        var result = await _processService.LaunchApplicationAsync(
             executable,
             arguments,
             workingDirectory,
             waitForWindow,
-            BoundedWait(waitTimeoutMs));
+            BoundedWait(waitTimeoutMs),
+            cancellationToken).ConfigureAwait(false);
 
         return new LaunchResultDto(
             Success: result.Success,
@@ -82,7 +86,7 @@ public class AppLauncherTools
                  "The result reports closeRequested, forced and exited. Refuses protected system processes, the agent's own host (the terminal or editor hosting this server; errorCode CannotTerminateHost) " +
                  "and apps the user's policy denies (TargetDeniedByPolicy); with forceKill=true also when a child process it would end belongs to that host or is denied by the policy, " +
                  "or when the child processes cannot be read to check them (ProcessTreeUnreadable).")]
-    public KillResultDto KillProcess(
+    public async Task<KillResultDto> KillProcess(
         [Description("The process ID to terminate (get from list_processes tool)")]
         int processId,
         [Description("Must be set to true to confirm termination - this is a safety requirement")]
@@ -92,9 +96,12 @@ public class AppLauncherTools
         [Description("Graceful mode only: milliseconds to wait for the process to exit after the close request (0-60000, default 5000)")]
         int gracefulTimeoutMs = 5000,
         [Description("Optional guard against PID reuse: the expected process name as shown by list_processes (e.g. 'notepad' or 'notepad.exe'). If the PID now belongs to a different process, nothing is done and errorCode is ProcessNameMismatch.")]
-        string? expectedProcessName = null)
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default)
     {
-        var result = _processService.KillProcess(processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName);
+        // The wait for the process to exit (up to gracefulTimeoutMs) ends when the client cancels the call
+        var result = await _processService.KillProcessAsync(
+            processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, cancellationToken).ConfigureAwait(false);
 
         return new KillResultDto(
             Success: result.Success,
@@ -111,18 +118,23 @@ public class AppLauncherTools
 
     [McpServerTool(Name = "launch_applications_batch")]
     [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls.")]
-    public BatchLaunchResult LaunchApplicationsBatch(
+    public async Task<BatchLaunchResult> LaunchApplicationsBatch(
         [Description("Array of applications to launch with executable, optional arguments, and optional workingDirectory")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
         [Description("Maximum time in milliseconds to wait for each window (0-30000, default: 5000)")]
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        IProgress<ProgressNotificationValue>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         var serviceApplications = applications.Select(a =>
             (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
 
-        var results = _processService.LaunchApplicationsBatch(serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs));
+        // One application after another; the client gets "i of n" after each, and a cancelled call starts no more
+        var results = await _processService.LaunchApplicationsBatchAsync(
+            serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs), ToolProgress.ForServices(progress), cancellationToken)
+            .ConfigureAwait(false);
 
         var items = results.Select((r, i) => new LaunchResultItem(
             Executable: applications[i].Executable,

@@ -136,8 +136,8 @@ public static class ServiceRegistration
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // The SDK runs the first filter added as the outermost one (although the XML documentation of
-        // McpServerOptions.Filters says the last; ServerFilterPipelineTests pins the real order)
+        // The SDK runs the first call-tool filter added as the outermost one (ServerFilterPipelineTests pins the
+        // order; SDK 0.5's XML documentation said the opposite)
         return builder
             // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
             // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added first, so it is the

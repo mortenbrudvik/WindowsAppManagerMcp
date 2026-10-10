@@ -428,15 +428,19 @@ public class WindowService : IWindowService
             "Nothing was closed.")
     };
 
-    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(
+    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowBoundsBatchAsync(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default)
     {
         var results = new List<(nint Handle, bool Success, string? Error)>();
 
         for (var i = 0; i < placements.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var placement = placements[i];
+            var changed = false;
             try
             {
                 if (!IsValidWindow(placement.Handle))
@@ -454,30 +458,35 @@ public class WindowService : IWindowService
                     placement.BringToFront);
 
                 results.Add((placement.Handle, success, success ? null : "SetWindowBounds failed"));
-
-                if (delayBetweenMs > 0 && i < placements.Count - 1)
-                {
-                    Thread.Sleep(BatchDelay(delayBetweenMs));
-                }
+                changed = true;
             }
             catch (Exception ex)
             {
                 results.Add((placement.Handle, false, ex.Message));
+            }
+
+            if (changed)
+            {
+                await PauseBetweenWindowsAsync(delayBetweenMs, i, placements.Count, cancellationToken).ConfigureAwait(false);
             }
         }
 
         return results;
     }
 
-    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SnapWindowsBatch(
+    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SnapWindowsBatchAsync(
         IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)> placements,
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default)
     {
         var results = new List<(nint Handle, bool Success, string? Error)>();
 
         for (var i = 0; i < placements.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var placement = placements[i];
+            var changed = false;
             try
             {
                 if (!IsValidWindow(placement.Handle))
@@ -493,30 +502,35 @@ public class WindowService : IWindowService
                     placement.BringToFront);
 
                 results.Add((placement.Handle, success, success ? null : "SnapWindow failed"));
-
-                if (delayBetweenMs > 0 && i < placements.Count - 1)
-                {
-                    Thread.Sleep(BatchDelay(delayBetweenMs));
-                }
+                changed = true;
             }
             catch (Exception ex)
             {
                 results.Add((placement.Handle, false, ex.Message));
+            }
+
+            if (changed)
+            {
+                await PauseBetweenWindowsAsync(delayBetweenMs, i, placements.Count, cancellationToken).ConfigureAwait(false);
             }
         }
 
         return results;
     }
 
-    public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowStateBatch(
+    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowStateBatchAsync(
         IReadOnlyList<(nint Handle, WindowState State)> changes,
-        int delayBetweenMs = 30)
+        int delayBetweenMs = 30,
+        CancellationToken cancellationToken = default)
     {
         var results = new List<(nint Handle, bool Success, string? Error)>();
 
         for (var i = 0; i < changes.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var change = changes[i];
+            var changed = false;
             try
             {
                 if (!IsValidWindow(change.Handle))
@@ -527,30 +541,34 @@ public class WindowService : IWindowService
 
                 var success = SetWindowState(change.Handle, change.State);
                 results.Add((change.Handle, success, success ? null : "SetWindowState failed"));
-
-                if (delayBetweenMs > 0 && i < changes.Count - 1)
-                {
-                    Thread.Sleep(BatchDelay(delayBetweenMs));
-                }
+                changed = true;
             }
             catch (Exception ex)
             {
                 results.Add((change.Handle, false, ex.Message));
+            }
+
+            if (changed)
+            {
+                await PauseBetweenWindowsAsync(delayBetweenMs, i, changes.Count, cancellationToken).ConfigureAwait(false);
             }
         }
 
         return results;
     }
 
-    public IReadOnlyList<WindowCloseResult> CloseWindowsBatch(
+    public async Task<IReadOnlyList<WindowCloseResult>> CloseWindowsBatchAsync(
         IReadOnlyList<nint> handles,
         bool force,
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default)
     {
         var results = new List<WindowCloseResult>();
 
         for (var i = 0; i < handles.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var handle = handles[i];
             WindowCloseResult result;
             try
@@ -565,14 +583,23 @@ public class WindowService : IWindowService
             results.Add(result);
 
             // Pause only after a close message was actually sent
-            if (result.Success && delayBetweenMs > 0 && i < handles.Count - 1)
+            if (result.Success)
             {
-                Thread.Sleep(BatchDelay(delayBetweenMs));
+                await PauseBetweenWindowsAsync(delayBetweenMs, i, handles.Count, cancellationToken).ConfigureAwait(false);
             }
         }
 
         return results;
     }
+
+    /// <summary>
+    /// The batches' pause after window <paramref name="index"/> of <paramref name="count"/>: none after the last one,
+    /// <see cref="BatchDelay"/> otherwise. A cancelled call ends the pause at once.
+    /// </summary>
+    private static Task PauseBetweenWindowsAsync(int delayBetweenMs, int index, int count, CancellationToken cancellationToken) =>
+        delayBetweenMs > 0 && index < count - 1
+            ? Task.Delay(BatchDelay(delayBetweenMs), cancellationToken)
+            : Task.CompletedTask;
 
     /// <summary>
     /// Applies <paramref name="query"/> to one window and reads it if it matches. The cheap native

@@ -71,6 +71,21 @@ jobs:
             }
           }
 
+      # The tools an MCP client gets from an exe must be the ones the sources define: the snapshot
+      # tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json, which ToolSurfaceSnapshotTests keeps current.
+      # A version or SHA check cannot catch an exe whose tools differ from its sources; this compares what it serves.
+      # The script starts the exe (without a pause hotkey), lists its tools over stdio and closes it; no tool is called.
+      # The exe published above is built from this checkout, so it is always compared.
+      - name: Check the tools/list of the published exe
+        shell: pwsh
+        run: ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./publish/WindowsAppManagerMcp.exe
+
+      # The committed plugin exe is compared only when it was built from the current build inputs (the checks of
+      # Test-PluginBinary.ps1); a stale one is expected until the next release, and the step says it skipped it.
+      - name: Check the tools/list of the committed plugin binary
+        shell: pwsh
+        run: ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/WindowsAppManagerMcp.exe -OnlyIfCurrent
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

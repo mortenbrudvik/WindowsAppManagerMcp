@@ -391,7 +391,8 @@ public class BrowserReadingToolsTests
         using var cts = new CancellationTokenSource();
         _mockBrowserReadingService
             .Setup(s => s.GetBrowserContentAsync(
-                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(AnyContentResult);
         var sut = CreateSut();
 
@@ -436,7 +437,8 @@ public class BrowserReadingToolsTests
     {
         _mockBrowserReadingService
             .Setup(s => s.GetBrowserContentAsync(
-                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(AnyContentResult with { Source = "cdp", TargetId = "TAB1" });
         var sut = CreateSut();
 
@@ -452,12 +454,13 @@ public class BrowserReadingToolsTests
     #region LaunchBrowserWithDebug Tests
 
     [Fact]
-    public void LaunchBrowserWithDebug_CallsServiceWithDefaultParameters()
+    public async Task LaunchBrowserWithDebug_CallsServiceWithDefaultParameters()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                "chrome", null, 9222, null, true, 10000))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                "chrome", null, 9222, null, true, 10000,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -468,15 +471,16 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.LaunchBrowserWithDebug();
+        await sut.LaunchBrowserWithDebug();
 
         // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            "chrome", null, 9222, null, true, 10000), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            "chrome", null, 9222, null, true, 10000,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_CallsServiceWithCustomParameters()
+    public async Task LaunchBrowserWithDebug_CallsServiceWithCustomParameters()
     {
         // Arrange
         var browser = "edge";
@@ -484,9 +488,9 @@ public class BrowserReadingToolsTests
         var port = 9224;
         var userDataDir = @"C:\CustomProfile";
 
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                browser, url, port, userDataDir, true, 10000))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                browser, url, port, userDataDir, true, 10000, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -497,15 +501,15 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.LaunchBrowserWithDebug(browser, url, port, userDataDir);
+        await sut.LaunchBrowserWithDebug(browser, url, port, userDataDir);
 
         // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            browser, url, port, userDataDir, true, 10000), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            browser, url, port, userDataDir, true, 10000, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_ReturnsMappedDto_OnSuccess()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
         var processId = 1234;
@@ -513,9 +517,10 @@ public class BrowserReadingToolsTests
         var cdpPort = 9222;
         var userDataDir = @"C:\Temp\browser-debug-abc123";
 
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: processId,
                 WindowHandle: windowHandle,
@@ -526,7 +531,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug();
+        var result = await sut.LaunchBrowserWithDebug();
 
         // Assert
         result.Success.Should().BeTrue();
@@ -539,12 +544,13 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_ReturnsMappedDto_OnUnsupportedBrowser()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnUnsupportedBrowser()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: false,
                 ProcessId: null,
                 WindowHandle: null,
@@ -555,7 +561,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug("firefox");
+        var result = await sut.LaunchBrowserWithDebug("firefox");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -568,12 +574,13 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_ReturnsMappedDto_OnBrowserNotFound()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnBrowserNotFound()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: false,
                 ProcessId: null,
                 WindowHandle: null,
@@ -584,7 +591,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug("chrome");
+        var result = await sut.LaunchBrowserWithDebug("chrome");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -593,12 +600,13 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_ReturnsMappedDto_OnPortInUse()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnPortInUse()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: false,
                 ProcessId: null,
                 WindowHandle: null,
@@ -609,7 +617,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug(port: 9222);
+        var result = await sut.LaunchBrowserWithDebug(port: 9222);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -618,12 +626,13 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_ReturnsMappedDto_OnDebugLaunchFailed()
+    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnDebugLaunchFailed()
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: false,
                 ProcessId: null,
                 WindowHandle: null,
@@ -634,7 +643,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug();
+        var result = await sut.LaunchBrowserWithDebug();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -646,12 +655,12 @@ public class BrowserReadingToolsTests
     [InlineData("chrome")]
     [InlineData("edge")]
     [InlineData("brave")]
-    public void LaunchBrowserWithDebug_AcceptsSupportedBrowsers(string browser)
+    public async Task LaunchBrowserWithDebug_AcceptsSupportedBrowsers(string browser)
     {
         // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -662,22 +671,23 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug(browser);
+        var result = await sut.LaunchBrowserWithDebug(browser);
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            browser, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_PassesUrlToService()
+    public async Task LaunchBrowserWithDebug_PassesUrlToService()
     {
         // Arrange
         var url = "https://github.com";
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -688,21 +698,23 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.LaunchBrowserWithDebug(url: url);
+        await sut.LaunchBrowserWithDebug(url: url);
 
         // Assert
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            It.IsAny<string>(), url, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_PassesCustomPortToService()
+    public async Task LaunchBrowserWithDebug_PassesCustomPortToService()
     {
         // Arrange
         var customPort = 9999;
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -713,22 +725,24 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug(port: customPort);
+        var result = await sut.LaunchBrowserWithDebug(port: customPort);
 
         // Assert
         result.CdpPort.Should().Be(customPort);
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), customPort, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchBrowserWithDebug_PassesUserDataDirToService()
+    public async Task LaunchBrowserWithDebug_PassesUserDataDirToService()
     {
         // Arrange
         var customDir = @"D:\BrowserProfiles\Debug";
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 1234,
                 WindowHandle: new nint(5678),
@@ -739,12 +753,13 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug(userDataDir: customDir);
+        var result = await sut.LaunchBrowserWithDebug(userDataDir: customDir);
 
         // Assert
         result.UserDataDir.Should().Be(customDir);
-        _mockProcessService.Verify(s => s.LaunchBrowserWithDebug(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>()), Times.Once);
+        _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), customDir, It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

@@ -108,12 +108,12 @@ public class WindowServiceHangTests
     }
 
     [Fact]
-    public void SetWindowBoundsBatch_AHungWindow_FailsOnlyItsOwnPlacement()
+    public async Task SetWindowBoundsBatch_AHungWindow_FailsOnlyItsOwnPlacement()
     {
         _native.Setup(n => n.IsHungAppWindow(Hung)).Returns(true);
         var sut = CreateSut();
 
-        var results = sut.SetWindowBoundsBatch(
+        var results = await sut.SetWindowBoundsBatchAsync(
             [(Hung, 0, 0, 640, 480, true), (Responsive, 640, 0, 640, 480, true)], delayBetweenMs: 0);
 
         results.Should().HaveCount(2);
@@ -122,10 +122,46 @@ public class WindowServiceHangTests
         results[1].Success.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task SetWindowBoundsBatch_CancelledDuringThePauseBetweenWindows_StopsAtOnce()
+    {
+        // Arrange - two windows five seconds apart; the call is cancelled during the pause
+        var sut = CreateSut();
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        var stopwatch = Stopwatch.StartNew();
+
+        // Act
+        var act = () => sut.SetWindowBoundsBatchAsync(
+            [(Responsive, 0, 0, 640, 480, false), (Responsive, 640, 0, 640, 480, false)], delayBetweenMs: 5000,
+            cancellationToken: call.Token);
+
+        // Assert - the batch, which holds the input gate, ends with the call; the second window is not changed
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(4));
+        _native.Verify(n => n.SetWindowPos(Responsive, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SetWindowStateBatch_CancelledBeforeItStarts_ChangesNoWindow()
+    {
+        // Arrange
+        var sut = CreateSut();
+        using var call = new CancellationTokenSource();
+        call.Cancel();
+
+        // Act
+        var act = () => sut.SetWindowStateBatchAsync([(Responsive, WindowState.Normal)], cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _native.Verify(n => n.ShowWindow(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
     [Theory]
     [InlineData(50, 50)]
     [InlineData(0, 0)]
-    [InlineData(-1, 0)] // Thread.Sleep(-1) would never return
+    [InlineData(-1, 0)] // Task.Delay(-1) would never return
     [InlineData(5000, 5000)]
     [InlineData(int.MaxValue, 5000)] // slept inside the input gate: an agent's value must not hold it for days
     public void BatchDelay_IsBetweenZeroAndMaxDelayBetweenMs(int delayBetweenMs, int expected)

@@ -411,7 +411,21 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         public bool CloseMainWindow() => process.CloseMainWindow();
 
-        public bool WaitForExit(int milliseconds) => process.WaitForExit(milliseconds);
+        public async Task<bool> WaitForExitAsync(int milliseconds, CancellationToken cancellationToken)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(milliseconds);
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The timeout passed first
+                return process.HasExited;
+            }
+        }
 
         public void Kill(bool entireProcessTree) => process.Kill(entireProcessTree);
 

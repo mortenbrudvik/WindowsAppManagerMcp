@@ -367,8 +367,8 @@ public class DependencyInjectionTests : IDisposable
 
         // Assert - added first: the SDK runs the first filter added as the outermost (ServerFilterPipelineTests), so it
         // also logs the input gate filter's wait and the calls that filter refuses while input is paused
-        options.Filters.CallToolFilters.Should().HaveCount(2);
-        options.Filters.CallToolFilters[0].Method.Should().BeSameAs(filter);
+        options.Filters.Request.CallToolFilters.Should().HaveCount(2);
+        options.Filters.Request.CallToolFilters[0].Method.Should().BeSameAs(filter);
     }
 
     [Fact]
@@ -379,7 +379,7 @@ public class DependencyInjectionTests : IDisposable
 
         var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-        options.Filters.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
+        options.Filters.Request.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
     }
 
     [Fact]

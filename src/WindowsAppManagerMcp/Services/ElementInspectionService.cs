@@ -44,7 +44,7 @@ public class ElementInspectionService : IElementInspectionService
     }
 
     /// <inheritdoc />
-    public FocusedElementResult GetFocusedElement(TimeSpan timeout, CancellationToken cancellationToken = default)
+    public Task<FocusedElementResult> GetFocusedElementAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -55,7 +55,7 @@ public class ElementInspectionService : IElementInspectionService
         // that can block this read
         var targetProcessId = AppProcessOf(SafeRead(_windows.GetForegroundWindow));
 
-        return Read(
+        return ReadAsync(
             targetProcessId,
             () =>
             {
@@ -90,7 +90,7 @@ public class ElementInspectionService : IElementInspectionService
     }
 
     /// <inheritdoc />
-    public ElementAtPointResult GetElementAtPoint(
+    public Task<ElementAtPointResult> GetElementAtPointAsync(
         int x,
         int y,
         int ancestors,
@@ -104,9 +104,9 @@ public class ElementInspectionService : IElementInspectionService
 
         if (!IsOnAMonitor(x, y))
         {
-            return Failure(
+            return Task.FromResult(Failure(
                 $"The point ({x}, {y}) is not on any monitor. Coordinates are physical virtual-screen pixels; see get_monitors.",
-                UIElementErrorCode.CoordinatesOutOfBounds);
+                UIElementErrorCode.CoordinatesOutOfBounds));
         }
 
         var ancestorCount = Math.Clamp(ancestors, 0, MaxAncestors);
@@ -116,7 +116,7 @@ public class ElementInspectionService : IElementInspectionService
         // window shows (for a UWP frame, the app it hosts) is the one that can block it.
         var hitWindow = SafeRead(() => _hitTest.GetRootWindow(_hitTest.WindowFromPoint(x, y)));
 
-        return Read(
+        return ReadAsync(
             AppProcessOf(hitWindow),
             () =>
             {
@@ -162,7 +162,7 @@ public class ElementInspectionService : IElementInspectionService
     /// Runs <paramref name="read"/> on the worker with a deadline of <paramref name="timeout"/>, and
     /// turns its failures into results.
     /// </summary>
-    private T Read<T>(
+    private async Task<T> ReadAsync<T>(
         int targetProcessId,
         Func<T> read,
         Func<string, UIElementErrorCode, T> failure,
@@ -175,7 +175,7 @@ public class ElementInspectionService : IElementInspectionService
 
         try
         {
-            return _worker.Run(targetProcessId, _ => read(), deadline.Token, TimeSpan.Zero);
+            return await _worker.RunAsync(targetProcessId, _ => read(), deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {

@@ -47,7 +47,7 @@ public class CaptureToolResultContractTests
         metadata.GetProperty("coordinateSpace").GetString().Should().Be("physical-virtual-screen");
         metadata.TryGetProperty("imageData", out _).Should().BeFalse("the image is sent once, as image content");
 
-        var bytes = Convert.FromBase64String(image.Data);
+        var bytes = image.DecodedData.ToArray();
         metadata.GetProperty("byteSize").GetInt64().Should().Be(bytes.Length);
         DecodeSize(bytes).Should().Be((metadata.GetProperty("width").GetInt32(), metadata.GetProperty("height").GetInt32()));
         metadata.GetProperty("width").GetInt32().Should().Be(1568, "the default long edge is 1568");
@@ -131,8 +131,8 @@ public class CaptureToolResultContractTests
     {
         // Arrange - one button inside the window captured at (-1700, 220)
         var button = new UIElementInfo("OK", "Button", "ok", new BoundsDto(-1600, 300, 80, 30), IsEnabled: true, IsOffscreen: false);
-        _uiElementService.Setup(u => u.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()))
-            .Returns(TestDataFactory.CreateUIElementResult(elements: [button]));
+        _uiElementService.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [button]));
         await using var server = await StartServerAsync();
 
         // Act

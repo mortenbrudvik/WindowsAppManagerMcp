@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
@@ -183,7 +184,7 @@ public class ScreenshotTools
                  "The overlays line up with or without the frame. A minimized window is refused (CaptureFailed), and so is a window of an app the user's policy denies (TargetDeniedByPolicy). " +
                  ImageToScreenDescription)]
     [ToolResultPayload(typeof(AnnotatedScreenshotResult))]
-    public CallToolResult CaptureWithElements(
+    public async Task<CallToolResult> CaptureWithElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
         long handle,
         [Description("Whether to include the window frame/decoration. Default: true")]
@@ -215,7 +216,9 @@ public class ScreenshotTools
         [Description(SaveToFileDescription)]
         bool saveToFile = false,
         [Description(MaxWidthDescription)]
-        int? maxWidth = null)
+        int? maxWidth = null,
+        IProgress<ProgressNotificationValue>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
         var windowHandle = (nint)handle;
@@ -248,34 +251,13 @@ public class ScreenshotTools
             return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.CaptureFailed), ScreenshotService.MinimizedMessage);
         }
 
-        // Parse filter parameters
-        string[]? controlTypeArray = null;
-        if (!string.IsNullOrWhiteSpace(controlTypes))
-        {
-            controlTypeArray = controlTypes
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToArray();
-
-            if (controlTypeArray.Length == 0)
-            {
-                controlTypeArray = null;
-            }
-        }
-
-        // Get UI elements
+        // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync)
         var filter = new UIElementFilter(
-            ControlTypes: controlTypeArray,
+            ControlTypes: UIElementTools.ParseControlTypes(controlTypes),
             InteractableOnly: interactableOnly,
-            VisibleOnly: visibleOnly
-        );
-
-        using var cts = new CancellationTokenSource(Math.Clamp(timeoutMs, 1000, 30000));
-        var elementsResult = _uiElementService.GetUIElements(
-            windowHandle,
-            Math.Clamp(maxDepth, 1, 10),
-            filter,
-            cts.Token);
+            VisibleOnly: visibleOnly);
+        var elementsResult = await UIElementTools.ReadTreeAsync(
+            _uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
 
         if (!elementsResult.Success || elementsResult.Elements == null)
         {

@@ -39,14 +39,14 @@ public class ProcessKillTests
     #region Graceful Mode Never Escalates
 
     [Fact]
-    public void KillProcess_Graceful_ProcessExits_ReportsGracefulExit()
+    public async Task KillProcess_Graceful_ProcessExits_ReportsGracefulExit()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -63,14 +63,14 @@ public class ProcessKillTests
     /// called Kill(entireProcessTree: true) and reported success, discarding the user's work.
     /// </summary>
     [Fact]
-    public void KillProcess_Graceful_ProcessStillRunningAfterTimeout_DoesNotForceKill()
+    public async Task KillProcess_Graceful_ProcessStillRunningAfterTimeout_DoesNotForceKill()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -87,14 +87,14 @@ public class ProcessKillTests
     /// the old code force-killed the whole tree immediately.
     /// </summary>
     [Fact]
-    public void KillProcess_Graceful_NoClosableWindow_DoesNotForceKill()
+    public async Task KillProcess_Graceful_NoClosableWindow_DoesNotForceKill()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(false);
         _mockProcess.SetupGet(p => p.HasExited).Returns(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -104,18 +104,18 @@ public class ProcessKillTests
         result.Forced.Should().BeFalse();
         result.ErrorMessage.Should().Contain("still running").And.Contain("forceKill=true");
         VerifyNeverForceKilled();
-        _mockProcess.Verify(p => p.WaitForExit(It.IsAny<int>()), Times.Never);
+        _mockProcess.Verify(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public void KillProcess_Graceful_ProcessExitedBeforeCloseRequest_ReportsExited()
+    public async Task KillProcess_Graceful_ProcessExitedBeforeCloseRequest_ReportsExited()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(false);
         _mockProcess.SetupGet(p => p.HasExited).Returns(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -126,13 +126,13 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Graceful_CloseMainWindowThrows_DoesNotForceKill()
+    public async Task KillProcess_Graceful_CloseMainWindowThrows_DoesNotForceKill()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Throws(new InvalidOperationException("boom"));
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -141,14 +141,14 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Graceful_WaitAccessDenied_ReportsAccessDeniedWithoutForceKill()
+    public async Task KillProcess_Graceful_WaitAccessDenied_ReportsAccessDeniedWithoutForceKill()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Throws(new Win32Exception(5));
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ThrowsAsync(new Win32Exception(5));
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -161,41 +161,79 @@ public class ProcessKillTests
     [InlineData(0)]
     [InlineData(1500)]
     [InlineData(60000)]
-    public void KillProcess_Graceful_UsesConfiguredTimeout(int timeoutMs)
+    public async Task KillProcess_Graceful_UsesConfiguredTimeout(int timeoutMs)
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, gracefulTimeoutMs: timeoutMs);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, gracefulTimeoutMs: timeoutMs);
 
         // Assert
-        _mockProcess.Verify(p => p.WaitForExit(timeoutMs), Times.Once);
+        _mockProcess.Verify(p => p.WaitForExitAsync(timeoutMs, It.IsAny<CancellationToken>()), Times.Once);
         result.ErrorMessage.Should().Contain($"{timeoutMs} ms");
     }
 
     [Fact]
-    public void KillProcess_Graceful_DefaultTimeoutIs5000Ms()
+    public async Task KillProcess_Graceful_CancelledWhileWaitingForTheExit_Throws()
+    {
+        // Arrange - the close request is sent; the process does not exit before the call is cancelled
+        _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, CancellationToken token) =>
+            {
+                await Task.Delay(System.Threading.Timeout.Infinite, token);
+                return true;
+            });
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        // Act
+        var act = () => CreateSut().KillProcessAsync(Pid, confirm: true, gracefulTimeoutMs: 60000, cancellationToken: call.Token);
+
+        // Assert - reported as cancelled, not as a TerminationException result; never escalated
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Once);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public async Task KillProcess_CancelledBeforeAnythingIsSent_DoesNothing()
+    {
+        // Arrange
+        using var call = new CancellationTokenSource();
+        call.Cancel();
+
+        // Act
+        var act = () => CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true, cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public async Task KillProcess_Graceful_DefaultTimeoutIs5000Ms()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        CreateSut().KillProcess(Pid, confirm: true);
+        await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
-        _mockProcess.Verify(p => p.WaitForExit(5000), Times.Once);
+        _mockProcess.Verify(p => p.WaitForExitAsync(5000, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
     [InlineData(-1)]
     [InlineData(60001)]
-    public void KillProcess_TimeoutOutOfRange_ReturnsInvalidTimeout(int timeoutMs)
+    public async Task KillProcess_TimeoutOutOfRange_ReturnsInvalidTimeout(int timeoutMs)
     {
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, gracefulTimeoutMs: timeoutMs);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, gracefulTimeoutMs: timeoutMs);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -208,13 +246,13 @@ public class ProcessKillTests
     #region Force Mode
 
     [Fact]
-    public void KillProcess_Force_KillsTreeAndReportsForcedExit()
+    public async Task KillProcess_Force_KillsTreeAndReportsForcedExit()
     {
         // Arrange
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -229,13 +267,13 @@ public class ProcessKillTests
     /// PAL-14: the old code ignored WaitForExit's result and always reported success.
     /// </summary>
     [Fact]
-    public void KillProcess_Force_ProcessNotExitedAfterWait_ReportsTerminationNotConfirmed()
+    public async Task KillProcess_Force_ProcessNotExitedAfterWait_ReportsTerminationNotConfirmed()
     {
         // Arrange
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -249,13 +287,13 @@ public class ProcessKillTests
     /// catch (UnauthorizedAccessException) never caught.
     /// </summary>
     [Fact]
-    public void KillProcess_Force_AccessDenied_ReportsAccessDenied()
+    public async Task KillProcess_Force_AccessDenied_ReportsAccessDenied()
     {
         // Arrange
         _mockProcess.Setup(p => p.Kill(It.IsAny<bool>())).Throws(new Win32Exception(5));
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -266,15 +304,15 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Force_SomeChildrenNotTerminated_ReportsSuccessWithWarning()
+    public async Task KillProcess_Force_SomeChildrenNotTerminated_ReportsSuccessWithWarning()
     {
         // Arrange
         _mockProcess.Setup(p => p.Kill(true))
             .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(31)));
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -284,15 +322,15 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Force_SomeChildrenNotTerminatedAndRootAlive_ReportsFailure()
+    public async Task KillProcess_Force_SomeChildrenNotTerminatedAndRootAlive_ReportsFailure()
     {
         // Arrange
         _mockProcess.Setup(p => p.Kill(true))
             .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(31)));
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -307,15 +345,15 @@ public class ProcessKillTests
     /// was terminated.
     /// </summary>
     [Fact]
-    public void KillProcess_Force_ChildAccessDeniedButRootExited_ReportsRootTerminatedWithWarning()
+    public async Task KillProcess_Force_ChildAccessDeniedButRootExited_ReportsRootTerminatedWithWarning()
     {
         // Arrange
         _mockProcess.Setup(p => p.Kill(true))
             .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(5)));
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -327,15 +365,15 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Force_AccessDeniedInTreeAndRootStillRunning_ReportsAccessDeniedAfterForcedAttempt()
+    public async Task KillProcess_Force_AccessDeniedInTreeAndRootStillRunning_ReportsAccessDeniedAfterForcedAttempt()
     {
         // Arrange - the root itself is elevated; its children may have been terminated
         _mockProcess.Setup(p => p.Kill(true))
             .Throws(new AggregateException("Not all processes in process tree could be terminated.", new Win32Exception(5)));
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(false);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -347,14 +385,14 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Force_KillThrowsUnexpectedly_ReportsTerminationException()
+    public async Task KillProcess_Force_KillThrowsUnexpectedly_ReportsTerminationException()
     {
         // Arrange
         _mockProcess.Setup(p => p.Kill(true)).Throws(new InvalidOperationException("Cannot be used to terminate a process tree containing the calling process."));
         _mockProcess.SetupGet(p => p.HasExited).Returns(false);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -369,7 +407,7 @@ public class ProcessKillTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void KillProcess_HostAncestor_IsRefusedInBothModes(bool forceKill)
+    public async Task KillProcess_HostAncestor_IsRefusedInBothModes(bool forceKill)
     {
         // Arrange - e.g. the Windows Terminal or VS Code process that hosts the agent. The live ancestor
         // walk still counts when the host guard has no record of it (its ancestor read failed at start).
@@ -377,7 +415,7 @@ public class ProcessKillTests
         _mockWrapper.Setup(w => w.IsAncestorOfCurrentProcess(Pid)).Returns(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: forceKill);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -389,7 +427,7 @@ public class ProcessKillTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void KillProcess_HostProcessThatIsNoAncestor_IsRefusedInBothModes(bool forceKill)
+    public async Task KillProcess_HostProcessThatIsNoAncestor_IsRefusedInBothModes(bool forceKill)
     {
         // Arrange - Windows Terminal as the default terminal: it shows the agent's console but is not an
         // ancestor of the server. The host guard recorded it at start (console host or startup foreground).
@@ -397,7 +435,7 @@ public class ProcessKillTests
         _hostGuard.Setup(g => g.IsHostProcess(Pid)).Returns(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: forceKill);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -408,7 +446,7 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ForceKill_AHostProcessInTheTree_RefusesTheWholeTree()
+    public async Task KillProcess_ForceKill_AHostProcessInTheTree_RefusesTheWholeTree()
     {
         // Arrange - a launcher that started the agent's terminal: forceKill would end the terminal too
         const int terminalPid = 5004;
@@ -417,7 +455,7 @@ public class ProcessKillTests
         _hostGuard.Setup(g => g.IsHostProcess(terminalPid)).Returns(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -430,13 +468,13 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ForceKill_TheServerInTheTree_IsRefusedEvenWithoutAHostGuard()
+    public async Task KillProcess_ForceKill_TheServerInTheTree_IsRefusedEvenWithoutAHostGuard()
     {
         // Arrange - the runtime would also refuse, but only with an exception after other checks
         _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(Environment.ProcessId, "WindowsAppManagerMcp.exe")]);
 
         // Act
-        var result = CreateSut(withHostGuard: false).KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut(withHostGuard: false).KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.CannotTerminateHost));
@@ -444,16 +482,16 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Graceful_AHostProcessInTheTree_DoesNotMatter()
+    public async Task KillProcess_Graceful_AHostProcessInTheTree_DoesNotMatter()
     {
         // Arrange - a graceful close asks only the process's own main window to close; its children live on
         _hostGuard.Setup(g => g.IsHostProcess(5004)).Returns(true);
         _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5004, "WindowsTerminal.exe")]);
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -461,15 +499,15 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ForceKill_WhenTheProcessTreeCannotBeRead_RefusesInsteadOfKillingAnUncheckedTree()
+    public async Task KillProcess_ForceKill_WhenTheProcessTreeCannotBeRead_RefusesInsteadOfKillingAnUncheckedTree()
     {
         // Arrange - the process snapshot failed: the children are unknown, so neither the policy nor the
         // host check could look at them, and Kill(entireProcessTree) would still end them all
         _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -481,15 +519,15 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_Graceful_WhenTheProcessTreeCannotBeRead_StillAsksTheWindowToClose()
+    public async Task KillProcess_Graceful_WhenTheProcessTreeCannotBeRead_StillAsksTheWindowToClose()
     {
         // Arrange - a graceful close never ends the children, so it does not need the tree
         _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -497,14 +535,14 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ForceKill_TreeWithoutHostProcesses_AsksTheHostGuardAboutEveryProcess()
+    public async Task KillProcess_ForceKill_TreeWithoutHostProcesses_AsksTheHostGuardAboutEveryProcess()
     {
         // Arrange
         _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "conhost.exe"), (5002, "child.exe")]);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -517,13 +555,13 @@ public class ProcessKillTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void KillProcess_ExpectedNameMismatch_DoesNothing(bool forceKill)
+    public async Task KillProcess_ExpectedNameMismatch_DoesNothing(bool forceKill)
     {
         // Arrange - the PID now belongs to a different process
         _mockProcess.SetupGet(p => p.ProcessName).Returns("WINWORD");
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: forceKill, expectedProcessName: "notepad");
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill, expectedProcessName: "notepad");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -540,14 +578,14 @@ public class ProcessKillTests
     [InlineData("notepad.exe")]
     [InlineData("NOTEPAD.EXE")]
     [InlineData("  notepad  ")]
-    public void KillProcess_ExpectedNameMatches_Proceeds(string expected)
+    public async Task KillProcess_ExpectedNameMatches_Proceeds(string expected)
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, expectedProcessName: expected);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, expectedProcessName: expected);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -563,13 +601,13 @@ public class ProcessKillTests
     [InlineData("fontdrvhost")]
     [InlineData("csrss")]
     [InlineData("explorer")]
-    public void KillProcess_ProtectedProcess_IsRefusedWithoutTouchingIt(string processName)
+    public async Task KillProcess_ProtectedProcess_IsRefusedWithoutTouchingIt(string processName)
     {
         // Arrange
         _mockProcess.SetupGet(p => p.ProcessName).Returns(processName);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -579,13 +617,13 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ProcessNotFound_ReturnsProcessNotFound()
+    public async Task KillProcess_ProcessNotFound_ReturnsProcessNotFound()
     {
         // Arrange
         _mockWrapper.Setup(w => w.OpenProcess(Pid)).Returns((IProcessHandle?)null);
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -593,13 +631,13 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_ProcessExitsBeforeNameIsRead_ReturnsProcessNotFound()
+    public async Task KillProcess_ProcessExitsBeforeNameIsRead_ReturnsProcessNotFound()
     {
         // Arrange
         _mockProcess.SetupGet(p => p.ProcessName).Throws(new InvalidOperationException("Process has exited"));
 
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: true);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -607,10 +645,10 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_WithoutConfirmation_DoesNotOpenProcess()
+    public async Task KillProcess_WithoutConfirmation_DoesNotOpenProcess()
     {
         // Act
-        var result = CreateSut().KillProcess(Pid, confirm: false);
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: false);
 
         // Assert
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ConfirmationRequired));
@@ -618,14 +656,14 @@ public class ProcessKillTests
     }
 
     [Fact]
-    public void KillProcess_DisposesProcessHandle()
+    public async Task KillProcess_DisposesProcessHandle()
     {
         // Arrange
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
-        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        CreateSut().KillProcess(Pid, confirm: true);
+        await CreateSut().KillProcessAsync(Pid, confirm: true);
 
         // Assert
         _mockProcess.Verify(p => p.Dispose(), Times.Once);

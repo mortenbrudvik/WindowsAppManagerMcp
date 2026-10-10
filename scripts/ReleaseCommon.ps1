@@ -194,6 +194,65 @@ function Get-ChangedBuildInputs([string]$Root, [string]$FromCommit) {
     $files.ToArray()
 }
 
+# $Path relative to $Root with forward slashes (bin/WindowsAppManagerMcp.exe) when it is inside $Root, for messages;
+# otherwise $Path as it is.
+function Get-RepoRelativeLabel([string]$Root, [string]$Path) {
+    if ($Path.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $Path.Substring($Root.Length).TrimStart([char]'\', [char]'/').Replace([char]'\', [char]'/')
+    }
+    $Path
+}
+
+# Why $ExePath is not a current build of the plugin exe (empty when it is): the version manifests agree, the
+# exe's ProductVersion is <version>+<commit sha>, that commit is in this clone, and no build input (see
+# $BuildInputPaths) changed between it and HEAD. With $Tag, the tag must also be v<version>. Reads the exe's file
+# metadata only; it never runs the exe. Test-PluginBinary.ps1 reports these problems, and Test-ToolsSnapshot.ps1
+# -OnlyIfCurrent uses them to decide whether the exe's tools/list is worth comparing.
+function Get-PluginBinaryProblems([string]$Root, [string]$ExePath, [string]$Tag) {
+    $exeLabel = Get-RepoRelativeLabel $Root $ExePath
+    $version = Get-PropsVersion $Root
+    $problems = Test-VersionConsistency $Root
+
+    if ($Tag -and $Tag -ne "v$version") {
+        $problems.Add("Tag '$Tag' does not match the version in Directory.Build.props (expected tag v$version).")
+    }
+
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        $problems.Add("$exeLabel does not exist. Run scripts/Publish-Plugin.ps1.")
+        return , $problems
+    }
+
+    $build = Get-ExeBuildInfo $ExePath
+    $republish = 'Run scripts/Publish-Plugin.ps1 and commit the exe.'
+
+    if ($build.Version -ne $version) {
+        $problems.Add("$exeLabel reports version '$($build.ProductVersion)', but Directory.Build.props is $version. $republish")
+    }
+
+    if (-not $build.CommitSha) {
+        $problems.Add("$exeLabel has no commit SHA in its ProductVersion ('$($build.ProductVersion)'), so its sources cannot be verified. $republish")
+    }
+    elseif ((Invoke-Git $Root @('cat-file', '-e', "$($build.CommitSha)^{commit}")).ExitCode -ne 0) {
+        $problems.Add("$exeLabel was built from commit $($build.CommitSha), which is not in this repository's history (shallow clone, or built from an unpushed commit). $republish")
+    }
+    else {
+        $files = $null
+        try {
+            $files = @(Get-ChangedBuildInputs $Root $build.CommitSha)
+        }
+        catch {
+            $problems.Add("Comparing the build inputs of $($build.CommitSha) and HEAD failed: $($_.Exception.Message)")
+        }
+        if ($files -and $files.Count -gt 0) {
+            $shown = ($files | Select-Object -First 10) -join ', '
+            $more = $(if ($files.Count -gt 10) { " and $($files.Count - 10) more" } else { '' })
+            $problems.Add("$exeLabel is stale: built from $($build.CommitSha.Substring(0, [Math]::Min(12, $build.CommitSha.Length))), and $($files.Count) build input(s) changed since then ($shown$more). $republish")
+        }
+    }
+
+    , $problems
+}
+
 function New-PluginBinaryChange([bool]$Changed, [string]$Reason) {
     [pscustomobject]@{ Changed = $Changed; Reason = $Reason }
 }

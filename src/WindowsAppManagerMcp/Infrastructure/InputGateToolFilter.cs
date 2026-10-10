@@ -90,7 +90,7 @@ public static class InputGateToolFilter
     public static IMcpServerBuilder AddInputGateSerialization(this IMcpServerBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        return builder.AddCallToolFilter(Filter);
+        return builder.WithRequestFilters(filters => filters.AddCallToolFilter(Filter));
     }
 
     /// <summary>True when the tool runs inside the gate through this filter.</summary>

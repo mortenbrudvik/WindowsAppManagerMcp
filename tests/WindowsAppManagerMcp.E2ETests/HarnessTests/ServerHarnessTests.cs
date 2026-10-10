@@ -133,7 +133,7 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
-    public void Server_CannotStartAProcess(DesktopTier tier)
+    public async Task Server_CannotStartAProcess(DesktopTier tier)
     {
         // Arrange - a fully qualified path needs no lookup, so the launch goes straight to the process wrapper.
         // It names a file that does not exist, in a folder that is never created.
@@ -146,7 +146,7 @@ public class ServerHarnessTests : IDisposable
         Wrapper<INativeProcessWrapper>().Invocations.Clear();
 
         // Act
-        var result = processService.LaunchApplication(executable);
+        var result = await processService.LaunchApplicationAsync(executable);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -157,7 +157,7 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
-    public void Server_CannotKillAProcessThatIsNotTheFixture(DesktopTier tier)
+    public async Task Server_CannotKillAProcessThatIsNotTheFixture(DesktopTier tier)
     {
         // Arrange - kill_process opens the process, reads its name, then kills it
         var processId = Environment.ProcessId + 1;
@@ -175,7 +175,7 @@ public class ServerHarnessTests : IDisposable
         processWrapper.Setup(w => w.GetDescendantsOf(processId)).Returns([]);
 
         // Act
-        var result = processService.KillProcess(processId, confirm: true, forceKill: true);
+        var result = await processService.KillProcessAsync(processId, confirm: true, forceKill: true);
 
         // Assert
         result.Success.Should().BeFalse();

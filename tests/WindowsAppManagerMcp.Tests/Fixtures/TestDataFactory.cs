@@ -169,13 +169,14 @@ public static class TestDataFactory
     {
         var mock = new Mock<IProcessService>();
 
-        mock.Setup(p => p.LaunchApplication(
+        mock.Setup(p => p.LaunchApplicationAsync(
                 It.IsAny<string>(),
                 It.IsAny<string[]?>(),
                 It.IsAny<string?>(),
                 It.IsAny<bool>(),
-                It.IsAny<int>()))
-            .Returns((string exe, string[]? args, string? dir, bool wait, int timeout) =>
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string exe, string[]? args, string? dir, bool wait, int timeout, CancellationToken _) =>
                 new LaunchResult(
                     Success: true,
                     ProcessId: 9999,
@@ -686,12 +687,13 @@ public static class TestDataFactory
             error: error,
             errorCode: errorCode);
 
-        mock.Setup(s => s.GetUIElements(
+        mock.Setup(s => s.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
                 It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(result);
+            .ReturnsAsync(result);
 
         return mock;
     }

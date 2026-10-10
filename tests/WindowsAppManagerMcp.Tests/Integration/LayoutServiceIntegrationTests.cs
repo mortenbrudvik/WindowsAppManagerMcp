@@ -186,7 +186,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         // Assert
         result.WindowsLaunched.Should().Be(1);
         _mockProcessService.Verify(
-            p => p.LaunchApplication("launched.exe", null, null, true, 5000),
+            p => p.LaunchApplicationAsync("launched.exe", null, null, true, 5000, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 

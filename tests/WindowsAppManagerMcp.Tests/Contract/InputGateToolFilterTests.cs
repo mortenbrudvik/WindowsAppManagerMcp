@@ -317,7 +317,7 @@ public class InputGateToolFilterTests
         services.AddMcpServer().AddInputGateSerialization();
 
         using var provider = services.BuildServiceProvider();
-        provider.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.CallToolFilters
+        provider.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.Request.CallToolFilters
             .Should().ContainSingle();
     }
 
@@ -340,9 +340,8 @@ public class InputGateToolFilterTests
             server.Setup(s => s.ServerOptions).Returns(new McpServerOptions { ToolCollection = tools });
         }
 
-        return new(server.Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
+        return new(server.Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall }, new CallToolRequestParams { Name = tool })
         {
-            Params = new CallToolRequestParams { Name = tool },
             Services = session == null ? null : new ServiceCollection().AddSingleton(session).BuildServiceProvider()
         };
     }

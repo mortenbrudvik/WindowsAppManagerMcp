@@ -5,12 +5,21 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 public interface IProcessService
 {
-    LaunchResult LaunchApplication(
+    /// <summary>
+    /// Launches an application, and with <paramref name="waitForWindow"/> waits up to
+    /// <paramref name="waitTimeoutMs"/> for its window.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels the call: before the start nothing is started; during the wait for the window the started program keeps
+    /// running and the call throws <see cref="OperationCanceledException"/>.
+    /// </param>
+    Task<LaunchResult> LaunchApplicationAsync(
         string executable,
         string[]? arguments = null,
         string? workingDirectory = null,
         bool waitForWindow = false,
-        int waitTimeoutMs = 5000);
+        int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Lists running processes, optionally filtered by name.
@@ -42,25 +51,36 @@ public interface IProcessService
     /// </param>
     /// <param name="gracefulTimeoutMs">Graceful mode: how long to wait for the process to exit (0-60000 ms).</param>
     /// <param name="expectedProcessName">Optional PID-reuse guard: the expected process name, with or without .exe.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the wait for the process to exit; the close request or termination already sent stands, and the call
+    /// throws <see cref="OperationCanceledException"/>. Cancelled before anything was sent, nothing is done.
+    /// </param>
     /// <returns>Result stating whether a close was requested, whether termination was forced, and whether the process exited.</returns>
-    KillResult KillProcess(
+    Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = 5000,
-        string? expectedProcessName = null);
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Launches multiple applications in batch.
+    /// Launches multiple applications in batch, one after another.
     /// </summary>
     /// <param name="applications">List of applications to launch with their arguments and working directories.</param>
     /// <param name="waitForWindows">Whether to wait for each application window to appear.</param>
     /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for each window.</param>
+    /// <param name="progress">Receives "i of n" after each application, started or not. Optional.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the batch: no further application is started, and the call throws <see cref="OperationCanceledException"/>.
+    /// </param>
     /// <returns>Results for each launch attempt.</returns>
-    IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
+    Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
         bool waitForWindows = false,
-        int waitTimeoutMs = 5000);
+        int waitTimeoutMs = 5000,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Launches a browser with CDP (Chrome DevTools Protocol) debug port enabled.
@@ -71,14 +91,16 @@ public interface IProcessService
     /// <param name="userDataDir">Optional separate user data directory to avoid conflicts with existing sessions.</param>
     /// <param name="waitForWindow">Whether to wait for the browser window to appear.</param>
     /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for the window.</param>
+    /// <param name="cancellationToken">Cancels the call, as for <see cref="LaunchApplicationAsync"/>.</param>
     /// <returns>Result containing process ID, window handle, CDP port, and user data directory.</returns>
-    DebugBrowserLaunchResult LaunchBrowserWithDebug(
+    Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         string browser = "chrome",
         string? url = null,
         int port = 9222,
         string? userDataDir = null,
         bool waitForWindow = true,
-        int waitTimeoutMs = 10000);
+        int waitTimeoutMs = 10000,
+        CancellationToken cancellationToken = default);
 }
 
 public record ProcessInfo(

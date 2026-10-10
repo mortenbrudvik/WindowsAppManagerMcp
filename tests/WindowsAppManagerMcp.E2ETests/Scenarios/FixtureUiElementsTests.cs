@@ -32,13 +32,13 @@ public class FixtureUiElementsTests
     }
 
     [DesktopNoInputFact]
-    public void GetUIElements_ReportsTheFixtureAutomationIdsAndControlTypes()
+    public async Task GetUIElements_ReportsTheFixtureAutomationIdsAndControlTypes()
     {
         // Arrange
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
         // Act
-        var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+        var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 
         // Assert
         result.Success.Should().BeTrue(result.Error);
@@ -55,14 +55,14 @@ public class FixtureUiElementsTests
     }
 
     [DesktopNoInputFact]
-    public void GetUIElements_BoundsMatchWhereTheFixtureDrawsItsElements()
+    public async Task GetUIElements_BoundsMatchWhereTheFixtureDrawsItsElements()
     {
         // Arrange
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
         var ready = e2e.Fixture.Ready;
 
         // Act
-        var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+        var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 
         // Assert - both sides are DPI aware, so both report physical screen pixels
         result.Success.Should().BeTrue(result.Error);
@@ -84,13 +84,13 @@ public class FixtureUiElementsTests
     }
 
     [DesktopNoInputFact]
-    public void GetUIElements_VirtualizedList_ExposesOnlyTheRealizedItems()
+    public async Task GetUIElements_VirtualizedList_ExposesOnlyTheRealizedItems()
     {
         // Arrange
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
         // Act
-        var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+        var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 
         // Assert - WPF realizes the visible items and a small cache, not all 10,000; finding the rest needs
         // ItemContainerPattern (roadmap M3), which this list is here to test

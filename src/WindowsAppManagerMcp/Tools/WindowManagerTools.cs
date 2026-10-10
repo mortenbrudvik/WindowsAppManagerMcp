@@ -230,7 +230,7 @@ public class WindowManagerTools
                  "More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed.")]
-    public BatchWindowResult CloseWindowsBatch(
+    public async Task<BatchWindowResult> CloseWindowsBatch(
         [Description("Array of window handles to close")]
         WindowCloseRequest[] windows,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
@@ -238,7 +238,8 @@ public class WindowManagerTools
         [Description("Must be true to close more than 3 windows in one batch. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
         bool confirm = false,
         [Description(ForceDescription + " Applies to every window in the batch.")]
-        bool force = false)
+        bool force = false,
+        CancellationToken cancellationToken = default)
     {
         if (windows.Length > MaxCloseBatchWithoutConfirm && !confirm)
         {
@@ -250,7 +251,7 @@ public class WindowManagerTools
 
         var handles = windows.Select(w => (nint)w.Handle).ToList();
 
-        var results = _windowService.CloseWindowsBatch(handles, force, delayBetweenMs);
+        var results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
 
         var items = results.Select(r => new WindowResultItem(
             Handle: r.Handle.ToInt64(),
@@ -345,17 +346,18 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "set_windows_bounds_batch")]
     [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls." + BatchErrors)]
-    public BatchWindowResult SetWindowsBoundsBatch(
+    public async Task<BatchWindowResult> SetWindowsBoundsBatch(
         [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowBoundsPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default)
     {
         var refusals = placements.Select(p => BatchPolicyRefusal(p.Handle)).ToList();
         var servicePlacements = placements.Where((_, i) => refusals[i] == null).Select(p =>
             ((nint)p.Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront)).ToList();
 
-        var results = _windowService.SetWindowBoundsBatch(servicePlacements, delayBetweenMs);
+        var results = await _windowService.SetWindowBoundsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
 
         var items = InOrder(refusals, results.Select(r =>
         {
@@ -378,11 +380,12 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "snap_windows_batch")]
     [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls." + BatchErrors)]
-    public BatchWindowResult SnapWindowsBatch(
+    public async Task<BatchWindowResult> SnapWindowsBatch(
         [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowSnapPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        CancellationToken cancellationToken = default)
     {
         // Invalid positions and windows the policy denies get their item here; the others go to the service
         var refusals = placements.Select(p => ParseSnapPosition(p.Position) == null
@@ -392,7 +395,7 @@ public class WindowManagerTools
             .Select(p => ((nint)p.Handle, ParseSnapPosition(p.Position)!.Value, p.MonitorIndex, p.BringToFront))
             .ToList();
 
-        var results = _windowService.SnapWindowsBatch(servicePlacements, delayBetweenMs);
+        var results = await _windowService.SnapWindowsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
 
         var items = InOrder(refusals, results.Select(r =>
         {
@@ -415,11 +418,12 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "set_windows_state_batch")]
     [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation." + BatchErrors)]
-    public BatchWindowResult SetWindowsStateBatch(
+    public async Task<BatchWindowResult> SetWindowsStateBatch(
         [Description("Array of state changes with handle and state")]
         WindowStateChange[] changes,
         [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
-        int delayBetweenMs = 30)
+        int delayBetweenMs = 30,
+        CancellationToken cancellationToken = default)
     {
         var refusals = changes.Select(c => BatchPolicyRefusal(c.Handle)).ToList();
         var serviceChanges = changes.Where((_, i) => refusals[i] == null).Select(c =>
@@ -434,7 +438,7 @@ public class WindowManagerTools
             return ((nint)c.Handle, state);
         }).ToList();
 
-        var results = _windowService.SetWindowStateBatch(serviceChanges, delayBetweenMs);
+        var results = await _windowService.SetWindowStateBatchAsync(serviceChanges, delayBetweenMs, cancellationToken).ConfigureAwait(false);
 
         var items = InOrder(refusals, results.Select(r =>
         {

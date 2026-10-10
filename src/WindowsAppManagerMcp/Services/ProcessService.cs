@@ -50,12 +50,16 @@ public class ProcessService : IProcessService
         _hostGuard = hostGuard;
     }
 
-    public LaunchResult LaunchApplication(
+    /// <summary>How often the wait for a launched application's window looks for it.</summary>
+    private const int WindowPollIntervalMs = 100;
+
+    public async Task<LaunchResult> LaunchApplicationAsync(
         string executable,
         string[]? arguments = null,
         string? workingDirectory = null,
         bool waitForWindow = false,
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default)
     {
         var plan = PlanLaunch(executable, arguments, workingDirectory);
         if (!plan.IsValid)
@@ -64,6 +68,9 @@ public class ProcessService : IProcessService
         }
 
         var warning = plan.Warning;
+
+        // A call cancelled before the start starts nothing
+        cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
@@ -77,7 +84,7 @@ public class ProcessService : IProcessService
 
             if (waitForWindow)
             {
-                windowHandle = WaitForMainWindow(process, waitTimeoutMs);
+                windowHandle = await WaitForMainWindowAsync(process, waitTimeoutMs, cancellationToken).ConfigureAwait(false);
             }
 
             return new LaunchResult(
@@ -86,6 +93,11 @@ public class ProcessService : IProcessService
                 WindowHandle: windowHandle,
                 Warning: warning
             );
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancelled while waiting for the window: the program was started and keeps running
+            throw;
         }
         catch (Exception ex)
         {
@@ -365,34 +377,49 @@ public class ProcessService : IProcessService
         "this server, an ancestor of it such as the terminal or editor hosting the agent, the process that shows " +
         "its console or the console server behind it (conhost or OpenConsole), or the app that was in front when the server started";
 
-    public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
+    public async Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
         bool waitForWindows = false,
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        var results = new List<LaunchResult>();
+        var results = new List<LaunchResult>(applications.Count);
 
-        foreach (var app in applications)
+        for (var i = 0; i < applications.Count; i++)
         {
-            var result = LaunchApplication(
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var app = applications[i];
+            var result = await LaunchApplicationAsync(
                 app.Executable,
                 app.Arguments,
                 app.WorkingDirectory,
                 waitForWindows,
-                waitTimeoutMs);
+                waitTimeoutMs,
+                cancellationToken).ConfigureAwait(false);
 
             results.Add(result);
+            progress?.Report(new OperationProgress(i + 1, applications.Count,
+                $"{i + 1} of {applications.Count}: {app.Executable} {DescribeLaunch(result, waitForWindows)}"));
         }
 
         return results;
     }
 
-    public KillResult KillProcess(
+    private static string DescribeLaunch(LaunchResult result, bool waitedForWindow) =>
+        !result.Success ? $"was not started ({result.ErrorCode})"
+        : !waitedForWindow ? "started"
+        : result.WindowHandle != null ? "started, its window appeared"
+        : "started, no window appeared in time";
+
+    public async Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
-        string? expectedProcessName = null)
+        string? expectedProcessName = null,
+        CancellationToken cancellationToken = default)
     {
         // Safety check: require explicit confirmation
         if (!confirm)
@@ -554,9 +581,12 @@ public class ProcessService : IProcessService
                 }
             }
 
+            // A call cancelled before anything is sent does nothing
+            cancellationToken.ThrowIfCancellationRequested();
+
             return forceKill
-                ? TerminateForcefully(process, processId, processName)
-                : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
+                ? await TerminateForcefullyAsync(process, processId, processName, cancellationToken).ConfigureAwait(false)
+                : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -605,7 +635,8 @@ public class ProcessService : IProcessService
     /// Graceful mode: posts WM_CLOSE to the main window and waits. Never escalates to a forced kill;
     /// a process that cannot be closed or is still running is left alone and reported as such.
     /// </summary>
-    private static KillResult CloseGracefully(IProcessHandle process, int processId, string processName, int timeoutMs)
+    private static async Task<KillResult> CloseGracefullyAsync(
+        IProcessHandle process, int processId, string processName, int timeoutMs, CancellationToken cancellationToken)
     {
         bool closeRequested;
         try
@@ -638,7 +669,12 @@ public class ProcessService : IProcessService
         bool exited;
         try
         {
-            exited = process.WaitForExit(timeoutMs);
+            exited = await process.WaitForExitAsync(timeoutMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The close request was sent; the process may still exit, or show a prompt
+            throw;
         }
         catch (Exception ex)
         {
@@ -666,7 +702,8 @@ public class ProcessService : IProcessService
     /// <summary>
     /// Force mode: terminates the process and its child processes, then confirms that it exited.
     /// </summary>
-    private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
+    private static async Task<KillResult> TerminateForcefullyAsync(
+        IProcessHandle process, int processId, string processName, CancellationToken cancellationToken)
     {
         AggregateException? treeFailures = null;
         try
@@ -699,7 +736,12 @@ public class ProcessService : IProcessService
         bool exited;
         try
         {
-            exited = process.WaitForExit(ForceKillExitWaitMs);
+            exited = await process.WaitForExitAsync(ForceKillExitWaitMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The termination was requested; only the confirmation that the process exited is not waited for
+            throw;
         }
         catch (Exception ex)
         {
@@ -817,7 +859,11 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    private nint? WaitForMainWindow(IProcessHandle process, int timeoutMs)
+    /// <summary>
+    /// Looks for the launched process's window every <see cref="WindowPollIntervalMs"/> until
+    /// <paramref name="timeoutMs"/> has passed. Null when none appeared, or when the process can no longer be read.
+    /// </summary>
+    private async Task<nint?> WaitForMainWindowAsync(IProcessHandle process, int timeoutMs, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -837,13 +883,13 @@ public class ProcessService : IProcessService
                 {
                     return windows[0].Handle;
                 }
-
-                Thread.Sleep(100);
             }
             catch
             {
                 break;
             }
+
+            await Task.Delay(WindowPollIntervalMs, cancellationToken).ConfigureAwait(false);
         }
 
         return null;
@@ -874,13 +920,14 @@ public class ProcessService : IProcessService
         "chrome", "edge", "brave"
     };
 
-    public DebugBrowserLaunchResult LaunchBrowserWithDebug(
+    public async Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         string browser = "chrome",
         string? url = null,
         int port = 9222,
         string? userDataDir = null,
         bool waitForWindow = true,
-        int waitTimeoutMs = 10000)
+        int waitTimeoutMs = 10000,
+        CancellationToken cancellationToken = default)
     {
         // Validate browser type
         if (!SupportedBrowsers.Contains(browser))
@@ -930,12 +977,13 @@ public class ProcessService : IProcessService
         try
         {
             // Launch browser
-            var launchResult = LaunchApplication(
+            var launchResult = await LaunchApplicationAsync(
                 browserPath,
                 arguments.ToArray(),
                 workingDirectory: null,
                 waitForWindow: waitForWindow,
-                waitTimeoutMs: waitTimeoutMs);
+                waitTimeoutMs: waitTimeoutMs,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
 
             if (!launchResult.Success)
             {
@@ -957,6 +1005,10 @@ public class ProcessService : IProcessService
                 UserDataDir: effectiveUserDataDir,
                 Error: null,
                 ErrorCode: null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
