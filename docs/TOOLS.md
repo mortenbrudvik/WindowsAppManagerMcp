@@ -275,7 +275,6 @@ Get information about the currently focused window. Any window is reported, with
 
 ---
 
-
 ## Window Control
 
 Tools for manipulating window position, size, and state.
@@ -3055,7 +3054,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
-| `InvalidControlType` | [get_ui_elements](#get_ui_elements), capture_with_elements (in `error`) | A `controlTypes` name is not a known control type; `error` lists the valid names |
+| `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools | `format` is not auto, png, jpeg or jpg |
 | `InvalidHandle` | [Window Control](#window-control) tools, [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window handle is zero or invalid, or the window no longer exists |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |

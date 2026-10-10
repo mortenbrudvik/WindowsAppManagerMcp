@@ -147,8 +147,10 @@ public interface INativeWindowWrapper
     bool IsHungAppWindow(nint hWnd);
 
     /// <summary>
-    /// Gets the DPI of the window (GetDpiForWindow), for example 96 at 100% scaling. Returns 0 when
-    /// the handle is not a window.
+    /// Gets the DPI of the window (GetDpiForWindow). The value depends on the window's DPI awareness:
+    /// 96 for a DPI-unaware window on any monitor, the system DPI for a system-aware window, and the
+    /// DPI of its monitor only for a per-monitor-aware window. Read a monitor's DPI with
+    /// GetDpiForMonitor (INativeMonitorWrapper) instead. Returns 0 when the handle is not a window.
     /// </summary>
     uint GetDpiForWindow(nint hWnd);
 }
