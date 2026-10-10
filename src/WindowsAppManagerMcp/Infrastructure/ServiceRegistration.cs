@@ -53,6 +53,14 @@ public static class ServiceRegistration
             return new LayoutService(windowService, monitorService, processService, createLayoutStorage());
         });
 
+        // Safety probes: integrity, elevation and desktop state, and the agent host recorded at start
+        // (HostGuardStartup creates the guard when the server starts, see IHostGuard)
+        services.AddSingleton<INativeProcessWrapper, NativeProcessWrapper>();
+        services.AddSingleton<INativeSecurityWrapper, NativeSecurityWrapper>();
+        services.AddSingleton<IProcessSecurityProbe, ProcessSecurityProbe>();
+        services.AddSingleton<IHostGuard, HostGuard>();
+        services.AddHostedService<HostGuardStartup>();
+
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();
         services.AddSingleton<WindowManagerTools>();
