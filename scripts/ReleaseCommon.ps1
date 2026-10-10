@@ -72,6 +72,38 @@ function Get-ExeBuildInfo([string]$ExePath) {
     }
 }
 
+# Copies an exe over $Target even while $Target is running (for example the MCP server of the
+# Claude Code session that runs /update-plugin). Windows cannot overwrite a running exe but can
+# rename it, so the running copy is moved aside to "<name>.old-<timestamp>"; the running process
+# is unaffected and the next start uses the new file. Leftovers from earlier runs are removed
+# once nothing runs them any more.
+function Copy-ExeReplacingRunning([string]$Source, [string]$Target) {
+    $directory = Split-Path -Parent $Target
+    $leaf = Split-Path -Leaf $Target
+    Get-ChildItem -LiteralPath $directory -Filter "$leaf.old-*" -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Target -Force
+        return
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $Target)) {
+            throw
+        }
+    }
+
+    $aside = "$Target.old-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    try {
+        Move-Item -LiteralPath $Target -Destination $aside -Force
+    }
+    catch {
+        throw "Could not replace $Target (in use?) and could not move it aside: $($_.Exception.Message)"
+    }
+    Write-Warning "$Target was in use, so it was moved to $aside. Restart the MCP client (Claude Code) to load the new build."
+    Copy-Item -LiteralPath $Source -Destination $Target -Force
+}
+
 function Invoke-Git([string]$Root, [string[]]$Arguments) {
     # Windows PowerShell 5.1 turns redirected native stderr into errors, which 'Stop' would make fatal.
     $ErrorActionPreference = 'Continue'

@@ -115,12 +115,7 @@ if ($build.CommitSha -ne $headSha) {
 # 6. Copy into place
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $target = Join-Path $OutputDirectory $script:ExeName
-try {
-    Copy-Item -LiteralPath $exe -Destination $target -Force
-}
-catch {
-    throw "Could not write $target. If an MCP client is running this exe, stop it and retry. $($_.Exception.Message)"
-}
+Copy-ExeReplacingRunning -Source $exe -Target $target
 
 $written = Get-ExeBuildInfo $target
 if ($written.ProductVersion -ne $build.ProductVersion) {
