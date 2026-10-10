@@ -75,8 +75,8 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
 
         // Size and screen origin of what is captured. GetWindowDC and PrintWindow without
         // PW_CLIENTONLY start at the window rectangle's corner; GetDC and PW_CLIENTONLY start at the
-        // client area's corner, which only ClientToScreen reports. All values are physical pixels
-        // because the server is per-monitor DPI aware.
+        // client area's top-left corner on screen. All values are physical pixels because the server
+        // is per-monitor DPI aware.
         RECT rect;
         int width, height, originX, originY;
 
@@ -95,14 +95,19 @@ public class ScreenCaptureWrapper : IScreenCaptureWrapper
             if (!NativeMethods.User32.GetClientRect(windowHandle, out rect))
                 throw new InvalidOperationException("Failed to get client rect");
 
-            var clientOrigin = new POINT { X = 0, Y = 0 };
-            if (!NativeMethods.User32.ClientToScreen(windowHandle, ref clientOrigin))
+            // The whole client rectangle on screen. In a right-to-left mirrored window
+            // (WS_EX_LAYOUTRTL, Arabic or Hebrew UI) client x = 0 is the right edge, so
+            // ClientToScreen(0, 0) would give the top-right corner; MapWindowPoints with a RECT keeps
+            // left < right, so Left is the left edge in every layout.
+            var clientOnScreen = rect;
+            if (NativeMethods.User32.MapWindowPoints(windowHandle, nint.Zero, ref clientOnScreen, 2) == 0 &&
+                Marshal.GetLastPInvokeError() != 0)
                 throw new InvalidOperationException("Failed to get the screen position of the client area");
 
             width = rect.Width;
             height = rect.Height;
-            originX = clientOrigin.X;
-            originY = clientOrigin.Y;
+            originX = Math.Min(clientOnScreen.Left, clientOnScreen.Right);
+            originY = Math.Min(clientOnScreen.Top, clientOnScreen.Bottom);
         }
 
         if (width <= 0 || height <= 0)

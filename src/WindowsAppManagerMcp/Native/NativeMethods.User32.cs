@@ -164,9 +164,14 @@ internal static partial class NativeMethods
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool GetClientRect(nint hWnd, out RECT lpRect);
 
-        [LibraryImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static partial bool ClientToScreen(nint hWnd, ref POINT lpPoint);
+        /// <summary>
+        /// Converts points from one window's coordinates to another's. With cPoints 2 the points are
+        /// treated as a RECT, and for a mirrored (WS_EX_LAYOUTRTL) window left and right are swapped
+        /// back so that left is not greater than right. Returns 0 on failure, but also for a zero
+        /// offset: SetLastError marshalling clears the last error first, so a failure has a non-zero one.
+        /// </summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial int MapWindowPoints(nint hWndFrom, nint hWndTo, ref RECT lpPoints, uint cPoints);
 
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
