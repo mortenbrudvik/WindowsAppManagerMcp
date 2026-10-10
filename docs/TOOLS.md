@@ -1,6 +1,6 @@
 # Windows App Manager - MCP Tools Reference
 
-A comprehensive guide to all 38 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 42 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -78,7 +78,7 @@ Find windows matching specific criteria.
     "processName": "chrome",
     "processId": 12456,
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 0
   },
@@ -88,7 +88,7 @@ Find windows matching specific criteria.
     "processName": "chrome",
     "processId": 12456,
     "bounds": { "x": 100, "y": 100, "width": 1200, "height": 800 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 1
   }
@@ -125,7 +125,7 @@ List all visible top-level windows on the system.
     "processName": "Code",
     "processId": 8432,
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-    "state": "Maximized",
+    "state": "maximized",
     "isVisible": true,
     "monitorIndex": 0
   },
@@ -135,7 +135,7 @@ List all visible top-level windows on the system.
     "processName": "WindowsTerminal",
     "processId": 15672,
     "bounds": { "x": 960, "y": 0, "width": 960, "height": 1040 },
-    "state": "Normal",
+    "state": "normal",
     "isVisible": true,
     "monitorIndex": 1
   }
@@ -168,7 +168,7 @@ Get information about the currently focused window.
   "processName": "Code",
   "processId": 8432,
   "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
-  "state": "Maximized",
+  "state": "maximized",
   "isVisible": true,
   "monitorIndex": 0
 }
@@ -318,7 +318,7 @@ Minimize, maximize, or restore a window.
 ```json
 {
   "success": true,
-  "newState": "Maximized"
+  "newState": "maximized"
 }
 ```
 
@@ -822,7 +822,13 @@ Get information about the primary display.
 
 ## Screenshot
 
-Tools for capturing screenshots of screens, regions, and windows. Screenshots are returned as base64-encoded image data, enabling AI to visually orient and understand what's on screen.
+Tools for capturing screenshots of screens, regions, and windows.
+
+**How images are returned:** every capture tool returns its result as JSON text. By default the image is a base64 string in `imageData`. It is not sent as MCP image content, so a model cannot see the picture by reading that string, and a full-resolution PNG can be several megabytes of text. To keep results usable:
+
+- Pass `saveToFile: true` to write the image to disk instead. `imageData` is then null and `filePath` holds the path: `outputPath` if given, otherwise an auto-named `screenshot_<timestamp>_<id>.png` (or `.jpg`) in the temp directory. Open that file with an image viewer; in Claude Code, the Read tool displays images.
+- Pass `maxWidth` to scale wide images down proportionally (narrower images are unchanged), and `format: "jpeg"` for smaller files. `width` and `height` are the output image size. `originalWidth` and `originalHeight` are set only when the image was scaled down. `maxWidth` must be a positive number.
+- If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image data.
 
 ### list_screens
 
@@ -895,6 +901,9 @@ Capture a screenshot of a specific monitor.
 | monitorIndex | int | No | primary | Monitor index (0-based). Defaults to primary monitor. |
 | format | string | No | "png" | Image format: "png" (lossless) or "jpeg" (smaller) |
 | quality | int | No | 85 | JPEG quality (1-100). Only used when format is "jpeg". |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Take a screenshot of the primary monitor"
@@ -934,6 +943,36 @@ Capture a screenshot of a specific monitor.
 }
 ```
 
+**Example: small JPEG saved to a file**
+> "Take a screenshot I can open, and keep it small"
+
+```json
+{
+  "name": "take_screenshot",
+  "arguments": {
+    "format": "jpeg",
+    "maxWidth": 1280,
+    "saveToFile": true
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "imageFormat": "jpeg",
+  "width": 1280,
+  "height": 720,
+  "capturedRegion": { "x": 0, "y": 0, "width": 3840, "height": 2160 },
+  "monitorIndex": 1,
+  "scaleFactor": 1.5,
+  "filePath": "C:\\Users\\me\\AppData\\Local\\Temp\\screenshot_20260110_101500_3f2a9c0d4b8e4f6a9d1c2b3a4e5f6a7b.jpg",
+  "originalWidth": 3840,
+  "originalHeight": 2160
+}
+```
+
 ---
 
 ### capture_region
@@ -949,6 +988,9 @@ Capture a screenshot of an arbitrary screen region.
 | height | int | Yes | - | Height of the region in pixels |
 | format | string | No | "png" | Image format: "png" or "jpeg" |
 | quality | int | No | 85 | JPEG quality (1-100) |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Capture a 800x600 region starting at position 100, 200"
@@ -992,6 +1034,9 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | includeFrame | bool | No | true | Include window frame/decoration (title bar, borders) |
 | format | string | No | "png" | Image format: "png" or "jpeg" |
 | quality | int | No | 85 | JPEG quality (1-100) |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels |
 
 **Example:**
 > "Capture the VS Code window"
@@ -1053,6 +1098,9 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | visibleOnly | bool | No | true | Only include visible elements |
 | highlightInteractable | bool | No | true | Use brighter colors for enabled elements |
 | timeoutMs | int | No | 5000 | Timeout for UI element retrieval in ms |
+| saveToFile | bool | No | false | Write the image to a file and return `filePath`; `imageData` is null |
+| outputPath | string | No | temp file | File path used when saveToFile is true |
+| maxWidth | int | No | - | Scale the image down proportionally to at most this width in pixels. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 
 **Color Coding:**
 | Control Type | Color |
@@ -1132,7 +1180,9 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 }
 ```
 
-> **Note:** The `imageBounds` coordinates are relative to the captured image, while `screenBounds` are absolute screen coordinates. Use `imageBounds` for visual reference and `screenBounds` for click automation.
+> **Note:** The `imageBounds` coordinates are relative to the output image (scaled when `maxWidth` shrinks it), while `screenBounds` are absolute screen coordinates. Use `imageBounds` for visual reference and `screenBounds` for click automation.
+
+> **Note:** `controlTypes` currently has the same limitation as in [get_ui_elements](#get_ui_elements): matching elements inside non-matching containers are left out.
 
 ---
 
@@ -1158,6 +1208,8 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 
 **Supported Control Types:**
 Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
+
+> **Note:** The `controlTypes` filter currently keeps an element only if every container above it (below the window) also matches the filter. Matching elements nested inside non-matching containers, such as a Button inside a Pane or a MenuItem inside a MenuBar, are left out. If a filtered call returns fewer elements than expected, call again without `controlTypes` and filter the result yourself, or narrow it with `interactableOnly`, `minWidth` and `minHeight`.
 
 **Example:**
 > "Get all UI elements from the Notepad window"
@@ -2249,7 +2301,7 @@ find_windows { "processName": "notepad" }
 
 2. Get UI elements with bounding boxes:
 ```
-get_ui_elements { "handle": 12345, "controlTypes": "Button,MenuItem" }
+get_ui_elements { "handle": 12345, "interactableOnly": true }
 ```
 
 3. Find the target element in the response and calculate center:

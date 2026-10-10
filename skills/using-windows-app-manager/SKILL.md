@@ -18,7 +18,7 @@ description: |
 
 # Using Windows App Manager
 
-Windows App Manager provides 38 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 42 MCP tools for managing Windows applications, windows, and desktop layouts.
 
 ## Safety Rules (Read First)
 
@@ -86,7 +86,7 @@ Use this skill when the user asks to:
 - "Show my saved layouts"
 - "Delete the [name] layout"
 
-## Available Tools (36)
+## Available Tools (42)
 
 ### Window Discovery (3 tools)
 
@@ -107,7 +107,7 @@ Use this skill when the user asks to:
 | `focus_window` | Bring to foreground | handle |
 | `close_window` | Close gracefully | handle |
 | `snap_window` | Snap to preset position | handle, position, monitorIndex |
-| `move_window_to_monitor` | Move to monitor | handle, monitorIndex, maximize |
+| `move_window_to_monitor` | Move to monitor | handle, monitorIndex, positioning |
 
 ### Batch Operations (5 tools)
 
@@ -117,7 +117,7 @@ Use this skill when the user asks to:
 | `snap_windows_batch` | Snap multiple windows | placements |
 | `set_windows_state_batch` | Set state of multiple windows | changes |
 | `close_windows_batch` | Close multiple windows | windows |
-| `launch_applications_batch` | Launch multiple applications | applications |
+| `launch_applications_batch` | Launch multiple applications | applications, waitForWindows |
 
 ### Monitor Info (2 tools)
 
@@ -131,16 +131,18 @@ Use this skill when the user asks to:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `list_screens` | List screens for capture | (none) |
-| `take_screenshot` | Capture a monitor | monitorIndex, format, quality |
-| `capture_region` | Capture screen region | x, y, width, height, format |
-| `capture_window` | Capture a window | handle, includeFrame, format |
-| `capture_with_elements` | Capture with UI overlays | handle, controlTypes, maxDepth |
+| `take_screenshot` | Capture a monitor | monitorIndex, format, maxWidth, saveToFile |
+| `capture_region` | Capture screen region | x, y, width, height, format, maxWidth, saveToFile |
+| `capture_window` | Capture a window | handle, includeFrame, format, maxWidth, saveToFile |
+| `capture_with_elements` | Capture with UI overlays | handle, maxDepth, interactableOnly, maxWidth, saveToFile |
+
+All capture tools also accept `quality` (JPEG) and `outputPath` (used with `saveToFile`).
 
 ### UI Automation (1 tool)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, interactableOnly |
+| `get_ui_elements` | Get UI element tree | handle, maxDepth, interactableOnly, minWidth, minHeight |
 
 ### Browser Reading (4 tools)
 
@@ -166,9 +168,9 @@ Use this skill when the user asks to:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `launch_application` | Launch app by path/name | path, arguments, workingDirectory |
-| `list_processes` | List running processes | nameFilter |
-| `kill_process` | Terminate process | pid, confirm |
+| `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow |
+| `list_processes` | List running processes | nameFilter, includeWindowless |
+| `kill_process` | Terminate process | processId, confirm |
 
 ### Layout Presets (5 tools)
 
@@ -187,6 +189,14 @@ Use this skill when the user asks to:
 - Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`.
 - Image pixels are not screen pixels once `maxWidth` scales a capture down (`originalWidth` is then set). To click something, use `screenBounds` from `capture_with_elements` or `bounds` from `get_ui_elements`. Do not use positions measured on the image.
 - Clicks outside every monitor are rejected with `CoordinatesOutOfBounds`.
+
+## Screenshots
+
+The capture tools return JSON text. The image is a base64 string in `imageData`. It is not sent as image content, so reading that string does not let you see the picture, and a full-resolution PNG is very large.
+
+- To look at a capture, pass `saveToFile: true` and open the returned `filePath` with your client's file or image viewer (in Claude Code, the Read tool shows images). `imageData` is then null. Pass `outputPath` to choose the file location; by default the file goes to the temp directory.
+- To keep a capture small, pass `maxWidth` (for example 1280) and `format: "jpeg"`.
+- If you only need positions, call `get_ui_elements`. It returns element bounds with no image data.
 
 ## Reading Browser Pages
 
@@ -235,31 +245,31 @@ The `snap_window` tool supports 14 positions:
 3. Later, use `apply_layout` to restore
 
 ### Multi-Monitor Setup
-1. Use `get_monitors` to see available displays
+1. Use `get_monitors` to see available displays and `primaryIndex`
 2. Use `move_window_to_monitor` to move windows to specific monitors
-3. Combine with `snap_window` for precise positioning
+3. Combine with `snap_window` (pass `monitorIndex`) for precise positioning
 
 ### Launch and Position App
-1. Use `launch_application` to start the app
-2. Wait briefly for window to appear
-3. Use `find_windows` to get the handle
-4. Use `snap_window` or `move_window` to position
+1. Use `launch_application` with `waitForWindow: true`. The result includes `windowHandle`
+2. If `windowHandle` is null, the window may belong to another process (for example an app that was already running). Find it with `find_windows` using `processName` or `titleContains`
+3. Use `snap_window` or `move_window` with the handle
+4. Check `newBounds` in the result
 
-### Capture and Analyze Window Content
+### Capture and View Window Content
 1. Use `find_windows` to locate the target window
-2. Use `capture_window` to get a screenshot
-3. Analyze the base64-encoded image data
-4. Take actions based on visual content
+2. Use `capture_window` with `saveToFile: true`, `format: "jpeg"` and `maxWidth: 1280`
+3. Open the returned `filePath` to view the image
+4. For anything you will click, take coordinates from `get_ui_elements` or from `screenBounds` in `capture_with_elements`
 
 ### Get UI Elements for Programmatic Interaction
 1. Use `find_windows` to locate the target window
-2. Use `get_ui_elements` to get element tree with bounding boxes
-3. Filter by controlTypes (Button, Edit, etc.) if needed
-4. Use element coordinates to plan click automation
+2. Use `get_ui_elements` to get the element tree with bounding boxes
+3. Trim the result with `interactableOnly`, `minWidth` and `minHeight` if needed
+4. Use element `bounds` to plan click automation
 
 ### Visual Element Discovery
 1. Use `find_windows` to locate the target window
-2. Use `capture_with_elements` to get annotated screenshot
+2. Use `capture_with_elements` (with `saveToFile: true`) to get an annotated screenshot
 3. Elements are color-coded (green=buttons, blue=inputs, etc.)
 4. Use `imageBounds` for visual reference, `screenBounds` for clicks
 
@@ -294,12 +304,12 @@ To close a window, use `close_window`, not a key chord.
 - Use `processName` filter for reliable matching (titles can change)
 - Layout presets can auto-launch missing applications with `launchMissing: true`
 - The `close_window` tool sends WM_CLOSE for graceful shutdown (apps can prompt to save)
-- Monitor indices are 0-based (primary is typically 0)
-- Screenshots return base64-encoded images - use PNG for UI clarity, JPEG for smaller size
+- Monitor indices are 0-based; the primary monitor is not always 0 (check `primaryIndex`)
+- Use PNG for UI clarity and JPEG for smaller size; see Screenshots above for viewing captures
 - `capture_window` works on occluded windows but not minimized ones
 - `capture_with_elements` provides visual overlays - great for debugging UI automation
 - `get_ui_elements` is lightweight when only coordinates are needed (no image data)
-- Filter elements by controlTypes: Button, Edit, CheckBox, ComboBox, etc.
+- The `controlTypes` filter currently drops matching elements that sit inside non-matching containers (for example a Button inside a Pane). If a filtered call returns fewer elements than expected, call again without `controlTypes` and filter the result yourself
 - For click automation, always use `get_ui_elements` first to get accurate screen coordinates
 - Calculate click center: x = bounds.x + bounds.width/2, y = bounds.y + bounds.height/2
 - Coordinates are validated against monitor bounds before clicking

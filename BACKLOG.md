@@ -178,7 +178,7 @@
 
 ---
 
-## MCP Tools Summary (38 Tools)
+## MCP Tools Summary (42 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|

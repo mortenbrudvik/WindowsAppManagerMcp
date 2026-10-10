@@ -68,7 +68,7 @@ dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -
 
 Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
 
-## Available Tools (38)
+## Available Tools (42)
 
 | Category | Tools |
 |----------|-------|
