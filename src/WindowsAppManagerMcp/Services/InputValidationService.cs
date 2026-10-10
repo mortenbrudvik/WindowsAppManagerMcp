@@ -8,10 +8,23 @@ namespace WindowsAppManagerMcp.Services;
 /// Service for validating and sanitizing user inputs for security.
 /// Prevents path traversal attacks, command injection, and unsafe protocol execution.
 /// </summary>
+/// <remarks>
+/// Applications are started with ShellExecuteEx (UseShellExecute=true), which never parses the
+/// executable path or the working directory with a shell. Absolute paths are therefore only checked
+/// for characters that cannot appear in a Windows path, so legitimate locations such as
+/// "C:\Program Files (x86)\..." or "C:\Users\O'Brien\..." are accepted. Bare names and relative
+/// paths never legitimately contain shell metacharacters, so they keep the stricter check.
+/// The real cmd.exe injection surface (arguments passed to batch files) is handled by
+/// <see cref="ProcessService"/> once the launch target has been resolved.
+/// </remarks>
 public partial class InputValidationService : IInputValidationService
 {
-    // Shell metacharacters that could enable command injection
+    // Shell metacharacters rejected in bare names and relative paths, where they only appear when
+    // someone tries to smuggle a command line into the executable or working directory field.
     private static readonly char[] ShellMetacharacters = ['&', '|', ';', '<', '>', '$', '`', '"', '\'', '(', ')', '{', '}', '\n', '\r'];
+
+    // Characters that can never appear in a Windows file system path (besides control characters).
+    private static readonly char[] InvalidPathCharacters = ['"', '<', '>', '|', '*', '?'];
 
     // Dangerous protocols that could execute arbitrary code
     private static readonly string[] DangerousProtocols =
@@ -29,15 +42,17 @@ public partial class InputValidationService : IInputValidationService
         "data:"
     ];
 
-    // Safe protocols that should be allowed
+    // Safe protocols that are passed to their registered handler unchanged.
+    // file:// is not listed here: it is converted to a local path and validated as one.
     private static readonly string[] SafeProtocols =
     [
         "http://",
         "https://",
-        "file://",
         "mailto:",
         "tel:"
     ];
+
+    private const string FileProtocol = "file:";
 
     // Suspicious executables that warrant a warning
     private static readonly string[] SuspiciousExecutables =
@@ -71,24 +86,14 @@ public partial class InputValidationService : IInputValidationService
 
         executable = executable.Trim();
 
-        // Check if it's a protocol URI FIRST (before metacharacter check)
+        // Check if it's a protocol URI FIRST (before the character checks)
         // This ensures protocol URIs are handled properly even if they contain special chars
         if (IsProtocolUri(executable))
         {
             return ValidateProtocolUri(executable);
         }
 
-        // Check for shell metacharacters (command injection) - only for non-URI paths
-        if (ContainsShellMetacharacters(executable))
-        {
-            return new ExecutableValidationResult(
-                false,
-                Error: "Executable contains invalid characters that could enable command injection",
-                ErrorCode: nameof(LaunchErrorCode.InvalidCharacters));
-        }
-
-        // Validate as file path
-        return ValidateFilePath(executable);
+        return ValidateExecutablePath(executable);
     }
 
     public PathValidationResult ValidateWorkingDirectory(string? workingDirectory)
@@ -101,8 +106,7 @@ public partial class InputValidationService : IInputValidationService
 
         workingDirectory = workingDirectory.Trim();
 
-        // Check for shell metacharacters
-        if (ContainsShellMetacharacters(workingDirectory))
+        if (ContainsInvalidCharacters(workingDirectory))
         {
             return new PathValidationResult(
                 false,
@@ -131,6 +135,22 @@ public partial class InputValidationService : IInputValidationService
             Warning: warning);
     }
 
+    private ExecutableValidationResult ValidateExecutablePath(string executable)
+    {
+        if (ContainsInvalidCharacters(executable))
+        {
+            return new ExecutableValidationResult(
+                false,
+                Error: Path.IsPathFullyQualified(executable)
+                    ? "Executable path contains invalid characters (\", <, >, |, *, ? and control characters are not allowed in Windows paths)"
+                    : "Executable contains invalid characters that could enable command injection",
+                ErrorCode: nameof(LaunchErrorCode.InvalidCharacters));
+        }
+
+        // Validate as file path
+        return ValidateFilePath(executable);
+    }
+
     private ExecutableValidationResult ValidateProtocolUri(string uri)
     {
         // Check for dangerous protocols
@@ -140,8 +160,16 @@ public partial class InputValidationService : IInputValidationService
             {
                 return new ExecutableValidationResult(
                     false,
-                    Error: $"Protocol '{protocol.TrimEnd(':')}' is blocked for security reasons");
+                    Error: $"Protocol '{protocol.TrimEnd(':')}' is blocked for security reasons",
+                    ErrorCode: nameof(LaunchErrorCode.BlockedProtocol));
             }
+        }
+
+        // file:// URIs name a local or UNC path. ShellExecuteEx opens or executes that path, so it
+        // gets exactly the same checks as a plain path instead of bypassing them.
+        if (uri.StartsWith(FileProtocol, StringComparison.OrdinalIgnoreCase))
+        {
+            return ValidateFileUri(uri);
         }
 
         // Check if it's a safe protocol
@@ -160,10 +188,39 @@ public partial class InputValidationService : IInputValidationService
             var protocolName = uri[..colonIndex];
             return new ExecutableValidationResult(
                 false,
-                Error: $"Unknown protocol '{protocolName}' is blocked for security reasons. Allowed: http, https, file, mailto, tel");
+                Error: $"Unknown protocol '{protocolName}' is blocked for security reasons. Allowed: http, https, file, mailto, tel",
+                ErrorCode: nameof(LaunchErrorCode.UnknownProtocol));
         }
 
-        return new ExecutableValidationResult(false, Error: "Invalid URI format");
+        return new ExecutableValidationResult(false, Error: "Invalid URI format", ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+    }
+
+    private ExecutableValidationResult ValidateFileUri(string uri)
+    {
+        if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed) || !parsed.IsFile)
+        {
+            return new ExecutableValidationResult(false, Error: "Invalid file URI format", ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
+        string localPath;
+        try
+        {
+            localPath = parsed.LocalPath;
+        }
+        catch (InvalidOperationException)
+        {
+            return new ExecutableValidationResult(false, Error: "Invalid file URI format", ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
+        if (string.IsNullOrWhiteSpace(localPath) || !Path.IsPathFullyQualified(localPath))
+        {
+            return new ExecutableValidationResult(
+                false,
+                Error: "File URI must name an absolute local path (file:///C:/...) or a UNC path (file://server/share/...)",
+                ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
+        return ValidateExecutablePath(localPath);
     }
 
     private ExecutableValidationResult ValidateFilePath(string path)
@@ -174,7 +231,7 @@ public partial class InputValidationService : IInputValidationService
         var traversalResult = CheckPathTraversal(path);
         if (!traversalResult.IsValid)
         {
-            return new ExecutableValidationResult(false, Error: traversalResult.Error);
+            return new ExecutableValidationResult(false, Error: traversalResult.Error, ErrorCode: traversalResult.ErrorCode);
         }
 
         var normalizedPath = traversalResult.NormalizedPath ?? path;
@@ -207,9 +264,18 @@ public partial class InputValidationService : IInputValidationService
             Warning: warning);
     }
 
-    private static bool ContainsShellMetacharacters(string input)
+    /// <summary>
+    /// Fully qualified paths (C:\..., \\server\share\...) are only checked for characters that cannot
+    /// appear in a Windows path. Bare names and relative paths are also checked for shell metacharacters.
+    /// </summary>
+    private static bool ContainsInvalidCharacters(string input)
     {
-        return input.IndexOfAny(ShellMetacharacters) >= 0;
+        if (input.Any(char.IsControl) || input.IndexOfAny(InvalidPathCharacters) >= 0)
+        {
+            return true;
+        }
+
+        return !Path.IsPathFullyQualified(input) && input.IndexOfAny(ShellMetacharacters) >= 0;
     }
 
     private static bool IsProtocolUri(string input)
@@ -246,19 +312,8 @@ public partial class InputValidationService : IInputValidationService
 
         try
         {
-            // Normalize the path to catch hidden traversal attempts
+            // Normalize the path (resolves '.' segments and mixed separators)
             var normalized = Path.GetFullPath(path);
-
-            // For absolute paths, verify the normalized path matches what was expected
-            if (Path.IsPathRooted(path))
-            {
-                var originalDir = Path.GetDirectoryName(Path.GetFullPath(path.Replace("..", "")));
-                var normalizedDir = Path.GetDirectoryName(normalized);
-
-                // If normalization changed the directory structure, it's suspicious
-                // (This catches encoded traversal or other tricks)
-            }
-
             return (true, null, null, normalized);
         }
         catch (Exception ex)

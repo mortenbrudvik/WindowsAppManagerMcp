@@ -215,6 +215,196 @@ public class InputValidationServiceTests
 
     #endregion
 
+    #region ValidateExecutable - Legitimate Absolute Paths (PAL-2 / BRW-2 regressions)
+
+    /// <summary>
+    /// Edge's default install location on x64 Windows. launch_browser_with_debug(browser: "edge")
+    /// passes this path to launch_application, which rejected it because of the parentheses.
+    /// </summary>
+    [Fact]
+    public void ValidateExecutable_EdgeDefaultX86Path_ReturnsValid()
+    {
+        // Arrange
+        const string edgePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+
+        // Act
+        var result = _sut.ValidateExecutable(edgePath);
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.Error.Should().BeNull();
+        result.ErrorCode.Should().BeNull();
+        result.SanitizedExecutable.Should().Be(edgePath);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Program Files (x86)\Steam\steam.exe")]
+    [InlineData(@"C:\Users\O'Brien\AppData\Local\Programs\tool\tool.exe")]
+    [InlineData(@"C:\R&D\tools\build.exe")]
+    [InlineData(@"C:\ProgramData\{0F3A6B2C-1D2E-4F50-9A8B-7C6D5E4F3A2B}\setup.exe")]
+    [InlineData(@"C:\Tools; Old\app.exe")]
+    [InlineData(@"C:\Money$\app.exe")]
+    [InlineData(@"\\server\share\Team (Shared)\app.exe")]
+    [InlineData(@"C:/Program Files (x86)/App/app.exe")]
+    public void ValidateExecutable_AbsolutePathWithLegitimateSpecialCharacters_ReturnsValid(string path)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(path);
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.SanitizedExecutable.Should().Be(Path.GetFullPath(path));
+    }
+
+    /// <summary>
+    /// Characters that can never appear in a Windows path are still rejected for absolute paths.
+    /// </summary>
+    [Theory]
+    [InlineData("C:\\Program Files\\App\\app.exe\" & calc.exe & \"")]
+    [InlineData(@"C:\Program Files\App\app.exe | calc.exe")]
+    [InlineData(@"C:\Program Files\App\app.exe > C:\out.txt")]
+    [InlineData(@"C:\Program Files\App\app.exe < C:\in.txt")]
+    [InlineData(@"C:\Program Files\App\*.exe")]
+    [InlineData(@"C:\Program Files\App\app?.exe")]
+    [InlineData("C:\\Program Files\\App\\app.exe\r\ncalc.exe")]
+    [InlineData("C:\\Program Files\\App\\app\0.exe")]
+    public void ValidateExecutable_AbsolutePathWithCharactersInvalidInWindowsPaths_ReturnsInvalid(string path)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(path);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Contain("invalid characters");
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidCharacters));
+    }
+
+    #endregion
+
+    #region ValidateExecutable - Error Codes on Every Rejection (PAL-15)
+
+    [Theory]
+    [InlineData("ms-settings:display")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("shell:appsfolder")]
+    public void ValidateExecutable_DangerousProtocol_ReturnsBlockedProtocolErrorCode(string uri)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.BlockedProtocol));
+    }
+
+    [Fact]
+    public void ValidateExecutable_UnknownProtocol_ReturnsUnknownProtocolErrorCode()
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable("custom-protocol://something");
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnknownProtocol));
+    }
+
+    [Theory]
+    [InlineData(@"..\..\malicious.exe")]
+    [InlineData(@"C:\..\..\windows\cmd.exe")]
+    public void ValidateExecutable_PathTraversal_ReturnsPathTraversalErrorCode(string path)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(path);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.PathTraversal));
+    }
+
+    [Theory]
+    [InlineData("notepad.exe & calc.exe")]
+    [InlineData("$(calc.exe)")]
+    public void ValidateExecutable_BareNameWithShellMetacharacters_ReturnsInvalidCharactersErrorCode(string executable)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(executable);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidCharacters));
+    }
+
+    #endregion
+
+    #region ValidateExecutable - file:// URIs (pro-m7)
+
+    /// <summary>
+    /// file:// URIs used to skip every path check. They are now converted to a local path and
+    /// validated like any other path, so the launch uses the same rules as a plain path.
+    /// </summary>
+    [Fact]
+    public void ValidateExecutable_FileUri_ReturnsLocalPath()
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable("file:///C:/Program%20Files%20(x86)/App/readme.html");
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.SanitizedExecutable.Should().Be(@"C:\Program Files (x86)\App\readme.html");
+    }
+
+    [Fact]
+    public void ValidateExecutable_FileUriToShell_ReturnsSuspiciousExecutableWarning()
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable("file:///C:/Windows/System32/cmd.exe");
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.SanitizedExecutable.Should().Be(@"C:\Windows\System32\cmd.exe");
+        result.Warning.Should().Contain("shell/script interpreter");
+    }
+
+    [Fact]
+    public void ValidateExecutable_FileUriToNetworkShare_ReturnsNetworkWarning()
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable("file://server/share/tool.exe");
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.SanitizedExecutable.Should().Be(@"\\server\share\tool.exe");
+        result.Warning.Should().Contain("network path");
+    }
+
+    [Fact]
+    public void ValidateExecutable_FileUriWithCharactersInvalidInPaths_ReturnsInvalidCharacters()
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable("file:///C:/a<b.exe");
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidCharacters));
+    }
+
+    [Theory]
+    [InlineData("file://")]
+    [InlineData("file:///")]
+    [InlineData("file:a")]
+    public void ValidateExecutable_FileUriWithoutLocalPath_ReturnsInvalidUri(string uri)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidUri));
+    }
+
+    #endregion
+
     #region ValidateWorkingDirectory - Valid Inputs
 
     [Theory]
@@ -263,8 +453,13 @@ public class InputValidationServiceTests
     #region ValidateWorkingDirectory - Shell Metacharacters
 
     [Theory]
-    [InlineData(@"C:\folder & other")]
     [InlineData(@"C:\folder|pipe")]
+    [InlineData(@"C:\folder<in")]
+    [InlineData(@"C:\folder>out")]
+    [InlineData("C:\\\"quoted\"")]
+    [InlineData("C:\\folder\nnext")]
+    [InlineData(@"folder & other")]
+    [InlineData(@"relative\dir;calc")]
     public void ValidateWorkingDirectory_ShellMetacharacters_ReturnsInvalid(string directory)
     {
         // Arrange & Act
@@ -273,6 +468,28 @@ public class InputValidationServiceTests
         // Assert
         result.IsValid.Should().BeFalse();
         result.Error.Should().Contain("invalid characters");
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidWorkingDirectory));
+    }
+
+    /// <summary>
+    /// Regression (PAL-2): absolute directories may legitimately contain parentheses, ampersands,
+    /// apostrophes and braces. ShellExecute never passes the working directory through a shell.
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\Program Files (x86)\Microsoft\Edge\Application")]
+    [InlineData(@"C:\folder & other")]
+    [InlineData(@"C:\Users\O'Brien\Documents")]
+    [InlineData(@"C:\R&D\{0F3A6B2C-1D2E-4F50-9A8B-7C6D5E4F3A2B}")]
+    [InlineData(@"\\server\share\Team (Shared)")]
+    public void ValidateWorkingDirectory_AbsolutePathWithLegitimateSpecialCharacters_ReturnsValid(string directory)
+    {
+        // Arrange & Act
+        var result = _sut.ValidateWorkingDirectory(directory);
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.SanitizedPath.Should().Be(Path.GetFullPath(directory));
     }
 
     #endregion

@@ -23,9 +23,21 @@ public interface IProcessService
     /// </summary>
     /// <param name="processId">The process ID to terminate.</param>
     /// <param name="confirm">Must be true to confirm termination (safety check).</param>
-    /// <param name="forceKill">If true, kills immediately. If false, attempts graceful close first.</param>
-    /// <returns>Result indicating success or failure with error details.</returns>
-    KillResult KillProcess(int processId, bool confirm, bool forceKill = false);
+    /// <param name="forceKill">
+    /// If true, terminates the process and all of its child processes immediately.
+    /// If false, only requests a graceful close (WM_CLOSE to the main window) and never escalates:
+    /// a process that cannot be closed, or is still running after the timeout, is left running and
+    /// the result reports success=false.
+    /// </param>
+    /// <param name="gracefulTimeoutMs">Graceful mode: how long to wait for the process to exit (0-60000 ms).</param>
+    /// <param name="expectedProcessName">Optional PID-reuse guard: the expected process name, with or without .exe.</param>
+    /// <returns>Result stating whether a close was requested, whether termination was forced, and whether the process exited.</returns>
+    KillResult KillProcess(
+        int processId,
+        bool confirm,
+        bool forceKill = false,
+        int gracefulTimeoutMs = 5000,
+        string? expectedProcessName = null);
 
     /// <summary>
     /// Launches multiple applications in batch.

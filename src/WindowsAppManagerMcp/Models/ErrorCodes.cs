@@ -44,7 +44,10 @@ public enum LaunchErrorCode
     /// <summary>The executable path is empty or null.</summary>
     EmptyExecutablePath = 1,
 
-    /// <summary>The executable path contains invalid characters (command injection attempt).</summary>
+    /// <summary>
+    /// The executable contains characters that are not valid in a Windows path (", &lt;, &gt;, |, *, ?, control characters),
+    /// or a bare name / relative path contains shell metacharacters.
+    /// </summary>
     InvalidCharacters = 2,
 
     /// <summary>Path traversal attempt detected (..).</summary>
@@ -69,7 +72,22 @@ public enum LaunchErrorCode
     ProcessStartFailed = 9,
 
     /// <summary>An exception occurred during launch.</summary>
-    LaunchException = 10
+    LaunchException = 10,
+
+    /// <summary>
+    /// An argument contains characters that cmd.exe would interpret (&amp; | &lt; &gt; ^ % ! " or control characters),
+    /// and the target is a batch file (.bat/.cmd) or could not be verified to be a native executable.
+    /// </summary>
+    UnsafeBatchArguments = 11,
+
+    /// <summary>An argument is null or contains a NUL character.</summary>
+    InvalidArguments = 12,
+
+    /// <summary>
+    /// A bare executable name was found only in the working directory. Bare names are never resolved
+    /// from the working directory, to avoid running a planted program.
+    /// </summary>
+    ExecutableInWorkingDirectory = 13
 }
 
 /// <summary>
@@ -92,14 +110,41 @@ public enum ProcessErrorCode
     /// <summary>Cannot terminate the current process.</summary>
     CannotTerminateSelf = 4,
 
-    /// <summary>Access denied - insufficient permissions to terminate the process.</summary>
+    /// <summary>
+    /// Access denied - insufficient permissions to terminate the process
+    /// (typically it runs elevated or as another user).
+    /// </summary>
     AccessDenied = 5,
 
     /// <summary>The confirmation parameter was not set to true.</summary>
     ConfirmationRequired = 6,
 
     /// <summary>An exception occurred during termination.</summary>
-    TerminationException = 7
+    TerminationException = 7,
+
+    /// <summary>
+    /// Graceful mode: the process has no main window that can receive a close request (windowless,
+    /// tray-only, or main window disabled by a modal dialog). The process was left running.
+    /// </summary>
+    NoClosableWindow = 8,
+
+    /// <summary>
+    /// Graceful mode: a close request was sent but the process was still running when the timeout
+    /// elapsed (for example it is showing a "save changes?" prompt). The process was left running.
+    /// </summary>
+    GracefulCloseTimedOut = 9,
+
+    /// <summary>The process name did not match expectedProcessName (the PID may have been reused). Nothing was done.</summary>
+    ProcessNameMismatch = 10,
+
+    /// <summary>The process is an ancestor of this server (for example the terminal or editor hosting the agent).</summary>
+    CannotTerminateHost = 11,
+
+    /// <summary>Forced termination was requested, but the process had not exited when the wait ended.</summary>
+    TerminationNotConfirmed = 12,
+
+    /// <summary>The graceful close timeout is outside the allowed range.</summary>
+    InvalidTimeout = 13
 }
 
 /// <summary>

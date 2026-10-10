@@ -297,51 +297,50 @@ public class AppLauncherToolsTests
 
     #region KillProcess Tests
 
+    private void SetupKill(KillResult result)
+    {
+        _mockProcessService.Setup(p => p.KillProcess(
+            It.IsAny<int>(),
+            It.IsAny<bool>(),
+            It.IsAny<bool>(),
+            It.IsAny<int>(),
+            It.IsAny<string?>()))
+            .Returns(result);
+    }
+
     [Fact]
     public void KillProcess_CallsServiceWithAllParameters()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(true, 1234, "notepad"));
+        SetupKill(new KillResult(true, 1234, "notepad"));
         var sut = CreateSut();
 
         // Act
-        sut.KillProcess(processId: 1234, confirm: true, forceKill: true);
+        sut.KillProcess(processId: 1234, confirm: true, forceKill: true, gracefulTimeoutMs: 2500, expectedProcessName: "notepad.exe");
 
         // Assert
-        _mockProcessService.Verify(p => p.KillProcess(1234, true, true), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcess(1234, true, true, 2500, "notepad.exe"), Times.Once);
     }
 
     [Fact]
     public void KillProcess_WithDefaults_UsesDefaultForceKill()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(true, 1234, "notepad"));
+        SetupKill(new KillResult(true, 1234, "notepad"));
         var sut = CreateSut();
 
         // Act
         sut.KillProcess(processId: 1234, confirm: true);
 
-        // Assert
-        _mockProcessService.Verify(p => p.KillProcess(1234, true, false), Times.Once);
+        // Assert - graceful by default, 5 s timeout, no name guard
+        _mockProcessService.Verify(p => p.KillProcess(1234, true, false, 5000, null), Times.Once);
     }
 
     [Fact]
     public void KillProcess_ReturnsSuccessResult()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(true, 1234, "notepad"));
+        SetupKill(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
         var sut = CreateSut();
 
         // Act
@@ -353,17 +352,55 @@ public class AppLauncherToolsTests
         result.ProcessName.Should().Be("notepad");
         result.Error.Should().BeNull();
         result.ErrorCode.Should().BeNull();
+        result.CloseRequested.Should().BeTrue();
+        result.Exited.Should().BeTrue();
+        result.Forced.Should().BeFalse();
+    }
+
+    [Fact]
+    public void KillProcess_MapsForcedExitAndWarning()
+    {
+        // Arrange
+        SetupKill(new KillResult(true, 1234, "node", Forced: true, Exited: true, Warning: "Some child processes could not be terminated"));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.KillProcess(processId: 1234, confirm: true, forceKill: true);
+
+        // Assert
+        result.Forced.Should().BeTrue();
+        result.Exited.Should().BeTrue();
+        result.CloseRequested.Should().BeFalse();
+        result.Warning.Should().Be("Some child processes could not be terminated");
+    }
+
+    [Fact]
+    public void KillProcess_GracefulTimeout_MapsStillRunningResult()
+    {
+        // Arrange
+        SetupKill(new KillResult(
+            false, 1234, "notepad",
+            ErrorMessage: "still running",
+            ErrorCode: nameof(ProcessErrorCode.GracefulCloseTimedOut),
+            CloseRequested: true));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.KillProcess(processId: 1234, confirm: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("GracefulCloseTimedOut");
+        result.CloseRequested.Should().BeTrue();
+        result.Forced.Should().BeFalse();
+        result.Exited.Should().BeFalse();
     }
 
     [Fact]
     public void KillProcess_ReturnsFailureResult()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(false, 1234, null, "Process not found", "ProcessNotFound"));
+        SetupKill(new KillResult(false, 1234, null, "Process not found", "ProcessNotFound"));
         var sut = CreateSut();
 
         // Act
@@ -381,11 +418,7 @@ public class AppLauncherToolsTests
     public void KillProcess_WithConfirmFalse_ReturnsConfirmationRequired()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(false, 1234, null, "Confirmation required", "ConfirmationRequired"));
+        SetupKill(new KillResult(false, 1234, null, "Confirmation required", "ConfirmationRequired"));
         var sut = CreateSut();
 
         // Act
@@ -400,11 +433,7 @@ public class AppLauncherToolsTests
     public void KillProcess_WithProtectedProcess_ReturnsProtectedProcess()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.KillProcess(
-            It.IsAny<int>(),
-            It.IsAny<bool>(),
-            It.IsAny<bool>()))
-            .Returns(new KillResult(false, 4, "System", "Cannot terminate protected system process", "ProtectedProcess"));
+        SetupKill(new KillResult(false, 4, "System", "Cannot terminate protected system process", "ProtectedProcess"));
         var sut = CreateSut();
 
         // Act
