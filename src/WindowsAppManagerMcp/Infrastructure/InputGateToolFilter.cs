@@ -26,10 +26,14 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// working, so the agent can still look.
 /// </para>
 /// <para>
-/// No wait is unbounded. A tool waits for the gate at most <see cref="GateWaitTimeout"/>, as an input call does,
-/// then returns InputBusy without running; a pause while it waits returns PausedByUser at once. And a tool that
-/// holds the gate does not wait on a window without a deadline: SetWindowPos and ShowWindow go through
+/// Every single wait is bounded. A tool waits for the gate at most <see cref="GateWaitTimeout"/>, as an input call
+/// does, then returns InputBusy without running; a pause while it waits returns PausedByUser at once. And a tool
+/// that holds the gate does not wait on a window without a deadline: SetWindowPos and ShowWindow go through
 /// <see cref="Services.Interfaces.IWindowCallRunner"/>, so a hung application cannot hold the gate until it recovers.
+/// A batch's total time inside the gate still grows with its length: up to the clamped waitTimeoutMs per launched
+/// application, the clamped delayBetweenMs per window, and one call deadline per window of a slow but live
+/// application. The agent chooses that length; a tool that waits for the gate meanwhile gets InputBusy after
+/// <see cref="GateWaitTimeout"/>.
 /// </para>
 /// </remarks>
 public static class InputGateToolFilter
