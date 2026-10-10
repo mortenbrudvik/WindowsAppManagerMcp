@@ -1887,7 +1887,9 @@ Rules for new tests:
 
 `.github/workflows/test.yml` runs the suite on every push and pull request to `main`. It
 leaves desktop tests out, kills a test that hangs for 5 minutes, caps the job at 20 minutes,
-and enforces a line-coverage threshold:
+and enforces a line-coverage threshold. A second step then runs only the desktop tests with
+`WAM_ALLOW_DESKTOP_TESTS` unset and fails unless every one of them is reported as skipped and
+at least one exists (the gate canaries), so CI proves the gate holds on the runner:
 
 ```yaml
 # GitHub Actions (abridged from .github/workflows/test.yml)
