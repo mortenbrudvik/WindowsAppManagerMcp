@@ -80,6 +80,19 @@ public class ToolSurfaceSnapshotTests
     }
 
     [Fact]
+    public void BuildWorkflow_ComparesTheToolsListOfThePublishedAndTheCommittedExe_WithThisSnapshot()
+    {
+        // The CI guard that catches an exe whose tools differ from its sources (roadmap M2.12)
+        var workflow = Snapshots.ReadNormalized(RepositoryFiles.PathOf(".github", "workflows", "build.yml"))!;
+        var script = Snapshots.ReadNormalized(RepositoryFiles.PathOf("scripts", "Test-ToolsSnapshot.ps1"))!;
+
+        workflow.Should().Contain("./scripts/Test-ToolsSnapshot.ps1 -ExePath ./publish/WindowsAppManagerMcp.exe\n")
+            .And.Contain("./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/WindowsAppManagerMcp.exe -OnlyIfCurrent");
+        script.Should().Contain($"'{string.Join('/', ToolSurface.SnapshotRelativePath)}'",
+            "the script's default snapshot is the file this test keeps current");
+    }
+
+    [Fact]
     public void Differences_NamesAddedRemovedAndChangedTools()
     {
         // The failure message must point at what changed, not just say "differs"

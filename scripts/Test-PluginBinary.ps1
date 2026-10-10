@@ -52,50 +52,9 @@ $root = Get-RepoRoot
 if (-not $ExePath) {
     $ExePath = Join-Path $root "bin/$($script:ExeName)"
 }
-$exeLabel = $ExePath
-if ($ExePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
-    $exeLabel = $ExePath.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
-}
-
+$exeLabel = Get-RepoRelativeLabel $root $ExePath
 $version = Get-PropsVersion $root
-$problems = Test-VersionConsistency $root
-
-if ($Tag -and $Tag -ne "v$version") {
-    $problems.Add("Tag '$Tag' does not match the version in Directory.Build.props (expected tag v$version).")
-}
-
-if (-not (Test-Path -LiteralPath $ExePath)) {
-    $problems.Add("$exeLabel does not exist. Run scripts/Publish-Plugin.ps1.")
-}
-else {
-    $build = Get-ExeBuildInfo $ExePath
-    $republish = 'Run scripts/Publish-Plugin.ps1 and commit the exe.'
-
-    if ($build.Version -ne $version) {
-        $problems.Add("$exeLabel reports version '$($build.ProductVersion)', but Directory.Build.props is $version. $republish")
-    }
-
-    if (-not $build.CommitSha) {
-        $problems.Add("$exeLabel has no commit SHA in its ProductVersion ('$($build.ProductVersion)'), so its sources cannot be verified. $republish")
-    }
-    elseif ((Invoke-Git $root @('cat-file', '-e', "$($build.CommitSha)^{commit}")).ExitCode -ne 0) {
-        $problems.Add("$exeLabel was built from commit $($build.CommitSha), which is not in this repository's history (shallow clone, or built from an unpushed commit). $republish")
-    }
-    else {
-        $files = $null
-        try {
-            $files = @(Get-ChangedBuildInputs $root $build.CommitSha)
-        }
-        catch {
-            $problems.Add("Comparing the build inputs of $($build.CommitSha) and HEAD failed: $($_.Exception.Message)")
-        }
-        if ($files -and $files.Count -gt 0) {
-            $shown = ($files | Select-Object -First 10) -join ', '
-            $more = $(if ($files.Count -gt 10) { " and $($files.Count - 10) more" } else { '' })
-            $problems.Add("$exeLabel is stale: built from $($build.CommitSha.Substring(0, [Math]::Min(12, $build.CommitSha.Length))), and $($files.Count) build input(s) changed since then ($shown$more). $republish")
-        }
-    }
-}
+$problems = Get-PluginBinaryProblems $root $ExePath $Tag
 
 $inActions = $env:GITHUB_ACTIONS -eq 'true'
 if ($problems.Count -eq 0) {
