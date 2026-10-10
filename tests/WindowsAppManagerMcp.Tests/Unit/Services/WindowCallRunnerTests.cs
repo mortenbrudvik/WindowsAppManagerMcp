@@ -9,7 +9,15 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class WindowCallRunnerTests
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromMilliseconds(100);
+    /// <summary>
+    /// The deadline of a runner with calls that must answer: far above the time a new thread takes to start and run a
+    /// trivial delegate, even on a loaded machine, so such a call is never given up on.
+    /// </summary>
+    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(1);
+
+    /// <summary>The deadline of a runner whose every call blocks or is refused: nothing has to answer in time.</summary>
+    private static readonly TimeSpan BlockedDeadline = TimeSpan.FromMilliseconds(100);
+
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
     private const nint HungWindow = 0x1001, OtherHungWindow = 0x1002, SameAppWindow = 0x1003, OtherWindow = 0x2001, ThirdWindow = 0x3001;
@@ -26,8 +34,8 @@ public class WindowCallRunnerTests
         _windows.Setup(w => w.GetWindowThreadProcessId(ThirdWindow)).Returns(ThirdApp);
     }
 
-    private WindowCallRunner CreateSut(int maxStuckCallsPerProcess = 1, int maxStuckCalls = 8) =>
-        new(_windows.Object, Deadline, maxStuckCallsPerProcess, maxStuckCalls);
+    private WindowCallRunner CreateSut(TimeSpan? deadline = null, int maxStuckCallsPerProcess = 1, int maxStuckCalls = 8) =>
+        new(_windows.Object, deadline ?? Deadline, maxStuckCallsPerProcess, maxStuckCalls);
 
     [Fact]
     public void Run_ReturnsTheCallsResult_FromABackgroundThread()
@@ -72,7 +80,7 @@ public class WindowCallRunnerTests
     public void Run_ACallThatBlocks_FailsWithNotRespondingAtTheDeadline_AndKeepsRunningOnItsOwn()
     {
         // Arrange - the window's thread does not answer SetWindowPos
-        var sut = CreateSut();
+        var sut = CreateSut(BlockedDeadline);
         using var answer = new ManualResetEventSlim();
         var returned = new ManualResetEventSlim();
         var stopwatch = Stopwatch.StartNew();
@@ -124,7 +132,7 @@ public class WindowCallRunnerTests
     public void Run_WhileTooManyCallsAreBlockedOverall_FailsAtOnceForEveryApplication()
     {
         // Arrange - two applications each have a blocked call, the most this runner allows
-        var sut = CreateSut(maxStuckCallsPerProcess: 1, maxStuckCalls: 2);
+        var sut = CreateSut(BlockedDeadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 2);
         using var answer = new ManualResetEventSlim();
         foreach (var window in new[] { HungWindow, OtherHungWindow })
         {

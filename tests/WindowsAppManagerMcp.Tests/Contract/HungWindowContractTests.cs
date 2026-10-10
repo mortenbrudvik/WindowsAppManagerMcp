@@ -17,7 +17,15 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public sealed class HungWindowContractTests : IDisposable
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromMilliseconds(300);
+    /// <summary>
+    /// The deadline when a responsive window's call must answer: far above the time a new thread takes to start, even
+    /// on a loaded machine, so that call is never given up on.
+    /// </summary>
+    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(1);
+
+    /// <summary>The deadline when every call blocks: nothing has to answer in time.</summary>
+    private static readonly TimeSpan BlockedDeadline = TimeSpan.FromMilliseconds(300);
+
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
     private const long Hung = 0x1001, Responsive = 0x2001;
@@ -53,7 +61,7 @@ public sealed class HungWindowContractTests : IDisposable
     public async Task AWindowToolOnAHungWindow_ReturnsNotResponding_AndReleasesTheInputGate()
     {
         // Arrange
-        await using var server = await StartServerAsync();
+        await using var server = await StartServerAsync(BlockedDeadline);
         var stopwatch = Stopwatch.StartNew();
 
         // Act
@@ -120,9 +128,9 @@ public sealed class HungWindowContractTests : IDisposable
         items[1].GetProperty("success").GetBoolean().Should().BeTrue();
     }
 
-    private Task<InProcessMcpServer> StartServerAsync()
+    private Task<InProcessMcpServer> StartServerAsync(TimeSpan? deadline = null)
     {
-        var runner = new WindowCallRunner(_native.Object, Deadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 8);
+        var runner = new WindowCallRunner(_native.Object, deadline ?? Deadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 8);
         var windows = new WindowService(TestDataFactory.CreateMockMonitorService().Object, _native.Object, Mock.Of<IHostGuard>(),
             windowCalls: runner);
         return InProcessMcpServer.StartAsync(

@@ -10,7 +10,15 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class WindowServiceHangTests
 {
-    private static readonly TimeSpan Deadline = TimeSpan.FromMilliseconds(100);
+    /// <summary>
+    /// The deadline when a responsive window's call must answer: far above the time a new thread takes to start, even
+    /// on a loaded machine, so that call is never given up on.
+    /// </summary>
+    private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(1);
+
+    /// <summary>The deadline when every call blocks or is refused: nothing has to answer in time.</summary>
+    private static readonly TimeSpan BlockedDeadline = TimeSpan.FromMilliseconds(100);
+
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
     private const nint Hung = 0x1001, Responsive = 0x2001;
@@ -31,9 +39,9 @@ public class WindowServiceHangTests
             .Returns(true);
     }
 
-    private WindowService CreateSut() =>
+    private WindowService CreateSut(TimeSpan? deadline = null) =>
         new(TestDataFactory.CreateMockMonitorService().Object, _native.Object, Mock.Of<IHostGuard>(),
-            windowCalls: new WindowCallRunner(_native.Object, Deadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 8));
+            windowCalls: new WindowCallRunner(_native.Object, deadline ?? Deadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 8));
 
     [Fact]
     public void MoveWindow_OfAWindowWindowsReportsHung_IsRefused_WithoutCallingSetWindowPos()
@@ -55,7 +63,7 @@ public class WindowServiceHangTests
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.SetWindowPos(Hung, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
             .Returns(() => answer.Wait(Long));
-        var sut = CreateSut();
+        var sut = CreateSut(BlockedDeadline);
         var stopwatch = Stopwatch.StartNew();
 
         // Act
@@ -75,7 +83,7 @@ public class WindowServiceHangTests
     {
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.ShowWindow(Hung, It.IsAny<int>())).Returns(() => answer.Wait(Long));
-        var sut = CreateSut();
+        var sut = CreateSut(BlockedDeadline);
 
         var act = () => sut.SetWindowState(Hung, state);
 
@@ -89,7 +97,7 @@ public class WindowServiceHangTests
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.IsIconic(Hung)).Returns(true);
         _native.Setup(n => n.ShowWindow(Hung, SwRestore)).Returns(() => answer.Wait(Long));
-        var sut = CreateSut();
+        var sut = CreateSut(BlockedDeadline);
 
         var act = () => sut.SetWindowBounds(Hung, 0, 0, 640, 480);
 
