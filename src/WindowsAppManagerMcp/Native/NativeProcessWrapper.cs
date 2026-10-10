@@ -144,6 +144,36 @@ public class NativeProcessWrapper : INativeProcessWrapper
             : FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime);
     }
 
+    public IReadOnlyList<(int ProcessId, DateTime? StartTime)> GetAncestorProcesses()
+    {
+        var parentByProcessId = SnapshotParentProcessIds();
+        if (parentByProcessId == null)
+        {
+            return [];
+        }
+
+        // Read each start time once: the walk reads them to detect reused PIDs, the result reports them.
+        var startTimes = new Dictionary<int, DateTime?>();
+        DateTime? StartTime(int processId)
+        {
+            if (!startTimes.TryGetValue(processId, out var startTime))
+            {
+                startTime = TryGetStartTime(processId);
+                startTimes[processId] = startTime;
+            }
+
+            return startTime;
+        }
+
+        return FindAncestors(Environment.ProcessId, parentByProcessId, StartTime)
+            .Select(processId => (processId, StartTime(processId)))
+            .ToList();
+    }
+
+    public DateTime? GetProcessStartTime(int processId) => TryGetStartTime(processId);
+
+    public nint GetConsoleWindow() => NativeMethods.Kernel32.GetConsoleWindow();
+
     /// <summary>
     /// Walks the parent chain of <paramref name="processId"/>, nearest ancestor first.
     /// Stops at a parent that is no longer running, at a cycle, or at a parent that started after its

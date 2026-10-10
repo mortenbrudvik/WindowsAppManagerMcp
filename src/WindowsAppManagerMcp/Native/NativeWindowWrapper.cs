@@ -84,6 +84,16 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return NativeMethods.User32.GetForegroundWindow();
     }
 
+    public nint GetAncestor(nint hWnd, WindowAncestor ancestor)
+    {
+        return NativeMethods.User32.GetAncestor(hWnd, (uint)ancestor);
+    }
+
+    public nint GetShellWindow()
+    {
+        return NativeMethods.User32.GetShellWindow();
+    }
+
     public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam)
     {
         return NativeMethods.User32.PostMessageW(hWnd, msg, wParam, lParam);

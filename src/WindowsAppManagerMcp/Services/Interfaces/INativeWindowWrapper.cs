@@ -73,6 +73,17 @@ public interface INativeWindowWrapper
     nint GetForegroundWindow();
 
     /// <summary>
+    /// Gets an ancestor of the window: its parent, its top-level root, or its root owner.
+    /// Returns zero when the handle is not a window.
+    /// </summary>
+    nint GetAncestor(nint hWnd, WindowAncestor ancestor);
+
+    /// <summary>
+    /// Gets the desktop shell's window (Progman for explorer.exe), or zero when no shell is running.
+    /// </summary>
+    nint GetShellWindow();
+
+    /// <summary>
     /// Posts a message to the message queue of the specified window.
     /// </summary>
     bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);

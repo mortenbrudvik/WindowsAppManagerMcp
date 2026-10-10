@@ -48,6 +48,8 @@ public class ReadOnlyNativeWindowWrapperTests
         inner.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(77u);
         inner.Setup(w => w.GetWindowRect(Handle)).Returns((1, 2, 3, 4));
         inner.Setup(w => w.GetForegroundWindow()).Returns(Handle);
+        inner.Setup(w => w.GetAncestor(Handle, WindowAncestor.RootOwner)).Returns(new nint(4343));
+        inner.Setup(w => w.GetShellWindow()).Returns(new nint(4444));
         inner.Setup(w => w.GetCurrentProcessId()).Returns(88u);
         inner.Setup(w => w.GetProcessName(77u)).Returns("app");
         var sut = new ReadOnlyNativeWindowWrapper(inner.Object);
@@ -66,6 +68,8 @@ public class ReadOnlyNativeWindowWrapperTests
         sut.GetWindowThreadProcessId(Handle).Should().Be(77u);
         sut.GetWindowRect(Handle).Should().Be((1, 2, 3, 4));
         sut.GetForegroundWindow().Should().Be(Handle);
+        sut.GetAncestor(Handle, WindowAncestor.RootOwner).Should().Be(new nint(4343));
+        sut.GetShellWindow().Should().Be(new nint(4444));
         sut.GetCurrentProcessId().Should().Be(88u);
         sut.GetProcessName(77u).Should().Be("app");
     }
@@ -82,7 +86,8 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.IsWindow), nameof(INativeWindowWrapper.IsIconic),
             nameof(INativeWindowWrapper.IsZoomed), nameof(INativeWindowWrapper.GetWindowText),
             nameof(INativeWindowWrapper.GetWindowThreadProcessId), nameof(INativeWindowWrapper.GetWindowRect),
-            nameof(INativeWindowWrapper.GetForegroundWindow), nameof(INativeWindowWrapper.GetCurrentProcessId),
+            nameof(INativeWindowWrapper.GetForegroundWindow), nameof(INativeWindowWrapper.GetAncestor),
+            nameof(INativeWindowWrapper.GetShellWindow), nameof(INativeWindowWrapper.GetCurrentProcessId),
             nameof(INativeWindowWrapper.GetProcessName),
         ];
         var changes = WindowChanges().Select(row => (string)row[0]);
