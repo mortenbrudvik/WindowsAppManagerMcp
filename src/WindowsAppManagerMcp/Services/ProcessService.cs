@@ -67,8 +67,7 @@ public class ProcessService : IProcessService
 
             if (arguments?.Length > 0)
             {
-                startInfo.Arguments = string.Join(" ", arguments.Select(a =>
-                    a.Contains(' ') ? $"\"{a}\"" : a));
+                startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments);
             }
 
             var process = Process.Start(startInfo);
@@ -466,17 +465,7 @@ public class ProcessService : IProcessService
         // Generate user data directory if not specified
         var effectiveUserDataDir = userDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
 
-        // Build arguments
-        var arguments = new List<string>
-        {
-            $"--remote-debugging-port={port}",
-            $"--user-data-dir=\"{effectiveUserDataDir}\""
-        };
-
-        if (!string.IsNullOrWhiteSpace(url))
-        {
-            arguments.Add(url);
-        }
+        var arguments = BuildDebugBrowserArguments(port, effectiveUserDataDir, url);
 
         try
         {
@@ -520,6 +509,27 @@ public class ProcessService : IProcessService
                 Error: ex.Message,
                 ErrorCode: nameof(BrowserErrorCode.DebugLaunchFailed));
         }
+    }
+
+    /// <summary>
+    /// Builds the argument list for a CDP debug browser launch. Values are left unquoted:
+    /// <see cref="CommandLineBuilder"/> quotes each argument once when the command line is built,
+    /// so user data directories containing spaces or a trailing backslash stay a single argument.
+    /// </summary>
+    public static IReadOnlyList<string> BuildDebugBrowserArguments(int port, string userDataDir, string? url)
+    {
+        var arguments = new List<string>
+        {
+            $"--remote-debugging-port={port}",
+            $"--user-data-dir={userDataDir}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            arguments.Add(url);
+        }
+
+        return arguments;
     }
 
     private static string? ResolveBrowserPath(string browser)
