@@ -44,6 +44,7 @@ public class LayoutServiceStorageTests : IDisposable
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
+        TestDataFactory.CreateMockForegroundService().Object,
         options,
         folderAccess);
 
@@ -51,6 +52,7 @@ public class LayoutServiceStorageTests : IDisposable
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
+        TestDataFactory.CreateMockForegroundService().Object,
         path);
 
     private LayoutStorageOptions OptionsWith(

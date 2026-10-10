@@ -185,6 +185,26 @@ public static class TestDataFactory
         return mock;
     }
 
+    /// <summary>
+    /// An <see cref="IForegroundService"/> that reports every window as brought to the front with
+    /// SetForegroundWindow, without touching anything.
+    /// </summary>
+    public static Mock<IForegroundService> CreateMockForegroundService()
+    {
+        var mock = new Mock<IForegroundService>();
+
+        mock.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
+            .Returns((nint handle, int _) => new FocusOutcome
+            {
+                Target = handle,
+                IsForeground = true,
+                Method = FocusMethod.SetForeground,
+                ForegroundHandle = handle
+            });
+
+        return mock;
+    }
+
     public static Mock<IBrowserDetectionService> CreateMockBrowserDetectionService(
         bool isBrowser = false,
         bool containsUrl = false,

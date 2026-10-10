@@ -168,26 +168,6 @@ public class WindowService : IWindowService
         return _nativeWrapper.ShowWindow(handle, cmd);
     }
 
-    public bool FocusWindow(nint handle)
-    {
-        if (!IsValidWindow(handle))
-            return false;
-
-        // If window is minimized, restore it first
-        if (_nativeWrapper.IsIconic(handle))
-        {
-            _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
-        }
-
-        // Try SetForegroundWindow first
-        if (_nativeWrapper.SetForegroundWindow(handle))
-            return true;
-
-        // Fallback: try BringWindowToTop
-        _nativeWrapper.BringWindowToTop(handle);
-        return _nativeWrapper.SetForegroundWindow(handle);
-    }
-
     public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
     {
         if (!IsValidWindow(handle))

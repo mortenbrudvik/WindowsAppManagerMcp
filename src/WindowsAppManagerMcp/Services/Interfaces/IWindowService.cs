@@ -51,8 +51,6 @@ public interface IWindowService
 
     bool SetWindowState(nint handle, WindowState state);
 
-    bool FocusWindow(nint handle);
-
     bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true);
 
     bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center", bool bringToFront = true);

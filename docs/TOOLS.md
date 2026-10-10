@@ -25,7 +25,7 @@ A comprehensive guide to all 44 MCP tools for managing Windows applications, win
 
 The input tools send real mouse and keyboard input to the user's desktop.
 
-- `type_text` and `send_keys` have no target window. They type into whatever window is in the foreground, and that is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before every `type_text` or `send_keys` call and check that `handle` is the intended window. If it is not, call `focus_window` and check again. Windows can refuse focus changes, so do not trust `focus_window` alone.
+- `type_text` and `send_keys` have no target window. They type into whatever window is in the foreground, and that is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before every `type_text` or `send_keys` call and check that `handle` is the intended window. If it is not, call `focus_window` and check its `isForeground`; if that is false, stop. `focus_window` verifies what is in front when it returns, but the foreground can change before the next call, so still confirm with `get_foreground_window` right before typing.
 - Never send destructive key chords without that check. Examples: Alt+F4 (`%{F4}`), Ctrl+W, Ctrl+Q, Ctrl+A followed by Delete, or Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4.
 - `click`, `right_click` and `double_click` act on whatever is at the given point. Bring the target window to the front and confirm it with `get_foreground_window` immediately before every click.
@@ -426,12 +426,24 @@ Minimize, maximize, or restore a window.
 
 ### focus_window
 
-Bring a window to the foreground and give it focus.
+Bring a window to the foreground, verify it, and report which window is actually in front afterwards.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | long | Yes | - | Window handle |
+
+Windows' foreground lock usually refuses a background process such as this server when it asks to bring a window to the front. `focus_window` works around that without sending keys, and checks the foreground window after every step (for about a second in total):
+
+1. **already**: the window, or a dialog it owns, is already in front. Nothing is changed.
+2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead.
+3. **setForeground**: SetForegroundWindow.
+4. **attachThreadInput**: if the foreground lock refused, the server's activation thread attaches its input to the foreground window's thread, activates the window and detaches again. Skipped when the foreground window is not responding or runs at a higher integrity level (elevated), where Windows refuses the attach.
+5. **inputUnlock**: last resort, a mouse move of zero distance makes the server the process that received the last input, then SetForegroundWindow again. No key is sent: an Alt press would reach the window in front, often the agent's terminal.
+
+If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), Esc is sent to close the menu, but only while the window is verified to be in front, and `menuClosed` is true.
+
+The window counts as in front when the foreground window is the window itself or a window it owns, such as a dialog. A dialog in front is reported as `blockingPopup`, because keyboard input goes to the dialog. The foreground can change again before the next call, so confirm with [get_foreground_window](#get_foreground_window) immediately before keyboard or mouse input.
 
 **Example:**
 > "Bring Chrome to the front"
@@ -448,9 +460,60 @@ Bring a window to the foreground and give it focus.
 **Response:**
 ```json
 {
-  "success": true
+  "success": true,
+  "handle": 2884384,
+  "isForeground": true,
+  "method": "attachThreadInput",
+  "foregroundHandle": 2884384,
+  "foregroundTitle": "Example Domain - Google Chrome",
+  "foregroundProcess": "chrome"
 }
 ```
+
+**Response** (a "Save As" dialog of the window is in front; typing would go into the dialog):
+```json
+{
+  "success": true,
+  "handle": 2884384,
+  "isForeground": true,
+  "method": "already",
+  "foregroundHandle": 3017422,
+  "foregroundTitle": "Save As",
+  "foregroundProcess": "notepad",
+  "blockingPopup": { "handle": 3017422, "title": "Save As" }
+}
+```
+
+**Response** (Windows kept another window in front):
+```json
+{
+  "success": false,
+  "handle": 2884384,
+  "isForeground": false,
+  "foregroundHandle": 1312934,
+  "foregroundTitle": "Administrator: Windows PowerShell",
+  "foregroundProcess": "WindowsTerminal",
+  "error": "The window could not be brought to the foreground; 'Administrator: Windows PowerShell' (WindowsTerminal) is in front: SetForegroundWindow was refused (foreground lock); attaching to the foreground thread was skipped: the foreground window's process has a higher integrity level (High), so UIPI refuses the attach; the input unlock (a zero-distance mouse move) did not help.",
+  "errorCode": "FocusFailed"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `success` | Same as `isForeground` |
+| `handle` | The window that was asked for |
+| `isForeground` | The window, or a window it owns, is the foreground window after the call |
+| `method` | How it got in front: `already`, `setForeground`, `attachThreadInput` or `inputUnlock`. Omitted when it is not in front |
+| `foregroundHandle`, `foregroundTitle`, `foregroundProcess` | The window actually in front after the call; omitted when no window is in the foreground |
+| `blockingPopup` | `{ handle, title }` of a dialog of the window that takes keyboard input instead of it: the dialog in front, or the dialog of a window that a modal dialog disables |
+| `menuClosed` | `true` when the window was in menu mode and Esc closed the menu |
+
+| Error code | Meaning |
+|------------|---------|
+| `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later |
+| `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
+| `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
+| `InvalidHandle` | The handle is not a window |
 
 ---
 
@@ -2721,6 +2784,8 @@ Apply a saved layout preset.
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
+A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error.
+
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
 
@@ -2746,14 +2811,25 @@ Apply a saved layout preset.
 }
 ```
 
-**Response:**
+**Response** (one placement has `focus: true`):
 ```json
 {
   "success": true,
   "presetName": "work-setup",
   "windowsArranged": 3,
   "windowsNotFound": 0,
-  "windowsLaunched": 1
+  "windowsLaunched": 1,
+  "focus": [
+    {
+      "success": true,
+      "handle": 1311422,
+      "isForeground": true,
+      "method": "setForeground",
+      "foregroundHandle": 1311422,
+      "foregroundTitle": "main.cs - Visual Studio Code",
+      "foregroundProcess": "Code"
+    }
+  ]
 }
 ```
 
@@ -3032,6 +3108,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
+| `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is cloaked (on another virtual desktop, or hidden by its app), so it was not activated |
 | `ConfirmationRequired` | [kill_process](#kill_process) | `confirm` was not true |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen |
@@ -3044,6 +3121,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
+| `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | Windows kept another window in front; `foregroundTitle` and `error` say which and why |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |
@@ -3071,6 +3149,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
+| `NotResponding` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is not responding, or a call to it did not return in time, so it was not activated |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | Unexpected error while reading; see `error` |
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements |

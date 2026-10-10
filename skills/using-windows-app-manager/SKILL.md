@@ -24,7 +24,7 @@ Windows App Manager provides 44 MCP tools for managing Windows applications, win
 
 The mouse and keyboard tools send real input to the user's desktop.
 
-- **Keyboard input has no target window.** `type_text` and `send_keys` type into whatever window is in the foreground, and that is often your own terminal or chat window. Call `get_foreground_window` right before every `type_text` or `send_keys` call and check that its `handle` is the window you mean to type into. If it is not, call `focus_window` with the right handle and check again. If it still does not match, stop and do not type. Windows can refuse focus changes, so do not rely on `focus_window` alone. To check that the caret is in the right field, call `get_focused_element` and compare its `element` and `windowHandle`.
+- **Keyboard input has no target window.** `type_text` and `send_keys` type into whatever window is in the foreground, and that is often your own terminal or chat window. Call `get_foreground_window` right before every `type_text` or `send_keys` call and check that its `handle` is the window you mean to type into. If it is not, call `focus_window` with the right handle: it works around the Windows foreground lock and returns `isForeground` and the window actually in front (`foregroundHandle`, `foregroundTitle`). If `isForeground` is false, stop and do not type. If it reports a `blockingPopup`, typing goes into that dialog. The foreground can change between calls, so still confirm with `get_foreground_window` right before typing. To check that the caret is in the right field, call `get_focused_element` and compare its `element` and `windowHandle`.
 - **Never send destructive key chords blind.** Examples: `%{F4}` (Alt+F4), `^w`, `^q`, `^a{DELETE}`, or `{ENTER}` on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - **Close windows with `close_window`, not Alt+F4.** `close_window` and `close_windows_batch` send WM_CLOSE to the exact handle you pass. The app may still ask to save.
 - **Clicks land on whatever is at the coordinates.** Before every click, bring the target window to the front with `focus_window` and confirm with `get_foreground_window`. Take coordinates from a fresh `get_ui_elements` or `capture_with_elements` call, and use `get_element_at_point` to check what is at a point before clicking it.
@@ -106,7 +106,7 @@ Use this skill when the user asks to:
 | `resize_window` | Change dimensions | handle, width, height |
 | `set_window_bounds` | Move + resize combined | handle, x, y, width, height |
 | `set_window_state` | Min/max/restore | handle, state |
-| `focus_window` | Bring to foreground | handle |
+| `focus_window` | Bring to foreground, verified; reports what is in front | handle |
 | `close_window` | Close gracefully | handle |
 | `snap_window` | Snap to preset position | handle, position, monitorIndex |
 | `move_window_to_monitor` | Move to monitor | handle, monitorIndex, positioning |
@@ -296,7 +296,7 @@ The `snap_window` tool supports 14 positions:
 
 ### Keyboard Automation
 1. Use `find_windows` to get the target window's handle
-2. Use `focus_window` with that handle
+2. Use `focus_window` with that handle. Stop if `isForeground` is false; `foregroundTitle` and `error` say what is in front instead
 3. Call `get_foreground_window` and confirm its `handle` is the target. Stop if it is not
 4. If needed, `click` the text field (coordinates from `get_ui_elements`), then repeat step 3 and call `get_focused_element` to confirm the caret is in that field
 5. Use `type_text` to enter text, or `send_keys` for keys and shortcuts:

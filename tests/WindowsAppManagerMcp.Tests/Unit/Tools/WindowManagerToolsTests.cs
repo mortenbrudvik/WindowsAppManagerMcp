@@ -9,13 +9,15 @@ using WindowsAppManagerMcp.Tools;
 public class WindowManagerToolsTests
 {
     private readonly Mock<IWindowService> _mockWindowService;
+    private readonly Mock<IForegroundService> _mockForegroundService;
 
     public WindowManagerToolsTests()
     {
         _mockWindowService = new Mock<IWindowService>();
+        _mockForegroundService = new Mock<IForegroundService>(MockBehavior.Strict);
     }
 
-    private WindowManagerTools CreateSut() => new WindowManagerTools(_mockWindowService.Object);
+    private WindowManagerTools CreateSut() => new WindowManagerTools(_mockWindowService.Object, _mockForegroundService.Object);
 
     #region MoveWindow Tests
 
@@ -224,11 +226,16 @@ public class WindowManagerToolsTests
     #region FocusWindow Tests
 
     [Fact]
-    public void FocusWindow_WithInvalidHandle_ReturnsFailure()
+    public void FocusWindow_WithInvalidHandle_ReturnsInvalidHandle()
     {
         // Arrange
-        _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
-            .Returns(false);
+        _mockForegroundService.Setup(f => f.EnsureForeground(new nint(99999), It.IsAny<int>())).Returns(new FocusOutcome
+        {
+            Target = new nint(99999),
+            ForegroundHandle = new nint(0x200),
+            ErrorCode = WindowErrorCode.InvalidHandle,
+            Error = "Invalid window handle"
+        });
         var sut = CreateSut();
 
         // Act
@@ -236,24 +243,44 @@ public class WindowManagerToolsTests
 
         // Assert
         result.Success.Should().BeFalse();
+        result.IsForeground.Should().BeFalse();
         result.Error.Should().Be("Invalid window handle");
+        result.ErrorCode.Should().Be("InvalidHandle");
+        result.ForegroundHandle.Should().Be(0x200);
     }
 
     [Fact]
-    public void FocusWindow_WithValidHandle_CallsService()
+    public void FocusWindow_ReturnsTheVerifiedOutcome_WithSuccessForCompatibility()
     {
-        // Arrange
+        // Arrange - a dialog of the window is in front
         var handle = new nint(12345);
-        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.FocusWindow(handle)).Returns(true);
+        _mockForegroundService.Setup(f => f.EnsureForeground(handle, It.IsAny<int>())).Returns(new FocusOutcome
+        {
+            Target = handle,
+            IsForeground = true,
+            Method = FocusMethod.AttachThreadInput,
+            ForegroundHandle = new nint(0x300),
+            ForegroundTitle = "Save As",
+            ForegroundProcess = "notepad",
+            BlockingPopup = new nint(0x300),
+            BlockingPopupTitle = "Save As"
+        });
         var sut = CreateSut();
 
         // Act
         var result = sut.FocusWindow(12345);
 
         // Assert
-        result.Success.Should().BeTrue();
-        _mockWindowService.Verify(w => w.FocusWindow(handle), Times.Once);
+        result.Should().BeEquivalentTo(new FocusResult(
+            Success: true,
+            Handle: 12345,
+            IsForeground: true,
+            Method: "attachThreadInput",
+            ForegroundHandle: 0x300,
+            ForegroundTitle: "Save As",
+            ForegroundProcess: "notepad",
+            BlockingPopup: new PopupWindowInfo(0x300, "Save As")));
+        _mockForegroundService.Verify(f => f.EnsureForeground(handle, ForegroundService.DefaultTimeoutMs), Times.Once);
     }
 
     #endregion

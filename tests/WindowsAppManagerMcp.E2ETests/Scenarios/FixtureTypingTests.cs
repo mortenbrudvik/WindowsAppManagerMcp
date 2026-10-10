@@ -27,15 +27,15 @@ public class FixtureTypingTests
         var main = e2e.Fixture.MainWindowHandle;
         var processId = e2e.Fixture.ProcessId;
 
-        // Act 1 - focus_window
-        var focusReported = e2e.Server.Windows.FocusWindow(main);
+        // Act 1 - focus_window (verified activation)
+        var focus = e2e.Server.Foreground.EnsureForeground(main);
         var inFront = Wait.Until(() => ForegroundRootOwner() == main, SettleTimeout);
 
         // Assert 1 - otherwise stop here, before anything is typed
         inFront.Should().BeTrue(
-            "focus_window returned " + focusReported + ", but the foreground window is " +
-            UiaReads.DescribeWindow(E2ENative.GetForegroundWindow()) + ". Nothing was typed. The foreground lock " +
-            "can refuse SetForegroundWindow; verified activation (EnsureForeground, roadmap M1.3) handles that");
+            $"focus_window reported isForeground={focus.IsForeground} (method {focus.Method}, {focus.ErrorCode}: {focus.Error}), " +
+            "but the foreground window is " + UiaReads.DescribeWindow(E2ENative.GetForegroundWindow()) + ". Nothing was typed");
+        focus.IsForeground.Should().BeTrue(focus.Error);
         var onEditBox = Wait.Until(() => UiaReads.FocusedAutomationId(processId) == FixtureContract.Ids.EditBox, SettleTimeout);
         onEditBox.Should().BeTrue(
             "keyboard focus should be on the fixture's edit box, but it is on '" +

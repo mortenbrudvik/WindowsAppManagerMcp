@@ -26,8 +26,20 @@ public enum WindowErrorCode
     /// <summary>Failed to change window state.</summary>
     StateChangeFailed = 6,
 
-    /// <summary>Failed to focus the window.</summary>
+    /// <summary>
+    /// The window could not be brought to the foreground: Windows kept another window in front
+    /// (the foreground lock, an open menu, or an elevated foreground window).
+    /// </summary>
     FocusFailed = 7,
+
+    // Activation codes (EnsureForeground) are numbered from 20, so that other window codes can be
+    // added after CloseFailed without renumbering.
+
+    /// <summary>The window's thread is not responding (IsHungAppWindow), or a call to it did not return in time.</summary>
+    NotResponding = 20,
+
+    /// <summary>The window is cloaked: it is on another virtual desktop, or its app has hidden it.</summary>
+    Cloaked = 21,
 
     /// <summary>Failed to close the window.</summary>
     CloseFailed = 8

@@ -42,6 +42,9 @@ public sealed class ServerHarness : IDisposable
 
     public IWindowService Windows => Get<IWindowService>();
 
+    /// <summary>Verified activation: what focus_window and apply_layout use.</summary>
+    public IForegroundService Foreground => Get<IForegroundService>();
+
     public IUIElementService UiElements => Get<IUIElementService>();
 
     public IScreenshotService Screenshots => Get<IScreenshotService>();

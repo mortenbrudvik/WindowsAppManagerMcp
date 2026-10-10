@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Services.Interfaces;
 using static WindowsAppManagerMcp.Models.WindowErrorCode;
 
@@ -10,10 +11,12 @@ namespace WindowsAppManagerMcp.Tools;
 public class WindowManagerTools
 {
     private readonly IWindowService _windowService;
+    private readonly IForegroundService _foregroundService;
 
-    public WindowManagerTools(IWindowService windowService)
+    public WindowManagerTools(IWindowService windowService, IForegroundService foregroundService)
     {
         _windowService = windowService;
+        _foregroundService = foregroundService;
     }
 
     [McpServerTool(Name = "move_window")]
@@ -131,19 +134,16 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "focus_window")]
-    [Description("Bring a window to the foreground and give it focus. Returns success. Windows can refuse to change the foreground window, so before sending keyboard or mouse input, confirm with get_foreground_window that this window is in front.")]
-    public WindowOperationResult FocusWindow(
+    [Description("Bring a window to the foreground and verify it. Works around the Windows foreground lock without sending keys. " +
+        "Returns isForeground (also as success), method (already, setForeground, attachThreadInput or inputUnlock), " +
+        "the window actually in front (foregroundHandle, foregroundTitle, foregroundProcess) and blockingPopup, a dialog of the " +
+        "window that takes keyboard input instead of it. errorCode: FocusFailed, NotResponding, Cloaked or InvalidHandle. " +
+        "The foreground can change again before your next call, so confirm with get_foreground_window immediately before keyboard or mouse input.")]
+    public FocusResult FocusWindow(
         [Description("Window handle (as integer)")]
         long handle)
     {
-        var hwnd = (nint)handle;
-        if (!_windowService.IsValidWindow(hwnd))
-        {
-            return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
-        }
-
-        var success = _windowService.FocusWindow(hwnd);
-        return new WindowOperationResult(Success: success);
+        return FocusResult.From(_foregroundService.EnsureForeground((nint)handle));
     }
 
     [McpServerTool(Name = "close_window")]

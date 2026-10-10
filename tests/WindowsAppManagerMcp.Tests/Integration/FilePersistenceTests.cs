@@ -35,6 +35,7 @@ public class FilePersistenceTests : IDisposable
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
+        TestDataFactory.CreateMockForegroundService().Object,
         customPath ?? _testLayoutPath);
 
     public void Dispose()

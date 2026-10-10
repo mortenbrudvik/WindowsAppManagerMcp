@@ -43,6 +43,7 @@ public class WrapperGuardTests
     [InlineData(typeof(IUIAutomationWrapper), true)]
     [InlineData(typeof(IScreenCaptureWrapper), true)]
     [InlineData(typeof(INativeThreadInputWrapper), true)]
+    [InlineData(typeof(IForegroundService), false)]
     [InlineData(typeof(IWindowService), false)]
     [InlineData(typeof(IInputSimulationService), false)]
     [InlineData(typeof(IExecutableResolver), false)]

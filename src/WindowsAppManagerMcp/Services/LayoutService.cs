@@ -42,6 +42,7 @@ public class LayoutService : ILayoutService
     private readonly IWindowService _windowService;
     private readonly IMonitorService _monitorService;
     private readonly IProcessService _processService;
+    private readonly IForegroundService _foregroundService;
     private readonly LayoutStorageOptions _options;
     private readonly ILayoutFolderAccess _folderAccess;
 
@@ -61,11 +62,13 @@ public class LayoutService : ILayoutService
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
+        IForegroundService foregroundService,
         string? layoutsPath = null)
         : this(
             windowService,
             monitorService,
             processService,
+            foregroundService,
             layoutsPath == null ? LayoutStorageOptions.FromEnvironment() : LayoutStorageOptions.ForPath(layoutsPath))
     {
     }
@@ -75,17 +78,20 @@ public class LayoutService : ILayoutService
     /// the folder is prepared on first use, so an unusable location is reported as
     /// <see cref="LayoutErrorCode.StorageUnavailable"/> instead of failing service construction.
     /// </summary>
+    /// <param name="foregroundService">Brings the windows of placements with focus set to the front, verified.</param>
     /// <param name="folderAccess">Checks that the folder can be listed and written; defaults to the real file system.</param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
+        IForegroundService foregroundService,
         LayoutStorageOptions options,
         ILayoutFolderAccess? folderAccess = null)
     {
         _windowService = windowService;
         _monitorService = monitorService;
         _processService = processService;
+        _foregroundService = foregroundService;
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _folderAccess = folderAccess ?? new LayoutFolderAccess();
     }
@@ -376,6 +382,7 @@ public class LayoutService : ILayoutService
         var arranged = 0;
         var notFound = 0;
         var launched = 0;
+        List<FocusResult>? focusResults = null;
 
         void AddError(LayoutErrorCode code, string message)
         {
@@ -445,10 +452,16 @@ public class LayoutService : ILayoutService
             {
                 arranged++;
 
-                if (placement.Focus && !_windowService.FocusWindow(window.Handle))
+                if (placement.Focus)
                 {
-                    AddError(LayoutErrorCode.ArrangeFailed,
-                        $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground");
+                    var focus = _foregroundService.EnsureForeground(window.Handle);
+                    (focusResults ??= []).Add(FocusResult.From(focus));
+                    if (!focus.IsForeground)
+                    {
+                        AddError(LayoutErrorCode.ArrangeFailed,
+                            $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground " +
+                            $"({focus.ErrorCode}): {focus.Error}");
+                    }
                 }
             }
             else
@@ -467,7 +480,8 @@ public class LayoutService : ILayoutService
             WindowsNotFound: notFound,
             WindowsLaunched: launched,
             Errors: errors.Count > 0 ? errors : null,
-            ErrorCode: errorCode
+            ErrorCode: errorCode,
+            Focus: focusResults
         );
     }
 

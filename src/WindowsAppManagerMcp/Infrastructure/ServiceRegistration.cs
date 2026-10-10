@@ -56,8 +56,15 @@ public static class ServiceRegistration
             var windowService = sp.GetRequiredService<IWindowService>();
             var monitorService = sp.GetRequiredService<IMonitorService>();
             var processService = sp.GetRequiredService<IProcessService>();
-            return new LayoutService(windowService, monitorService, processService, createLayoutStorage());
+            var foregroundService = sp.GetRequiredService<IForegroundService>();
+            return new LayoutService(windowService, monitorService, processService, foregroundService, createLayoutStorage());
         });
+
+        // Verified window activation (focus_window, apply_layout, and the input guard): all attach and
+        // activation calls run on one dedicated thread, started on first use
+        services.AddSingleton<INativeThreadInputWrapper, NativeThreadInputWrapper>();
+        services.AddSingleton<IForegroundThread, ForegroundThread>();
+        services.AddSingleton<IForegroundService, ForegroundService>();
 
         // Safety probes: integrity, elevation and desktop state, and the agent host recorded at start
         // (HostGuardStartup creates the guard when the server starts, see IHostGuard)
