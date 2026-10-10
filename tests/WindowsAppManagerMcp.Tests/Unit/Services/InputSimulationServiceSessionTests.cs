@@ -124,10 +124,13 @@ public class InputSimulationServiceSessionTests
     }
 
     [Fact]
-    public async Task Pause_DuringTheDelayBetweenKeystrokes_CancelsTheWait()
+    public async Task Pause_WhileSlowTypingSendsACharacter_LetsItFinish_AndTypesNoMore()
     {
-        // Arrange - the hotkey is pressed while the first character is being sent; the pause waits for that batch,
-        // so it comes during the delay before the second character
+        // Arrange - with a delay between keys, every character is a batch of its own. The hotkey is pressed while
+        // the first character is being sent: the pause waits for that batch (Send holds the session's lock), so it
+        // takes effect right after it, usually during the delay before the second character. On a loaded machine
+        // the pausing thread can be slow to get the lock, and the delay is at most 100 ms, so the check before the
+        // second character waits for the pause: wherever it lands, it comes before that character.
         var pausing = Task.CompletedTask;
         _input.BeforeSend = _ =>
         {
@@ -136,17 +139,27 @@ public class InputSimulationServiceSessionTests
                 pausing = Task.Run(() => _session.Pause(InputControlSources.Hotkey));
             }
         };
-        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var rechecks = 0;
+        _guard.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>()))
+            .Returns((InputGuardResult approved) =>
+            {
+                if (++rechecks == 2)
+                {
+                    pausing.Wait(Timeout);
+                }
 
-        // Act - ten characters, 10 s apart
-        var result = await CreateSut().TypeTextAsync("abcdefghij", 10_000);
+                return approved;
+            });
+
+        // Act - ten characters, as slowly as type_text types (it clamps the delay to 100 ms)
+        var result = await CreateSut().TypeTextAsync("abcdefghij", 100);
         await pausing.WaitAsync(Timeout);
 
-        // Assert - the cancelled delay ended the call: a delay that was waited out would have taken 10 s. The bound is
-        // far from both, so a slow machine, or another test holding the input gate for a moment, cannot fail it.
+        // Assert - the character being sent went in whole; nothing after the pause did, and nothing is held down
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
         result.CharactersTyped.Should().Be(1);
-        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+        result.Error.Should().StartWith("Typing stopped after 1 of 10 characters");
+        _input.Batches.Should().ContainSingle();
         _input.Events.Count(e => (e.Flags & KeyUp) == 0).Should().Be(_input.Events.Count(e => (e.Flags & KeyUp) != 0),
             "every key that went down went up again");
         VerifyNothingIsDown();
