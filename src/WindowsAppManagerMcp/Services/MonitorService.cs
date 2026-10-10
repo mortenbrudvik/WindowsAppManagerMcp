@@ -7,69 +7,26 @@ namespace WindowsAppManagerMcp.Services;
 public class MonitorService : IMonitorService
 {
     private readonly List<(nint Handle, MonitorInfo Info)> _monitors = [];
+    private readonly INativeMonitorWrapper _nativeMonitors;
 
     public MonitorService()
+        : this(new NativeMonitorWrapper())
     {
+    }
+
+    public MonitorService(INativeMonitorWrapper nativeMonitors)
+    {
+        _nativeMonitors = nativeMonitors;
         RefreshMonitors();
     }
 
     private void RefreshMonitors()
     {
         _monitors.Clear();
-        var index = 0;
-
-        NativeMethods.User32.MonitorEnumProc callback = (nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData) =>
+        foreach (var monitor in _nativeMonitors.EnumerateMonitors())
         {
-            var mi = MONITORINFOEX.Create();
-            if (NativeMethods.User32.GetMonitorInfoW(hMonitor, ref mi))
-            {
-                var scaleFactor = GetScaleFactor(hMonitor);
-                var info = new MonitorInfo(
-                    Index: index++,
-                    DeviceName: mi.szDevice,
-                    IsPrimary: (mi.dwFlags & NativeEnums.MONITORINFOF_PRIMARY) != 0,
-                    Bounds: new MonitorRect(
-                        mi.rcMonitor.Left,
-                        mi.rcMonitor.Top,
-                        mi.rcMonitor.Right - mi.rcMonitor.Left,
-                        mi.rcMonitor.Bottom - mi.rcMonitor.Top),
-                    WorkArea: new MonitorRect(
-                        mi.rcWork.Left,
-                        mi.rcWork.Top,
-                        mi.rcWork.Right - mi.rcWork.Left,
-                        mi.rcWork.Bottom - mi.rcWork.Top),
-                    ScaleFactor: scaleFactor
-                );
-                _monitors.Add((hMonitor, info));
-            }
-            return true;
-        };
-
-        NativeMethods.User32.EnumDisplayMonitors(nint.Zero, nint.Zero, callback, nint.Zero);
-    }
-
-    private static double GetScaleFactor(nint hMonitor)
-    {
-        try
-        {
-            int result = NativeMethods.Shcore.GetDpiForMonitor(
-                hMonitor,
-                MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
-                out uint dpiX,
-                out uint _);
-
-            if (result == 0) // S_OK
-            {
-                // Standard DPI is 96, scale factor = actual DPI / 96
-                return dpiX / 96.0;
-            }
+            _monitors.Add(monitor);
         }
-        catch
-        {
-            // Fallback for older Windows versions (pre-8.1)
-        }
-
-        return 1.0; // Default to no scaling
     }
 
     public IReadOnlyList<MonitorInfo> GetAllMonitors()
@@ -89,15 +46,14 @@ public class MonitorService : IMonitorService
     public MonitorInfo? GetMonitorAt(int x, int y)
     {
         RefreshMonitors();
-        var pt = new POINT { X = x, Y = y };
-        var hMonitor = NativeMethods.User32.MonitorFromPoint(pt, NativeEnums.MONITOR_DEFAULTTONEAREST);
+        var hMonitor = _nativeMonitors.MonitorFromPoint(x, y);
         return _monitors.FirstOrDefault(m => m.Handle == hMonitor).Info;
     }
 
     public MonitorInfo? GetMonitorForWindow(nint windowHandle)
     {
         RefreshMonitors();
-        var hMonitor = NativeMethods.User32.MonitorFromWindow(windowHandle, NativeEnums.MONITOR_DEFAULTTONEAREST);
+        var hMonitor = _nativeMonitors.MonitorFromWindow(windowHandle);
         return _monitors.FirstOrDefault(m => m.Handle == hMonitor).Info;
     }
 
