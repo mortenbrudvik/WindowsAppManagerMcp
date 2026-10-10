@@ -92,7 +92,8 @@ public interface INativeWindowWrapper
 
     /// <summary>
     /// Enumerates the child windows of <paramref name="hWndParent"/>, including their descendants,
-    /// by calling the callback for each one until it returns false.
+    /// by calling the callback for each one until it returns false. A zero handle has no children
+    /// (unlike the Win32 call, it does not list the top-level windows).
     /// </summary>
     void EnumChildWindows(nint hWndParent, Func<nint, bool> callback);
 

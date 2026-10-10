@@ -112,6 +112,10 @@ public class NativeWindowWrapper : INativeWindowWrapper
 
     public void EnumChildWindows(nint hWndParent, Func<nint, bool> callback)
     {
+        // EnumChildWindows(NULL) would list every top-level window instead, like EnumWindows.
+        if (hWndParent == nint.Zero)
+            return;
+
         NativeMethods.User32.EnumWindowsProc nativeCallback = (hWnd, lParam) => callback(hWnd);
         NativeMethods.User32.EnumChildWindows(hWndParent, nativeCallback, nint.Zero);
     }

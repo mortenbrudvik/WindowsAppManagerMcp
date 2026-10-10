@@ -21,8 +21,9 @@ public class NativeWindowWrapperReadTests
         var children = new List<nint>();
 
         _sut.EnumChildWindows(InvalidHandle, child => { children.Add(child); return true; });
+        _sut.EnumChildWindows(nint.Zero, child => { children.Add(child); return true; });
 
-        children.Should().BeEmpty();
+        children.Should().BeEmpty("a zero parent must not list the top-level windows");
         _sut.GetClassName(InvalidHandle).Should().BeEmpty();
         _sut.GetWindowLongPtr(InvalidHandle, GwlExStyle).Should().Be(nint.Zero);
         _sut.GetWindow(InvalidHandle, GwOwner).Should().Be(nint.Zero);
