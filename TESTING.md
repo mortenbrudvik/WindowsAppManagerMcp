@@ -655,11 +655,15 @@ or change a real window, use `[DesktopFact]` or `[DesktopTheory]` instead of `[F
 
 ```csharp
 [DesktopFact]
-public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
+public void SomeOperation_OnTheRealDesktop_Works()
 {
-    // Really starts notepad.exe: only runs when WAM_ALLOW_DESKTOP_TESTS=1
+    // Has a real side effect (a process, input or a window change):
+    // only runs when WAM_ALLOW_DESKTOP_TESTS=1
 }
 ```
+
+Today the only tests marked this way are the gate's own canaries in `DesktopTestGateTests`, which
+have no side effects.
 
 ### xUnit Assertions Reference
 
@@ -1818,8 +1822,10 @@ or stops a real process. A test that really needs a side effect like that must b
   explorers and coverage tools.
 - **report the trait `Category=Desktop`**, so you can select or exclude them with `--filter`.
 
-A desktop test can still type into, click on, or close whatever window has focus, so save
-your work before opting in. Run them deliberately:
+Today the only desktop tests are the canaries in `DesktopTestGateTests`. They only check that
+the gate let them run and have no side effects. A desktop test added later can type into, click
+on, or close whatever window has focus, so save your work before opting in, and run them
+deliberately:
 
 ```powershell
 # PowerShell
@@ -1833,25 +1839,29 @@ Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
 WAM_ALLOW_DESKTOP_TESTS=1 dotnet test --filter "Category=Desktop"
 ```
 
-On Windows 11 the Notepad launch tests can leave a Notepad window open: `notepad.exe` hands off
-to the Notepad app and exits, and the tests clean up only the process they started. Close that
-window yourself afterwards.
-
 Rules for new tests:
 
 - Do not send real input, start or kill processes, or move, focus or close real windows
   from a `[Fact]` or `[Theory]`. Mock the wrapper instead (see
   [Mocking Native P/Invoke Layer](#9-mocking-native-pinvoke-layer)).
-- `ProcessService` has no launcher seam yet. Its tests keep `Process.Start` from launching
-  anything by having the validation mock return an empty file name; see the class comment in
-  `ProcessServiceTests`.
+- Build `ProcessService` with a mocked `INativeProcessWrapper` and `IExecutableResolver`, as
+  `CreateSut` in `ProcessServiceTests` and `ProcessKillTests` does. Without them the constructor
+  falls back to the real `NativeProcessWrapper` and `ExecutableResolver`. That is only acceptable
+  for tests that call nothing but `PlanLaunch`, which builds a `ProcessStartInfo` and never starts
+  a process (`LaunchPlanningTests`).
 - Never call `KillProcess` on a real system process, even to check that the guard refuses it.
 - A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
   test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
 - `NativeCallGuardTests` scans the server assembly and fails if anything other than
   `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
   `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
-  `ProcessService` calls `Process.Start`, `Kill` or `CloseMainWindow`.
+  `NativeProcessWrapper` calls `Process.Start`, `Kill` or `CloseMainWindow`
+  (`ProcessStartAndKill_AreOnlyCalledByNativeProcessWrapper`). It also fails if the server
+  declares a P/Invoke that starts or terminates processes directly, such as `CreateProcess`,
+  `ShellExecute` or `TerminateProcess` (`NoPlatformInvoke_StartsOrTerminatesProcesses`). New
+  process code goes through `INativeProcessWrapper`.
+- The guards scan only the server assembly. They do not see code in the test project, so the
+  rules above are up to you there.
 
 ### Visual Studio
 

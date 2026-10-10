@@ -241,8 +241,9 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 - By default a test run sends no keyboard or mouse input, launches or kills no
   processes, and does not move, focus or close your windows (some tests only read
   system state, such as the window, monitor and process lists)
-- **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) launch
-  real applications such as Notepad. They are skipped unless you opt in:
+- **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) are for
+  tests with real side effects, such as starting processes or sending input. They are skipped
+  unless you opt in. Today the only ones are the gate's own canaries, which have no side effects:
 
 ```powershell
 $env:WAM_ALLOW_DESKTOP_TESTS = "1"
