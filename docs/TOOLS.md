@@ -2804,7 +2804,7 @@ Close or terminate a process by ID (requires confirmation).
 
 To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
 
-**Force mode** checks the whole process tree first, because it ends every process in it: if a child process is refused by the [target policy](#target-policy) (`TargetDeniedByPolicy`) or belongs to the agent's host (`CannotTerminateHost`), nothing is terminated and the error names the child. A graceful close asks only the process's own main window to close, so it does not check the children. Force mode returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
+**Force mode** checks the whole process tree first, because it ends every process in it: if a child process is refused by the [target policy](#target-policy) (`TargetDeniedByPolicy`) or belongs to the agent's host (`CannotTerminateHost`), nothing is terminated and the error names the child. When the process list cannot be read, the children cannot be checked, so nothing is terminated either (`ProcessTreeUnreadable`). A graceful close asks only the process's own main window to close, so it does not check the children. Force mode returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
 
 **Example 1:** Close gracefully
 > "Close Notepad (PID 12456)"
@@ -2878,6 +2878,7 @@ To end the process anyway, call again with `forceKill: true`. This ends the proc
 | `CannotTerminateHost` | The PID belongs to the agent's host: an ancestor of this server such as the terminal or editor hosting the agent, the process that shows the server's console, or the app that was in front when the server started. With `forceKill: true`, also when one of its child processes does (a forced kill ends the whole process tree; the error names the child). Nothing was done |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process, or, with `forceKill: true`, one of its child processes (a forced kill ends the whole process tree; the error names the child). `forceKill` does not override it; nothing was done |
 | `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
+| `ProcessTreeUnreadable` | Force mode: the process list could not be read, so the child processes a forced kill would also end could not be checked; nothing was terminated. Try again, or close without `forceKill` |
 | `NoClosableWindow` | Graceful mode: no closable main window; process left running |
 | `GracefulCloseTimedOut` | Graceful mode: still running after the timeout; process left running |
 | `AccessDenied` | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
@@ -3468,6 +3469,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |
 | `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
+| `ProcessTreeUnreadable` | [kill_process](#kill_process) | Force mode: the process list could not be read, so the child processes a forced kill would also end could not be checked against the target policy and the agent's host; nothing was terminated |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window) | The window is part of the desktop shell or of the agent's own host, and `force` was not true; nothing was sent |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |

@@ -221,10 +221,16 @@ public class NativeProcessWrapper : INativeProcessWrapper
         return ancestors;
     }
 
-    public IReadOnlyList<(int ProcessId, string ImageName)> GetDescendantsOf(int processId)
+    public IReadOnlyList<(int ProcessId, string ImageName)>? GetDescendantsOf(int processId)
     {
         var processes = SnapshotProcesses();
-        if (processes == null || processId <= 0 || !processes.ContainsKey(processId))
+        if (processes == null)
+        {
+            // The children are unknown, not absent
+            return null;
+        }
+
+        if (processId <= 0 || !processes.ContainsKey(processId))
         {
             return [];
         }

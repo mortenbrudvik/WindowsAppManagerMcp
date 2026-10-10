@@ -201,7 +201,13 @@ public enum ProcessErrorCode
     /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the process (roadmap
     /// M1.12). Nothing was done.
     /// </summary>
-    TargetDeniedByPolicy = 14
+    TargetDeniedByPolicy = 14,
+
+    /// <summary>
+    /// forceKill: the process list could not be read, so the child processes the forced kill would also end
+    /// could not be checked against the target policy and the host guard. Nothing was terminated.
+    /// </summary>
+    ProcessTreeUnreadable = 15
 }
 
 /// <summary>

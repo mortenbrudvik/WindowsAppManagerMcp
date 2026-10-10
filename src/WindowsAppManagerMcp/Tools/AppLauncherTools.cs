@@ -74,7 +74,8 @@ public class AppLauncherTools
                  "for example because it shows a 'Save changes?' prompt (errorCode GracefulCloseTimedOut), the process is left running and success is false. " +
                  "forceKill=true terminates the process and all of its child processes immediately; unsaved work is lost. " +
                  "The result reports closeRequested, forced and exited. Refuses protected system processes, the agent's own host (the terminal or editor hosting this server; errorCode CannotTerminateHost) " +
-                 "and apps the user's policy denies (TargetDeniedByPolicy); with forceKill=true also when a child process it would end belongs to that host or is denied by the policy.")]
+                 "and apps the user's policy denies (TargetDeniedByPolicy); with forceKill=true also when a child process it would end belongs to that host or is denied by the policy, " +
+                 "or when the child processes cannot be read to check them (ProcessTreeUnreadable).")]
     public KillResultDto KillProcess(
         [Description("The process ID to terminate (get from list_processes tool)")]
         int processId,

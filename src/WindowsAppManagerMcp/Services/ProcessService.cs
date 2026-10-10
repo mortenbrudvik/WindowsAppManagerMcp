@@ -513,7 +513,20 @@ public class ProcessService : IProcessService
             // host check too. A graceful close asks only the process's own main window to close.
             if (forceKill)
             {
-                var tree = _processWrapper.GetDescendantsOf(processId) ?? [];
+                // Fails closed: the runtime's tree kill finds the children on its own, so an unread tree would
+                // still be ended, unchecked
+                if (_processWrapper.GetDescendantsOf(processId) is not { } tree)
+                {
+                    return new KillResult(
+                        Success: false,
+                        ProcessId: processId,
+                        ProcessName: processName,
+                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
+                                      "could not be read, so they could not be checked against the target policy and the agent's host. " +
+                                      "Nothing was terminated. Try again, or close it without forceKill (only its main window is asked to close).",
+                        ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
+                }
+
                 if (DeniedDescendant(tree) is { } denied)
                 {
                     return new KillResult(
