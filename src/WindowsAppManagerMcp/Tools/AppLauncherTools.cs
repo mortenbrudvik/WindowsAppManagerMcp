@@ -66,23 +66,36 @@ public class AppLauncherTools
     }
 
     [McpServerTool(Name = "kill_process")]
-    [Description("Terminate a process by its ID. Requires explicit confirmation for safety. Attempts graceful close first unless forceKill is true.")]
+    [Description("Close or terminate a process by its ID. Requires confirm=true. " +
+                 "Default (forceKill=false) is a graceful close only: WM_CLOSE is sent to the main window and the call waits up to gracefulTimeoutMs. " +
+                 "It never escalates: if the process has no closable window (errorCode NoClosableWindow) or is still running after the timeout, " +
+                 "for example because it shows a 'Save changes?' prompt (errorCode GracefulCloseTimedOut), the process is left running and success is false. " +
+                 "forceKill=true terminates the process and all of its child processes immediately; unsaved work is lost. " +
+                 "The result reports closeRequested, forced and exited. Refuses protected system processes and the terminal/editor hosting this server.")]
     public KillResultDto KillProcess(
         [Description("The process ID to terminate (get from list_processes tool)")]
         int processId,
         [Description("Must be set to true to confirm termination - this is a safety requirement")]
         bool confirm,
-        [Description("If true, immediately kills the process. If false (default), attempts graceful close first.")]
-        bool forceKill = false)
+        [Description("If true, immediately terminates the process and all of its child processes (unsaved work is lost). If false (default), only requests a graceful close and never escalates.")]
+        bool forceKill = false,
+        [Description("Graceful mode only: milliseconds to wait for the process to exit after the close request (0-60000, default 5000)")]
+        int gracefulTimeoutMs = 5000,
+        [Description("Optional guard against PID reuse: the expected process name as shown by list_processes (e.g. 'notepad' or 'notepad.exe'). If the PID now belongs to a different process, nothing is done and errorCode is ProcessNameMismatch.")]
+        string? expectedProcessName = null)
     {
-        var result = _processService.KillProcess(processId, confirm, forceKill);
+        var result = _processService.KillProcess(processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName);
 
         return new KillResultDto(
             Success: result.Success,
             ProcessId: result.ProcessId,
             ProcessName: result.ProcessName,
             Error: result.ErrorMessage,
-            ErrorCode: result.ErrorCode
+            ErrorCode: result.ErrorCode,
+            CloseRequested: result.CloseRequested,
+            Forced: result.Forced,
+            Exited: result.Exited,
+            Warning: result.Warning
         );
     }
 
@@ -124,7 +137,11 @@ public record KillResultDto(
     int ProcessId,
     string? ProcessName = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    bool CloseRequested = false,
+    bool Forced = false,
+    bool Exited = false,
+    string? Warning = null
 );
 
 public record LaunchResultDto(

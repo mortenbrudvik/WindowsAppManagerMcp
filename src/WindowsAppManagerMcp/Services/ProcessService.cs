@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
@@ -18,17 +19,20 @@ public class ProcessService : IProcessService
     private readonly IInputValidationService _validationService;
     private readonly IBrowserDetectionService _browserDetection;
     private readonly IExecutableResolver _executableResolver;
+    private readonly INativeProcessWrapper _processWrapper;
 
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
         IBrowserDetectionService browserDetection,
-        IExecutableResolver? executableResolver = null)
+        IExecutableResolver? executableResolver = null,
+        INativeProcessWrapper? processWrapper = null)
     {
         _windowService = windowService;
         _validationService = validationService;
         _browserDetection = browserDetection;
         _executableResolver = executableResolver ?? new ExecutableResolver();
+        _processWrapper = processWrapper ?? new NativeProcessWrapper();
     }
 
     public LaunchResult LaunchApplication(
@@ -312,12 +316,21 @@ public class ProcessService : IProcessService
         return null;
     }
 
-    // Protected system processes that should not be terminated
+    // Protected system and shell processes that should not be terminated
     private static readonly HashSet<string> ProtectedProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "System", "smss", "csrss", "wininit", "services", "lsass", "lsm",
-        "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression"
+        "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression",
+        // User-session shell infrastructure: killing these breaks keyboard input, the Start menu or search
+        "sihost", "ctfmon", "StartMenuExperienceHost", "ShellExperienceHost", "SearchHost", "TextInputHost", "fontdrvhost"
     };
+
+    public const int DefaultGracefulTimeoutMs = 5000;
+    public const int MaxGracefulTimeoutMs = 60000;
+    private const int ForceKillExitWaitMs = 5000;
+    private const int ErrorAccessDenied = 5;
+    private const string ForceKillConsequence =
+        "this terminates the process and all of its child processes immediately, and unsaved work is lost.";
 
     public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
@@ -341,7 +354,12 @@ public class ProcessService : IProcessService
         return results;
     }
 
-    public KillResult KillProcess(int processId, bool confirm, bool forceKill = false)
+    public KillResult KillProcess(
+        int processId,
+        bool confirm,
+        bool forceKill = false,
+        int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
+        string? expectedProcessName = null)
     {
         // Safety check: require explicit confirmation
         if (!confirm)
@@ -373,10 +391,42 @@ public class ProcessService : IProcessService
                 ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
         }
 
+        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+        }
+
+        IProcessHandle? process;
         try
         {
-            using var process = Process.GetProcessById(processId);
-            var processName = process.ProcessName;
+            process = _processWrapper.OpenProcess(processId);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName: null);
+        }
+
+        if (process == null)
+        {
+            return ProcessNotFound(processId);
+        }
+
+        using (process)
+        {
+            string processName;
+            try
+            {
+                processName = process.ProcessName;
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between opening it and reading its name
+                return ProcessNotFound(processId);
+            }
 
             // Check if it's a protected system process
             if (ProtectedProcesses.Contains(processName))
@@ -389,63 +439,222 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
             }
 
-            // Attempt graceful close first if not forcing
-            if (!forceKill)
+            // PID reuse guard: the process the agent saw in list_processes may have exited
+            if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
             {
-                try
-                {
-                    if (process.CloseMainWindow())
-                    {
-                        // Wait briefly for graceful exit
-                        if (process.WaitForExit(3000))
-                        {
-                            return new KillResult(
-                                Success: true,
-                                ProcessId: processId,
-                                ProcessName: processName);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Graceful close failed, fall through to force kill
-                }
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
+                                  "The process you meant may have exited and its PID been reused. Nothing was done; " +
+                                  "call list_processes to get the current PID.",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
             }
 
-            // Force kill
-            process.Kill(entireProcessTree: true);
-            process.WaitForExit(1000);
+            // Closing or killing an ancestor (the terminal or editor hosting the agent) ends the agent's own session
+            if (IsHostAncestor(processId))
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"'{processName}' (PID {processId}) is an ancestor of this MCP server, such as the terminal " +
+                                  "or editor hosting the agent. Closing it would end the agent's own session, so it is refused.",
+                    ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+            }
 
-            return new KillResult(
-                Success: true,
-                ProcessId: processId,
-                ProcessName: processName);
+            return forceKill
+                ? TerminateForcefully(process, processId, processName)
+                : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
         }
-        catch (ArgumentException)
+    }
+
+    /// <summary>
+    /// Graceful mode: posts WM_CLOSE to the main window and waits. Never escalates to a forced kill;
+    /// a process that cannot be closed or is still running is left alone and reported as such.
+    /// </summary>
+    private static KillResult CloseGracefully(IProcessHandle process, int processId, string processName, int timeoutMs)
+    {
+        bool closeRequested;
+        try
         {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Process not found. It may have already exited.",
-                ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Access denied. Insufficient permissions to terminate this process.",
-                ErrorCode: nameof(ProcessErrorCode.AccessDenied));
+            closeRequested = process.CloseMainWindow();
         }
         catch (Exception ex)
         {
+            return KillFailureFromException(ex, processId, processName);
+        }
+
+        if (!closeRequested)
+        {
+            if (HasExitedSafe(process))
+            {
+                return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
+            }
+
             return new KillResult(
                 Success: false,
                 ProcessId: processId,
-                ErrorMessage: ex.Message,
-                ErrorCode: nameof(ProcessErrorCode.TerminationException));
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
+                              "(it may be windowless, running only in the notification area, or its window is blocked by a " +
+                              "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
+                              $"kill_process again with forceKill=true: {ForceKillConsequence}",
+                ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
+        }
+
+        bool exited;
+        try
+        {
+            exited = process.WaitForExit(timeoutMs);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName) with { CloseRequested = true };
+        }
+
+        if (exited)
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, CloseRequested: true, Exited: true);
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: $"A close request was sent to '{processName}' (PID {processId}), but it was still running after " +
+                          $"{timeoutMs} ms. It may be showing a prompt such as 'Save changes?', still shutting down, or " +
+                          "running elevated (Windows then drops the close request). Nothing was force-terminated. Handle " +
+                          "the prompt, retry with a longer gracefulTimeoutMs, or call kill_process with forceKill=true: " +
+                          ForceKillConsequence,
+            ErrorCode: nameof(ProcessErrorCode.GracefulCloseTimedOut),
+            CloseRequested: true);
+    }
+
+    /// <summary>
+    /// Force mode: terminates the process and its child processes, then confirms that it exited.
+    /// </summary>
+    private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
+    {
+        string? warning = null;
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (AggregateException ex) when (!IsAccessDenied(ex))
+        {
+            // The runtime reports processes in the tree it could not terminate; the root may still be gone
+            warning = "Some child processes could not be terminated: " +
+                      string.Join("; ", ex.InnerExceptions.Select(e => e.Message));
+        }
+        catch (InvalidOperationException) when (HasExitedSafe(process))
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName);
+        }
+
+        bool exited;
+        try
+        {
+            exited = process.WaitForExit(ForceKillExitWaitMs);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName) with { Forced = true, Warning = warning };
+        }
+
+        if (exited)
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Forced: true, Exited: true, Warning: warning);
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: $"Termination of '{processName}' (PID {processId}) was requested, but the process had not exited " +
+                          $"after {ForceKillExitWaitMs} ms. It may still be shutting down; check with list_processes.",
+            ErrorCode: nameof(ProcessErrorCode.TerminationNotConfirmed),
+            Forced: true,
+            Warning: warning);
+    }
+
+    private bool IsHostAncestor(int processId)
+    {
+        try
+        {
+            return _processWrapper.IsAncestorOfCurrentProcess(processId);
+        }
+        catch (Exception)
+        {
+            // If the process tree cannot be read, fall back to the runtime's own check in Kill(entireProcessTree: true)
+            return false;
         }
     }
+
+    private static bool ProcessNameMatches(string actualName, string expectedName)
+    {
+        var expected = expectedName.Trim();
+        if (expected.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            expected = expected[..^4];
+        }
+
+        return actualName.Equals(expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasExitedSafe(IProcessHandle process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsAccessDenied(Exception ex) => ex switch
+    {
+        Win32Exception win32 => win32.NativeErrorCode == ErrorAccessDenied,
+        UnauthorizedAccessException => true,
+        AggregateException aggregate => aggregate.InnerExceptions.Any(IsAccessDenied),
+        _ => false
+    };
+
+    private static KillResult KillFailureFromException(Exception ex, int processId, string? processName)
+    {
+        if (IsAccessDenied(ex))
+        {
+            var target = processName != null ? $"'{processName}' (PID {processId})" : $"PID {processId}";
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"Access denied for {target}. It is probably running elevated (as administrator), as another " +
+                              "user, or as a protected process; terminating it requires the server to run with at least the " +
+                              "same privileges.",
+                ErrorCode: nameof(ProcessErrorCode.AccessDenied));
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: ex.Message,
+            ErrorCode: nameof(ProcessErrorCode.TerminationException));
+    }
+
+    private static KillResult ProcessNotFound(int processId) => new(
+        Success: false,
+        ProcessId: processId,
+        ErrorMessage: "Process not found. It may have already exited.",
+        ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
     private nint? WaitForMainWindow(Process process, int timeoutMs)
     {

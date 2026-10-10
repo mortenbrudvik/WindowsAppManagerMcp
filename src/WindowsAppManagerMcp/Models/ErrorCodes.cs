@@ -110,14 +110,41 @@ public enum ProcessErrorCode
     /// <summary>Cannot terminate the current process.</summary>
     CannotTerminateSelf = 4,
 
-    /// <summary>Access denied - insufficient permissions to terminate the process.</summary>
+    /// <summary>
+    /// Access denied - insufficient permissions to terminate the process
+    /// (typically it runs elevated or as another user).
+    /// </summary>
     AccessDenied = 5,
 
     /// <summary>The confirmation parameter was not set to true.</summary>
     ConfirmationRequired = 6,
 
     /// <summary>An exception occurred during termination.</summary>
-    TerminationException = 7
+    TerminationException = 7,
+
+    /// <summary>
+    /// Graceful mode: the process has no main window that can receive a close request (windowless,
+    /// tray-only, or main window disabled by a modal dialog). The process was left running.
+    /// </summary>
+    NoClosableWindow = 8,
+
+    /// <summary>
+    /// Graceful mode: a close request was sent but the process was still running when the timeout
+    /// elapsed (for example it is showing a "save changes?" prompt). The process was left running.
+    /// </summary>
+    GracefulCloseTimedOut = 9,
+
+    /// <summary>The process name did not match expectedProcessName (the PID may have been reused). Nothing was done.</summary>
+    ProcessNameMismatch = 10,
+
+    /// <summary>The process is an ancestor of this server (for example the terminal or editor hosting the agent).</summary>
+    CannotTerminateHost = 11,
+
+    /// <summary>Forced termination was requested, but the process had not exited when the wait ended.</summary>
+    TerminationNotConfirmed = 12,
+
+    /// <summary>The graceful close timeout is outside the allowed range.</summary>
+    InvalidTimeout = 13
 }
 
 /// <summary>
