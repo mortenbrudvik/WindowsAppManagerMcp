@@ -6,10 +6,16 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// Service for reading URLs and content from browser windows using UI Automation or CDP.
-/// When CDP is available and specified, it provides more reliable content extraction.
+/// When a CDP port is specified, CDP is tried first; every result says which method produced it
+/// (Source) and, after a fallback to UI Automation, why CDP was not used (CdpError).
 /// </summary>
 public class BrowserReadingService : IBrowserReadingService
 {
+    private const string CdpPortRequiredMessage =
+        "requireCdp=true needs cdpPort: the debug port of the browser instance that owns the window.";
+
+    private static readonly TimeSpan DefaultCdpTimeout = TimeSpan.FromMilliseconds(CdpOptions.DefaultTimeoutMs);
+
     private readonly IUIAutomationWrapper _uiAutomation;
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IBrowserDetectionService _browserDetection;
@@ -57,7 +63,10 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <inheritdoc />
-    public BrowserUrlResult GetBrowserUrl(nint browserHandle, int? cdpPort = null)
+    public async Task<BrowserUrlResult> GetBrowserUrlAsync(
+        nint browserHandle,
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -95,12 +104,51 @@ public class BrowserReadingService : IBrowserReadingService
             // Get window title (page title)
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
-            // Try CDP first if port is specified
-            if (cdpPort.HasValue)
+            // Try CDP first if a port is specified
+            string? cdpError = null;
+            if (cdp?.Port is int port)
             {
-                var cdpResult = TryGetUrlViaCdp(pageTitle, cdpPort.Value, browserType);
-                if (cdpResult != null)
-                    return cdpResult;
+                var match = await _cdpService.FindTargetForWindowAsync(
+                    port, (int)processId, pageTitle, cdp.EffectiveTimeout, cancellationToken);
+
+                if (match.Success)
+                {
+                    var target = match.Value!;
+                    return new BrowserUrlResult(
+                        Success: true,
+                        Url: target.Url,
+                        BrowserType: browserType,
+                        PageTitle: target.Title,
+                        Error: null,
+                        ErrorCode: BrowserErrorCode.None,
+                        Source: BrowserReadSource.Cdp,
+                        TargetId: target.Id);
+                }
+
+                if (cdp.Required)
+                {
+                    return new BrowserUrlResult(
+                        Success: false,
+                        Url: null,
+                        BrowserType: browserType,
+                        PageTitle: pageTitle,
+                        Error: match.Error,
+                        ErrorCode: match.ErrorCode,
+                        Source: BrowserReadSource.Cdp,
+                        CdpError: match.DescribeError());
+                }
+
+                cdpError = match.DescribeError();
+            }
+            else if (cdp?.Required == true)
+            {
+                return new BrowserUrlResult(
+                    Success: false,
+                    Url: null,
+                    BrowserType: browserType,
+                    PageTitle: pageTitle,
+                    Error: CdpPortRequiredMessage,
+                    ErrorCode: BrowserErrorCode.CdpUnavailable);
             }
 
             // Fall back to UI Automation
@@ -112,7 +160,9 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     Error: "UI Automation is not available",
-                    ErrorCode: BrowserErrorCode.AutomationUnavailable);
+                    ErrorCode: BrowserErrorCode.AutomationUnavailable,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError);
             }
 
             // Get title via UI Automation if not already set
@@ -129,7 +179,9 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: browserType,
                     PageTitle: pageTitle,
                     Error: "Could not find or read the URL bar",
-                    ErrorCode: BrowserErrorCode.UrlBarNotFound);
+                    ErrorCode: BrowserErrorCode.UrlBarNotFound,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError);
             }
 
             return new BrowserUrlResult(
@@ -138,7 +190,13 @@ public class BrowserReadingService : IBrowserReadingService
                 BrowserType: browserType,
                 PageTitle: pageTitle,
                 Error: null,
-                ErrorCode: BrowserErrorCode.None);
+                ErrorCode: BrowserErrorCode.None,
+                Source: BrowserReadSource.Uia,
+                CdpError: cdpError);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -153,7 +211,11 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <inheritdoc />
-    public BrowserContentResult GetBrowserContent(nint browserHandle, BrowserContentOptions? options = null, int? cdpPort = null)
+    public async Task<BrowserContentResult> GetBrowserContentAsync(
+        nint browserHandle,
+        BrowserContentOptions? options = null,
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default)
     {
         options ??= new BrowserContentOptions();
 
@@ -197,12 +259,79 @@ public class BrowserReadingService : IBrowserReadingService
             // Get window title (page title)
             var pageTitle = _nativeWrapper.GetWindowText(browserHandle);
 
-            // Try CDP first if port is specified
-            if (cdpPort.HasValue)
+            // Try CDP first if a port is specified
+            string? cdpError = null;
+            if (cdp?.Port is int port)
             {
-                var cdpResult = TryGetContentViaCdp(pageTitle, cdpPort.Value, browserType, options);
-                if (cdpResult != null)
-                    return cdpResult;
+                var (snapshot, targetId) = await ReadContentViaCdpAsync(
+                    port, (int)processId, pageTitle, options, cdp.EffectiveTimeout, cancellationToken);
+
+                if (snapshot.Success)
+                {
+                    var page = snapshot.Value!;
+                    var content = Truncate(page.Content, options.MaxLength);
+                    return new BrowserContentResult(
+                        Success: true,
+                        Content: content,
+                        Url: page.Url,
+                        BrowserType: browserType,
+                        PageTitle: page.Title,
+                        ContentLength: content.Length,
+                        Error: null,
+                        ErrorCode: BrowserErrorCode.None,
+                        Source: BrowserReadSource.Cdp,
+                        TargetId: targetId);
+                }
+
+                if (cdp.Required)
+                {
+                    return new BrowserContentResult(
+                        Success: false,
+                        Content: null,
+                        Url: null,
+                        BrowserType: browserType,
+                        PageTitle: pageTitle,
+                        ContentLength: null,
+                        Error: snapshot.Error,
+                        ErrorCode: snapshot.ErrorCode,
+                        Source: BrowserReadSource.Cdp,
+                        TargetId: targetId,
+                        CdpError: snapshot.DescribeError());
+                }
+
+                cdpError = snapshot.DescribeError();
+            }
+            else if (cdp?.Required == true)
+            {
+                return new BrowserContentResult(
+                    Success: false,
+                    Content: null,
+                    Url: null,
+                    BrowserType: browserType,
+                    PageTitle: pageTitle,
+                    ContentLength: null,
+                    Error: CdpPortRequiredMessage,
+                    ErrorCode: BrowserErrorCode.CdpUnavailable);
+            }
+
+            // UI Automation only reads text. Returning text when HTML was asked for would
+            // silently change the format, so report it instead.
+            if (!options.TextOnly)
+            {
+                var reason = cdpError != null
+                    ? $"CDP could not be used ({cdpError})."
+                    : "No cdpPort was given; pass the debug port of a browser started with --remote-debugging-port (see launch_browser_with_debug).";
+                return new BrowserContentResult(
+                    Success: false,
+                    Content: null,
+                    Url: null,
+                    BrowserType: browserType,
+                    PageTitle: pageTitle,
+                    ContentLength: null,
+                    Error: $"textOnly=false returns HTML, which is only available via CDP. {reason} " +
+                           "Use textOnly=true to read the page text with UI Automation.",
+                    ErrorCode: BrowserErrorCode.HtmlRequiresCdp,
+                    CdpError: cdpError);
             }
 
             // Fall back to UI Automation
@@ -216,7 +345,9 @@ public class BrowserReadingService : IBrowserReadingService
                     PageTitle: pageTitle,
                     ContentLength: null,
                     Error: "UI Automation is not available",
-                    ErrorCode: BrowserErrorCode.AutomationUnavailable);
+                    ErrorCode: BrowserErrorCode.AutomationUnavailable,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError);
             }
 
             // Get title via UI Automation
@@ -226,9 +357,9 @@ public class BrowserReadingService : IBrowserReadingService
             var url = _uiAutomation.GetBrowserUrl(browserHandle, browserType);
 
             // Extract content via UI Automation
-            var content = _uiAutomation.GetBrowserContent(browserHandle, browserType, options.MaxLength);
+            var uiaContent = _uiAutomation.GetBrowserContent(browserHandle, browserType, options.MaxLength);
 
-            if (string.IsNullOrEmpty(content))
+            if (string.IsNullOrEmpty(uiaContent))
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -238,18 +369,26 @@ public class BrowserReadingService : IBrowserReadingService
                     PageTitle: pageTitle,
                     ContentLength: null,
                     Error: "Could not extract content from browser",
-                    ErrorCode: BrowserErrorCode.ContentExtractionFailed);
+                    ErrorCode: BrowserErrorCode.ContentExtractionFailed,
+                    Source: BrowserReadSource.Uia,
+                    CdpError: cdpError);
             }
 
             return new BrowserContentResult(
                 Success: true,
-                Content: content,
+                Content: uiaContent,
                 Url: url,
                 BrowserType: browserType,
                 PageTitle: pageTitle,
-                ContentLength: content.Length,
+                ContentLength: uiaContent.Length,
                 Error: null,
-                ErrorCode: BrowserErrorCode.None);
+                ErrorCode: BrowserErrorCode.None,
+                Source: BrowserReadSource.Uia,
+                CdpError: cdpError);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -266,7 +405,9 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <inheritdoc />
-    public BrowserUrlResult GetActiveBrowserUrl(int? cdpPort = null)
+    public async Task<BrowserUrlResult> GetActiveBrowserUrlAsync(
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -300,7 +441,11 @@ public class BrowserReadingService : IBrowserReadingService
             }
 
             // Get URL from the browser
-            return GetBrowserUrl(foregroundHandle, cdpPort);
+            return await GetBrowserUrlAsync(foregroundHandle, cdp, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -315,18 +460,23 @@ public class BrowserReadingService : IBrowserReadingService
     }
 
     /// <inheritdoc />
-    public async Task<bool> IsCdpAvailableAsync(int port = 9222)
+    public async Task<bool> IsCdpAvailableAsync(int port = 9222, CancellationToken cancellationToken = default)
     {
-        return await _cdpService.IsDebugPortAvailableAsync(port);
+        var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
+        return targets.Success;
     }
 
     /// <inheritdoc />
-    public async Task<BrowserContentResult> GetContentViaCdpAsync(int port = 9222, int targetIndex = 0)
+    public async Task<BrowserContentResult> GetContentViaCdpAsync(
+        int port = 9222,
+        int targetIndex = 0,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var isAvailable = await _cdpService.IsDebugPortAvailableAsync(port);
-            if (!isAvailable)
+            var stopwatch = Stopwatch.StartNew();
+            var targets = await _cdpService.GetPageTargetsAsync(port, DefaultCdpTimeout, cancellationToken);
+            if (!targets.Success)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -335,12 +485,14 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: "cdp",
                     PageTitle: null,
                     ContentLength: null,
-                    Error: $"CDP not available on port {port}",
-                    ErrorCode: BrowserErrorCode.AutomationUnavailable);
+                    Error: targets.Error,
+                    ErrorCode: targets.ErrorCode,
+                    Source: BrowserReadSource.Cdp,
+                    CdpError: targets.DescribeError());
             }
 
-            var targets = await _cdpService.GetTargetsAsync(port);
-            if (targets.Count == 0)
+            var pages = targets.Value!;
+            if (pages.Count == 0)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -350,10 +502,11 @@ public class BrowserReadingService : IBrowserReadingService
                     PageTitle: null,
                     ContentLength: null,
                     Error: "No browser targets found",
-                    ErrorCode: BrowserErrorCode.ContentAreaNotFound);
+                    ErrorCode: BrowserErrorCode.ContentAreaNotFound,
+                    Source: BrowserReadSource.Cdp);
             }
 
-            if (targetIndex >= targets.Count)
+            if (targetIndex < 0 || targetIndex >= pages.Count)
             {
                 return new BrowserContentResult(
                     Success: false,
@@ -362,36 +515,47 @@ public class BrowserReadingService : IBrowserReadingService
                     BrowserType: "cdp",
                     PageTitle: null,
                     ContentLength: null,
-                    Error: $"Target index {targetIndex} out of range (found {targets.Count} targets)",
-                    ErrorCode: BrowserErrorCode.InvalidHandle);
+                    Error: $"Target index {targetIndex} out of range (found {pages.Count} targets)",
+                    ErrorCode: BrowserErrorCode.InvalidHandle,
+                    Source: BrowserReadSource.Cdp);
             }
 
-            var target = targets[targetIndex];
-            var content = await _cdpService.GetPageContentAsync(target.Id, port, textOnly: true);
-            var title = await _cdpService.GetPageTitleAsync(target.Id, port);
+            var target = pages[targetIndex];
+            var snapshot = await ReadSnapshotWithinBudgetAsync(
+                target, textOnly: true, maxLength: null, DefaultCdpTimeout, stopwatch, cancellationToken);
 
-            if (string.IsNullOrEmpty(content))
+            if (!snapshot.Success || string.IsNullOrEmpty(snapshot.Value!.Content))
             {
                 return new BrowserContentResult(
                     Success: false,
                     Content: null,
                     Url: target.Url,
                     BrowserType: "cdp",
-                    PageTitle: title ?? target.Title,
+                    PageTitle: target.Title,
                     ContentLength: null,
-                    Error: "Could not extract content via CDP",
-                    ErrorCode: BrowserErrorCode.ContentExtractionFailed);
+                    Error: snapshot.Success ? "Could not extract content via CDP" : snapshot.Error,
+                    ErrorCode: snapshot.Success ? BrowserErrorCode.ContentExtractionFailed : snapshot.ErrorCode,
+                    Source: BrowserReadSource.Cdp,
+                    TargetId: target.Id,
+                    CdpError: snapshot.DescribeError());
             }
 
+            var page = snapshot.Value;
             return new BrowserContentResult(
                 Success: true,
-                Content: content,
-                Url: target.Url,
+                Content: page.Content,
+                Url: page.Url,
                 BrowserType: "cdp",
-                PageTitle: title ?? target.Title,
-                ContentLength: content.Length,
+                PageTitle: page.Title,
+                ContentLength: page.Content.Length,
                 Error: null,
-                ErrorCode: BrowserErrorCode.None);
+                ErrorCode: BrowserErrorCode.None,
+                Source: BrowserReadSource.Cdp,
+                TargetId: target.Id);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -406,6 +570,7 @@ public class BrowserReadingService : IBrowserReadingService
                 ErrorCode: BrowserErrorCode.OperationException);
         }
     }
+
 
     /// <inheritdoc />
     public string? GetBrowserType(nint browserHandle, string processName)
@@ -459,73 +624,56 @@ public class BrowserReadingService : IBrowserReadingService
         return _browserDetection.IsBrowser(processName);
     }
 
-    private BrowserUrlResult? TryGetUrlViaCdp(string windowTitle, int port, string browserType)
+
+    /// <summary>
+    /// Finds the tab shown by the window and reads it, all within one time budget.
+    /// </summary>
+    private async Task<(CdpResult<CdpPageSnapshot> Snapshot, string? TargetId)> ReadContentViaCdpAsync(
+        int port,
+        int windowProcessId,
+        string windowTitle,
+        BrowserContentOptions options,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        try
-        {
-            var isAvailable = _cdpService.IsDebugPortAvailableAsync(port).GetAwaiter().GetResult();
-            if (!isAvailable)
-                return null;
+        var stopwatch = Stopwatch.StartNew();
 
-            var target = _cdpService.FindTargetByTitleAsync(windowTitle, port).GetAwaiter().GetResult();
-            if (target == null)
-                return null;
+        var match = await _cdpService.FindTargetForWindowAsync(
+            port, windowProcessId, windowTitle, timeout, cancellationToken);
+        if (!match.Success)
+            return (match.FailAs<CdpPageSnapshot>(), null);
 
-            var title = _cdpService.GetPageTitleAsync(target.Id, port).GetAwaiter().GetResult();
-
-            return new BrowserUrlResult(
-                Success: true,
-                Url: target.Url,
-                BrowserType: browserType,
-                PageTitle: title ?? target.Title,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None);
-        }
-        catch
-        {
-            return null;
-        }
+        var target = match.Value!;
+        var snapshot = await ReadSnapshotWithinBudgetAsync(
+            target, options.TextOnly, options.MaxLength, timeout, stopwatch, cancellationToken);
+        return (snapshot, target.Id);
     }
 
-    private BrowserContentResult? TryGetContentViaCdp(string windowTitle, int port, string browserType, BrowserContentOptions options)
+    /// <summary>
+    /// Reads a tab with whatever is left of the time budget that <paramref name="stopwatch"/> started.
+    /// </summary>
+    private async Task<CdpResult<CdpPageSnapshot>> ReadSnapshotWithinBudgetAsync(
+        CdpTarget target,
+        bool textOnly,
+        int? maxLength,
+        TimeSpan budget,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
     {
-        try
+        var remaining = budget - stopwatch.Elapsed;
+        if (remaining <= TimeSpan.Zero)
         {
-            var isAvailable = _cdpService.IsDebugPortAvailableAsync(port).GetAwaiter().GetResult();
-            if (!isAvailable)
-                return null;
-
-            var target = _cdpService.FindTargetByTitleAsync(windowTitle, port).GetAwaiter().GetResult();
-            if (target == null)
-                return null;
-
-            var content = _cdpService.GetPageContentAsync(target.Id, port, options.TextOnly).GetAwaiter().GetResult();
-            var title = _cdpService.GetPageTitleAsync(target.Id, port).GetAwaiter().GetResult();
-
-            if (string.IsNullOrEmpty(content))
-                return null;
-
-            // Apply max length if specified
-            if (options.MaxLength.HasValue && content.Length > options.MaxLength.Value)
-            {
-                content = content[..options.MaxLength.Value];
-            }
-
-            return new BrowserContentResult(
-                Success: true,
-                Content: content,
-                Url: target.Url,
-                BrowserType: browserType,
-                PageTitle: title ?? target.Title,
-                ContentLength: content.Length,
-                Error: null,
-                ErrorCode: BrowserErrorCode.None);
+            return CdpResult<CdpPageSnapshot>.Fail(
+                BrowserErrorCode.CdpTimeout,
+                $"The CDP time budget of {(long)budget.TotalMilliseconds} ms was used up before tab {target.Id} could be read.");
         }
-        catch
-        {
-            return null;
-        }
+
+        return await _cdpService.GetPageSnapshotAsync(target, textOnly, maxLength, remaining, cancellationToken);
     }
+
+    private static string Truncate(string content, int? maxLength) =>
+        maxLength is int max && max >= 0 && content.Length > max ? content[..max] : content;
+
 
     private static string GetProcessNameFromId(int processId)
     {
