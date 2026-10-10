@@ -27,6 +27,14 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// Without this, the MCP SDK replaces every exception that is not an <see cref="McpException"/>
 /// with "An error occurred invoking '&lt;tool&gt;'.", so the agent cannot tell what failed or
 /// whether a retry makes sense.
+/// <para>
+/// The same filter logs every tool call in the <see cref="CallLoggerCategory"/> category: one line
+/// when the call starts and one when it ends, with the tool name, the duration and the outcome
+/// (<c>ok</c>, <c>isError &lt;errorCode&gt;</c>, <c>cancelled</c>, <c>protocolError</c> or
+/// <c>unhandled &lt;exception type&gt;</c>). A call that takes at least
+/// <see cref="SlowCallThreshold"/> ends with a Warning instead of an Information line. Argument
+/// values and result content are never logged: they can hold typed text or page content.
+/// </para>
 /// </summary>
 public static class ToolErrorReporting
 {
@@ -38,6 +46,12 @@ public static class ToolErrorReporting
 
     /// <summary>The errorCode reported when the call's arguments could not be bound to the tool's parameters.</summary>
     public const string InvalidArgumentsErrorCode = "InvalidArguments";
+
+    /// <summary>The log category of the per-call lines (start, end, duration and outcome of every tool call).</summary>
+    public const string CallLoggerCategory = "WindowsAppManagerMcp.ToolCalls";
+
+    /// <summary>A call that runs at least this long is logged with a Warning when it ends.</summary>
+    public static readonly TimeSpan SlowCallThreshold = TimeSpan.FromSeconds(10);
 
     private const string LoggerCategory = "WindowsAppManagerMcp.ToolErrors";
 
@@ -63,32 +77,48 @@ public static class ToolErrorReporting
     /// exceptions are logged with their stack trace to stderr; deliberate tool errors and invalid
     /// arguments are expected outcomes and are only logged at Information level. Cancellation and
     /// protocol errors (e.g. an unknown tool name) pass through unchanged so the SDK keeps reporting
-    /// them as JSON-RPC errors.
+    /// them as JSON-RPC errors. Every call is also logged with its duration and outcome (see the
+    /// class summary), with <see cref="SlowCallThreshold"/> as the slow-call threshold.
     /// </summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
-        async (request, cancellationToken) =>
+        CreateFilter(SlowCallThreshold)(next);
+
+    /// <summary>
+    /// Creates the filter with a different slow-call threshold. <see cref="Filter"/> is this filter with
+    /// <see cref="SlowCallThreshold"/>; tests pass zero to check the slow-call Warning without waiting.
+    /// </summary>
+    public static McpRequestFilter<CallToolRequestParams, CallToolResult> CreateFilter(TimeSpan slowCallThreshold) =>
+        next => async (request, cancellationToken) =>
         {
+            var call = new CallLog(request, slowCallThreshold);
+            call.Started();
+
             try
             {
-                return await next(request, cancellationToken).ConfigureAwait(false);
+                var result = await next(request, cancellationToken).ConfigureAwait(false);
+                call.Finished(result.IsError == true ? "isError (no errorCode)" : "ok");
+                return result;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                call.Finished("cancelled");
                 throw;
             }
             catch (McpProtocolException)
             {
+                call.Finished("protocolError");
                 throw;
             }
             catch (Exception ex)
             {
                 var toolName = request.Params?.Name ?? "(unknown)";
                 var exception = Unwrap(ex);
-                var logger = CreateLogger(request.Services);
+                var logger = CreateLogger(request.Services, LoggerCategory);
 
                 if (exception is McpProtocolException)
                 {
+                    call.Finished("protocolError");
                     ExceptionDispatchInfo.Throw(exception);
                 }
 
@@ -97,6 +127,7 @@ public static class ToolErrorReporting
                     var errorCode = (deliberate as ToolErrorException)?.ErrorCode ?? ToolErrorCode;
                     logger.LogInformation(
                         "Tool '{ToolName}' returned error {ErrorCode}: {ErrorMessage}", toolName, errorCode, deliberate.Message);
+                    call.Finished($"isError {errorCode}");
                     return CreateToolErrorResult(toolName, errorCode, deliberate.Message);
                 }
 
@@ -107,6 +138,7 @@ public static class ToolErrorReporting
                         toolName,
                         exception.GetType().FullName,
                         exception.Message);
+                    call.Finished($"isError {InvalidArgumentsErrorCode}");
                     return CreateInvalidArgumentsResult(toolName, exception);
                 }
 
@@ -116,6 +148,7 @@ public static class ToolErrorReporting
                     toolName,
                     exception.GetType().FullName,
                     exception.Message);
+                call.Finished($"unhandled {exception.GetType().FullName}");
 
                 return CreateErrorResult(toolName, exception);
             }
@@ -248,8 +281,45 @@ public static class ToolErrorReporting
         }
     }
 
-    private static ILogger CreateLogger(IServiceProvider? services) =>
-        services?.GetService<ILoggerFactory>()?.CreateLogger(LoggerCategory) ?? NullLogger.Instance;
+    private static ILogger CreateLogger(IServiceProvider? services, string category) =>
+        services?.GetService<ILoggerFactory>()?.CreateLogger(category) ?? NullLogger.Instance;
+
+    /// <summary>
+    /// The start and end lines of one tool call. Only the tool name, the JSON-RPC request id, the
+    /// duration and the outcome are logged; never argument values or result content.
+    /// </summary>
+    private sealed class CallLog(RequestContext<CallToolRequestParams> request, TimeSpan slowCallThreshold)
+    {
+        private readonly ILogger _logger = CreateLogger(request.Services, CallLoggerCategory);
+        private readonly string _toolName = request.Params?.Name ?? "(unknown)";
+        private readonly string _requestId = request.JsonRpcRequest?.Id.ToString() ?? string.Empty;
+        private readonly Stopwatch _stopwatch = new();
+
+        public void Started()
+        {
+            _stopwatch.Start();
+            _logger.LogInformation("Tool call '{ToolName}' (request {RequestId}) started", _toolName, _requestId);
+        }
+
+        public void Finished(string outcome)
+        {
+            var elapsed = _stopwatch.Elapsed;
+            var durationMs = (long)elapsed.TotalMilliseconds;
+
+            if (elapsed >= slowCallThreshold)
+            {
+                _logger.LogWarning(
+                    "Tool call '{ToolName}' (request {RequestId}) finished in {DurationMs} ms: {Outcome}. " +
+                    "Slow call: it took at least {SlowCallThresholdMs} ms",
+                    _toolName, _requestId, durationMs, outcome, (long)slowCallThreshold.TotalMilliseconds);
+                return;
+            }
+
+            _logger.LogInformation(
+                "Tool call '{ToolName}' (request {RequestId}) finished in {DurationMs} ms: {Outcome}",
+                _toolName, _requestId, durationMs, outcome);
+        }
+    }
 }
 
 /// <summary>
