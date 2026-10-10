@@ -147,11 +147,23 @@ public class WindowManagerTools
         return FocusResult.From(_foregroundService.EnsureForeground((nint)handle));
     }
 
+    /// <summary>close_windows_batch closes at most this many windows without confirm=true.</summary>
+    public const int MaxCloseBatchWithoutConfirm = 3;
+
+    private const string ForceDescription =
+        "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host " +
+        "(the terminal, editor or chat app this server was started from). Default false: such windows are refused " +
+        "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.";
+
     [McpServerTool(Name = "close_window")]
-    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows.")]
+    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows. " +
+                 "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, " +
+                 "and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator).")]
     public WindowOperationResult CloseWindow(
         [Description("Window handle (as integer)")]
-        long handle)
+        long handle,
+        [Description(ForceDescription)]
+        bool force = false)
     {
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
@@ -159,26 +171,44 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
-        var success = _windowService.CloseWindow(hwnd);
-        return new WindowOperationResult(Success: success);
+        var result = _windowService.CloseWindow(hwnd, force);
+        return new WindowOperationResult(
+            Success: result.Success,
+            Error: result.Error,
+            ErrorCode: result.Success ? null : result.ErrorCode.ToString());
     }
 
     [McpServerTool(Name = "close_windows_batch")]
-    [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work.")]
+    [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. " +
+                 "More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) " +
+                 "are refused per window with errorCode ProtectedWindow unless force is true; the other windows are still closed.")]
     public BatchWindowResult CloseWindowsBatch(
         [Description("Array of window handles to close")]
         WindowCloseRequest[] windows,
         [Description("Delay between operations in milliseconds (default: 50)")]
-        int delayBetweenMs = 50)
+        int delayBetweenMs = 50,
+        [Description("Must be true to close more than 3 windows in one batch. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
+        bool confirm = false,
+        [Description(ForceDescription + " Applies to every window in the batch.")]
+        bool force = false)
     {
+        if (windows.Length > MaxCloseBatchWithoutConfirm && !confirm)
+        {
+            throw new Infrastructure.ToolErrorException(
+                nameof(ConfirmationRequired),
+                $"close_windows_batch was asked to close {windows.Length} windows; more than {MaxCloseBatchWithoutConfirm} " +
+                "require confirm=true. Nothing was closed. Check the handles (find_windows) and call again with confirm=true.");
+        }
+
         var handles = windows.Select(w => (nint)w.Handle).ToList();
 
-        var results = _windowService.CloseWindowsBatch(handles, delayBetweenMs);
+        var results = _windowService.CloseWindowsBatch(handles, force, delayBetweenMs);
 
         var items = results.Select(r => new WindowResultItem(
             Handle: r.Handle.ToInt64(),
             Success: r.Success,
-            Error: r.Error
+            Error: r.Error,
+            ErrorCode: r.Success ? null : r.ErrorCode.ToString()
         )).ToList();
 
         return new BatchWindowResult(

@@ -8,11 +8,13 @@ public class WindowService : IWindowService
 {
     private readonly IMonitorService _monitorService;
     private readonly INativeWindowWrapper _nativeWrapper;
+    private readonly IHostGuard _hostGuard;
 
-    public WindowService(IMonitorService monitorService, INativeWindowWrapper nativeWrapper)
+    public WindowService(IMonitorService monitorService, INativeWindowWrapper nativeWrapper, IHostGuard hostGuard)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
+        _hostGuard = hostGuard ?? throw new ArgumentNullException(nameof(hostGuard));
     }
 
     public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true) =>
@@ -267,14 +269,71 @@ public class WindowService : IWindowService
         return handle != nint.Zero && _nativeWrapper.IsWindow(handle);
     }
 
-    public bool CloseWindow(nint handle)
+    public WindowCloseResult CloseWindow(nint handle, bool force)
     {
         if (!IsValidWindow(handle))
-            return false;
+            return WindowCloseResult.Failed(handle, WindowErrorCode.InvalidHandle, "Invalid window handle");
 
-        // Send WM_CLOSE for graceful close - the application can cancel this
-        return _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+        if (!force && FindCloseProtection(handle) is { } protection)
+            return WindowCloseResult.Failed(handle, WindowErrorCode.ProtectedWindow, protection);
+
+        // WM_CLOSE asks for a graceful close: the application can prompt to save, or cancel it
+        var posted = _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+        return posted.Succeeded ? WindowCloseResult.Sent(handle) : CloseNotPosted(handle, posted.Win32Error);
     }
+
+    /// <summary>
+    /// Why closing the window could take down the desktop shell or end the agent's own session, or null
+    /// when it cannot. The shell rule checks the window, the top-level window it is part of and that
+    /// window's root owner: DefWindowProc destroys any window that gets WM_CLOSE, so a child or an owned
+    /// helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the taskbar itself.
+    /// The host rule is <see cref="IHostGuard.IsHostWindow"/>, which is root-owner aware on its own.
+    /// </summary>
+    private string? FindCloseProtection(nint handle)
+    {
+        var shellWindow = _nativeWrapper.GetShellWindow();
+        nint[] windows =
+        [
+            handle,
+            _nativeWrapper.GetAncestor(handle, WindowAncestor.Root),
+            _nativeWrapper.GetAncestor(handle, WindowAncestor.RootOwner)
+        ];
+
+        foreach (var window in windows.Where(w => w != nint.Zero).Distinct())
+        {
+            var className = _nativeWrapper.GetClassName(window);
+            if (WindowClassification.IsShellWindowClass(className) || (shellWindow != nint.Zero && window == shellWindow))
+            {
+                var part = window == handle ? "is" : $"belongs to {window}, which is";
+                return $"Window {handle} {part} part of the desktop shell ({className}): the desktop or a taskbar. " +
+                       "Closing it can open the Shut Down Windows dialog or take down part of the shell. " +
+                       "Nothing was sent. Pass force=true only if the user explicitly asked to close this window.";
+            }
+        }
+
+        if (_hostGuard.IsHostWindow(handle))
+        {
+            return $"Window {handle} belongs to the agent's host: the terminal, editor or chat app this server was " +
+                   "started from, or a window that one owns. Closing it can end the agent's own session. " +
+                   "Nothing was sent. Pass force=true only if the user explicitly asked to close this window.";
+        }
+
+        return null;
+    }
+
+    /// <summary>Maps the Win32 error of a PostMessage(WM_CLOSE) that Windows refused.</summary>
+    private static WindowCloseResult CloseNotPosted(nint handle, int win32Error) => win32Error switch
+    {
+        NativeEnums.ERROR_ACCESS_DENIED => WindowCloseResult.Failed(handle, WindowErrorCode.AccessDenied,
+            $"Windows blocked the close message (Win32 error {win32Error}, access denied). The window most likely " +
+            "belongs to an app running with higher privileges, for example as administrator: User Interface " +
+            "Privilege Isolation blocks messages to it from this server. Nothing was closed."),
+        NativeEnums.ERROR_INVALID_WINDOW_HANDLE => WindowCloseResult.Failed(handle, WindowErrorCode.InvalidHandle,
+            $"The window no longer exists (Win32 error {win32Error}): it closed before the close message was sent."),
+        _ => WindowCloseResult.Failed(handle, WindowErrorCode.CloseFailed,
+            $"Windows did not accept the close message (Win32 error {win32Error}: {new System.ComponentModel.Win32Exception(win32Error).Message}). " +
+            "Nothing was closed.")
+    };
 
     public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
@@ -390,34 +449,32 @@ public class WindowService : IWindowService
         return results;
     }
 
-    public IReadOnlyList<(nint Handle, bool Success, string? Error)> CloseWindowsBatch(
+    public IReadOnlyList<WindowCloseResult> CloseWindowsBatch(
         IReadOnlyList<nint> handles,
+        bool force,
         int delayBetweenMs = 50)
     {
-        var results = new List<(nint Handle, bool Success, string? Error)>();
+        var results = new List<WindowCloseResult>();
 
         for (var i = 0; i < handles.Count; i++)
         {
             var handle = handles[i];
+            WindowCloseResult result;
             try
             {
-                if (!IsValidWindow(handle))
-                {
-                    results.Add((handle, false, "Invalid window handle"));
-                    continue;
-                }
-
-                var success = CloseWindow(handle);
-                results.Add((handle, success, success ? null : "CloseWindow failed"));
-
-                if (delayBetweenMs > 0 && i < handles.Count - 1)
-                {
-                    Thread.Sleep(delayBetweenMs);
-                }
+                result = CloseWindow(handle, force);
             }
             catch (Exception ex)
             {
-                results.Add((handle, false, ex.Message));
+                result = WindowCloseResult.Failed(handle, WindowErrorCode.CloseFailed, ex.Message);
+            }
+
+            results.Add(result);
+
+            // Pause only after a close message was actually sent
+            if (result.Success && delayBetweenMs > 0 && i < handles.Count - 1)
+            {
+                Thread.Sleep(delayBetweenMs);
             }
         }
 

@@ -333,7 +333,7 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.CloseWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.CloseWindow(handle, false)).Returns(WindowCloseResult.Sent(handle));
         var sut = CreateSut();
 
         // Act
@@ -341,7 +341,7 @@ public class WindowManagerToolsTests
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockWindowService.Verify(w => w.CloseWindow(handle), Times.Once);
+        _mockWindowService.Verify(w => w.CloseWindow(handle, false), Times.Once);
     }
 
     [Fact]
@@ -350,7 +350,8 @@ public class WindowManagerToolsTests
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.CloseWindow(handle)).Returns(false);
+        _mockWindowService.Setup(w => w.CloseWindow(handle, false))
+            .Returns(WindowCloseResult.Failed(handle, WindowErrorCode.CloseFailed, "Windows did not accept the close message"));
         var sut = CreateSut();
 
         // Act

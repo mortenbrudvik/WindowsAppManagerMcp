@@ -141,6 +141,10 @@ public class ServerHarnessTests : IDisposable
         var processService = ResolveWithoutRealWrappers<IProcessService>(provider);
         var executable = Path.Combine(_layoutsPath, "app.exe");
 
+        // Resolving ProcessService creates WindowService and with it the host guard, which reads the
+        // ancestor processes and the console window once. Only what the launch does is under test.
+        Wrapper<INativeProcessWrapper>().Invocations.Clear();
+
         // Act
         var result = processService.LaunchApplication(executable);
 

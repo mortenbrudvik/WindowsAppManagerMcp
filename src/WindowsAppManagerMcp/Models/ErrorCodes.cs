@@ -32,8 +32,14 @@ public enum WindowErrorCode
     /// </summary>
     FocusFailed = 7,
 
-    // Activation codes (EnsureForeground) are numbered from 20, so that other window codes can be
-    // added after CloseFailed without renumbering.
+    /// <summary>
+    /// The close message could not be sent (a Win32 error other than access denied, or an unexpected
+    /// error in a batch); the error text has the reason.
+    /// </summary>
+    CloseFailed = 8,
+
+    // Codes added in M1 are numbered from 20, so that earlier window codes can be added after
+    // CloseFailed without renumbering. Activation codes (EnsureForeground, roadmap M1.3):
 
     /// <summary>The window's thread is not responding (IsHungAppWindow), or a call to it did not return in time.</summary>
     NotResponding = 20,
@@ -41,8 +47,22 @@ public enum WindowErrorCode
     /// <summary>The window is cloaked: it is on another virtual desktop, or its app has hidden it.</summary>
     Cloaked = 21,
 
-    /// <summary>Failed to close the window.</summary>
-    CloseFailed = 8
+    // Close guard codes (roadmap M1.7):
+
+    /// <summary>
+    /// The window is part of the desktop shell (the desktop or a taskbar) or of the agent's own host (the
+    /// terminal, editor or chat app the server was started from), and force was not true. Nothing was sent.
+    /// </summary>
+    ProtectedWindow = 22,
+
+    /// <summary>
+    /// Windows refused the message with ERROR_ACCESS_DENIED (5): User Interface Privilege Isolation blocks
+    /// messages to windows of more privileged processes, such as an app running as administrator.
+    /// </summary>
+    AccessDenied = 23,
+
+    /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
+    ConfirmationRequired = 24
 }
 
 /// <summary>

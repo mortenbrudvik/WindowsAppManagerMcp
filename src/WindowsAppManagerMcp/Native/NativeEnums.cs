@@ -76,6 +76,10 @@ internal static class NativeEnums
     // Window messages
     public const uint WM_CLOSE = 0x0010;
 
+    // Win32 error codes that a wrapper returns in a Win32CallResult
+    public const int ERROR_ACCESS_DENIED = 5;
+    public const int ERROR_INVALID_WINDOW_HANDLE = 1400;
+
     // Raster operation codes for BitBlt
     public const uint SRCCOPY = 0x00CC0020;
     public const uint CAPTUREBLT = 0x40000000;

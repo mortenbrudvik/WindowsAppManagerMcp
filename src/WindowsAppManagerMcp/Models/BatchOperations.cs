@@ -43,7 +43,8 @@ public record WindowResultItem(
     bool Success,
     BoundsDto? NewBounds = null,
     string? NewState = null,
-    string? Error = null
+    string? Error = null,
+    string? ErrorCode = null
 );
 
 public record BatchLaunchResult(

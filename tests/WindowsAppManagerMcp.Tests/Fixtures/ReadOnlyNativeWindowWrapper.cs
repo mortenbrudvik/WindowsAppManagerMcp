@@ -73,7 +73,7 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public bool BringWindowToTop(nint hWnd) => throw Refused(nameof(BringWindowToTop));
 
-    public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) => throw Refused(nameof(PostMessage));
+    public Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) => throw Refused(nameof(PostMessage));
 
     private static InvalidOperationException Refused(string method) =>
         new($"{method} would change a real window. This test wrapper is read-only; " +

@@ -57,7 +57,15 @@ public interface IWindowService
 
     bool IsValidWindow(nint handle);
 
-    bool CloseWindow(nint handle);
+    /// <summary>
+    /// Asks the window to close by posting WM_CLOSE; the application can still prompt to save or refuse.
+    /// Unless <paramref name="force"/> is true, nothing is posted to a protected window
+    /// (<see cref="WindowErrorCode.ProtectedWindow"/>): the desktop shell (the window, the top-level window
+    /// it is part of, or its root owner is Progman, WorkerW, Shell_TrayWnd, Shell_SecondaryTrayWnd or the
+    /// shell window) and the agent's host (<see cref="IHostGuard.IsHostWindow"/>). A refused message is
+    /// reported with its Win32 error: 5 is <see cref="WindowErrorCode.AccessDenied"/>.
+    /// </summary>
+    WindowCloseResult CloseWindow(nint handle, bool force);
 
     // Batch operations
     IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(
@@ -72,7 +80,12 @@ public interface IWindowService
         IReadOnlyList<(nint Handle, WindowState State)> changes,
         int delayBetweenMs = 30);
 
-    IReadOnlyList<(nint Handle, bool Success, string? Error)> CloseWindowsBatch(
+    /// <summary>
+    /// <see cref="CloseWindow"/> for each window, in order, with the same <paramref name="force"/>. A
+    /// refused or failed window does not stop the batch; each result says what happened to its window.
+    /// </summary>
+    IReadOnlyList<WindowCloseResult> CloseWindowsBatch(
         IReadOnlyList<nint> handles,
+        bool force,
         int delayBetweenMs = 50);
 }
