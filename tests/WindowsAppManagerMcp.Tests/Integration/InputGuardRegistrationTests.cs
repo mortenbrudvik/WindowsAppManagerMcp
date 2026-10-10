@@ -56,6 +56,12 @@ public sealed class InputGuardRegistrationTests : IDisposable
     }
 
     [Fact]
+    public void TheSafetySettings_AreLoggedWhenTheServerStarts()
+    {
+        _provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<InputSafetyStartup>().Should().ContainSingle();
+    }
+
+    [Fact]
     public void SafetyInfo_ReportsTheHostThePolicyAndTheChords()
     {
         // Act

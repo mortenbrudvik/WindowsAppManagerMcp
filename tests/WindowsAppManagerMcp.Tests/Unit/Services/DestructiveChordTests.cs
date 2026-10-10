@@ -190,14 +190,25 @@ public class DestructiveChordTests
     }
 
     [Fact]
-    public void FromEnvironment_EntriesThatAreNotOneChord_AreReportedAndIgnored()
+    public void FromEnvironment_EntriesThatAreNotOneChord_AreReported_AndKeepTheDefaultsInForce()
     {
         // Arrange - a sequence, an unknown key and an unclosed brace
-        var options = Options("^a{DELETE} ^{NOPE} %{F4 ^w");
+        var options = Options("^a{DELETE} ^{NOPE} %{F4 ^{F5}");
 
-        // Assert
+        // Assert - fails closed: a mistyped entry must not silently remove Alt+F4 and the others
         options.InvalidChordEntries.Should().Equal("^a{DELETE}", "^{NOPE}", "%{F4");
-        options.DestructiveChords.Select(c => c.Spec).Should().Equal("^w");
+        options.DestructiveChords.Select(c => c.Spec).Should().Equal("^{F5}", "%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l");
+    }
+
+    [Fact]
+    public void FromEnvironment_CommaSeparatedList_IsInvalid_SoTheDefaultsStay()
+    {
+        // Copying WAM_DENY_PROCESSES' comma style: one entry that is not one chord
+        var options = Options("%{F4},^w");
+
+        options.InvalidChordEntries.Should().Equal("%{F4},^w");
+        options.DestructiveChords.Select(c => c.Spec).Should().Equal(InputGuardOptions.DefaultDestructiveChords);
+        Find("%{F4}", options).Should().NotBeNull();
     }
 
     [Theory]

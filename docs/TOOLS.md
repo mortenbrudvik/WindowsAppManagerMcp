@@ -38,9 +38,11 @@ The user, not the agent, decides which applications the agent may act on. The se
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, CredentialUIBroker, consent` | Image names (with or without `.exe`, separated by commas or semicolons) the agent may not act on. A value replaces the default list; the entry `default` puts the default list back in, and `none` alone turns it off |
+| `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, NordPass, ProtonPass, Proton Pass, RoboForm, pwsafe, CredentialUIBroker, consent` | Image names (with or without `.exe`, separated by commas or semicolons; a name may contain spaces, and whitespace right after `.exe` also separates) the agent may not act on. A value replaces the default list; the entry `default` puts the default list back in, and `none` alone turns it off |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only image names the agent may act on. The deny list still wins |
-| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here; `send_keys` itself has no Windows-key modifier, so `#l` waits for one). `default` and `none` work as above |
+| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here; `send_keys` itself has no Windows-key modifier, so `#l` waits for one). `default` and `none` work as above. An entry that is not one chord (such as a comma-separated list) is ignored and logged, and the default chords then stay in force as well |
+
+The server logs the deny list, the allow list and the chords in force to stderr when it starts, so a mistyped value shows up there.
 
 The policy applies to:
 
@@ -2036,7 +2038,7 @@ Input calls never interleave. If several input tools are called in parallel, eac
 
 Before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
-1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)).
+1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)).
 2. **The desktop.** The session is locked (`SessionLocked`), or the input desktop cannot be reached because a UAC prompt or the Ctrl+Alt+Del screen is shown or the session is disconnected (`DesktopUnavailable`).
 3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
 4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`). For the mouse, the top-level window at the point: with a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a process the target started, such as a WebView2 dropdown (`TargetOccluded`). Another main window of the same process counts as covering the target. Then the window checks below.

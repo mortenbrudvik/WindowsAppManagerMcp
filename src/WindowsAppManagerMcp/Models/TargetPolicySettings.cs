@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
@@ -21,9 +23,10 @@ public sealed record TargetPolicySettings(
     string DenyListSource)
 {
     /// <summary>
-    /// Environment variable with the denied image names, separated by commas or semicolons. It replaces
-    /// the default list; the entry "default" puts the default list back in, and "none" alone turns the
-    /// deny list off. Names may include a path or ".exe".
+    /// Environment variable with the denied image names, separated by commas or semicolons (a name may
+    /// contain spaces; whitespace right after ".exe" also separates). It replaces the default list; the
+    /// entry "default" puts the default list back in, and "none" alone turns the deny list off. Names may
+    /// include a path or ".exe". The server logs the list in force when it starts.
     /// </summary>
     public const string DenyVariable = "WAM_DENY_PROCESSES";
 
@@ -48,8 +51,15 @@ public sealed record TargetPolicySettings(
     public static IReadOnlyList<string> DefaultDeniedProcesses { get; } =
     [
         "1Password", "Bitwarden", "KeePass", "KeePassXC", "LastPass", "Dashlane", "Keeper", "KeeperPasswordManager",
-        "Enpass", "CredentialUIBroker", "consent"
+        "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "consent"
     ];
+
+    /// <summary>
+    /// Whitespace right after ".exe" (and an optional closing quote) separates two names: no image name
+    /// goes on after its extension, so "KeePass.exe Bitwarden.exe" is two names, not one that matches nothing.
+    /// </summary>
+    private static readonly Regex SpaceAfterExtension =
+        new("(?<=\\.exe\"?)\\s+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>The policy when nothing is configured: the default deny list and no allow list.</summary>
     public static TargetPolicySettings Default { get; } = new(DefaultDeniedProcesses, null, DefaultSource);
@@ -112,6 +122,7 @@ public sealed record TargetPolicySettings(
         string.IsNullOrWhiteSpace(value)
             ? []
             : value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .SelectMany(token => SpaceAfterExtension.Split(token))
                 .Select(NormalizeProcessName)
                 .Where(name => name.Length > 0)
                 .ToList();

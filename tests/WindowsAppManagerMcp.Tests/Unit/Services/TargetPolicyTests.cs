@@ -42,6 +42,28 @@ public class TargetPolicyTests
     }
 
     [Fact]
+    public void DefaultDeniedProcesses_CoverMorePasswordManagers()
+    {
+        TargetPolicySettings.DefaultDeniedProcesses.Should().Contain(["NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe"]);
+    }
+
+    [Theory]
+    [InlineData("KeePass.exe Bitwarden.exe")]
+    [InlineData("KeePass.exe  Bitwarden.EXE")]
+    [InlineData("KeePass.exe\tBitwarden.exe")]
+    public void FromEnvironment_NamesSeparatedOnlyBySpacesAfterExe_AreSplit(string deny)
+    {
+        // A space-separated list must not turn into one name that matches nothing (and drops the defaults)
+        Settings(deny: deny).DeniedProcesses.Should().Equal("KeePass", "Bitwarden");
+    }
+
+    [Fact]
+    public void FromEnvironment_NameWithASpace_StaysOneName()
+    {
+        Settings(deny: "Proton Pass.exe, My Vault").DeniedProcesses.Should().Equal("Proton Pass", "My Vault");
+    }
+
+    [Fact]
     public void FromEnvironment_DenyList_ReplacesTheDefaultsAndNormalizesNames()
     {
         // Act - separators, quotes, paths and the .exe extension

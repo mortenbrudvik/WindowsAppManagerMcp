@@ -25,7 +25,8 @@ public sealed record InputGuardOptions(
     /// <summary>
     /// Environment variable with the destructive chords, separated by spaces (commas and semicolons are
     /// keys). It replaces the default list; the entry "default" puts the default list back in, and "none"
-    /// alone turns the rule off. <c>#</c> is the Windows-key modifier here.
+    /// alone turns the rule off. <c>#</c> is the Windows-key modifier here. An entry that is not one chord
+    /// is ignored and logged, and the default list then stays in force as well.
     /// </summary>
     public const string DestructiveChordsVariable = "WAM_DESTRUCTIVE_CHORDS";
 
@@ -76,8 +77,14 @@ public sealed record InputGuardOptions(
         }
 
         var specs = entries.SelectMany(entry =>
-            string.Equals(entry, "default", StringComparison.OrdinalIgnoreCase) ? DefaultDestructiveChords : [entry]);
-        return Build(specs, DestructiveChordsVariable);
+            string.Equals(entry, "default", StringComparison.OrdinalIgnoreCase) ? DefaultDestructiveChords : [entry]).ToList();
+        var options = Build(specs, DestructiveChordsVariable);
+
+        // Fails closed: a mistyped entry (a comma-separated list, say) keeps the default chords in force too,
+        // instead of silently leaving Alt+F4 and the others unprotected
+        return options.InvalidChordEntries.Count == 0
+            ? options
+            : Build(specs.Concat(DefaultDestructiveChords), DestructiveChordsVariable);
     }
 
     /// <summary>

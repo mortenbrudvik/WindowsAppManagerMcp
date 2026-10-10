@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -43,8 +42,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
         IProcessSecurityProbe security,
         IHostGuard hostGuard,
         ITargetPolicy policy,
-        InputGuardOptions options,
-        ILogger<InputTargetGuard>? logger = null)
+        InputGuardOptions options)
     {
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
         _hitTest = hitTest ?? throw new ArgumentNullException(nameof(hitTest));
@@ -56,13 +54,6 @@ public sealed class InputTargetGuard : IInputTargetGuard
         _hostGuard = hostGuard ?? throw new ArgumentNullException(nameof(hostGuard));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _options = options ?? throw new ArgumentNullException(nameof(options));
-
-        if (options.InvalidChordEntries.Count > 0)
-        {
-            logger?.LogWarning(
-                "{Variable} entries that are not one key chord in send_keys syntax are ignored: {Entries}",
-                InputGuardOptions.DestructiveChordsVariable, string.Join(" ", options.InvalidChordEntries));
-        }
     }
 
     public InputGuardResult CheckKeyboard(InputTarget target, KeyboardInputKind kind, IReadOnlyList<InputEvent>? keys)
