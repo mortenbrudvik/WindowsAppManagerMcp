@@ -99,8 +99,9 @@ function Get-ExeBuildInfo([string]$ExePath) {
 # Copies an exe over $Target even while $Target is running (for example the MCP server of the
 # Claude Code session that runs /update-plugin). Windows cannot overwrite a running exe but can
 # rename it, so the running copy is moved aside to "<name>.old-<timestamp>"; the running process
-# is unaffected and the next start uses the new file. Leftovers from earlier runs are removed
-# once nothing runs them any more.
+# is unaffected and the next start uses the new file. If the copy still fails, the original is
+# moved back before the error is rethrown, so $Target (the path the plugin runs) is never left
+# without an exe. Leftovers from earlier runs are removed once nothing runs them any more.
 function Copy-ExeReplacingRunning([string]$Source, [string]$Target) {
     $directory = Split-Path -Parent $Target
     $leaf = Split-Path -Leaf $Target
@@ -124,8 +125,25 @@ function Copy-ExeReplacingRunning([string]$Source, [string]$Target) {
     catch {
         throw "Could not replace $Target (in use?) and could not move it aside: $($_.Exception.Message)"
     }
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Target -Force
+    }
+    catch {
+        $copyError = $_
+        try {
+            # A failed copy can leave a partial file behind; the original replaces it.
+            if (Test-Path -LiteralPath $Target) {
+                Remove-Item -LiteralPath $Target -Force
+            }
+            Move-Item -LiteralPath $aside -Destination $Target -Force
+        }
+        catch {
+            throw "Could not copy $Source to $Target ($($copyError.Exception.Message)), and could not move the original back from $aside ($($_.Exception.Message)). Rename $aside to $Target by hand."
+        }
+        Write-Warning "Could not copy $Source to $Target, so the original exe was moved back."
+        throw $copyError
+    }
     Write-Warning "$Target was in use, so it was moved to $aside. Restart the MCP client (Claude Code) to load the new build."
-    Copy-Item -LiteralPath $Source -Destination $Target -Force
 }
 
 function Invoke-Git([string]$Root, [string[]]$Arguments) {
@@ -177,19 +195,41 @@ function Get-ChangedBuildInputs([string]$Root, [string]$FromCommit) {
 }
 
 # Uncommitted build inputs (see $BuildInputPaths) in the working tree, as git status --porcelain
-# lines: modified, staged and untracked files, and ignored files outside src/ (src/ holds the
-# ignored bin/ and obj/ build output). Throws when git fails.
+# lines: modified, staged, untracked and ignored files. Ignored files count because MSBuild reads
+# them all the same: a *.csproj.user, a Directory.Build.rsp, or a source file that a .gitignore
+# pattern happens to match is compiled in like any other. Only the build output is left out: the
+# bin/ and obj/ folders next to each project file under src/. Throws when git fails.
 function Get-UncommittedBuildInputs([string]$Root) {
     $entries = New-Object System.Collections.Generic.List[string]
-    $otherPaths = @($script:BuildInputPaths | Where-Object { $_ -ne 'src' })
 
-    $sources = Invoke-Git $Root @('status', '--porcelain', '--', 'src')
-    $others = Invoke-Git $Root (@('status', '--porcelain', '--ignored', '--') + $otherPaths)
-    if ($sources.ExitCode -ne 0 -or $others.ExitCode -ne 0) {
+    $status = Invoke-Git $Root (@('status', '--porcelain', '--ignored', '--') + $script:BuildInputPaths)
+    $projects = Invoke-Git $Root @('ls-files', '--', ':(glob)src/**/*.*proj')
+    if ($status.ExitCode -ne 0 -or $projects.ExitCode -ne 0) {
         throw "git status for the build inputs failed in $Root."
     }
-    foreach ($line in @(@($sources.Output) + @($others.Output) | Where-Object { $_ })) {
-        $entries.Add([string]$line)
+
+    # "src/WindowsAppManagerMcp/bin/", "src/WindowsAppManagerMcp/obj/", ...
+    $buildOutput = New-Object System.Collections.Generic.List[string]
+    foreach ($project in @($projects.Output | Where-Object { $_ })) {
+        $directory = ([string]$project).Trim('"')
+        $slash = $directory.LastIndexOf('/')
+        $directory = $(if ($slash -ge 0) { $directory.Substring(0, $slash + 1) } else { '' })
+        $buildOutput.Add("${directory}bin/")
+        $buildOutput.Add("${directory}obj/")
+    }
+
+    foreach ($line in @($status.Output | Where-Object { $_ })) {
+        $text = [string]$line
+        if ($text.StartsWith('!! ')) {
+            $path = $text.Substring(3).Trim('"')
+            $isBuildOutput = @($buildOutput | Where-Object {
+                    $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+                }).Count -gt 0
+            if ($isBuildOutput) {
+                continue
+            }
+        }
+        $entries.Add($text)
     }
     if (Test-BuildPropsChangedBeyondVersion $Root @('HEAD')) {
         $entries.Add(" M $($script:BuildPropsPath) (more than its <Version>)")
