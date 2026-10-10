@@ -68,6 +68,10 @@ public class NativeCallGuardTests
         ["User32.MonitorFromWindow"] = "finds the monitor of a window",
         ["Shcore.GetDpiForMonitor"] = "reads the DPI of a monitor",
 
+        // Window hit testing for get_element_at_point (NativeHitTestWrapper)
+        ["User32.WindowFromPoint"] = "finds the window at a point",
+        ["User32.GetAncestor"] = "finds the top-level window of a window",
+
         // Screen capture into memory device contexts owned by the server (ScreenCaptureWrapper)
         ["User32.GetDC"] = "gets a device context to copy pixels from",
         ["User32.GetWindowDC"] = "gets the device context of a window to copy pixels from",
@@ -254,8 +258,8 @@ public class NativeCallGuardTests
         var calls = FindCalls(callee => callee.DeclaringType != null && IsActionCapableUiAutomationType(callee.DeclaringType));
 
         // Assert
-        calls.Should().Contain(c => c.Owner == typeof(UIElementService),
-            "the scan must see UIElementService's own UI Automation reads");
+        calls.Should().Contain(c => c.Owner == typeof(UiaTree),
+            "the scan must see the UI Automation tree adapter's own reads");
         calls
             .Where(c => c.Owner != typeof(UIAutomationWrapper))
             .Where(c => !IsReadOnlyUiAutomationCall(c.Callee))
@@ -263,6 +267,22 @@ public class NativeCallGuardTests
             .Should().BeEmpty(
                 "UI Automation actions (Invoke, SetValue, Toggle, Expand, Select, Scroll, Close, SetFocus, ...) must go " +
                 "through IUIAutomationWrapper so tests can mock them; reads must be on ReadOnlyUiAutomationMethods");
+    }
+
+    [Theory]
+    [InlineData(typeof(UIElementService))]
+    [InlineData(typeof(ElementInspectionService))]
+    public void UiaTreeServices_ReadUiAutomationOnlyThroughIUiaTree(Type service)
+    {
+        // Act - any call into System.Windows.Automation, reads included
+        var calls = FindCalls(callee =>
+            callee.DeclaringType?.Namespace?.StartsWith("System.Windows.Automation", StringComparison.Ordinal) == true);
+
+        // Assert - otherwise the fake-tree unit tests no longer cover what the service does
+        calls.Should().Contain(c => c.Owner == typeof(UiaTree), "the scan must see the adapter's own UI Automation calls");
+        calls.Where(c => c.Owner == service).Select(c => c.Description).Should().BeEmpty(
+            "{0} must read UI Automation through IUiaTree (adapter: UiaTree), so its walk and filters stay unit-testable",
+            service.Name);
     }
 
     [Fact]

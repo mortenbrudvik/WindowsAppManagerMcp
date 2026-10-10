@@ -44,6 +44,12 @@ public static class ServiceRegistration
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
+        // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,
+        // get_element_at_point); UiaWorker runs every UI Automation read under a deadline
+        services.AddSingleton<IUiaTree, UiaTree>();
+        services.AddSingleton<IUiaWorker, UiaWorker>();
+        services.AddSingleton<INativeHitTestWrapper, NativeHitTestWrapper>();
+        services.AddSingleton<IElementInspectionService, ElementInspectionService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

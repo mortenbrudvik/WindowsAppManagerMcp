@@ -12,7 +12,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
-- **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
+- **UI Automation** - Retrieve UI element trees with bounding boxes, and check which element has keyboard focus or sits at a screen point
 - **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs
@@ -88,7 +88,7 @@ The release zip is built by CI from the tagged sources. It is not a copy of the 
 so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
-## Available Tools (42)
+## Available Tools (44)
 
 | Category | Tools |
 |----------|-------|
@@ -97,7 +97,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
-| UI Automation | `get_ui_elements` |
+| UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
 | Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
@@ -140,6 +140,7 @@ Once configured, you can ask Claude to:
 - "Capture a 800x600 region at position 100, 200"
 - "Capture the Notepad window with UI element overlays"
 - "Get all buttons and text inputs from the Settings window"
+- "Which control has keyboard focus?" / "What is at position 640, 480?"
 
 ### Click & Keyboard Automation
 - "Click at position 500, 300"
