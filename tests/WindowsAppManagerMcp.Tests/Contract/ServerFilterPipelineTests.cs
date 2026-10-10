@@ -58,19 +58,27 @@ public class ServerFilterPipelineTests
     [Fact]
     public async Task TheWaitForTheInputGate_CountsTowardTheLoggedDuration()
     {
-        // Arrange - a served tool on no list runs inside the gate, which an input call holds for a while
+        // Arrange - a served tool on no list runs inside the gate, which an input call holds
         await using var server = await StartServerAsync(session: null);
         var gate = InputGate.Enter();
-        var release = Task.Delay(GateHeld).ContinueWith(_ => gate.Dispose(), TaskScheduler.Default);
-
-        // Act
-        await server.CallToolAsync(UnclassifiedTool);
-        await release;
+        try
+        {
+            // Act - the gate is released only once the call has started (and its call log with it), and a while later
+            var call = server.CallToolAsync(UnclassifiedTool);
+            SpinWait.SpinUntil(() => CallLines(server, UnclassifiedTool).Count > 0, TimeSpan.FromSeconds(10)).Should().BeTrue();
+            await Task.Delay(GateHeld);
+            gate.Dispose();
+            await call;
+        }
+        finally
+        {
+            gate.Dispose();
+        }
 
         // Assert
         var finished = CallLines(server, UnclassifiedTool).Last();
         var duration = int.Parse(Regex.Match(finished, @"finished in (\d+) ms").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-        duration.Should().BeGreaterThanOrEqualTo((int)GateHeld.TotalMilliseconds - 50, "the call waited for the gate before it ran");
+        duration.Should().BeGreaterThanOrEqualTo((int)GateHeld.TotalMilliseconds - 20, "the call waited for the gate before it ran");
         finished.Should().EndWith(": ok");
     }
 
