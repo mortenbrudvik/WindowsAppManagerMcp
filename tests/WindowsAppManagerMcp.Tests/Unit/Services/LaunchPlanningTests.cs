@@ -3,7 +3,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// <summary>
 /// Unit tests for ProcessService.PlanLaunch: validation, target resolution, batch-file argument
 /// rules (BatBadBut, pro-m3), binary planting (pro-m2) and argument quoting (PAL-7/PAL-8).
-/// PlanLaunch only builds a ProcessStartInfo; these tests never start a process.
+/// PlanLaunch only builds a ProcessStartInfo; these tests never start a process. The process
+/// wrapper is a strict mock with no setups, so a test that did start or kill one would throw.
 /// </summary>
 public class LaunchPlanningTests
 {
@@ -17,7 +18,8 @@ public class LaunchPlanningTests
         TestDataFactory.CreateMockWindowService().Object,
         new InputValidationService(),
         _mockBrowserDetection.Object,
-        _mockResolver.Object);
+        _mockResolver.Object,
+        new Mock<INativeProcessWrapper>(MockBehavior.Strict).Object);
 
     private void ResolveAs(string fileName, LaunchTargetKind kind, string? plantedPath = null)
     {
