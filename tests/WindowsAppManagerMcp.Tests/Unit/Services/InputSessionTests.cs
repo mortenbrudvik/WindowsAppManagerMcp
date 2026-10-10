@@ -321,6 +321,40 @@ public class InputSessionTests
     }
 
     [Fact]
+    public void ReleaseModifiers_ReportsOnlyItsOwnKeys()
+    {
+        // A key of the server that could not be released earlier is not reported again as one of the user's
+        _input.Insert = (_, call) => call == 1 ? 0u : uint.MaxValue;
+        var sut = CreateSut();
+        sut.Send([InputEvent.Key(VkC, KeyDown)]);
+        sut.ReleaseHeldInput("end of the call");
+        _input.Press(VkRShift);
+
+        var outcome = sut.ReleaseModifiers(sut.ReadModifiersDown(), "releaseHeldModifiers");
+
+        outcome.Released.Should().Equal("RightShift");
+        outcome.StillHeld.Should().BeEmpty();
+        sut.ServerHeld.Select(h => h.Name).Should().Equal("C");
+    }
+
+    [Fact]
+    public void AReleaseCutShortAfterTheMaskingKeyWentDown_ReportsAndTracksIt()
+    {
+        // Only the masking key's down went in: it is held now, and released with the next release
+        _input.Press(VkLMenu);
+        var sut = CreateSut();
+        _input.Insert = (_, _) => 1u;
+
+        var outcome = sut.ReleaseModifiers(sut.ReadModifiersDown(), "releaseHeldModifiers");
+        _input.Insert = null;
+        var retry = sut.ReleaseHeldInput("retry");
+
+        outcome.StillHeld.Should().BeEquivalentTo("LeftAlt", "VK 0xE8");
+        retry.Released.Should().Equal("VK 0xE8");
+        sut.ServerHeld.Should().BeEmpty();
+    }
+
+    [Fact]
     public void ReleaseModifiers_WhilePaused_IsRefused()
     {
         // The user paused: the server leaves the user's keys alone

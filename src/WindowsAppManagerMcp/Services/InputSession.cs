@@ -259,9 +259,16 @@ public sealed class InputSession : IInputSession
 
         // The up events that went in release their keys; a masking key that went down but not up is held now
         _held.Apply(events, inserted);
-        var releasedEvents = events.Take(inserted).Where(e => e.Code != HeldInputTracker.MaskKey || e.Kind != InputEventKind.VirtualKey).ToList();
+        // The up events that went in, after the masking key's down and up (sent first when Alt or Windows is released)
+        var maskPrefix = keys.Any(k => k.OpensAMenuWhenReleasedAlone) ? 2 : 0;
+        var releasedEvents = events.Take(inserted).Skip(maskPrefix).ToList();
         var released = releasedEvents.SelectMany(e => keys.Where(k => Releases(e, k))).Distinct().ToList();
-        var stillHeld = keys.Except(released).Concat(_held.Held).Distinct().Select(k => k.Name).ToList();
+        // What was asked for and not released, and the masking key if it went down without its up
+        var stillHeld = keys.Except(released)
+            .Concat(_held.Held.Where(h => h.Kind == InputEventKind.VirtualKey && h.Code == HeldInputTracker.MaskKey))
+            .Select(k => k.Name)
+            .Distinct()
+            .ToList();
 
         var outcome = new InputReleaseOutcome(released.Select(k => k.Name).ToList(), stillHeld, Error: error);
         _lastRelease = new InputReleaseRecord(_time.GetUtcNow(), reason, outcome.Released, outcome.StillHeld, error);
