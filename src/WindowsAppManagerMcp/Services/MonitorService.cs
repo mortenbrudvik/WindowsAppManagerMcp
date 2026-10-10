@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -6,55 +7,121 @@ namespace WindowsAppManagerMcp.Services;
 
 public class MonitorService : IMonitorService
 {
-    private readonly List<(nint Handle, MonitorInfo Info)> _monitors = [];
+    /// <summary>
+    /// How long a monitor snapshot is reused before the monitors are enumerated again.
+    /// Window listings look up the monitor of every window, so this avoids one
+    /// EnumDisplayMonitors pass per window while keeping display changes visible quickly.
+    /// </summary>
+    public static TimeSpan SnapshotLifetime { get; } = TimeSpan.FromMilliseconds(250);
+
     private readonly INativeMonitorWrapper _nativeMonitors;
+    private readonly TimeProvider _timeProvider;
+
+    // Immutable once published. Tool calls can run concurrently, so a refresh builds a new
+    // snapshot and swaps the reference; readers never see a list that is being filled.
+    private MonitorSnapshot? _snapshot;
 
     public MonitorService()
         : this(new NativeMonitorWrapper())
     {
     }
 
-    public MonitorService(INativeMonitorWrapper nativeMonitors)
+    public MonitorService(INativeMonitorWrapper nativeMonitors, TimeProvider? timeProvider = null)
     {
         _nativeMonitors = nativeMonitors;
-        RefreshMonitors();
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    private void RefreshMonitors()
+    private sealed record MonitorSnapshot(ImmutableArray<(nint Handle, MonitorInfo Info)> Monitors, long Timestamp)
     {
-        _monitors.Clear();
-        foreach (var monitor in _nativeMonitors.EnumerateMonitors())
+        public ImmutableArray<MonitorInfo> Infos { get; } = Monitors.Select(m => m.Info).ToImmutableArray();
+
+        public MonitorInfo? FindByHandle(nint hMonitor)
         {
-            _monitors.Add(monitor);
+            foreach (var monitor in Monitors)
+            {
+                if (monitor.Handle == hMonitor)
+                {
+                    return monitor.Info;
+                }
+            }
+
+            return null;
         }
+    }
+
+    /// <summary>
+    /// Returns the current snapshot, enumerating the monitors again if it is missing, stale or empty.
+    /// </summary>
+    private MonitorSnapshot GetSnapshot() => GetSnapshot(out _);
+
+    private MonitorSnapshot GetSnapshot(out bool refreshed)
+    {
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot != null &&
+            !snapshot.Monitors.IsEmpty &&
+            _timeProvider.GetElapsedTime(snapshot.Timestamp) < SnapshotLifetime)
+        {
+            refreshed = false;
+            return snapshot;
+        }
+
+        refreshed = true;
+        return RefreshSnapshot();
+    }
+
+    private MonitorSnapshot RefreshSnapshot()
+    {
+        // Take the timestamp first so the snapshot never looks newer than the data in it
+        var timestamp = _timeProvider.GetTimestamp();
+        var snapshot = new MonitorSnapshot(_nativeMonitors.EnumerateMonitors().ToImmutableArray(), timestamp);
+        Volatile.Write(ref _snapshot, snapshot);
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Finds the monitor with the handle the native lookup returns. If a cached snapshot does not
+    /// contain that handle, the display configuration changed after the snapshot was taken, so
+    /// enumerate the monitors again and look the handle up once more.
+    /// </summary>
+    private MonitorInfo? FindMonitor(Func<nint> getMonitorHandle)
+    {
+        var snapshot = GetSnapshot(out var refreshed);
+        var hMonitor = getMonitorHandle();
+        var monitor = snapshot.FindByHandle(hMonitor);
+        if (monitor != null || refreshed || hMonitor == nint.Zero)
+        {
+            return monitor;
+        }
+
+        return RefreshSnapshot().FindByHandle(getMonitorHandle());
     }
 
     public IReadOnlyList<MonitorInfo> GetAllMonitors()
     {
-        RefreshMonitors();
-        return _monitors.Select(m => m.Info).ToList();
+        return GetSnapshot().Infos;
     }
 
     public MonitorInfo GetPrimaryMonitor()
     {
-        RefreshMonitors();
-        return _monitors.FirstOrDefault(m => m.Info.IsPrimary).Info
-            ?? _monitors.FirstOrDefault().Info
+        return GetPrimaryMonitor(GetSnapshot());
+    }
+
+    private static MonitorInfo GetPrimaryMonitor(MonitorSnapshot snapshot)
+    {
+        return snapshot.Infos.FirstOrDefault(m => m.IsPrimary)
+            ?? snapshot.Infos.FirstOrDefault()
             ?? throw new InvalidOperationException("No monitors found");
     }
 
     public MonitorInfo? GetMonitorAt(int x, int y)
     {
-        RefreshMonitors();
-        var hMonitor = _nativeMonitors.MonitorFromPoint(x, y);
-        return _monitors.FirstOrDefault(m => m.Handle == hMonitor).Info;
+        return FindMonitor(() => _nativeMonitors.MonitorFromPoint(x, y));
     }
 
     public MonitorInfo? GetMonitorForWindow(nint windowHandle)
     {
-        RefreshMonitors();
-        var hMonitor = _nativeMonitors.MonitorFromWindow(windowHandle);
-        return _monitors.FirstOrDefault(m => m.Handle == hMonitor).Info;
+        return FindMonitor(() => _nativeMonitors.MonitorFromWindow(windowHandle));
     }
 
     public int GetMonitorIndex(nint windowHandle)
@@ -65,9 +132,10 @@ public class MonitorService : IMonitorService
 
     public MonitorRect CalculateSnapBounds(int monitorIndex, SnapPosition position)
     {
-        RefreshMonitors();
-        var monitor = _monitors.ElementAtOrDefault(monitorIndex).Info
-            ?? GetPrimaryMonitor();
+        var snapshot = GetSnapshot();
+        var monitor = monitorIndex >= 0 && monitorIndex < snapshot.Infos.Length
+            ? snapshot.Infos[monitorIndex]
+            : GetPrimaryMonitor(snapshot);
 
         var workArea = monitor.WorkArea;
 
