@@ -733,12 +733,13 @@ public class InputSimulationService : IInputSimulationService
 
     private string ModifiersDownMessage(IReadOnlyList<string> names, string action, bool pauseChord)
     {
-        var them = names.Count == 1 ? "it" : "them";
-        var held = $"{string.Join(", ", names)} {(names.Count == 1 ? "is" : "are")} held down";
+        var one = names.Count == 1;
+        var them = one ? "it" : "them";
+        var held = $"{string.Join(", ", names)} {(one ? "is" : "are")} held down";
         return pauseChord
-            ? $"{held}, and the user's pause hotkey ({_session.PauseChord}) uses {(names.Count == 1 ? "it" : "some of them")}, so nothing " +
-              $"(more) was {action}. The user may be about to pause input, so {them} {(names.Count == 1 ? "is" : "are")} not released, " +
-              "not even with releaseHeldModifiers. Wait, and ask the user if they stay down."
+            ? $"{held}, and the user's pause hotkey ({_session.PauseChord}) uses {(one ? "it" : "at least one of them")}, so nothing " +
+              $"(more) was {action}. The user may be about to pause input, so {(one ? "it is" : "they are")} not released, " +
+              $"not even with releaseHeldModifiers. Wait, and ask the user if {(one ? "it stays" : "they stay")} down."
             : $"{held}, by the user or stuck, so nothing (more) was {action}: with a modifier down, keys become shortcuts and clicks " +
               $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, pass " +
               $"releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release {them}.";

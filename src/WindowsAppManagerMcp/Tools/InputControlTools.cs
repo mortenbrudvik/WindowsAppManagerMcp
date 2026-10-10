@@ -207,8 +207,9 @@ public class InputControlTools
                  "could not release (normally none; every input call releases its own). With releaseHeldModifiers: true it also " +
                  "releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it; use that " +
                  "only when an input tool returned ModifiersHeld and nobody is pressing the key, or the user asked. Works while input is " +
-                 "paused, except for releaseHeldModifiers. While any modifier that is down belongs to the pause hotkey's chord, none is " +
-                 "released (ModifiersHeld): the user may be pressing the hotkey, so ask the user to press and release the key.")]
+                 "paused, except for releaseHeldModifiers. While any modifier that is down belongs to the pause hotkey's chord, no " +
+                 "modifier the server did not press is released (ModifiersHeld): the user may be pressing the hotkey, so ask the user to " +
+                 "press and release the key; the keys and buttons the server pressed are still released.")]
     public ReleaseInputResult ReleaseAllInput(
         [Description("Also release modifier keys that are down although the server did not press them (the user's, or stuck). Default: false")]
         bool releaseHeldModifiers = false)
@@ -227,9 +228,13 @@ public class InputControlTools
                 : _session.ReleaseModifiers(down, "release_all_input with releaseHeldModifiers");
             if (modifiers == null)
             {
+                // One modifier of the chord is enough: the user may be pressing the hotkey one key after another
+                var one = down.Count == 1;
                 errorCode = errorCode == InputErrorCode.None ? InputErrorCode.ModifiersHeld : errorCode;
-                error = Join(error, $"{string.Join(", ", down.Select(k => k.Name))} are down: the modifiers of the pause hotkey " +
-                                    $"({_session.PauseChord}). The user may be pressing it, so they were left alone. Ask the user.");
+                error = Join(error, $"{string.Join(", ", down.Select(k => k.Name))} {(one ? "is" : "are")} down, and the pause hotkey " +
+                                    $"({_session.PauseChord}) uses {(one ? "it" : "at least one of them")}. The user may be pressing the " +
+                                    $"hotkey, so no modifier the server did not press was released. Ask the user to press and release " +
+                                    $"{(one ? "it" : "them")} if {(one ? "it stays" : "they stay")} down.");
             }
             else if (modifiers.PausedByUser)
             {
