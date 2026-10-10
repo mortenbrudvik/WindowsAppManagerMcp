@@ -7,7 +7,10 @@ A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refa
 > **Desktop safety:** a plain `dotnet test` is safe to run on your own desktop. A test that
 > launches or kills real processes, sends real keyboard or mouse input, or moves, focuses or
 > closes real windows must use `[DesktopFact]` or `[DesktopTheory]`. Those tests are skipped
-> unless `WAM_ALLOW_DESKTOP_TESTS=1`. See [Desktop Tests](#desktop-tests).
+> unless `WAM_ALLOW_DESKTOP_TESTS=1`. A test that only starts the suite's own fixture app and
+> reads or captures it uses `[DesktopNoInputFact]` and is skipped unless
+> `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` (or `WAM_ALLOW_DESKTOP_TESTS=1`). See
+> [Desktop Tests](#desktop-tests).
 
 ---
 
@@ -276,20 +279,25 @@ WindowsAppManagerMcp/
 │       └── Tools/                 # [McpServerTool] classes
 │
 └── tests/
-    └── WindowsAppManagerMcp.Tests/
-        ├── WindowsAppManagerMcp.Tests.csproj
-        ├── GlobalUsings.cs
-        ├── Contract/              # Tool contract: serialization, error reporting, descriptions, docs
-        ├── Fixtures/              # TestDataFactory, RepositoryFiles, InProcessMcpServer, FakeCdp, ...
-        ├── Infrastructure/        # [DesktopFact] / [DesktopTheory]
-        ├── Integration/           # DI, file persistence, layout service, screen capture (read-only)
-        └── Unit/
-            ├── Architecture/      # NativeCallGuardTests (IL scan for native calls)
-            ├── Infrastructure/    # DesktopTestGateTests
-            ├── Models/
-            ├── Native/
-            ├── Services/
-            └── Tools/
+    ├── WindowsAppManagerMcp.Tests/
+    │   ├── WindowsAppManagerMcp.Tests.csproj
+    │   ├── GlobalUsings.cs
+    │   ├── Contract/              # Tool contract: serialization, error reporting, descriptions, docs
+    │   ├── Fixtures/              # TestDataFactory, RepositoryFiles, InProcessMcpServer, FakeCdp, ...
+    │   ├── Integration/           # DI, file persistence, layout service, screen capture (read-only)
+    │   └── Unit/
+    │       ├── Architecture/      # NativeCallGuardTests (IL scan for native calls)
+    │       ├── Infrastructure/    # DesktopTestGateTests
+    │       ├── Models/
+    │       ├── Native/
+    │       ├── Services/
+    │       └── Tools/
+    ├── WindowsAppManagerMcp.Tests.Infrastructure/  # Shared desktop test gate ([DesktopFact], [DesktopNoInputFact], ...)
+    ├── FixtureApp/                # WamFixtureApp: the WPF app the end-to-end tests drive
+    └── WindowsAppManagerMcp.E2ETests/
+        ├── Harness/               # Starts the fixture, guarded server services, event log reader
+        ├── HarnessTests/          # Ordinary tests of the harness (never start the fixture)
+        └── Scenarios/             # Gated end-to-end tests against the fixture
 ```
 
 ### Test Class Organization
@@ -662,8 +670,14 @@ public void SomeOperation_OnTheRealDesktop_Works()
 }
 ```
 
-Today the only tests marked this way are the gate's own canaries in `DesktopTestGateTests`, which
-have no side effects.
+A test that only starts the suite's own fixture app and reads it (find its windows, read its UI
+Automation tree, capture it) uses `[DesktopNoInputFact]` or `[DesktopNoInputTheory]`. It is skipped
+unless `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` or `WAM_ALLOW_DESKTOP_TESTS=1`, and reports both
+`Category=Desktop` and `Category=DesktopNoInput`.
+
+Besides the gate's own canaries in `DesktopTestGateTests`, the tests marked this way are the
+fixture app scenarios in `tests/WindowsAppManagerMcp.E2ETests`. See
+[End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app).
 
 ### xUnit Assertions Reference
 
@@ -1047,7 +1061,12 @@ start ./TestResults/report/index.html
 ```
 
 CI fails the build when line coverage of the `Category!=Desktop` run drops below the
-threshold in `.github/workflows/test.yml` (currently 59%).
+threshold in `.github/workflows/test.yml` (currently 59%). It measures the server assembly
+(package `WindowsAppManagerMcp`), merged over the coverage files of every test project: a line
+counts as covered when any project covers it. Lines are matched by full source path, because
+coverlet writes file names relative to a source root that depends on what each project
+instruments. Measured this way, the suite covers about 76% of the server's lines (October 2026); the
+threshold has not been raised to match yet.
 
 ---
 
@@ -1736,6 +1755,8 @@ public static class TestDataFactory
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\WindowsAppManagerMcp\WindowsAppManagerMcp.csproj" />
+    <!-- The desktop test gate, shared with WindowsAppManagerMcp.E2ETests -->
+    <ProjectReference Include="..\WindowsAppManagerMcp.Tests.Infrastructure\WindowsAppManagerMcp.Tests.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
@@ -1814,22 +1835,36 @@ real system state (the monitor, window and process lists, UI Automation trees in
 agent's host chain in `SecurityProbeIntegrationTests`) but change nothing.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
-or stops a real process. A test that really needs a side effect like that must be marked
-`[DesktopFact]` or `[DesktopTheory]`
-(`tests/WindowsAppManagerMcp.Tests/Infrastructure/DesktopTestAttributes.cs`), which:
+or stops a real process. A test that really needs a side effect like that must be marked with a
+desktop gate attribute
+(`tests/WindowsAppManagerMcp.Tests.Infrastructure/DesktopTestAttributes.cs`, a small project
+that the unit tests and the end-to-end tests share). There are two tiers:
 
-- **skip the test unless `WAM_ALLOW_DESKTOP_TESTS` is exactly `1`**. The gate is in the
+| Attribute | Tier | Runs when | Traits |
+|-----------|------|-----------|--------|
+| `[DesktopFact]`, `[DesktopTheory]` | Input: may start or kill processes, send real input, focus, move or close windows | `WAM_ALLOW_DESKTOP_TESTS=1` | `Category=Desktop` |
+| `[DesktopNoInputFact]`, `[DesktopNoInputTheory]` | No input: starts only the suite's own fixture app and reads or captures it | `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` or `WAM_ALLOW_DESKTOP_TESTS=1` | `Category=Desktop`, `Category=DesktopNoInput` |
+
+- **The attributes skip the test unless its variable is exactly `1`**. The gate is in the
   attribute, so it holds for every runner: plain `dotnet test`, any `--filter`, IDE test
-  explorers and coverage tools.
-- **report the trait `Category=Desktop`**, so you can select or exclude them with `--filter`.
+  explorers and coverage tools. The no-input opt-in never unlocks an input test.
+- **They report the traits above**, so you can select or exclude them with `--filter`. A filter
+  treats a trait with two values as matching either, so `Category!=Desktop` leaves both tiers out,
+  `Category=Desktop` selects both and `Category=DesktopNoInput` selects the no-input tier alone.
 
-Today the only desktop tests are the canaries in `DesktopTestGateTests`. They only check that
-the gate let them run and have no side effects. A desktop test added later can type into, click
-on, or close whatever window has focus, so save your work before opting in, and run them
-deliberately:
+Besides the gate's canaries in `DesktopTestGateTests`, which only check that the gate let them run,
+the desktop tests are the fixture app scenarios (see
+[End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app)). An input
+test brings a window to the front and types into it, so save your work before opting in, and run
+them deliberately:
 
 ```powershell
-# PowerShell
+# PowerShell: the no-input tier only
+$env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = "1"
+dotnet test --filter "Category=DesktopNoInput"
+Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
+
+# PowerShell: both tiers
 $env:WAM_ALLOW_DESKTOP_TESTS = "1"
 dotnet test --filter "Category=Desktop"
 Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
@@ -1837,6 +1872,7 @@ Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
 
 ```bash
 # Git Bash
+WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test --filter "Category=DesktopNoInput"
 WAM_ALLOW_DESKTOP_TESTS=1 dotnet test --filter "Category=Desktop"
 ```
 
@@ -1854,8 +1890,10 @@ Rules for new tests:
   `CreateReadOnlySut` in `WindowServiceTests` does. It forwards the queries and throws on every
   call that would move, show, focus or close a window.
 - Never call `KillProcess` on a real system process, even to check that the guard refuses it.
-- A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
-  test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
+- A plain `[Trait("Category", "Desktop")]` (or `DesktopNoInput`) is not enough:
+  `DesktopTestGateTests` fails if a test carries that trait without a gate attribute.
+- A desktop test that needs a real app uses the fixture app through the E2E harness, never an app
+  of the developer's (Notepad, a browser, a terminal).
 - `NativeCallGuardTests` scans the server assembly and fails if anything other than
   `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
   `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
@@ -1874,6 +1912,90 @@ Rules for new tests:
 - The guards scan only the server assembly. They do not see code in the test project, so the
   rules above are up to you there.
 
+### End-to-end tests against the fixture app
+
+`tests/WindowsAppManagerMcp.E2ETests` tests the real server services against an app the suite
+owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
+mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
+
+**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a check box, a
+combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
+button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
+unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
+items. It has no WebView2 pane yet: that would add a package and a runtime dependency to every
+build. Its command line (`FixtureOptions`) sets an instance token that appears in every window
+title, shows the windows without activating them, opens the modal or the document at start, and
+sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
+after its maximum lifetime (5 minutes by default), so a crashed run cannot leave it behind.
+
+**The event log.** The fixture writes one JSON object per line to the file given with
+`--event-log`: first a `ready` event with its process id, window handle, DPI, window and client
+rectangles and the screen rectangle of every element, then every change it receives (text, check
+box, selection, buttons, focus, modal, document, context menu). It is the fixture's own record of
+what reached it, independent of what the server reports. `FixtureContract.Events` documents the
+events; the harness reads them with `FixtureEventLogReader`.
+
+**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, starts the fixture
+(`FixtureAppSession`), waits for its ready event, builds the server services as Program.cs registers
+them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose kills the
+fixture.
+
+Every native wrapper of the server sits behind a fail-closed guard (`WrapperGuard`). That includes
+the process and monitor wrappers that ProcessService and MonitorService would otherwise create
+themselves: `ServerHarness` registers them, so the container passes the guarded ones in. An ordinary
+test (`ServerHarnessTests`) resolves every service and fails if any of them holds a native wrapper
+outside the guard. A process handle returned by `OpenProcess` is guarded as well. The guard does not
+decide from member names: `WrapperCatalog` classifies every wrapper member explicitly (read, window
+action, input, process action or process start). A member it does not list is refused in every tier,
+and `WrapperCatalogTests` fails until a new wrapper or member is classified. When you merge a change
+that adds wrapper members, classify them there.
+
+- In the no-input tier the server can only read. Input, window changes, process closes and kills
+  throw `E2EGuardException` before they reach the wrapper.
+- In the input tier the server can act only on the fixture process:
+  - keyboard input goes out only while a fixture window is in front;
+  - mouse input goes out only while the cursor is over a fixture window;
+  - window calls go through only when every window they name is a fixture window;
+  - closes and kills apply only to the fixture process, checked by id and process name.
+
+  The check runs before every `SendInput` batch, so a window that comes to the front mid-text stops
+  the typing. This stands in for the server's own target guard (roadmap M1.1 and M1.5) until it
+  exists.
+- In both tiers, starting a process (including `where.exe`) is refused. CDP (`ICdpService`) refuses
+  every call, because it talks to a browser's debug port over the network, outside the native
+  wrappers, and no fixture has one yet.
+
+UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
+forbids acting pattern calls outside the Native wrappers. The harness finds the fixture exe from a
+path the build records in the test assembly; set `WAM_FIXTURE_APP_PATH` to use another build of
+`WamFixtureApp.exe` (for example in Windows Sandbox). The harness refuses any exe with another name.
+
+**Writing a scenario.** Put it in `Scenarios/`, mark it `[DesktopNoInputFact]` when it only reads or
+captures and `[DesktopFact]` when it acts, and start from `E2ESession`:
+
+```csharp
+[DesktopNoInputFact]
+public void GetUIElements_SeesTheEditBox()
+{
+    using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
+
+    var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+
+    UiaReads.Flatten(result.Elements).Should().Contain(e => e.AutomationId == FixtureContract.Ids.EditBox);
+}
+```
+
+Compare the server's answers with the ready event (`e2e.Fixture.Ready`) and the event log
+(`e2e.Fixture.WaitForEvent(...)`), not with fixed coordinates: positions depend on the monitor and
+its DPI. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
+`HarnessTests/` are ordinary tests of the harness and must never start the fixture.
+
+**Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
+runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
+checks that the runner has an interactive desktop and otherwise ends with a notice instead of
+running anything; use a self-hosted runner in a logged-on desktop session then. It fails when no
+test ran, so an opt-in that did not reach the tests cannot pass as green.
+
 ### Visual Studio
 
 | Action | Shortcut |
@@ -1886,11 +2008,13 @@ Rules for new tests:
 
 ### Continuous Integration
 
-`.github/workflows/test.yml` runs the suite on every push and pull request to `main`. It
-leaves desktop tests out, kills a test that hangs for 5 minutes, caps the job at 20 minutes,
-and enforces a line-coverage threshold. A second step then runs only the desktop tests with
-`WAM_ALLOW_DESKTOP_TESTS` unset and fails unless every one of them is reported as skipped and
-at least one exists (the gate canaries), so CI proves the gate holds on the runner:
+`.github/workflows/test.yml` runs the suite on every push and pull request to `main`. It runs
+every test project, leaves desktop tests out, kills a test that hangs for 5 minutes, caps the job
+at 20 minutes, and enforces a line-coverage threshold. A second step then runs only the desktop
+tests with both opt-in variables unset and fails unless every one of them is reported as skipped,
+at least one exists, and the fixture app scenarios are among them, so CI proves the gate holds on
+the runner. The fixture app scenarios themselves run only in `.github/workflows/e2e.yml`, on demand
+(see [End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app)):
 
 ```yaml
 # GitHub Actions (abridged from .github/workflows/test.yml)
@@ -1901,7 +2025,7 @@ at least one exists (the gate canaries), so CI proves the gate holds on the runn
       --blame-hang-timeout 5m `
       --collect:"XPlat Code Coverage" `
       --results-directory ./TestResults `
-      --logger "trx;LogFileName=test-results.trx"
+      --logger trx
 
 - name: Upload test results
   uses: actions/upload-artifact@v4
