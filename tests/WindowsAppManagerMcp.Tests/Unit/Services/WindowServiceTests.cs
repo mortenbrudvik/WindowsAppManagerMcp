@@ -401,11 +401,12 @@ public class WindowServiceTests
         var result = sut.GetForegroundWindow();
 
         // Assert - May be null if no window has focus (rare but possible)
-        // If not null, should have valid properties
+        // If not null, should have valid properties. The title can be empty (a menu, the taskbar),
+        // but every window has a class.
         if (result != null)
         {
             result.Handle.Should().NotBe(nint.Zero);
-            result.Title.Should().NotBeNullOrEmpty();
+            result.ClassName.Should().NotBeNullOrEmpty();
         }
     }
 
