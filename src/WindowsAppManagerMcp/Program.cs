@@ -1,11 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Native;
-using WindowsAppManagerMcp.Services;
-using WindowsAppManagerMcp.Services.Interfaces;
-using WindowsAppManagerMcp.Tools;
 
 // Set per-monitor DPI awareness for accurate window positioning on high-DPI displays
 try
@@ -25,42 +22,14 @@ builder.Logging.AddConsole(options =>
 {
     options.LogToStandardErrorThreshold = LogLevel.Trace;
 });
-builder.Logging.SetMinimumLevel(LogLevel.Warning);
+// Warning and above, plus one Information line at the start and end of every tool call (tool, duration,
+// outcome; never arguments or results). See ServiceRegistration.AddWindowsAppManagerLogLevels.
+builder.Logging.AddWindowsAppManagerLogLevels();
 
-// Register services
-builder.Services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
-builder.Services.AddSingleton<INativeInputWrapper, NativeInputWrapper>();
-builder.Services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
-builder.Services.AddSingleton<ICdpService, CdpService>();
-builder.Services.AddSingleton<IMonitorService, MonitorService>();
-builder.Services.AddSingleton<IWindowService, WindowService>();
-builder.Services.AddSingleton<IInputValidationService, InputValidationService>();
-builder.Services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
-builder.Services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
-builder.Services.AddSingleton<IProcessService, ProcessService>();
-builder.Services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
-builder.Services.AddSingleton<IScreenshotService, ScreenshotService>();
-builder.Services.AddSingleton<IUIElementService, UIElementService>();
-builder.Services.AddSingleton<IInputSimulationService, InputSimulationService>();
-builder.Services.AddSingleton<ILayoutService>(sp =>
-{
-    var windowService = sp.GetRequiredService<IWindowService>();
-    var monitorService = sp.GetRequiredService<IMonitorService>();
-    var processService = sp.GetRequiredService<IProcessService>();
-    var layoutsPath = Path.Combine(AppContext.BaseDirectory, "layouts");
-    return new LayoutService(windowService, monitorService, processService, layoutsPath);
-});
-
-// Register MCP tools
-builder.Services.AddSingleton<WindowFinderTools>();
-builder.Services.AddSingleton<WindowManagerTools>();
-builder.Services.AddSingleton<MonitorInfoTools>();
-builder.Services.AddSingleton<AppLauncherTools>();
-builder.Services.AddSingleton<LayoutPresetTools>();
-builder.Services.AddSingleton<BrowserReadingTools>();
-builder.Services.AddSingleton<ScreenshotTools>();
-builder.Services.AddSingleton<UIElementTools>();
-builder.Services.AddSingleton<InputSimulationTools>();
+// Register services and MCP tool classes (shared with DependencyInjectionTests, see ServiceRegistration).
+// Layout presets live in %LOCALAPPDATA%\WindowsAppManagerMcp\layouts or WAM_LAYOUTS_PATH, outside the
+// versioned plugin folder (LayoutStorageOptions.FromEnvironment).
+builder.Services.AddWindowsAppManagerServices();
 
 // Configure MCP Server
 builder.Services.AddMcpServer(options =>
@@ -68,19 +37,12 @@ builder.Services.AddMcpServer(options =>
     options.ServerInfo = new()
     {
         Name = "windows-app-manager",
-        Version = "1.0.0"
+        Version = WindowsAppManagerMcp.ServerVersion.Current
     };
 })
 .WithStdioServerTransport()
-.WithTools<WindowFinderTools>()
-.WithTools<WindowManagerTools>()
-.WithTools<MonitorInfoTools>()
-.WithTools<AppLauncherTools>()
-.WithTools<LayoutPresetTools>()
-.WithTools<BrowserReadingTools>()
-.WithTools<ScreenshotTools>()
-.WithTools<UIElementTools>()
-.WithTools<InputSimulationTools>();
+// The tool error filter (ToolErrorReporting) and every tool
+.AddWindowsAppManagerTools();
 
 var app = builder.Build();
 

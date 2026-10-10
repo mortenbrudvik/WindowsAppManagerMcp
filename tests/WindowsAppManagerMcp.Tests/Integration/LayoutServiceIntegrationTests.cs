@@ -132,7 +132,8 @@ public class LayoutServiceIntegrationTests : IDisposable
         var captured = await sut.CaptureCurrentLayoutAsync("captured-layout", "My workspace");
 
         // Verify capture
-        captured.Placements.Should().HaveCount(2);
+        captured.Success.Should().BeTrue();
+        captured.Preset!.Placements.Should().HaveCount(2);
 
         // Act - Apply the captured layout
         var result = await sut.ApplyPresetAsync("captured-layout");
@@ -468,10 +469,11 @@ public class LayoutServiceIntegrationTests : IDisposable
             includeProcesses: new[] { "notepad", "Code" });
 
         // Assert
-        result.Placements.Should().HaveCount(2);
-        result.Placements.Should().Contain(p => p.Matcher.ProcessName == "notepad");
-        result.Placements.Should().Contain(p => p.Matcher.ProcessName == "Code");
-        result.Placements.Should().NotContain(p => p.Matcher.ProcessName == "chrome");
+        var placements = result.Preset!.Placements;
+        placements.Should().HaveCount(2);
+        placements.Should().Contain(p => p.Matcher.ProcessName == "notepad");
+        placements.Should().Contain(p => p.Matcher.ProcessName == "Code");
+        placements.Should().NotContain(p => p.Matcher.ProcessName == "chrome");
     }
 
     #endregion

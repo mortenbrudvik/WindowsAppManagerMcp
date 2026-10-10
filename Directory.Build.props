@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    Single source of truth for the product version.
+
+    Change it with scripts/Set-Version.ps1, which also updates the plugin version in
+    .claude-plugin/plugin.json and .claude-plugin/marketplace.json (tests fail if they drift).
+
+    The SDK stamps it into the assemblies: FileVersion 1.2.3.0 and ProductVersion /
+    AssemblyInformationalVersion 1.2.3+<commit sha>. The MCP server reports the latter as
+    serverInfo.version, and scripts/Test-PluginBinary.ps1 uses it to check that the committed
+    bin/WindowsAppManagerMcp.exe was built from the current sources.
+  -->
+  <PropertyGroup>
+    <Version>1.11.0</Version>
+  </PropertyGroup>
+
+</Project>

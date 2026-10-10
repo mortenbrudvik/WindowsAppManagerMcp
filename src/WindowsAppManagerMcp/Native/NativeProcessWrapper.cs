@@ -1,0 +1,254 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using WindowsAppManagerMcp.Services.Interfaces;
+
+namespace WindowsAppManagerMcp.Native;
+
+/// <summary>
+/// Production implementation of INativeProcessWrapper backed by System.Diagnostics.Process and
+/// a Toolhelp32 process snapshot. This is the only type in the server that calls Process.Start,
+/// Process.Kill or Process.CloseMainWindow (enforced by NativeCallGuardTests).
+/// </summary>
+public class NativeProcessWrapper : INativeProcessWrapper
+{
+    private const int WhereExeTimeoutMs = 5000;
+
+    public IProcessHandle? StartProcess(ProcessStartInfo startInfo)
+    {
+        var process = Process.Start(startInfo);
+        return process == null ? null : new ProcessHandle(process);
+    }
+
+    /// <summary>
+    /// Runs where.exe for <paramref name="fileName"/> without a window and returns the first line it
+    /// prints. Returns null when it finds nothing, cannot be run, or has not exited and closed its
+    /// output within 5 seconds; in that case where.exe (and anything it started) is killed.
+    /// </summary>
+    public string? FindWithWhereExe(string fileName)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "where.exe",
+                Arguments = fileName,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                return null;
+            }
+
+            // Read in the background, so the time limit also covers a where.exe that never prints
+            // anything (for example while it searches a PATH entry on an unreachable network share).
+            var output = process.StandardOutput.ReadToEndAsync();
+            return ReadFirstLineWithin(output, process.WaitForExit, () => KillProcessTree(process), WhereExeTimeoutMs);
+        }
+        catch (Exception)
+        {
+            // where.exe missing or not runnable: treat as not found
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Waits at most <paramref name="timeoutMs"/> in total for a process to exit and for its output
+    /// to be read to the end, then returns the first line of the output (null when it is blank).
+    /// When the process does not exit in time, its output is not complete in time, or reading it
+    /// fails, <paramref name="kill"/> is called and null is returned.
+    /// </summary>
+    /// <param name="output">The process's standard output, being read to the end.</param>
+    /// <param name="waitForExit">Waits up to the given milliseconds; returns true if the process exited.</param>
+    /// <param name="kill">Kills the process (and its children); must not throw.</param>
+    /// <param name="timeoutMs">Total time limit in milliseconds.</param>
+    public static string? ReadFirstLineWithin(
+        Task<string> output,
+        Func<int, bool> waitForExit,
+        Action kill,
+        int timeoutMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (waitForExit(timeoutMs))
+            {
+                var remainingMs = (int)Math.Max(0, timeoutMs - stopwatch.ElapsedMilliseconds);
+                if (output.Wait(remainingMs))
+                {
+                    using var reader = new StringReader(output.Result);
+                    var firstLine = reader.ReadLine();
+                    return string.IsNullOrWhiteSpace(firstLine) ? null : firstLine;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Reading the output failed: treat as not found
+        }
+
+        kill();
+
+        // The abandoned read fails once the process is disposed; observe that so it is not reported
+        // as an unobserved task exception.
+        output.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return null;
+    }
+
+    private static void KillProcessTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception)
+        {
+            // Already exited, or cannot be killed: nothing more to do
+        }
+    }
+
+    public IProcessHandle? OpenProcess(int processId)
+    {
+        try
+        {
+            return new ProcessHandle(Process.GetProcessById(processId));
+        }
+        catch (ArgumentException)
+        {
+            // No process with this ID is running
+            return null;
+        }
+    }
+
+    public bool IsAncestorOfCurrentProcess(int processId)
+    {
+        return GetAncestorProcessIds().Contains(processId);
+    }
+
+    /// <summary>
+    /// Returns the current process's ancestors, nearest first (parent, grandparent, ...).
+    /// Returns an empty list if the process snapshot cannot be taken.
+    /// </summary>
+    public static IReadOnlyList<int> GetAncestorProcessIds()
+    {
+        var parentByProcessId = SnapshotParentProcessIds();
+        return parentByProcessId == null
+            ? []
+            : FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime);
+    }
+
+    /// <summary>
+    /// Walks the parent chain of <paramref name="processId"/>, nearest ancestor first.
+    /// Stops at a parent that is no longer running, at a cycle, or at a parent that started after its
+    /// child: Windows reuses PIDs, so such a "parent" is an unrelated process that took the PID of
+    /// the real parent after it exited.
+    /// </summary>
+    public static IReadOnlyList<int> FindAncestors(
+        int processId,
+        IReadOnlyDictionary<int, int> parentByProcessId,
+        Func<int, DateTime?> getStartTime)
+    {
+        var ancestors = new List<int>();
+        var visited = new HashSet<int> { processId };
+        var current = processId;
+        var startTimeUpperBound = getStartTime(current);
+
+        while (parentByProcessId.TryGetValue(current, out var parent) &&
+               parent > 0 &&
+               !visited.Contains(parent) &&
+               parentByProcessId.ContainsKey(parent))
+        {
+            var parentStart = getStartTime(parent);
+            if (startTimeUpperBound.HasValue && parentStart.HasValue && parentStart.Value > startTimeUpperBound.Value)
+            {
+                break;
+            }
+
+            ancestors.Add(parent);
+            visited.Add(parent);
+            current = parent;
+
+            // Every further ancestor must have started before this one. If this start time is
+            // unknown, the child's start time is still a valid upper bound.
+            startTimeUpperBound = parentStart ?? startTimeUpperBound;
+        }
+
+        return ancestors;
+    }
+
+    private static Dictionary<int, int>? SnapshotParentProcessIds()
+    {
+        var snapshot = NativeMethods.Kernel32.CreateToolhelp32Snapshot(NativeMethods.Kernel32.TH32CS_SNAPPROCESS, 0);
+        if (snapshot == NativeMethods.Kernel32.INVALID_HANDLE_VALUE || snapshot == nint.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var parentByProcessId = new Dictionary<int, int>();
+            var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
+
+            if (!NativeMethods.Kernel32.Process32FirstW(snapshot, ref entry))
+            {
+                return parentByProcessId;
+            }
+
+            do
+            {
+                parentByProcessId[(int)entry.th32ProcessID] = (int)entry.th32ParentProcessID;
+            }
+            while (NativeMethods.Kernel32.Process32NextW(snapshot, ref entry));
+
+            return parentByProcessId;
+        }
+        finally
+        {
+            NativeMethods.Kernel32.CloseHandle(snapshot);
+        }
+    }
+
+    private static DateTime? TryGetStartTime(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return process.StartTime.ToUniversalTime();
+        }
+        catch (Exception)
+        {
+            // Exited, access denied, or a system process without a start time
+            return null;
+        }
+    }
+
+    private sealed class ProcessHandle(Process process) : IProcessHandle
+    {
+        public int Id => process.Id;
+
+        public string ProcessName => process.ProcessName;
+
+        public bool HasExited => process.HasExited;
+
+        public nint RefreshMainWindowHandle()
+        {
+            process.Refresh();
+            return process.MainWindowHandle;
+        }
+
+        public bool CloseMainWindow() => process.CloseMainWindow();
+
+        public bool WaitForExit(int milliseconds) => process.WaitForExit(milliseconds);
+
+        public void Kill(bool entireProcessTree) => process.Kill(entireProcessTree);
+
+        public void Dispose() => process.Dispose();
+    }
+}

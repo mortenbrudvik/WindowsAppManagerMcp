@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
@@ -8,18 +9,30 @@ namespace WindowsAppManagerMcp.Services;
 
 public class ProcessService : IProcessService
 {
+    // Characters cmd.exe interprets in a command line, even inside quotes for % and !.
+    // Control characters (line breaks in particular) are rejected as well.
+    private static readonly char[] CmdMetacharacters = ['&', '|', '<', '>', '^', '%', '!', '"'];
+
+    private const int MaxArgumentLengthInMessages = 80;
+
     private readonly IWindowService _windowService;
     private readonly IInputValidationService _validationService;
     private readonly IBrowserDetectionService _browserDetection;
+    private readonly IExecutableResolver _executableResolver;
+    private readonly INativeProcessWrapper _processWrapper;
 
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
-        IBrowserDetectionService browserDetection)
+        IBrowserDetectionService browserDetection,
+        IExecutableResolver? executableResolver = null,
+        INativeProcessWrapper? processWrapper = null)
     {
         _windowService = windowService;
         _validationService = validationService;
         _browserDetection = browserDetection;
+        _executableResolver = executableResolver ?? new ExecutableResolver();
+        _processWrapper = processWrapper ?? new NativeProcessWrapper();
     }
 
     public LaunchResult LaunchApplication(
@@ -29,49 +42,17 @@ public class ProcessService : IProcessService
         bool waitForWindow = false,
         int waitTimeoutMs = 5000)
     {
-        // Validate executable path
-        var executableValidation = _validationService.ValidateExecutable(executable);
-        if (!executableValidation.IsValid)
+        var plan = PlanLaunch(executable, arguments, workingDirectory);
+        if (!plan.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: executableValidation.Error, ErrorCode: executableValidation.ErrorCode);
+            return new LaunchResult(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
         }
 
-        // Validate working directory
-        var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
-        if (!workingDirValidation.IsValid)
-        {
-            return new LaunchResult(false, ErrorMessage: workingDirValidation.Error, ErrorCode: workingDirValidation.ErrorCode);
-        }
-
-        // Combine warnings
-        var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
-
-        // Auto-inject --new-window for browsers opening URLs
-        if (_browserDetection.IsBrowser(executable) && _browserDetection.ContainsUrl(arguments))
-        {
-            var newWindowFlag = _browserDetection.GetNewWindowFlag(executable);
-            if (newWindowFlag != null && (arguments?.All(a => a != newWindowFlag) ?? true))
-            {
-                arguments = new[] { newWindowFlag }.Concat(arguments ?? []).ToArray();
-            }
-        }
+        var warning = plan.Warning;
 
         try
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = executableValidation.SanitizedExecutable ?? executable,
-                UseShellExecute = true,
-                WorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory
-            };
-
-            if (arguments?.Length > 0)
-            {
-                startInfo.Arguments = string.Join(" ", arguments.Select(a =>
-                    a.Contains(' ') ? $"\"{a}\"" : a));
-            }
-
-            var process = Process.Start(startInfo);
+            using var process = _processWrapper.StartProcess(plan.StartInfo!);
             if (process == null)
             {
                 return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
@@ -95,6 +76,119 @@ public class ProcessService : IProcessService
         {
             return new LaunchResult(false, ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: warning);
         }
+    }
+
+    /// <summary>
+    /// Validates and resolves a launch request and builds the start info, without starting anything.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>Bare names are resolved to an absolute path by <see cref="IExecutableResolver"/>, never from
+    /// the working directory, and the resolved path is what gets started.</item>
+    /// <item>Arguments are quoted with the Windows command-line rules (<see cref="CommandLineBuilder"/>).</item>
+    /// <item>When the target is a batch file (ShellExecute runs it through cmd.exe) or cannot be verified to
+    /// be a native executable, arguments containing cmd.exe metacharacters are rejected, because cmd.exe
+    /// ignores \" escaping and expands %VAR% even inside quotes.</item>
+    /// </list>
+    /// </remarks>
+    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null)
+    {
+        // Validate executable path
+        var executableValidation = _validationService.ValidateExecutable(executable);
+        if (!executableValidation.IsValid)
+        {
+            return LaunchPlan.Rejected(executableValidation.Error, executableValidation.ErrorCode);
+        }
+
+        // Validate working directory
+        var workingDirValidation = _validationService.ValidateWorkingDirectory(workingDirectory);
+        if (!workingDirValidation.IsValid)
+        {
+            return LaunchPlan.Rejected(workingDirValidation.Error, workingDirValidation.ErrorCode);
+        }
+
+        // Combine warnings
+        var warning = CombineWarnings(executableValidation.Warning, workingDirValidation.Warning);
+
+        if (arguments != null && arguments.Any(a => a is null || a.Contains('\0')))
+        {
+            return LaunchPlan.Rejected(
+                "Arguments must not be null or contain NUL characters.",
+                nameof(LaunchErrorCode.InvalidArgumentValue),
+                warning);
+        }
+
+        // Auto-inject --new-window for browsers opening URLs
+        if (_browserDetection.IsBrowser(executable) && _browserDetection.ContainsUrl(arguments))
+        {
+            var newWindowFlag = _browserDetection.GetNewWindowFlag(executable);
+            if (newWindowFlag != null && (arguments?.All(a => a != newWindowFlag) ?? true))
+            {
+                arguments = new[] { newWindowFlag }.Concat(arguments ?? []).ToArray();
+            }
+        }
+
+        var effectiveWorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory;
+        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, effectiveWorkingDirectory);
+
+        if (target.FoundOnlyInWorkingDirectory != null)
+        {
+            return LaunchPlan.Rejected(
+                $"'{executable}' was not found in the Windows directory, System32, PATH or App Paths, but " +
+                $"'{target.FoundOnlyInWorkingDirectory}' exists in the current or working directory. Bare names are " +
+                "never resolved from the working directory, to avoid running a planted program. Pass the full path " +
+                "if you intend to run that file.",
+                nameof(LaunchErrorCode.ExecutableInWorkingDirectory),
+                warning);
+        }
+
+        var isNativeExecutable = target.Kind == LaunchTargetKind.NativeExecutable;
+        if (!isNativeExecutable && arguments?.Length > 0)
+        {
+            var unsafeArgument = arguments.FirstOrDefault(ContainsCmdMetacharacters);
+            if (unsafeArgument != null)
+            {
+                return LaunchPlan.Rejected(
+                    BuildUnsafeBatchArgumentMessage(executable, target, unsafeArgument),
+                    nameof(LaunchErrorCode.UnsafeBatchArguments),
+                    warning);
+            }
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = target.FileName,
+            UseShellExecute = true,
+            WorkingDirectory = effectiveWorkingDirectory
+        };
+
+        if (arguments?.Length > 0)
+        {
+            startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
+        }
+
+        return new LaunchPlan(startInfo, target.Kind, warning);
+    }
+
+    private static bool ContainsCmdMetacharacters(string argument)
+    {
+        return argument.IndexOfAny(CmdMetacharacters) >= 0 || argument.Any(char.IsControl);
+    }
+
+    private static string BuildUnsafeBatchArgumentMessage(string executable, ResolvedLaunchTarget target, string argument)
+    {
+        var shownArgument = argument.Length > MaxArgumentLengthInMessages
+            ? argument[..MaxArgumentLengthInMessages] + "..."
+            : argument;
+
+        var reason = target.Kind == LaunchTargetKind.BatchFile
+            ? $"'{executable}' resolves to the batch file '{target.FileName}'. Windows runs batch files through cmd.exe"
+            : $"'{executable}' could not be verified to be a native .exe (it is a URI, document, shortcut, script or an " +
+              "unresolved name), so it may be run through cmd.exe";
+
+        return $"{reason}, which would interpret characters in the argument '{shownArgument}' " +
+               "(& | < > ^ % ! \" or control characters) as commands or variables. Remove those characters, " +
+               "or launch the program's .exe directly by its full path.";
     }
 
     private static string? CombineWarnings(string? warning1, string? warning2)
@@ -222,12 +316,21 @@ public class ProcessService : IProcessService
         return null;
     }
 
-    // Protected system processes that should not be terminated
+    // Protected system and shell processes that should not be terminated
     private static readonly HashSet<string> ProtectedProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "System", "smss", "csrss", "wininit", "services", "lsass", "lsm",
-        "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression"
+        "svchost", "winlogon", "dwm", "explorer", "Registry", "Memory Compression",
+        // User-session shell infrastructure: killing these breaks keyboard input, the Start menu or search
+        "sihost", "ctfmon", "StartMenuExperienceHost", "ShellExperienceHost", "SearchHost", "TextInputHost", "fontdrvhost"
     };
+
+    public const int DefaultGracefulTimeoutMs = 5000;
+    public const int MaxGracefulTimeoutMs = 60000;
+    private const int ForceKillExitWaitMs = 5000;
+    private const int ErrorAccessDenied = 5;
+    private const string ForceKillConsequence =
+        "this terminates the process and all of its child processes immediately, and unsaved work is lost.";
 
     public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
         IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
@@ -251,7 +354,12 @@ public class ProcessService : IProcessService
         return results;
     }
 
-    public KillResult KillProcess(int processId, bool confirm, bool forceKill = false)
+    public KillResult KillProcess(
+        int processId,
+        bool confirm,
+        bool forceKill = false,
+        int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
+        string? expectedProcessName = null)
     {
         // Safety check: require explicit confirmation
         if (!confirm)
@@ -283,10 +391,42 @@ public class ProcessService : IProcessService
                 ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
         }
 
+        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+        }
+
+        IProcessHandle? process;
         try
         {
-            using var process = Process.GetProcessById(processId);
-            var processName = process.ProcessName;
+            process = _processWrapper.OpenProcess(processId);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName: null);
+        }
+
+        if (process == null)
+        {
+            return ProcessNotFound(processId);
+        }
+
+        using (process)
+        {
+            string processName;
+            try
+            {
+                processName = process.ProcessName;
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between opening it and reading its name
+                return ProcessNotFound(processId);
+            }
 
             // Check if it's a protected system process
             if (ProtectedProcesses.Contains(processName))
@@ -299,65 +439,243 @@ public class ProcessService : IProcessService
                     ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
             }
 
-            // Attempt graceful close first if not forcing
-            if (!forceKill)
+            // PID reuse guard: the process the agent saw in list_processes may have exited
+            if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
             {
-                try
-                {
-                    if (process.CloseMainWindow())
-                    {
-                        // Wait briefly for graceful exit
-                        if (process.WaitForExit(3000))
-                        {
-                            return new KillResult(
-                                Success: true,
-                                ProcessId: processId,
-                                ProcessName: processName);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Graceful close failed, fall through to force kill
-                }
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
+                                  "The process you meant may have exited and its PID been reused. Nothing was done; " +
+                                  "call list_processes to get the current PID.",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
             }
 
-            // Force kill
-            process.Kill(entireProcessTree: true);
-            process.WaitForExit(1000);
+            // Closing or killing an ancestor (the terminal or editor hosting the agent) ends the agent's own session
+            if (IsHostAncestor(processId))
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"'{processName}' (PID {processId}) is an ancestor of this MCP server, such as the terminal " +
+                                  "or editor hosting the agent. Closing it would end the agent's own session, so it is refused.",
+                    ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+            }
 
-            return new KillResult(
-                Success: true,
-                ProcessId: processId,
-                ProcessName: processName);
-        }
-        catch (ArgumentException)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Process not found. It may have already exited.",
-                ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Access denied. Insufficient permissions to terminate this process.",
-                ErrorCode: nameof(ProcessErrorCode.AccessDenied));
-        }
-        catch (Exception ex)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: ex.Message,
-                ErrorCode: nameof(ProcessErrorCode.TerminationException));
+            return forceKill
+                ? TerminateForcefully(process, processId, processName)
+                : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
         }
     }
 
-    private nint? WaitForMainWindow(Process process, int timeoutMs)
+    /// <summary>
+    /// Graceful mode: posts WM_CLOSE to the main window and waits. Never escalates to a forced kill;
+    /// a process that cannot be closed or is still running is left alone and reported as such.
+    /// </summary>
+    private static KillResult CloseGracefully(IProcessHandle process, int processId, string processName, int timeoutMs)
+    {
+        bool closeRequested;
+        try
+        {
+            closeRequested = process.CloseMainWindow();
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName);
+        }
+
+        if (!closeRequested)
+        {
+            if (HasExitedSafe(process))
+            {
+                return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
+            }
+
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
+                              "(it may be windowless, running only in the notification area, or its window is blocked by a " +
+                              "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
+                              $"kill_process again with forceKill=true: {ForceKillConsequence}",
+                ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
+        }
+
+        bool exited;
+        try
+        {
+            exited = process.WaitForExit(timeoutMs);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName) with { CloseRequested = true };
+        }
+
+        if (exited)
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, CloseRequested: true, Exited: true);
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: $"A close request was sent to '{processName}' (PID {processId}), but it was still running after " +
+                          $"{timeoutMs} ms. It may be showing a prompt such as 'Save changes?', still shutting down, or " +
+                          "running elevated (Windows then drops the close request). Nothing was force-terminated. Handle " +
+                          "the prompt, retry with a longer gracefulTimeoutMs, or call kill_process with forceKill=true: " +
+                          ForceKillConsequence,
+            ErrorCode: nameof(ProcessErrorCode.GracefulCloseTimedOut),
+            CloseRequested: true);
+    }
+
+    /// <summary>
+    /// Force mode: terminates the process and its child processes, then confirms that it exited.
+    /// </summary>
+    private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
+    {
+        AggregateException? treeFailures = null;
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (AggregateException ex)
+        {
+            // Kill(entireProcessTree: true) tries the root and every descendant, then reports all
+            // failures together without saying which process failed. Whether the root is gone,
+            // which decides the outcome, is checked below.
+            treeFailures = ex;
+        }
+        catch (InvalidOperationException) when (HasExitedSafe(process))
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName);
+        }
+
+        var accessDenied = treeFailures != null && IsAccessDenied(treeFailures);
+        var warning = treeFailures == null
+            ? null
+            : "Some child processes could not be terminated and may still be running" +
+              (accessDenied ? " (access denied: they probably run elevated or as another user)" : "") +
+              ": " + string.Join("; ", treeFailures.InnerExceptions.Select(e => e.Message));
+
+        bool exited;
+        try
+        {
+            exited = process.WaitForExit(ForceKillExitWaitMs);
+        }
+        catch (Exception ex)
+        {
+            return KillFailureFromException(ex, processId, processName) with { Forced = true, Warning = warning };
+        }
+
+        if (exited)
+        {
+            return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Forced: true, Exited: true, Warning: warning);
+        }
+
+        if (accessDenied)
+        {
+            // The root is still running, so the denial most likely came from the root itself
+            return KillFailureFromException(treeFailures!, processId, processName) with
+            {
+                Forced = true,
+                Warning = "Termination was attempted for the whole process tree, so some of its child processes may " +
+                          "have been terminated even though the process itself is still running."
+            };
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: $"Termination of '{processName}' (PID {processId}) was requested, but the process had not exited " +
+                          $"after {ForceKillExitWaitMs} ms. It may still be shutting down; check with list_processes.",
+            ErrorCode: nameof(ProcessErrorCode.TerminationNotConfirmed),
+            Forced: true,
+            Warning: warning);
+    }
+
+    private bool IsHostAncestor(int processId)
+    {
+        try
+        {
+            return _processWrapper.IsAncestorOfCurrentProcess(processId);
+        }
+        catch (Exception)
+        {
+            // If the process tree cannot be read, fall back to the runtime's own check in Kill(entireProcessTree: true)
+            return false;
+        }
+    }
+
+    private static bool ProcessNameMatches(string actualName, string expectedName)
+    {
+        var expected = expectedName.Trim();
+        if (expected.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            expected = expected[..^4];
+        }
+
+        return actualName.Equals(expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasExitedSafe(IProcessHandle process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsAccessDenied(Exception ex) => ex switch
+    {
+        Win32Exception win32 => win32.NativeErrorCode == ErrorAccessDenied,
+        UnauthorizedAccessException => true,
+        AggregateException aggregate => aggregate.InnerExceptions.Any(IsAccessDenied),
+        _ => false
+    };
+
+    private static KillResult KillFailureFromException(Exception ex, int processId, string? processName)
+    {
+        if (IsAccessDenied(ex))
+        {
+            var target = processName != null ? $"'{processName}' (PID {processId})" : $"PID {processId}";
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"Access denied for {target}. It is probably running elevated (as administrator), as another " +
+                              "user, or as a protected process; terminating it requires the server to run with at least the " +
+                              "same privileges.",
+                ErrorCode: nameof(ProcessErrorCode.AccessDenied));
+        }
+
+        return new KillResult(
+            Success: false,
+            ProcessId: processId,
+            ProcessName: processName,
+            ErrorMessage: ex.Message,
+            ErrorCode: nameof(ProcessErrorCode.TerminationException));
+    }
+
+    private static KillResult ProcessNotFound(int processId) => new(
+        Success: false,
+        ProcessId: processId,
+        ErrorMessage: "Process not found. It may have already exited.",
+        ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
+
+    private nint? WaitForMainWindow(IProcessHandle process, int timeoutMs)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -365,11 +683,10 @@ public class ProcessService : IProcessService
         {
             try
             {
-                process.Refresh();
-
-                if (process.MainWindowHandle != nint.Zero)
+                var mainWindowHandle = process.RefreshMainWindowHandle();
+                if (mainWindowHandle != nint.Zero)
                 {
-                    return process.MainWindowHandle;
+                    return mainWindowHandle;
                 }
 
                 // Also try to find windows belonging to this process
@@ -466,17 +783,7 @@ public class ProcessService : IProcessService
         // Generate user data directory if not specified
         var effectiveUserDataDir = userDataDir ?? Path.Combine(Path.GetTempPath(), $"browser-debug-{Guid.NewGuid()}");
 
-        // Build arguments
-        var arguments = new List<string>
-        {
-            $"--remote-debugging-port={port}",
-            $"--user-data-dir=\"{effectiveUserDataDir}\""
-        };
-
-        if (!string.IsNullOrWhiteSpace(url))
-        {
-            arguments.Add(url);
-        }
+        var arguments = BuildDebugBrowserArguments(port, effectiveUserDataDir, url);
 
         try
         {
@@ -522,7 +829,28 @@ public class ProcessService : IProcessService
         }
     }
 
-    private static string? ResolveBrowserPath(string browser)
+    /// <summary>
+    /// Builds the argument list for a CDP debug browser launch. Values are left unquoted:
+    /// <see cref="CommandLineBuilder"/> quotes each argument once when the command line is built,
+    /// so user data directories containing spaces or a trailing backslash stay a single argument.
+    /// </summary>
+    public static IReadOnlyList<string> BuildDebugBrowserArguments(int port, string userDataDir, string? url)
+    {
+        var arguments = new List<string>
+        {
+            $"--remote-debugging-port={port}",
+            $"--user-data-dir={userDataDir}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            arguments.Add(url);
+        }
+
+        return arguments;
+    }
+
+    private string? ResolveBrowserPath(string browser)
     {
         // Check common paths
         if (BrowserPaths.TryGetValue(browser, out var paths))
@@ -537,40 +865,16 @@ public class ProcessService : IProcessService
         }
 
         // Fall back to PATH lookup
-        try
+        var executableName = browser switch
         {
-            var processInfo = new ProcessStartInfo
-            {
-                FileName = "where.exe",
-                Arguments = browser switch
-                {
-                    "chrome" => "chrome.exe",
-                    "edge" => "msedge.exe",
-                    "brave" => "brave.exe",
-                    _ => $"{browser}.exe"
-                },
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            "chrome" => "chrome.exe",
+            "edge" => "msedge.exe",
+            "brave" => "brave.exe",
+            _ => $"{browser}.exe"
+        };
 
-            using var process = Process.Start(processInfo);
-            if (process != null)
-            {
-                var output = process.StandardOutput.ReadLine();
-                process.WaitForExit(5000);
-                if (!string.IsNullOrWhiteSpace(output) && File.Exists(output))
-                {
-                    return output;
-                }
-            }
-        }
-        catch
-        {
-            // Ignore errors from where.exe
-        }
-
-        return null;
+        var output = _processWrapper.FindWithWhereExe(executableName);
+        return !string.IsNullOrWhiteSpace(output) && File.Exists(output) ? output : null;
     }
 
     private static bool IsPortInUse(int port)

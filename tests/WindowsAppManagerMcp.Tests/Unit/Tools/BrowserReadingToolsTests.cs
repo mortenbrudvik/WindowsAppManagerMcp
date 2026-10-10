@@ -22,12 +22,12 @@ public class BrowserReadingToolsTests
     #region GetBrowserUrl Tests
 
     [Fact]
-    public void GetBrowserUrl_CallsServiceWithCorrectHandle()
+    public async Task GetBrowserUrl_CallsServiceWithCorrectHandle()
     {
         // Arrange
         var handle = 12345L;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserUrl(new nint(handle), It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(new nint(handle), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: true,
                 Url: "https://example.com",
                 BrowserType: "chrome",
@@ -37,19 +37,19 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.GetBrowserUrl(handle);
+        await sut.GetBrowserUrl(handle);
 
         // Assert
-        _mockBrowserReadingService.Verify(s => s.GetBrowserUrl(new nint(handle), It.IsAny<int?>()), Times.Once);
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(new nint(handle), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void GetBrowserUrl_ReturnsMappedDto_OnSuccess()
+    public async Task GetBrowserUrl_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
         var handle = 12345L;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserUrl(new nint(handle), It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(new nint(handle), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: true,
                 Url: "https://example.com",
                 BrowserType: "chrome",
@@ -59,7 +59,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetBrowserUrl(handle);
+        var result = await sut.GetBrowserUrl(handle);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -71,12 +71,12 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void GetBrowserUrl_ReturnsMappedDto_OnError()
+    public async Task GetBrowserUrl_ReturnsMappedDto_OnError()
     {
         // Arrange
         var handle = 12345L;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserUrl(new nint(handle), It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(new nint(handle), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: false,
                 Url: null,
                 BrowserType: null,
@@ -86,7 +86,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetBrowserUrl(handle);
+        var result = await sut.GetBrowserUrl(handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -100,16 +100,17 @@ public class BrowserReadingToolsTests
     #region GetBrowserContent Tests
 
     [Fact]
-    public void GetBrowserContent_CallsServiceWithCorrectParameters()
+    public async Task GetBrowserContent_CallsServiceWithCorrectParameters()
     {
         // Arrange
         var handle = 12345L;
         var maxLength = 1000;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserContentAsync(
                 new nint(handle),
                 It.Is<BrowserContentOptions>(o => o.MaxLength == maxLength && o.TextOnly),
-                It.IsAny<int?>()))
-            .Returns(new BrowserContentResult(
+                It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(
                 Success: true,
                 Content: "Page content",
                 Url: "https://example.com",
@@ -121,27 +122,29 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.GetBrowserContent(handle, maxLength, textOnly: true);
+        await sut.GetBrowserContent(handle, maxLength, textOnly: true);
 
         // Assert
-        _mockBrowserReadingService.Verify(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
             new nint(handle),
             It.Is<BrowserContentOptions>(o => o.MaxLength == maxLength && o.TextOnly),
-            It.IsAny<int?>()),
+            It.IsAny<CdpOptions?>(),
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public void GetBrowserContent_ReturnsMappedDto_OnSuccess()
+    public async Task GetBrowserContent_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
         var handle = 12345L;
         var content = "This is the page content";
-        _mockBrowserReadingService.Setup(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserContentAsync(
                 new nint(handle),
                 It.IsAny<BrowserContentOptions>(),
-                It.IsAny<int?>()))
-            .Returns(new BrowserContentResult(
+                It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(
                 Success: true,
                 Content: content,
                 Url: "https://example.com",
@@ -153,7 +156,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetBrowserContent(handle);
+        var result = await sut.GetBrowserContent(handle);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -167,15 +170,16 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void GetBrowserContent_ReturnsMappedDto_OnError()
+    public async Task GetBrowserContent_ReturnsMappedDto_OnError()
     {
         // Arrange
         var handle = 12345L;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserContentAsync(
                 new nint(handle),
                 It.IsAny<BrowserContentOptions>(),
-                It.IsAny<int?>()))
-            .Returns(new BrowserContentResult(
+                It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(
                 Success: false,
                 Content: null,
                 Url: null,
@@ -187,7 +191,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetBrowserContent(handle);
+        var result = await sut.GetBrowserContent(handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -198,15 +202,16 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void GetBrowserContent_DefaultsToNullMaxLength()
+    public async Task GetBrowserContent_DefaultsToNullMaxLength()
     {
         // Arrange
         var handle = 12345L;
-        _mockBrowserReadingService.Setup(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserContentAsync(
                 new nint(handle),
                 It.Is<BrowserContentOptions>(o => o.MaxLength == null),
-                It.IsAny<int?>()))
-            .Returns(new BrowserContentResult(
+                It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserContentResult(
                 Success: true,
                 Content: "Content",
                 Url: null,
@@ -218,13 +223,14 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.GetBrowserContent(handle);
+        await sut.GetBrowserContent(handle);
 
         // Assert
-        _mockBrowserReadingService.Verify(s => s.GetBrowserContent(
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
             new nint(handle),
             It.Is<BrowserContentOptions>(o => o.MaxLength == null),
-            It.IsAny<int?>()),
+            It.IsAny<CdpOptions?>(),
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -233,11 +239,11 @@ public class BrowserReadingToolsTests
     #region GetActiveBrowserUrl Tests
 
     [Fact]
-    public void GetActiveBrowserUrl_CallsService()
+    public async Task GetActiveBrowserUrl_CallsService()
     {
         // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: true,
                 Url: "https://example.com",
                 BrowserType: "edge",
@@ -247,18 +253,18 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.GetActiveBrowserUrl();
+        await sut.GetActiveBrowserUrl();
 
         // Assert
-        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrl(It.IsAny<int?>()), Times.Once);
+        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void GetActiveBrowserUrl_ReturnsMappedDto_OnSuccess()
+    public async Task GetActiveBrowserUrl_ReturnsMappedDto_OnSuccess()
     {
         // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: true,
                 Url: "https://example.com",
                 BrowserType: "edge",
@@ -268,7 +274,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetActiveBrowserUrl();
+        var result = await sut.GetActiveBrowserUrl();
 
         // Assert
         result.Success.Should().BeTrue();
@@ -279,11 +285,11 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public void GetActiveBrowserUrl_ReturnsMappedDto_WhenNoBrowser()
+    public async Task GetActiveBrowserUrl_ReturnsMappedDto_WhenNoBrowser()
     {
         // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: false,
                 Url: null,
                 BrowserType: null,
@@ -293,7 +299,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetActiveBrowserUrl();
+        var result = await sut.GetActiveBrowserUrl();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -315,11 +321,15 @@ public class BrowserReadingToolsTests
     [InlineData(BrowserErrorCode.AutomationUnavailable, "AutomationUnavailable")]
     [InlineData(BrowserErrorCode.NoBrowserInForeground, "NoBrowserInForeground")]
     [InlineData(BrowserErrorCode.OperationException, "OperationException")]
-    public void GetBrowserUrl_MapsErrorCodeToString_Correctly(BrowserErrorCode errorCode, string expectedString)
+    [InlineData(BrowserErrorCode.CdpTimeout, "CdpTimeout")]
+    [InlineData(BrowserErrorCode.CdpDialogOpen, "CdpDialogOpen")]
+    [InlineData(BrowserErrorCode.CdpTargetAmbiguous, "CdpTargetAmbiguous")]
+    [InlineData(BrowserErrorCode.CdpPortOwnerMismatch, "CdpPortOwnerMismatch")]
+    public async Task GetBrowserUrl_MapsErrorCodeToString_Correctly(BrowserErrorCode errorCode, string expectedString)
     {
         // Arrange
-        _mockBrowserReadingService.Setup(s => s.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<int?>()))
-            .Returns(new BrowserUrlResult(
+        _mockBrowserReadingService.Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BrowserUrlResult(
                 Success: false,
                 Url: null,
                 BrowserType: null,
@@ -329,10 +339,112 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetBrowserUrl(12345);
+        var result = await sut.GetBrowserUrl(12345);
 
         // Assert
         result.ErrorCode.Should().Be(expectedString);
+    }
+
+    #endregion
+
+    #region CDP Options and Source Tests
+
+    private static readonly BrowserUrlResult AnyUrlResult = new(
+        Success: true, Url: "https://example.com", BrowserType: "chrome", PageTitle: "Example", Error: null, ErrorCode: BrowserErrorCode.None);
+
+    private static readonly BrowserContentResult AnyContentResult = new(
+        Success: true, Content: "c", Url: "https://example.com", BrowserType: "chrome", PageTitle: "Example",
+        ContentLength: 1, Error: null, ErrorCode: BrowserErrorCode.None);
+
+    [Fact]
+    public async Task GetBrowserUrl_PassesCdpOptionsAndCancellationToken()
+    {
+        using var cts = new CancellationTokenSource();
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserUrl(12345, cdpPort: 9333, requireCdp: true, timeoutMs: 4000, cancellationToken: cts.Token);
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
+            new nint(12345), new CdpOptions(9333, true, 4000), cts.Token), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_DefaultsToNoCdpAndTenSecondTimeout()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserUrl(12345);
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserUrlAsync(
+            new nint(12345), new CdpOptions(null, false, 10000), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_PassesCdpOptionsAndCancellationToken()
+    {
+        using var cts = new CancellationTokenSource();
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult);
+        var sut = CreateSut();
+
+        await sut.GetBrowserContent(12345, maxLength: 10, textOnly: false, cdpPort: 9222, requireCdp: true, timeoutMs: 2500, cancellationToken: cts.Token);
+
+        _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(
+            new nint(12345), new BrowserContentOptions(10, false), new CdpOptions(9222, true, 2500), cts.Token), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetActiveBrowserUrl_PassesCdpOptionsAndCancellationToken()
+    {
+        using var cts = new CancellationTokenSource();
+        _mockBrowserReadingService
+            .Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult);
+        var sut = CreateSut();
+
+        await sut.GetActiveBrowserUrl(cdpPort: 9222, requireCdp: false, timeoutMs: 1500, cancellationToken: cts.Token);
+
+        _mockBrowserReadingService.Verify(s => s.GetActiveBrowserUrlAsync(
+            new CdpOptions(9222, false, 1500), cts.Token), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_MapsSourceTargetIdAndCdpError()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyUrlResult with { Source = "uia", TargetId = null, CdpError = "CdpTimeout: no answer" });
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserUrl(12345, cdpPort: 9222);
+
+        result.Source.Should().Be("uia");
+        result.TargetId.Should().BeNull();
+        result.CdpError.Should().Be("CdpTimeout: no answer");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_MapsSourceTargetIdAndCdpError()
+    {
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult with { Source = "cdp", TargetId = "TAB1" });
+        var sut = CreateSut();
+
+        var result = await sut.GetBrowserContent(12345, cdpPort: 9222);
+
+        result.Source.Should().Be("cdp");
+        result.TargetId.Should().Be("TAB1");
+        result.CdpError.Should().BeNull();
     }
 
     #endregion
@@ -419,7 +531,7 @@ public class BrowserReadingToolsTests
         // Assert
         result.Success.Should().BeTrue();
         result.ProcessId.Should().Be(processId);
-        result.WindowHandle.Should().Be(windowHandle);
+        result.WindowHandle.Should().Be(windowHandle.ToInt64());
         result.CdpPort.Should().Be(cdpPort);
         result.UserDataDir.Should().Be(userDataDir);
         result.Error.Should().BeNull();

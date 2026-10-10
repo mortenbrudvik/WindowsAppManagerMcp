@@ -8,21 +8,50 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// Tests T2.1-T2.12 from BACKLOG-TECHNICAL.md.
 ///
 /// Note: WindowService uses P/Invoke for window management.
-/// These tests focus on behavior that can be safely tested without side effects.
-/// Tests use the real NativeWindowWrapper to verify actual Windows API behavior.
+/// Read-only tests (enumerating and querying windows) use the real NativeWindowWrapper to
+/// verify actual Windows API behavior, wrapped in <see cref="ReadOnlyNativeWindowWrapper"/>: it
+/// throws instead of moving, resizing, showing, focusing or closing a window, so even a test that
+/// calls a mutating method by mistake cannot change the desktop. Tests of methods that change
+/// windows use a mocked wrapper.
 /// </summary>
 public class WindowServiceTests
 {
     private readonly Mock<IMonitorService> _mockMonitorService;
-    private readonly INativeWindowWrapper _nativeWrapper;
 
     public WindowServiceTests()
     {
         _mockMonitorService = TestDataFactory.CreateMockMonitorService();
-        _nativeWrapper = new NativeWindowWrapper();
     }
 
-    private WindowService CreateSut() => new WindowService(_mockMonitorService.Object, _nativeWrapper);
+    /// <summary>
+    /// A WindowService over the real windows of the desktop that can only read them: every window
+    /// change throws (see <see cref="ReadOnlyNativeWindowWrapper"/>).
+    /// </summary>
+    private WindowService CreateReadOnlySut() => new WindowService(_mockMonitorService.Object, new ReadOnlyNativeWindowWrapper());
+
+    private const int InvalidHandleValue = 99999999;
+
+    /// <summary>
+    /// Creates a WindowService whose native wrapper reports every handle as invalid. With the
+    /// real wrapper, a window that happened to own the handle would be moved, minimized or focused.
+    /// </summary>
+    private (WindowService Sut, Mock<INativeWindowWrapper> Native) CreateSutWithNoValidWindows()
+    {
+        var native = new Mock<INativeWindowWrapper>();
+        native.Setup(n => n.IsWindow(It.IsAny<nint>())).Returns(false);
+        return (new WindowService(_mockMonitorService.Object, native.Object), native);
+    }
+
+    private static void VerifyNoWindowWasChanged(Mock<INativeWindowWrapper> native)
+    {
+        native.Verify(n => n.SetWindowPos(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        native.Verify(n => n.ShowWindow(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+        native.Verify(n => n.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
+        native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
+        native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(),
+            It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
 
     #region T2.1: GetAllWindows Tests
 
@@ -30,7 +59,7 @@ public class WindowServiceTests
     public void GetAllWindows_ReturnsNonEmptyList()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetAllWindows(includeMinimized: true);
@@ -70,7 +99,7 @@ public class WindowServiceTests
     public void GetAllWindows_ReturnsWindowsWithValidHandles()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetAllWindows(includeMinimized: true);
@@ -83,7 +112,7 @@ public class WindowServiceTests
     public void GetAllWindows_ReturnsWindowsWithNonEmptyTitles()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetAllWindows(includeMinimized: true);
@@ -97,7 +126,7 @@ public class WindowServiceTests
     public void GetAllWindows_ReturnsWindowsWithProcessInfo()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetAllWindows(includeMinimized: true);
@@ -114,7 +143,7 @@ public class WindowServiceTests
     public void FindWindows_WithNoFilters_ReturnsWindows()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.FindWindows();
@@ -152,10 +181,64 @@ public class WindowServiceTests
     }
 
     [Fact]
+    public void FindWindows_WithProcessName_UsesTheProcessNamesFromTheNativeWrapper()
+    {
+        // Arrange - the names come from the mocked wrapper, not from whichever real processes
+        // happen to own the fake process IDs
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Document.txt - Notepad", "notepad", 5001),
+            TestDataFactory.CreateWindowInfo(1002, "Google Chrome - Search", "chrome", 5002)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act
+        var result = sut.FindWindows(processName: "notepad");
+
+        // Assert
+        result.Should().ContainSingle().Which.ProcessName.Should().Be("notepad");
+    }
+
+    [Fact]
+    public void GetWindowInfo_WhenTheProcessNameCannotBeRead_ReportsUnknown()
+    {
+        // Arrange - the process exited or cannot be opened
+        var window = TestDataFactory.CreateWindowInfo(1001, "Orphaned Window", "gone", 5001);
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper([window]);
+        mockNativeWrapper.Setup(n => n.GetProcessName(5001u)).Returns((string?)null);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act
+        var result = sut.GetWindowInfo(window.Handle);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.ProcessName.Should().Be("Unknown");
+    }
+
+    [Fact]
+    public void ReadOnlyWrapper_MakesWindowChangesThrowBeforeTheyReachTheWrapper()
+    {
+        // Arrange - the read-only wrapper over a mock that reports a valid window, the situation
+        // in which a read-only test calling MoveWindow by mistake would move a real window
+        var window = TestDataFactory.CreateWindowInfo(1001, "Some Window", "app", 5001);
+        var inner = TestDataFactory.CreateMockNativeWindowWrapper([window]);
+        var sut = new WindowService(_mockMonitorService.Object, new ReadOnlyNativeWindowWrapper(inner.Object));
+
+        // Act
+        var act = () => sut.MoveWindow(window.Handle, 10, 10);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("SetWindowPos*read-only*");
+        VerifyNoWindowWasChanged(inner);
+    }
+
+    [Fact]
     public void FindWindows_WithProcessName_FiltersCorrectly()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
         // Get all windows first and use a process name that we know has windows
         var allWindows = sut.GetAllWindows(includeMinimized: true);
         if (!allWindows.Any()) return; // Skip if no windows
@@ -202,7 +285,7 @@ public class WindowServiceTests
     public void FindWindows_WithNonMatchingFilter_ReturnsEmpty()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.FindWindows(processName: "xyznonexistentprocess123");
@@ -242,7 +325,7 @@ public class WindowServiceTests
     public void FindWindows_WithHandle_ReturnsMatchingWindow()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
         var allWindows = sut.GetAllWindows(includeMinimized: true);
         if (!allWindows.Any()) return; // Skip if no windows
         var targetHandle = allWindows.First().Handle;
@@ -312,7 +395,7 @@ public class WindowServiceTests
     public void GetForegroundWindow_ReturnsWindowOrNull()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetForegroundWindow();
@@ -334,7 +417,7 @@ public class WindowServiceTests
     public void GetWindowInfo_WithValidHandle_ReturnsInfo()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
         var allWindows = sut.GetAllWindows(includeMinimized: true);
         if (!allWindows.Any()) return;
         var targetHandle = allWindows.First().Handle;
@@ -351,7 +434,7 @@ public class WindowServiceTests
     public void GetWindowInfo_WithInvalidHandle_ReturnsNull()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetWindowInfo(new nint(99999999));
@@ -364,7 +447,7 @@ public class WindowServiceTests
     public void GetWindowInfo_WithZeroHandle_ReturnsNull()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.GetWindowInfo(nint.Zero);
@@ -381,7 +464,7 @@ public class WindowServiceTests
     public void IsValidWindow_WithValidHandle_ReturnsTrue()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
         var allWindows = sut.GetAllWindows(includeMinimized: true);
         if (!allWindows.Any()) return;
         var validHandle = allWindows.First().Handle;
@@ -397,7 +480,7 @@ public class WindowServiceTests
     public void IsValidWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.IsValidWindow(new nint(99999999));
@@ -410,7 +493,7 @@ public class WindowServiceTests
     public void IsValidWindow_WithZeroHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var sut = CreateReadOnlySut();
 
         // Act
         var result = sut.IsValidWindow(nint.Zero);
@@ -421,71 +504,76 @@ public class WindowServiceTests
 
     #endregion
 
-    #region T2.5-T2.8: Window Manipulation Tests (Safe Operations)
+    #region T2.5-T2.8: Window Manipulation Tests (Mocked Native Wrapper)
 
     [Fact]
     public void MoveWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.MoveWindow(new nint(99999999), 100, 100);
+        var result = sut.MoveWindow(new nint(InvalidHandleValue), 100, 100);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void ResizeWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.ResizeWindow(new nint(99999999), 800, 600);
+        var result = sut.ResizeWindow(new nint(InvalidHandleValue), 800, 600);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void SetWindowBounds_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SetWindowBounds(new nint(99999999), 100, 100, 800, 600);
+        var result = sut.SetWindowBounds(new nint(InvalidHandleValue), 100, 100, 800, 600);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void SetWindowState_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SetWindowState(new nint(99999999), WindowState.Minimized);
+        var result = sut.SetWindowState(new nint(InvalidHandleValue), WindowState.Minimized);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void FocusWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.FocusWindow(new nint(99999999));
+        var result = sut.FocusWindow(new nint(InvalidHandleValue));
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion
@@ -496,13 +584,14 @@ public class WindowServiceTests
     public void SnapWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SnapWindow(new nint(99999999), SnapPosition.LeftHalf);
+        var result = sut.SnapWindow(new nint(InvalidHandleValue), SnapPosition.LeftHalf);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion
@@ -513,13 +602,14 @@ public class WindowServiceTests
     public void MoveWindowToMonitor_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.MoveWindowToMonitor(new nint(99999999), 0);
+        var result = sut.MoveWindowToMonitor(new nint(InvalidHandleValue), 0);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion

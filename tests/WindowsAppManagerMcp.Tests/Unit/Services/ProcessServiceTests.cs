@@ -1,82 +1,92 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
 /// Unit tests for ProcessService.
-/// Tests T4.2-T4.4 from BACKLOG-TECHNICAL.md.
+/// Tests T4.1-T4.5 from BACKLOG-TECHNICAL.md.
 ///
-/// Note: LaunchApplication tests (T4.1) are limited due to side effects
-/// of actually launching processes. Those are better suited for integration tests.
+/// Desktop safety: every ProcessService in this class is built by <see cref="CreateSut"/> with a
+/// mocked <see cref="INativeProcessWrapper"/>, the only code that starts, closes or kills
+/// processes (NativeCallGuardTests enforces that). No test here can launch or terminate a real
+/// process. The process listing and lookup tests below only read the real process table.
 /// </summary>
 public class ProcessServiceTests
 {
+    private const int LaunchedProcessId = 4321;
+
     private readonly Mock<IWindowService> _mockWindowService;
     private readonly Mock<IInputValidationService> _mockValidationService;
     private readonly Mock<IBrowserDetectionService> _mockBrowserDetection;
+    private readonly Mock<IExecutableResolver> _mockResolver = new();
+    private readonly Mock<INativeProcessWrapper> _mockProcessWrapper = new();
+    private readonly Mock<IProcessHandle> _mockLaunchedProcess = new();
+    private ProcessStartInfo? _startedWith;
 
     public ProcessServiceTests()
     {
         _mockWindowService = TestDataFactory.CreateMockWindowService();
+        _mockWindowService.Setup(w => w.FindWindows(
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<int?>(), It.IsAny<nint?>(), It.IsAny<bool>()))
+            .Returns(Array.Empty<WindowInfo>());
         _mockValidationService = new Mock<IInputValidationService>();
         _mockBrowserDetection = TestDataFactory.CreateMockBrowserDetectionService();
 
-        // Set up default validation to pass through
+        // Validation accepts executables and working directories unchanged
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
             .Returns<string>(exe => new ExecutableValidationResult(true, SanitizedExecutable: exe));
         _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
             .Returns<string?>(dir => new PathValidationResult(true, SanitizedPath: dir));
+
+        // Every name resolves to itself as a native executable, independent of the machine's PATH
+        _mockResolver.Setup(r => r.Resolve(It.IsAny<string>(), It.IsAny<string?>()))
+            .Returns<string, string?>((exe, _) => new ResolvedLaunchTarget(exe, LaunchTargetKind.NativeExecutable));
+
+        // The process seam records what would have been started and returns a fake process
+        _mockLaunchedProcess.SetupGet(p => p.Id).Returns(LaunchedProcessId);
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Callback<ProcessStartInfo>(startInfo => _startedWith = startInfo)
+            .Returns(_mockLaunchedProcess.Object);
+        _mockProcessWrapper.Setup(w => w.OpenProcess(It.IsAny<int>())).Returns((IProcessHandle?)null);
     }
 
-    private ProcessService CreateSut() => new ProcessService(
+    private ProcessService CreateSut(IBrowserDetectionService? browserDetection = null) => new(
         _mockWindowService.Object,
         _mockValidationService.Object,
-        _mockBrowserDetection.Object);
+        browserDetection ?? _mockBrowserDetection.Object,
+        _mockResolver.Object,
+        _mockProcessWrapper.Object);
 
-    #region T4.1: LaunchApplication Integration Tests
+    private void VerifyNothingStarted() =>
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Never);
+
+    #region T4.1: LaunchApplication Tests
 
     /// <summary>
     /// T4.1.1: Test LaunchApplication with valid executable returns success.
-    /// Uses notepad.exe which is available on all Windows systems.
     /// </summary>
     [Fact]
     public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
     {
         // Arrange
         var sut = CreateSut();
-        Process? launchedProcess = null;
 
-        try
-        {
-            // Act
-            var result = sut.LaunchApplication("notepad.exe", waitForWindow: false);
+        // Act
+        var result = sut.LaunchApplication("notepad.exe", waitForWindow: false);
 
-            // Assert
-            result.Success.Should().BeTrue();
-            result.ProcessId.Should().BeGreaterThan(0);
-            result.ErrorMessage.Should().BeNull();
-            result.ErrorCode.Should().BeNull();
-
-            // Store process for cleanup
-            if (result.ProcessId.HasValue)
-            {
-                try
-                {
-                    launchedProcess = Process.GetProcessById(result.ProcessId.Value);
-                }
-                catch { /* Process may have exited */ }
-            }
-        }
-        finally
-        {
-            // Cleanup - kill the launched notepad
-            try
-            {
-                launchedProcess?.Kill();
-                launchedProcess?.Dispose();
-            }
-            catch { /* Ignore cleanup errors */ }
-        }
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().Be(LaunchedProcessId);
+        result.WindowHandle.Should().BeNull();
+        result.ErrorMessage.Should().BeNull();
+        result.ErrorCode.Should().BeNull();
+        _startedWith.Should().NotBeNull();
+        _startedWith!.FileName.Should().Be("notepad.exe");
+        _startedWith.UseShellExecute.Should().BeTrue();
+        _mockLaunchedProcess.Verify(p => p.RefreshMainWindowHandle(), Times.Never);
+        _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Once);
     }
 
     /// <summary>
@@ -101,46 +111,44 @@ public class ProcessServiceTests
         result.ProcessId.Should().BeNull();
         result.ErrorMessage.Should().NotBeNullOrEmpty();
         result.ErrorCode.Should().NotBeNullOrEmpty();
+        VerifyNothingStarted();
     }
 
     [Fact]
     public void LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
     {
-        // Arrange
+        // Arrange - the main window appears on the second poll
+        _mockLaunchedProcess.SetupSequence(p => p.RefreshMainWindowHandle())
+            .Returns(nint.Zero)
+            .Returns(new nint(0x1234));
         var sut = CreateSut();
-        Process? launchedProcess = null;
 
-        try
-        {
-            // Act - Wait for window with a generous timeout
-            var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+        // Act
+        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
 
-            // Assert
-            result.Success.Should().BeTrue();
-            result.ProcessId.Should().BeGreaterThan(0);
-            // WindowHandle may or may not be set depending on timing
-            // but the call should succeed
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().Be(LaunchedProcessId);
+        result.WindowHandle.Should().Be(new nint(0x1234));
+        _mockLaunchedProcess.Verify(p => p.RefreshMainWindowHandle(), Times.Exactly(2));
+    }
 
-            // Store process for cleanup
-            if (result.ProcessId.HasValue)
-            {
-                try
-                {
-                    launchedProcess = Process.GetProcessById(result.ProcessId.Value);
-                }
-                catch { /* Process may have exited */ }
-            }
-        }
-        finally
-        {
-            // Cleanup
-            try
-            {
-                launchedProcess?.Kill();
-                launchedProcess?.Dispose();
-            }
-            catch { /* Ignore cleanup errors */ }
-        }
+    [Fact]
+    public void LaunchApplication_WithWaitForWindow_UsesWindowOfProcessWhenNoMainWindow()
+    {
+        // Arrange - no main window, but the window service sees a window owned by the process
+        var window = TestDataFactory.CreateWindowInfo(handleValue: 0x5678, processId: LaunchedProcessId);
+        _mockWindowService.Setup(w => w.FindWindows(
+                It.IsAny<string?>(), It.IsAny<string?>(), LaunchedProcessId, It.IsAny<nint?>(), It.IsAny<bool>()))
+            .Returns([window]);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.WindowHandle.Should().Be(new nint(0x5678));
     }
 
     #endregion
@@ -162,14 +170,13 @@ public class ProcessServiceTests
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Be("Path traversal detected");
         result.ErrorCode.Should().Be("PathTraversal");
+        VerifyNothingStarted();
     }
 
     [Fact]
     public void LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
     {
         // Arrange
-        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
-            .Returns(new ExecutableValidationResult(true, SanitizedExecutable: "notepad.exe"));
         _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
             .Returns(new PathValidationResult(false, Error: "Invalid working directory", ErrorCode: "InvalidWorkingDirectory"));
         var sut = CreateSut();
@@ -181,6 +188,45 @@ public class ProcessServiceTests
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Be("Invalid working directory");
         result.ErrorCode.Should().Be("InvalidWorkingDirectory");
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public void LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
+    {
+        // Arrange
+        _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
+            .Returns(new ExecutableValidationResult(true, SanitizedExecutable: "app.exe", Warning: "exe warning"));
+        _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
+            .Returns(new PathValidationResult(true, Warning: "dir warning"));
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Throws(new Win32Exception(2, "The system cannot find the file specified."));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("app.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ProcessId.Should().BeNull();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
+        result.ErrorMessage.Should().Be("The system cannot find the file specified.");
+        result.Warning.Should().Be("exe warning; dir warning");
+    }
+
+    [Fact]
+    public void LaunchApplication_WhenNoProcessIsStarted_ReturnsProcessStartFailed()
+    {
+        // Arrange - ShellExecute handed the request over without creating a process
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchApplication("app.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ProcessStartFailed));
     }
 
     #endregion
@@ -392,53 +438,64 @@ public class ProcessServiceTests
     [Fact]
     public void KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
     {
-        // Arrange
+        // Arrange - the mocked process seam finds no process with this ID
         var sut = CreateSut();
 
-        // Act - Use a very high PID that's unlikely to exist
+        // Act
         var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be("ProcessNotFound");
+        _mockProcessWrapper.Verify(w => w.OpenProcess(int.MaxValue - 1), Times.Once);
     }
 
+    /// <summary>
+    /// Verifies the protected-process set directly instead of calling KillProcess on the real
+    /// System, csrss, lsass, svchost and winlogon processes: if the guard ever regressed, that
+    /// would try to terminate them, which crashes Windows when the run is elevated.
+    /// </summary>
     [Theory]
     [InlineData("System")]
+    [InlineData("smss")]
     [InlineData("csrss")]
+    [InlineData("wininit")]
+    [InlineData("services")]
     [InlineData("lsass")]
     [InlineData("svchost")]
     [InlineData("winlogon")]
+    [InlineData("dwm")]
+    [InlineData("explorer")]
     public void KillProcess_ProtectedProcessNames_AreInProtectedList(string processName)
     {
-        // This test verifies that the protected process list includes critical system processes
-        // We can't easily test killing them (they require elevated privileges and we shouldn't try)
-        // Instead we verify the implementation has them in the protected list
-
-        // Arrange - find a real process with this name (if it exists)
-        var sut = CreateSut();
-        var processes = Process.GetProcessesByName(processName);
-
-        if (processes.Length == 0)
-        {
-            // Process not running, skip this test case
-            return;
-        }
-
-        using var process = processes[0];
-
         // Act
-        var result = sut.KillProcess(process.Id, confirm: true);
+        var protectedNames = GetProtectedProcessNames();
 
-        // Assert - should be protected
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be("ProtectedProcess");
-        result.ProcessName.Should().Be(processName);
+        // Assert
+        protectedNames.Contains(processName).Should().BeTrue();
+        protectedNames.Contains(processName.ToUpperInvariant()).Should().BeTrue(
+            "process names must match case-insensitively");
+    }
+
+    private static ISet<string> GetProtectedProcessNames()
+    {
+        var field = typeof(ProcessService)
+            .GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+            .SingleOrDefault(f => f.Name.Contains("Protected", StringComparison.OrdinalIgnoreCase)
+                                  && typeof(ISet<string>).IsAssignableFrom(f.FieldType));
+
+        field.Should().NotBeNull(
+            "ProcessService should keep its protected process names in a static ISet<string>; " +
+            "update this test if the protected-process check moved");
+
+        return (ISet<string>)field!.GetValue(null)!;
     }
 
     #endregion
 
     #region Browser --new-window Injection Tests
+
+    // The mocked process seam records the start info instead of opening a browser or Notepad.
 
     [Fact]
     public void LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
@@ -448,16 +505,14 @@ public class ProcessServiceTests
         mockBrowserDetection.Setup(b => b.IsBrowser("chrome.exe")).Returns(true);
         mockBrowserDetection.Setup(b => b.ContainsUrl(It.IsAny<string[]>())).Returns(true);
         mockBrowserDetection.Setup(b => b.GetNewWindowFlag("chrome.exe")).Returns("--new-window");
+        var sut = CreateSut(mockBrowserDetection.Object);
 
-        var sut = new ProcessService(
-            _mockWindowService.Object,
-            _mockValidationService.Object,
-            mockBrowserDetection.Object);
+        // Act
+        var result = sut.LaunchApplication("chrome.exe", ["https://example.com"]);
 
-        // Act - will fail to launch since we're not in a browser, but we can verify detection was called
-        sut.LaunchApplication("chrome.exe", ["https://example.com"]);
-
-        // Assert - verify browser detection service was called
+        // Assert - browser detection was consulted and the flag goes before the URL
+        result.Success.Should().BeTrue();
+        _startedWith!.Arguments.Should().Be("--new-window https://example.com");
         mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]>()), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag("chrome.exe"), Times.Once);
@@ -469,16 +524,14 @@ public class ProcessServiceTests
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
         mockBrowserDetection.Setup(b => b.IsBrowser("notepad.exe")).Returns(false);
-
-        var sut = new ProcessService(
-            _mockWindowService.Object,
-            _mockValidationService.Object,
-            mockBrowserDetection.Object);
+        var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        sut.LaunchApplication("notepad.exe", ["https://example.com"]);
+        var result = sut.LaunchApplication("notepad.exe", ["https://example.com"]);
 
-        // Assert - should check if it's a browser, but not get the new window flag
+        // Assert - checked for a browser, but no new window flag
+        result.Success.Should().BeTrue();
+        _startedWith!.Arguments.Should().Be("https://example.com");
         mockBrowserDetection.Verify(b => b.IsBrowser("notepad.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
     }
@@ -490,19 +543,37 @@ public class ProcessServiceTests
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
         mockBrowserDetection.Setup(b => b.IsBrowser("chrome.exe")).Returns(true);
         mockBrowserDetection.Setup(b => b.ContainsUrl(It.IsAny<string[]?>())).Returns(false);
-
-        var sut = new ProcessService(
-            _mockWindowService.Object,
-            _mockValidationService.Object,
-            mockBrowserDetection.Object);
+        var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        sut.LaunchApplication("chrome.exe", ["--incognito"]);
+        var result = sut.LaunchApplication("chrome.exe", ["--incognito"]);
 
-        // Assert - should check browser and URL, but not get flag since no URL
+        // Assert - checked browser and URL, but no flag since no URL
+        result.Success.Should().BeTrue();
+        _startedWith!.Arguments.Should().Be("--incognito");
         mockBrowserDetection.Verify(b => b.IsBrowser("chrome.exe"), Times.Once);
         mockBrowserDetection.Verify(b => b.ContainsUrl(It.IsAny<string[]?>()), Times.Once);
         mockBrowserDetection.Verify(b => b.GetNewWindowFlag(It.IsAny<string>()), Times.Never);
+    }
+
+    #endregion
+
+    #region LaunchBrowserWithDebug Tests
+
+    [Fact]
+    public void LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.LaunchBrowserWithDebug("firefox");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(BrowserErrorCode.UnsupportedBrowser));
+        VerifyNothingStarted();
+        _mockProcessWrapper.Verify(w => w.FindWithWhereExe(It.IsAny<string>()), Times.Never);
     }
 
     #endregion

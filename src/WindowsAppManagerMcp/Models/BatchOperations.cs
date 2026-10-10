@@ -59,7 +59,8 @@ public record LaunchResultItem(
     int? ProcessId = null,
     long? WindowHandle = null,
     string? Error = null,
-    string? Warning = null
+    string? Warning = null,
+    string? ErrorCode = null
 );
 
 public record BoundsDto(int X, int Y, int Width, int Height);

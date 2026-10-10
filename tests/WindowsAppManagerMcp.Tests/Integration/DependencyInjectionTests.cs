@@ -1,5 +1,8 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
-using WindowsAppManagerMcp.Native;
+using Microsoft.Extensions.Options;
+using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.Tests.Integration;
@@ -8,8 +11,10 @@ namespace WindowsAppManagerMcp.Tests.Integration;
 /// Integration tests for DI container configuration.
 /// Tests T7.3 from BACKLOG-TECHNICAL.md.
 ///
-/// These tests verify that the DI container is configured correctly
-/// with proper service registrations and lifetimes.
+/// The container is built with the same registration methods Program.cs uses
+/// (<see cref="ServiceRegistration"/>), so these tests cover what the server really registers.
+/// Only the layout storage differs: a temp folder instead of %LOCALAPPDATA%. Resolving services
+/// only constructs them; no test here sends input, starts processes or changes windows.
 /// </summary>
 public class DependencyInjectionTests : IDisposable
 {
@@ -22,35 +27,18 @@ public class DependencyInjectionTests : IDisposable
             Path.GetTempPath(),
             $"DITests_{Guid.NewGuid()}");
 
+        _serviceProvider = BuildServerServices().BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// The registrations of Program.cs, without the stdio transport and with layouts in a temp folder.
+    /// </summary>
+    private ServiceCollection BuildServerServices()
+    {
         var services = new ServiceCollection();
-
-        // Register services exactly as in Program.cs
-        services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
-        services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
-        services.AddSingleton<ICdpService, CdpService>();
-        services.AddSingleton<IMonitorService, MonitorService>();
-        services.AddSingleton<IWindowService, WindowService>();
-        services.AddSingleton<IInputValidationService, InputValidationService>();
-        services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
-        services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
-        services.AddSingleton<IProcessService, ProcessService>();
-        services.AddSingleton<ILayoutService>(sp =>
-        {
-            var windowService = sp.GetRequiredService<IWindowService>();
-            var monitorService = sp.GetRequiredService<IMonitorService>();
-            var processService = sp.GetRequiredService<IProcessService>();
-            return new LayoutService(windowService, monitorService, processService, _testLayoutPath);
-        });
-
-        // Register MCP tools
-        services.AddSingleton<WindowFinderTools>();
-        services.AddSingleton<WindowManagerTools>();
-        services.AddSingleton<MonitorInfoTools>();
-        services.AddSingleton<AppLauncherTools>();
-        services.AddSingleton<LayoutPresetTools>();
-        services.AddSingleton<BrowserReadingTools>();
-
-        _serviceProvider = services.BuildServiceProvider();
+        services.AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(_testLayoutPath));
+        services.AddMcpServer().AddWindowsAppManagerTools();
+        return services;
     }
 
     public void Dispose()
@@ -289,6 +277,115 @@ public class DependencyInjectionTests : IDisposable
 
         // Assert
         tools.Should().NotBeNull();
+    }
+
+    #endregion
+
+    #region Program.cs Wiring
+
+    [Fact]
+    public void AddWindowsAppManagerServices_EveryRegistrationIsASingletonThatResolves()
+    {
+        // Arrange - only the server's own registrations, not the MCP SDK's
+        var registrations = new ServiceCollection()
+            .AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(_testLayoutPath))
+            .ToList();
+
+        // Act & Assert
+        registrations.Should().NotBeEmpty();
+        foreach (var registration in registrations)
+        {
+            registration.Lifetime.Should().Be(ServiceLifetime.Singleton, "{0} is registered as a singleton", registration.ServiceType.Name);
+            _serviceProvider.GetService(registration.ServiceType).Should().NotBeNull(
+                "{0} must resolve from the server's container", registration.ServiceType.Name);
+        }
+    }
+
+    [Theory]
+    [InlineData(typeof(INativeInputWrapper))]
+    [InlineData(typeof(IScreenCaptureWrapper))]
+    [InlineData(typeof(IScreenshotService))]
+    [InlineData(typeof(IUIElementService))]
+    [InlineData(typeof(IInputSimulationService))]
+    [InlineData(typeof(ICdpService))]
+    public void AddWindowsAppManagerServices_RegistersService(Type serviceType)
+    {
+        _serviceProvider.GetService(serviceType).Should().NotBeNull();
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerServices_RegistersEveryToolClass()
+    {
+        // Arrange
+        var toolTypes = typeof(ServiceRegistration).Assembly.GetTypes()
+            .Where(t => t.GetCustomAttribute<McpServerToolTypeAttribute>() != null)
+            .ToList();
+
+        // Assert
+        toolTypes.Should().NotBeEmpty();
+        foreach (var toolType in toolTypes)
+        {
+            _serviceProvider.GetService(toolType).Should().NotBeNull("{0} must be registered", toolType.Name);
+        }
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersEveryTool()
+    {
+        // Act
+        var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+        // Assert
+        options.ToolCollection.Should().NotBeNull();
+        options.ToolCollection!.Select(t => t.ProtocolTool.Name)
+            .Should().BeEquivalentTo(ServerToolCatalog.Tools.Keys);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheToolErrorFilter()
+    {
+        // The errorCode contract in docs/TOOLS.md (InvalidArguments, ToolError, PresetNotFound, ...)
+        // depends on this filter being in the server's pipeline.
+        var filter = typeof(ToolErrorReporting).GetMethod(nameof(ToolErrorReporting.Filter));
+
+        // Act
+        var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+        // Assert
+        options.Filters.CallToolFilters.Should().ContainSingle()
+            .Which.Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerServices_ByDefault_StoresLayoutsWhereFromEnvironmentSays()
+    {
+        // Arrange - Program.cs's default storage. Constructing LayoutService does not touch the file
+        // system, and only the path is read here, so nothing is created under %LOCALAPPDATA%.
+        using var provider = new ServiceCollection().AddWindowsAppManagerServices().BuildServiceProvider();
+        var expected = LayoutStorageOptions.FromEnvironment().LayoutsPath;
+
+        // Act
+        var layoutsPath = provider.GetRequiredService<ILayoutService>().LayoutsPath;
+
+        // Assert
+        layoutsPath.Should().Be(expected);
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(LayoutStorageOptions.LayoutsPathEnvironmentVariable)))
+        {
+            layoutsPath.Should().Be(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                LayoutStorageOptions.AppDataFolderName,
+                "layouts"));
+        }
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerServices_WithLayoutStorage_UsesIt()
+    {
+        // Act
+        var layoutsPath = _serviceProvider.GetRequiredService<ILayoutService>().LayoutsPath;
+
+        // Assert
+        layoutsPath.Should().Be(_testLayoutPath);
     }
 
     #endregion

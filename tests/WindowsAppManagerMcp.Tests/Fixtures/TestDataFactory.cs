@@ -235,6 +235,7 @@ public static class TestDataFactory
             mock.Setup(n => n.IsZoomed(w.Handle)).Returns(w.State == WindowState.Maximized);
             mock.Setup(n => n.GetWindowText(w.Handle)).Returns(w.Title);
             mock.Setup(n => n.GetWindowThreadProcessId(w.Handle)).Returns((uint)w.ProcessId);
+            mock.Setup(n => n.GetProcessName((uint)w.ProcessId)).Returns(w.ProcessName);
             mock.Setup(n => n.GetWindowRect(w.Handle))
                 .Returns((w.Bounds.X, w.Bounds.Y, w.Bounds.X + w.Bounds.Width, w.Bounds.Y + w.Bounds.Height));
         }
@@ -334,9 +335,9 @@ public static class TestDataFactory
             Error: success ? null : "Test error",
             ErrorCode: success ? BrowserErrorCode.None : BrowserErrorCode.ContentExtractionFailed);
 
-        mock.Setup(s => s.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<int?>())).Returns(urlResult);
-        mock.Setup(s => s.GetBrowserContent(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<int?>())).Returns(contentResult);
-        mock.Setup(s => s.GetActiveBrowserUrl(It.IsAny<int?>())).Returns(urlResult);
+        mock.Setup(s => s.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(urlResult);
+        mock.Setup(s => s.GetBrowserContentAsync(It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(contentResult);
+        mock.Setup(s => s.GetActiveBrowserUrlAsync(It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>())).ReturnsAsync(urlResult);
         mock.Setup(s => s.IsBrowserWindow(It.Is<nint>(h => h != nint.Zero))).Returns(true);
         mock.Setup(s => s.IsBrowserWindow(nint.Zero)).Returns(false);
         mock.Setup(s => s.GetBrowserType(It.IsAny<nint>(), It.IsAny<string>())).Returns(browserType);

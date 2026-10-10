@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml)
 [![Test](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml)
-![Coverage](https://img.shields.io/badge/coverage-70%25-green)
+![Coverage](https://img.shields.io/badge/coverage-60%25-yellowgreen)
 
 An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts.
 
@@ -13,7 +13,8 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
 - **UI Automation** - Retrieve UI element trees with bounding boxes for programmatic interaction
-- **Input Simulation** - Click, right-click, double-click, and move mouse cursor
+- **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations
+- **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs
 - **Process Management** - List running processes, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
@@ -22,8 +23,11 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 ### Prerequisites
 
-- Windows 10/11
-- .NET 8.0 Runtime (or use self-contained build)
+- Windows 10/11 (x64)
+- [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0) (the "Windows Desktop Runtime" download).
+  The server exe is framework-dependent and uses WPF UI Automation, so the base .NET Runtime alone is not enough:
+  without the Desktop Runtime the server exits at startup and no windows-app-manager tools appear.
+  Check with `dotnet --list-runtimes`, which should list `Microsoft.WindowsDesktop.App 8.x`.
 
 ### Option 1: Claude Code Plugin (Recommended)
 
@@ -39,9 +43,13 @@ Install as a Claude Code plugin:
 
 Then restart Claude Code. The plugin includes a skill with usage guidance.
 
+The plugin runs the pre-built `bin/WindowsAppManagerMcp.exe` from this repository, so it needs the
+.NET 8 Desktop Runtime too. That exe is rebuilt at each release and can lag behind `main` in between.
+
 ### Option 2: Claude Desktop (Manual)
 
-Add to your `claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
+Get `WindowsAppManagerMcp.exe` from a release (Option 4) or build it (Option 3), then add it to your
+`claude_desktop_config.json` (located at `%APPDATA%\Claude\`):
 
 ```json
 {
@@ -60,14 +68,27 @@ Then restart Claude Desktop.
 ```bash
 git clone https://github.com/mortenbrudvik/WindowsAppManagerMcp.git
 cd WindowsAppManagerMcp
-dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./bin
+dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
+
+This produces `publish/WindowsAppManagerMcp.exe`, a framework-dependent single-file exe that needs the
+.NET 8 Desktop Runtime. To bundle the runtime instead, add `--self-contained`; the output is much larger
+(about 160 MB) and includes native WPF DLLs that must stay next to the exe. Do not publish into `./bin`:
+that folder holds the committed plugin exe (see [Building](#building)).
 
 ### Option 4: Download Release
 
-Download the latest release from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases) page.
+Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
+page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is a
+framework-dependent single-file exe and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
+is pushed; no release was published for the tags up to v1.11.0, so until the next tag use Option 3.
 
-## Available Tools (38)
+The release zip is built by CI from the tagged sources. It is not a copy of the plugin's committed
+`bin/WindowsAppManagerMcp.exe`: both have the same version and sources, but they are separate builds,
+so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
+`X.Y.Z+<commit before the release commit>` for the plugin exe).
+
+## Available Tools (42)
 
 | Category | Tools |
 |----------|-------|
@@ -77,6 +98,7 @@ Download the latest release from the [Releases](https://github.com/mortenbrudvik
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements` |
+| Browser Reading | `get_browser_url`, `get_browser_content`, `get_active_browser_url`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
@@ -127,7 +149,13 @@ Once configured, you can ask Claude to:
 - "Type 'Hello World' into the text field"
 - "Press Ctrl+C to copy"
 - "Press Enter to confirm"
-- "Press Alt+F4 to close the window"
+
+> **Keyboard input goes to the foreground window.** `type_text` and `send_keys` have no target window. They type into whatever window has focus, and that can be the terminal running the agent. Agents should call `get_foreground_window` right before typing to confirm the target, and should close windows with `close_window`, never with Alt+F4. See the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
+
+### Browser Reading
+- "What page is open in Chrome?"
+- "Read the text of the page open in Edge"
+- "Launch Chrome with a debug port and read the full text of this JavaScript-heavy page"
 
 ### Batch Operations
 - "Launch Notepad and Calculator, then snap them side by side"
@@ -152,11 +180,13 @@ The `snap_window` tool supports 14 predefined positions:
 
 ## Example Layout Presets
 
-The `config/layouts/` folder contains example presets:
+The `config/layouts/` folder contains example presets. They are built into the server and added to your layouts folder the first time a layout tool runs:
 
 - `work-setup.json` - Typical development workspace
 - `dual-monitor.json` - Multi-monitor configuration
-- `focus-mode.json` - Single maximized window
+- `focus-mode.json` - Single centered window
+
+Presets are stored in `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts`, outside the plugin folder, so they survive plugin updates. To use another folder, set the `WAM_LAYOUTS_PATH` environment variable to an absolute path. On first run, presets saved by older versions (in a `layouts` folder next to the executable) are copied there and the originals are left in place. Existing presets are never overwritten, and a sample you delete is not added back.
 
 ## Building
 
@@ -167,39 +197,86 @@ dotnet build
 # Run tests
 dotnet test
 
-# Publish self-contained executable
-dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./publish
+# Publish the exe (framework-dependent single file, needs the .NET 8 Desktop Runtime)
+dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 ```
+
+### Versioning and the plugin binary
+
+- The version is defined once, as `<Version>` in `Directory.Build.props`. Change it with
+  `./scripts/Set-Version.ps1 -Version X.Y.Z`, which also updates `.claude-plugin/plugin.json` and
+  `.claude-plugin/marketplace.json` (tests fail if they drift). The server reports it, with the
+  commit SHA, as `serverInfo.version` in the MCP handshake.
+- The plugin runs the committed `bin/WindowsAppManagerMcp.exe`; it is the only binary in git.
+  Refresh it only with `./scripts/Publish-Plugin.ps1` (the `/commit` release flow does this). The
+  script refuses uncommitted changes to the build inputs and verifies the exe reports
+  `<version>+<HEAD sha>`. The build inputs are `src/`, `config/` (the sample layout presets are
+  embedded in the exe) and the MSBuild, NuGet and SDK files at the repository root; they are listed
+  once, in `scripts/ReleaseCommon.ps1`. Ignored files count too, because MSBuild reads them (for
+  example a `*.csproj.user`); only each project's `bin/` and `obj/` build output is left out.
+  `-AllowDirty` builds anyway, but only into another folder (`-OutputDirectory`), never into `bin/`.
+- `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and that
+  no build input changed since the commit it was built from. The Build workflow runs it as an error
+  on `v*` tags, so a release cannot ship a stale exe, and on pushes and pull requests that change
+  `bin/WindowsAppManagerMcp.exe`, so a stale or hand-built exe fails when it is committed. On other
+  pushes and pull requests it is only a warning. The tag's GitHub release gets
+  `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
+  build from the committed exe, see [Option 4](#option-4-download-release)) and publishes with the
+  GitHub CLI.
+- `bin/` is gitignored, but `bin/WindowsAppManagerMcp.exe` is tracked, so staging it needs
+  `git add -f -- bin/WindowsAppManagerMcp.exe`. The `/commit` command
+  (`.claude/commands/commit.md`) does this.
 
 ## Testing
 
 The project includes comprehensive tests:
 
 ```bash
-# Run all tests
+# Run all tests (safe on your desktop: desktop tests are skipped by default)
 dotnet test
 
+# Run what CI runs: leave desktop tests out of the run entirely
+dotnet test --filter "Category!=Desktop"
+
 # Run with coverage
-dotnet test --collect:"XPlat Code Coverage"
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
-- **780 tests** covering unit and integration scenarios
-- ~70% code coverage
+- **1,300+ tests** covering unit and integration scenarios, about 60% line coverage
+- By default a test run sends no keyboard or mouse input, launches or kills no
+  processes, and does not move, focus or close your windows (some tests only read
+  system state, such as the window, monitor and process lists)
+- **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) are for
+  tests with real side effects, such as starting processes or sending input. They are skipped
+  unless you opt in; CI runs them without the opt-in and fails unless every one is reported as
+  skipped. Today the only ones are the gate's own canaries, which have no side effects. To opt in:
+
+```powershell
+$env:WAM_ALLOW_DESKTOP_TESTS = "1"
+dotnet test --filter "Category=Desktop"
+Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
+```
+
+See [TESTING.md](TESTING.md#desktop-tests) for details.
 
 ## Project Structure
 
 ```
 WindowsAppManagerMcp/
+├── .claude/commands/    # /commit (release) and /update-plugin (local install) commands
 ├── .claude-plugin/      # Claude Code plugin configuration
 │   ├── plugin.json      # Plugin metadata and MCP server config
 │   └── marketplace.json # Marketplace distribution manifest
 ├── skills/              # Claude Code skills
 │   └── using-windows-app-manager/
 │       └── SKILL.md     # Usage guidance and trigger patterns
-├── bin/                 # Pre-built executable (for plugin)
+├── bin/                 # Pre-built plugin executable (refreshed only by scripts/Publish-Plugin.ps1)
+├── scripts/             # Release scripts: Set-Version, Publish-Plugin, Test-PluginBinary
+├── Directory.Build.props # Product version (single source of truth)
 ├── src/WindowsAppManagerMcp/
+│   ├── Infrastructure/  # MCP pipeline extensions (tool error reporting)
 │   ├── Models/          # Data models and DTOs
-│   ├── Native/          # P/Invoke declarations
+│   ├── Native/          # P/Invoke declarations and native wrappers
 │   ├── Services/        # Business logic
 │   └── Tools/           # MCP tool definitions
 ├── tests/               # Unit and integration tests
@@ -209,15 +286,17 @@ WindowsAppManagerMcp/
 
 ## Security
 
-- **Input Validation** - Path traversal and shell injection prevention
+- **Launch Validation** - `launch_application` rejects path traversal, resolves bare program names in system folders, `PATH` and App Paths before the working directory can shadow them, and refuses arguments that `cmd.exe` would run as commands. It protects against data being turned into commands, not against an agent that runs `cmd` or PowerShell on purpose
+- **Untrusted Content** - Web page text, window titles and UI element names come from other apps and websites and can contain prompt-injection text. The skill and [docs/TOOLS.md](docs/TOOLS.md#untrusted-content) tell agents to treat them as data, never as instructions
 - **Protected Processes** - System-critical processes cannot be terminated
 - **Confirmation Required** - Process termination requires explicit confirmation
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
+- **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.
 
 ## Requirements
 
 - Windows 10 version 1607+ or Windows 11
-- .NET 8.0 Runtime (or self-contained build)
+- .NET 8 Desktop Runtime (x64), not just the base .NET Runtime (see [Prerequisites](#prerequisites))
 - DPI awareness enabled for accurate positioning on high-DPI displays
 
 ## License

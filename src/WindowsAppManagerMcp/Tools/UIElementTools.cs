@@ -15,6 +15,26 @@ public class UIElementTools
     private const int MaxDepth = 10;
     private const int DefaultDepth = 5;
 
+    // The filters are applied per element, and an element that fails one is dropped together with its
+    // children (UIElementService.ExtractElementInfo). The descriptions must not present them as a safe
+    // way to narrow the result. Shared with capture_with_elements (ScreenshotTools).
+    internal const string CompleteResultsHint =
+        "For complete results leave it unset and filter the returned tree yourself.";
+
+    internal const string ControlTypesDescription =
+        "Comma-separated control types to keep (e.g., 'Button,Edit'). Leave empty for all types. " +
+        "Caution: this filter currently drops whole subtrees: an element is returned only if every container above it " +
+        "also matches, so a Button inside a Pane is left out unless 'Pane' is listed too. " + CompleteResultsHint +
+        " Common types: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, Text, Hyperlink, Image, Pane, Group.";
+
+    internal const string InteractableOnlyCaution =
+        "Caution: this filter currently drops whole subtrees: everything inside a disabled container is left out too. " +
+        CompleteResultsHint;
+
+    internal const string VisibleOnlyCaution =
+        "This filter drops whole subtrees: everything inside an element reported as offscreen is left out too. " +
+        "Pass false if the control may be scrolled out of view.";
+
     public UIElementTools(IUIElementService uiElementService)
     {
         _uiElementService = uiElementService;
@@ -27,15 +47,15 @@ public class UIElementTools
         long handle,
         [Description("Maximum tree depth to traverse (default: 5, max: 10). Higher values return more nested elements but take longer.")]
         int maxDepth = DefaultDepth,
-        [Description("Comma-separated list of control types to include (e.g., 'Button,Edit,CheckBox'). Leave empty for all types. Common types: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, Text, Hyperlink, Image.")]
+        [Description(ControlTypesDescription)]
         string? controlTypes = null,
-        [Description("Only return enabled/interactable elements (default: false)")]
+        [Description("Only return enabled elements (default: false). " + InteractableOnlyCaution)]
         bool interactableOnly = false,
-        [Description("Only return visible (not offscreen) elements (default: true)")]
+        [Description("Only return elements that are not offscreen (default: true). " + VisibleOnlyCaution)]
         bool visibleOnly = true,
-        [Description("Minimum width in pixels - filters out elements smaller than this (optional)")]
+        [Description("Minimum element width in pixels (optional). Caution: this filter currently drops whole subtrees: everything inside a narrower container is left out too, and layout containers often report small or empty bounds. " + CompleteResultsHint)]
         int? minWidth = null,
-        [Description("Minimum height in pixels - filters out elements smaller than this (optional)")]
+        [Description("Minimum element height in pixels (optional). Caution: this filter currently drops whole subtrees: everything inside a shorter container is left out too, and layout containers often report small or empty bounds. " + CompleteResultsHint)]
         int? minHeight = null,
         [Description("Timeout in milliseconds (default: 10000, max: 30000)")]
         int timeoutMs = DefaultTimeoutMs)

@@ -4,6 +4,11 @@
 
 A comprehensive guide for Test-Driven Development (TDD) using the Red-Green-Refactor methodology.
 
+> **Desktop safety:** a plain `dotnet test` is safe to run on your own desktop. A test that
+> launches or kills real processes, sends real keyboard or mouse input, or moves, focuses or
+> closes real windows must use `[DesktopFact]` or `[DesktopTheory]`. Those tests are skipped
+> unless `WAM_ALLOW_DESKTOP_TESTS=1`. See [Desktop Tests](#desktop-tests).
+
 ---
 
 ## Table of Contents
@@ -262,38 +267,29 @@ public void BadTest_MixedActAssert()
 WindowsAppManagerMcp/
 ├── src/
 │   └── WindowsAppManagerMcp/
+│       ├── Infrastructure/        # MCP pipeline extensions (ToolErrorReporting)
+│       ├── Models/                # DTOs, result records, error codes
+│       ├── Native/                # P/Invoke declarations and the native wrappers tests mock
 │       ├── Services/
-│       │   ├── Interfaces/
-│       │   │   ├── IWindowService.cs
-│       │   │   ├── IMonitorService.cs
-│       │   │   ├── IProcessService.cs
-│       │   │   └── ILayoutService.cs
-│       │   ├── WindowService.cs
-│       │   ├── MonitorService.cs
-│       │   ├── ProcessService.cs
-│       │   └── LayoutService.cs
-│       └── Models/
+│       │   ├── Interfaces/        # IWindowService, IMonitorService, IProcessService, ...
+│       │   └── *.cs               # WindowService, MonitorService, ProcessService, LayoutService, ...
+│       └── Tools/                 # [McpServerTool] classes
 │
 └── tests/
     └── WindowsAppManagerMcp.Tests/
         ├── WindowsAppManagerMcp.Tests.csproj
         ├── GlobalUsings.cs
-        ├── Unit/
-        │   ├── Services/
-        │   │   ├── WindowServiceTests.cs
-        │   │   ├── MonitorServiceTests.cs
-        │   │   ├── ProcessServiceTests.cs
-        │   │   └── LayoutServiceTests.cs
-        │   └── Models/
-        │       └── WindowInfoTests.cs
-        ├── Integration/
-        │   ├── LayoutPersistenceTests.cs
-        │   └── ServiceInteractionTests.cs
-        ├── Fixtures/
-        │   ├── TestDataFactory.cs
-        │   └── MockNativeWrapper.cs
-        └── Helpers/
-            └── AssertExtensions.cs
+        ├── Contract/              # Tool contract: serialization, error reporting, descriptions, docs
+        ├── Fixtures/              # TestDataFactory, RepositoryFiles, InProcessMcpServer, FakeCdp, ...
+        ├── Infrastructure/        # [DesktopFact] / [DesktopTheory]
+        ├── Integration/           # DI, file persistence, layout service, screen capture (read-only)
+        └── Unit/
+            ├── Architecture/      # NativeCallGuardTests (IL scan for native calls)
+            ├── Infrastructure/    # DesktopTestGateTests
+            ├── Models/
+            ├── Native/
+            ├── Services/
+            └── Tools/
 ```
 
 ### Test Class Organization
@@ -650,6 +646,25 @@ public void MatchesWindow_ReturnsExpectedResult(
 }
 ```
 
+### `[DesktopFact]` / `[DesktopTheory]` - Tests With Real Desktop Side Effects
+
+Prefer mocking the native layer. When a test must really launch or kill a process, send input,
+or change a real window, use `[DesktopFact]` or `[DesktopTheory]` instead of `[Fact]` or
+`[Theory]`. They are skipped unless `WAM_ALLOW_DESKTOP_TESTS=1` and report the trait
+`Category=Desktop`. See [Desktop Tests](#desktop-tests).
+
+```csharp
+[DesktopFact]
+public void SomeOperation_OnTheRealDesktop_Works()
+{
+    // Has a real side effect (a process, input or a window change):
+    // only runs when WAM_ALLOW_DESKTOP_TESTS=1
+}
+```
+
+Today the only tests marked this way are the gate's own canaries in `DesktopTestGateTests`, which
+have no side effects.
+
 ### xUnit Assertions Reference
 
 ```csharp
@@ -980,7 +995,7 @@ public void MoveWindow_CallsSetWindowPos_WithCorrectParameters()
 | Services | 80%+ | HIGH | Business logic |
 | Models | 70%+ | MEDIUM | Data structures |
 | Tools | 60%+ | LOW | Thin wrappers over services |
-| Native | 0% | N/A | Excluded - can't unit test P/Invoke |
+| Native | - | N/A | Mocked in unit tests; not excluded from the measured coverage |
 
 ### Configuring Coverlet
 
@@ -1020,16 +1035,19 @@ public class Program
 ### Running Coverage
 
 ```bash
-# Run tests with coverage
-dotnet test /p:CollectCoverage=true
+# Run tests with coverage (same filter as CI)
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 
 # Generate HTML report
 dotnet tool install -g dotnet-reportgenerator-globaltool
-reportgenerator -reports:./coverage/coverage.cobertura.xml -targetdir:./coverage/report
+reportgenerator -reports:./TestResults/**/coverage.cobertura.xml -targetdir:./TestResults/report
 
 # Open report
-start ./coverage/report/index.html
+start ./TestResults/report/index.html
 ```
+
+CI fails the build when line coverage of the `Category!=Desktop` run drops below the
+threshold in `.github/workflows/test.yml` (currently 59%).
 
 ---
 
@@ -1661,6 +1679,8 @@ public static class TestDataFactory
 - [ ] Asserts are specific and meaningful
 - [ ] No dependencies on external state
 - [ ] Cleanup implemented if test creates resources
+- [ ] No real desktop side effects (input, process launch or kill, window changes); if
+      unavoidable, the test uses `[DesktopFact]` or `[DesktopTheory]`
 
 ### Mock Setup Checklist
 
@@ -1762,8 +1782,11 @@ tests/
 ### Command Line
 
 ```bash
-# Run all tests
+# Run all tests (desktop tests are reported as Skipped)
 dotnet test
+
+# Run what CI runs (desktop tests left out entirely)
+dotnet test --filter "Category!=Desktop"
 
 # Run with verbose output
 dotnet test --logger "console;verbosity=detailed"
@@ -1778,11 +1801,77 @@ dotnet test --filter "FullyQualifiedName~IsValidWindow_WithZeroHandle"
 dotnet test --filter "ClassName~Layout"
 
 # Run with coverage
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
-
-# Run and generate coverage report
-dotnet test /p:CollectCoverage=true && reportgenerator -reports:./coverage/*.xml -targetdir:./coverage/report
+dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --results-directory ./TestResults
 ```
+
+### Desktop Tests
+
+Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input and
+`INativeWindowWrapper` for window changes. Some tests use the real stack read-only: they read
+real system state (the monitor, window and process lists, UI Automation trees in
+`UIAutomationWrapperTests` and `UIElementServiceTests`, a small screen region in
+`ScreenCaptureWrapperIntegrationTests`) but change nothing.
+
+Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
+or stops a real process. A test that really needs a side effect like that must be marked
+`[DesktopFact]` or `[DesktopTheory]`
+(`tests/WindowsAppManagerMcp.Tests/Infrastructure/DesktopTestAttributes.cs`), which:
+
+- **skip the test unless `WAM_ALLOW_DESKTOP_TESTS` is exactly `1`**. The gate is in the
+  attribute, so it holds for every runner: plain `dotnet test`, any `--filter`, IDE test
+  explorers and coverage tools.
+- **report the trait `Category=Desktop`**, so you can select or exclude them with `--filter`.
+
+Today the only desktop tests are the canaries in `DesktopTestGateTests`. They only check that
+the gate let them run and have no side effects. A desktop test added later can type into, click
+on, or close whatever window has focus, so save your work before opting in, and run them
+deliberately:
+
+```powershell
+# PowerShell
+$env:WAM_ALLOW_DESKTOP_TESTS = "1"
+dotnet test --filter "Category=Desktop"
+Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
+```
+
+```bash
+# Git Bash
+WAM_ALLOW_DESKTOP_TESTS=1 dotnet test --filter "Category=Desktop"
+```
+
+Rules for new tests:
+
+- Do not send real input, start or kill processes, or move, focus or close real windows
+  from a `[Fact]` or `[Theory]`. Mock the wrapper instead (see
+  [Mocking Native P/Invoke Layer](#9-mocking-native-pinvoke-layer)).
+- Build `ProcessService` with a mocked `INativeProcessWrapper` and `IExecutableResolver`, as
+  `CreateSut` in `ProcessServiceTests` and `ProcessKillTests` does. Without them the constructor
+  falls back to the real `NativeProcessWrapper` and `ExecutableResolver`. `LaunchPlanningTests`
+  only calls `PlanLaunch`, which never starts a process, and still passes a strict
+  `INativeProcessWrapper` mock, so an accidental launch or kill throws.
+- To read real windows, wrap the real `NativeWindowWrapper` in `ReadOnlyNativeWindowWrapper`, as
+  `CreateReadOnlySut` in `WindowServiceTests` does. It forwards the queries and throws on every
+  call that would move, show, focus or close a window.
+- Never call `KillProcess` on a real system process, even to check that the guard refuses it.
+- A plain `[Trait("Category", "Desktop")]` is not enough: `DesktopTestGateTests` fails if a
+  test carries that trait without `[DesktopFact]` or `[DesktopTheory]`.
+- `NativeCallGuardTests` scans the server assembly and fails if anything other than
+  `NativeInputWrapper` calls the `SendInput`/`SetCursorPos` APIs, anything other than
+  `NativeWindowWrapper` calls the window-changing user32 APIs, or anything other than
+  `NativeProcessWrapper` calls `Process.Start`, `Kill` or `CloseMainWindow`
+  (`ProcessStartAndKill_AreOnlyCalledByNativeProcessWrapper`). It also fails if the server
+  declares a P/Invoke that starts or terminates processes directly, such as `CreateProcess`,
+  `ShellExecute` or `TerminateProcess` (`NoPlatformInvoke_StartsOrTerminatesProcesses`). New
+  process code goes through `INativeProcessWrapper`.
+- `NativeCallGuardTests` also works as an allow-list. Outside `NativeWindowWrapper`,
+  `NativeInputWrapper` and `NativeProcessWrapper`, code may call only the read-only
+  `NativeMethods` APIs listed in `ReadOnlyNativeApis`, and P/Invoke declarations must live in
+  `NativeMethods`. Outside `UIAutomationWrapper`, UI Automation elements, patterns and text ranges
+  may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`, `SetValue`, `Toggle`, `Select`,
+  `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
+  until it goes through a mockable wrapper or is reviewed onto a list.
+- The guards scan only the server assembly. They do not see code in the test project, so the
+  rules above are up to you there.
 
 ### Visual Studio
 
@@ -1796,18 +1885,29 @@ dotnet test /p:CollectCoverage=true && reportgenerator -reports:./coverage/*.xml
 
 ### Continuous Integration
 
-Add to your CI pipeline:
+`.github/workflows/test.yml` runs the suite on every push and pull request to `main`. It
+leaves desktop tests out, kills a test that hangs for 5 minutes, caps the job at 20 minutes,
+and enforces a line-coverage threshold. A second step then runs only the desktop tests with
+`WAM_ALLOW_DESKTOP_TESTS` unset and fails unless every one of them is reported as skipped and
+at least one exists (the gate canaries), so CI proves the gate holds on the runner:
 
 ```yaml
-# GitHub Actions example
-- name: Run tests
-  run: dotnet test --configuration Release --logger trx --results-directory TestResults
+# GitHub Actions (abridged from .github/workflows/test.yml)
+- name: Test with coverage
+  run: |
+    dotnet test --no-build --configuration Release `
+      --filter "Category!=Desktop" `
+      --blame-hang-timeout 5m `
+      --collect:"XPlat Code Coverage" `
+      --results-directory ./TestResults `
+      --logger "trx;LogFileName=test-results.trx"
 
 - name: Upload test results
-  uses: actions/upload-artifact@v3
+  uses: actions/upload-artifact@v4
+  if: always()
   with:
     name: test-results
-    path: TestResults
+    path: TestResults/**/*.trx
 ```
 
 ---

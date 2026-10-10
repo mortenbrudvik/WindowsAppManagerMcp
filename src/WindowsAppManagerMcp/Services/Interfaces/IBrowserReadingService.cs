@@ -5,31 +5,49 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <summary>
 /// Service for reading URLs and content from browser windows using UI Automation or CDP.
 /// </summary>
+/// <remarks>
+/// When <see cref="CdpOptions.Port"/> is set, CDP is tried first. If CDP fails, the result comes from
+/// UI Automation with <c>Source = "uia"</c> and the reason in <c>CdpError</c>, unless
+/// <see cref="CdpOptions.Required"/> is set, in which case the CDP error is returned.
+/// </remarks>
 public interface IBrowserReadingService
 {
     /// <summary>
-    /// Gets the URL from a browser window's address bar.
+    /// Gets the URL from a browser window.
     /// </summary>
     /// <param name="browserHandle">The window handle of the browser.</param>
-    /// <param name="cdpPort">Optional CDP port to use for extraction (more reliable if available).</param>
+    /// <param name="cdp">Optional CDP settings (port, required, timeout). Null uses UI Automation only.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Result containing the URL or error information.</returns>
-    BrowserUrlResult GetBrowserUrl(nint browserHandle, int? cdpPort = null);
+    Task<BrowserUrlResult> GetBrowserUrlAsync(
+        nint browserHandle,
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gets the text content from a browser window's page.
+    /// Gets the content from a browser window's page.
+    /// HTML (TextOnly = false) is only available via CDP; UI Automation returns text only.
     /// </summary>
     /// <param name="browserHandle">The window handle of the browser.</param>
     /// <param name="options">Options for content extraction (max length, text-only, etc.).</param>
-    /// <param name="cdpPort">Optional CDP port to use for extraction (more reliable if available).</param>
+    /// <param name="cdp">Optional CDP settings (port, required, timeout). Null uses UI Automation only.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Result containing the content or error information.</returns>
-    BrowserContentResult GetBrowserContent(nint browserHandle, BrowserContentOptions? options = null, int? cdpPort = null);
+    Task<BrowserContentResult> GetBrowserContentAsync(
+        nint browserHandle,
+        BrowserContentOptions? options = null,
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the URL from the currently active (foreground) browser window.
     /// </summary>
-    /// <param name="cdpPort">Optional CDP port to use for extraction.</param>
+    /// <param name="cdp">Optional CDP settings (port, required, timeout). Null uses UI Automation only.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Result containing the URL or error information.</returns>
-    BrowserUrlResult GetActiveBrowserUrl(int? cdpPort = null);
+    Task<BrowserUrlResult> GetActiveBrowserUrlAsync(
+        CdpOptions? cdp = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Determines the browser type from a window handle and process name.
@@ -50,14 +68,19 @@ public interface IBrowserReadingService
     /// Checks if CDP is available on the specified port.
     /// </summary>
     /// <param name="port">The port to check (default 9222).</param>
-    /// <returns>True if CDP is available.</returns>
-    Task<bool> IsCdpAvailableAsync(int port = 9222);
+    /// <param name="cancellationToken">Cancels the check.</param>
+    /// <returns>True if CDP answered within the default timeout.</returns>
+    Task<bool> IsCdpAvailableAsync(int port = 9222, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets URL and content using CDP directly (without window handle).
     /// </summary>
     /// <param name="port">The CDP port.</param>
     /// <param name="targetIndex">Index of the target/tab (0 = first).</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     /// <returns>Result containing URL and content.</returns>
-    Task<BrowserContentResult> GetContentViaCdpAsync(int port = 9222, int targetIndex = 0);
+    Task<BrowserContentResult> GetContentViaCdpAsync(
+        int port = 9222,
+        int targetIndex = 0,
+        CancellationToken cancellationToken = default);
 }

@@ -134,13 +134,13 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.SavePresetAsync(preset);
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
         var filePath = Path.Combine(_testLayoutPath, "save-test.json");
         File.Exists(filePath).Should().BeTrue();
     }
 
     [Fact]
-    public async Task SavePresetAsync_ReturnsTrue_OnSuccess()
+    public async Task SavePresetAsync_ReturnsSuccess_OnSuccess()
     {
         // Arrange
         var sut = CreateSut();
@@ -150,7 +150,10 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.SavePresetAsync(preset);
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
+        result.Replaced.Should().BeFalse();
+        result.ErrorCode.Should().BeNull();
+        result.Preset.Should().Be(preset);
     }
 
     [Fact]
@@ -182,7 +185,7 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.SavePresetAsync(preset);
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
         // File should exist with sanitized name
         var files = Directory.GetFiles(_testLayoutPath, "*.json");
         files.Should().HaveCount(1);
@@ -224,12 +227,12 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.DeletePresetAsync("delete-test");
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
         File.Exists(filePath).Should().BeFalse();
     }
 
     [Fact]
-    public async Task DeletePresetAsync_ReturnsTrue_WhenPresetExists()
+    public async Task DeletePresetAsync_ReturnsSuccess_WhenPresetExists()
     {
         // Arrange
         var sut = CreateSut();
@@ -240,11 +243,12 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.DeletePresetAsync("exists-test");
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
     }
 
     [Fact]
-    public async Task DeletePresetAsync_ReturnsTrue_WhenPresetNotFound()
+    public async Task DeletePresetAsync_ReturnsPresetNotFound_WhenPresetNotFound()
     {
         // Arrange
         var sut = CreateSut();
@@ -253,8 +257,9 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.DeletePresetAsync("nonexistent");
 
         // Assert
-        // Note: Current implementation returns true even if file doesn't exist
-        result.Should().BeTrue();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
+        result.ErrorMessage.Should().Contain("nonexistent");
     }
 
     [Fact]
@@ -287,7 +292,8 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.CaptureCurrentLayoutAsync("captured-layout");
 
         // Assert
-        result.Name.Should().Be("captured-layout");
+        result.Success.Should().BeTrue();
+        result.Preset!.Name.Should().Be("captured-layout");
     }
 
     [Fact]
@@ -306,7 +312,7 @@ public class LayoutServiceTests : IDisposable
         var result = await sut.CaptureCurrentLayoutAsync("capture-test");
 
         // Assert
-        result.Placements.Should().HaveCount(2);
+        result.Preset!.Placements.Should().HaveCount(2);
     }
 
     [Fact]
@@ -327,8 +333,8 @@ public class LayoutServiceTests : IDisposable
             includeProcesses: new[] { "notepad" });
 
         // Assert
-        result.Placements.Should().HaveCount(1);
-        result.Placements[0].Matcher.ProcessName.Should().Be("notepad");
+        result.Preset!.Placements.Should().HaveCount(1);
+        result.Preset.Placements[0].Matcher.ProcessName.Should().Be("notepad");
     }
 
     [Fact]
@@ -349,8 +355,8 @@ public class LayoutServiceTests : IDisposable
             excludeProcesses: new[] { "chrome" });
 
         // Assert
-        result.Placements.Should().HaveCount(1);
-        result.Placements[0].Matcher.ProcessName.Should().Be("notepad");
+        result.Preset!.Placements.Should().HaveCount(1);
+        result.Preset.Placements[0].Matcher.ProcessName.Should().Be("notepad");
     }
 
     [Fact]
@@ -365,7 +371,7 @@ public class LayoutServiceTests : IDisposable
             description: "My custom description");
 
         // Assert
-        result.Description.Should().Be("My custom description");
+        result.Preset!.Description.Should().Be("My custom description");
     }
 
     #endregion
@@ -730,4 +736,399 @@ public class LayoutServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Honest save results
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SavePresetAsync_WithBlankName_ReturnsInvalidName(string name)
+    {
+        var sut = CreateSut();
+
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(name));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.InvalidName));
+        Directory.Exists(_testLayoutPath).Should().BeFalse("nothing should be written for an invalid name");
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WithTooLongName_ReturnsInvalidName()
+    {
+        var sut = CreateSut();
+
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(new string('a', LayoutService.MaxNameLength + 1)));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.InvalidName));
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WhenFileCannotBeWritten_ReturnsSaveFailed()
+    {
+        // Arrange - make the existing preset file read-only so it cannot be replaced
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("locked", "Original"));
+        var filePath = Path.Combine(_testLayoutPath, "locked.json");
+        File.SetAttributes(filePath, FileAttributes.ReadOnly);
+
+        try
+        {
+            // Act
+            var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("locked", "Updated"));
+
+            // Assert
+            result.Success.Should().BeFalse();
+            result.ErrorCode.Should().Be(nameof(LayoutErrorCode.SaveFailed));
+            result.ErrorMessage.Should().NotBeNullOrEmpty();
+            sut.GetPreset("locked")!.Description.Should().Be("Original");
+            Directory.GetFiles(_testLayoutPath, "*.tmp").Should().BeEmpty();
+        }
+        finally
+        {
+            File.SetAttributes(filePath, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WhenNameExists_ReportsReplaced()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("again"));
+
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("AGAIN"));
+
+        result.Success.Should().BeTrue();
+        result.Replaced.Should().BeTrue();
+        Directory.GetFiles(_testLayoutPath, "*.json").Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_NamesThatSanitizeToSameFile_DoNotOverwriteEachOther()
+    {
+        var sut = CreateSut();
+
+        (await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("a:b", "colon"))).Success.Should().BeTrue();
+        (await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("a_b", "underscore"))).Success.Should().BeTrue();
+
+        sut.GetPreset("a:b")!.Description.Should().Be("colon");
+        sut.GetPreset("a_b")!.Description.Should().Be("underscore");
+        Directory.GetFiles(_testLayoutPath, "*.json").Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_ExistingPresetInDifferentlyNamedFile_IsUpdatedInPlace()
+    {
+        // Arrange - a hand-written file whose name does not match the preset name
+        Directory.CreateDirectory(_testLayoutPath);
+        var handWritten = Path.Combine(_testLayoutPath, "My Work Layout.json");
+        File.WriteAllText(handWritten, ToJson(TestDataFactory.CreateLayoutPreset("work", "Old")));
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("work", "New"));
+
+        // Assert
+        result.Replaced.Should().BeTrue();
+        Directory.GetFiles(_testLayoutPath, "*.json").Should().ContainSingle().Which.Should().Be(handWritten);
+        sut.GetPreset("work")!.Description.Should().Be("New");
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_DoesNotOverwriteUnreadableJsonFileWithSameFileName()
+    {
+        Directory.CreateDirectory(_testLayoutPath);
+        var broken = Path.Combine(_testLayoutPath, "draft.json");
+        File.WriteAllText(broken, "{ half-edited");
+        var sut = CreateSut();
+
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("draft"));
+
+        result.Success.Should().BeTrue();
+        File.ReadAllText(broken).Should().Be("{ half-edited");
+        sut.GetPreset("draft").Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData("CON")]
+    [InlineData("nul")]
+    [InlineData("com1")]
+    public async Task SavePresetAsync_WithReservedDeviceName_SavesToRegularFile(string name)
+    {
+        var sut = CreateSut();
+
+        var result = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(name));
+
+        result.Success.Should().BeTrue();
+        sut.GetPreset(name).Should().NotBeNull();
+        Directory.GetFiles(_testLayoutPath, "*.json").Should().ContainSingle();
+    }
+
+    #endregion
+
+    #region Honest capture results
+
+    [Fact]
+    public async Task CaptureCurrentLayoutAsync_WhenSaveFails_ReturnsSaveFailed()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("locked"));
+        var filePath = Path.Combine(_testLayoutPath, "locked.json");
+        File.SetAttributes(filePath, FileAttributes.ReadOnly);
+
+        try
+        {
+            var result = await sut.CaptureCurrentLayoutAsync("locked");
+
+            result.Success.Should().BeFalse();
+            result.ErrorCode.Should().Be(nameof(LayoutErrorCode.SaveFailed));
+            result.Preset.Should().NotBeNull("the captured layout is still reported");
+        }
+        finally
+        {
+            File.SetAttributes(filePath, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureCurrentLayoutAsync_WithNoMatchingWindows_ReturnsNoWindowsCaptured_AndKeepsExistingPreset()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("keep-me", "Good layout"));
+
+        var result = await sut.CaptureCurrentLayoutAsync("keep-me", includeProcesses: ["no-such-process"]);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.NoWindowsCaptured));
+        sut.GetPreset("keep-me")!.Description.Should().Be("Good layout");
+    }
+
+    [Fact]
+    public async Task CaptureCurrentLayoutAsync_WithBlankName_ReturnsInvalidName()
+    {
+        var sut = CreateSut();
+
+        var result = await sut.CaptureCurrentLayoutAsync(" ");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.InvalidName));
+    }
+
+    [Fact]
+    public async Task CaptureCurrentLayoutAsync_WhenNameExists_ReportsReplaced()
+    {
+        var sut = CreateSut();
+        await sut.CaptureCurrentLayoutAsync("twice");
+
+        var result = await sut.CaptureCurrentLayoutAsync("twice");
+
+        result.Success.Should().BeTrue();
+        result.Replaced.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Honest delete results
+
+    [Fact]
+    public async Task DeletePresetAsync_DeletesTheFileThePresetWasLoadedFrom()
+    {
+        Directory.CreateDirectory(_testLayoutPath);
+        var handWritten = Path.Combine(_testLayoutPath, "Hand Written.json");
+        File.WriteAllText(handWritten, ToJson(TestDataFactory.CreateLayoutPreset("hand-written")));
+        var sut = CreateSut();
+
+        var result = await sut.DeletePresetAsync("HAND-WRITTEN");
+
+        result.Success.Should().BeTrue();
+        File.Exists(handWritten).Should().BeFalse();
+        sut.GetAllPresets().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DeletePresetAsync_WhenFileCannotBeDeleted_ReturnsDeleteFailed()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("stuck"));
+        var filePath = Path.Combine(_testLayoutPath, "stuck.json");
+        File.SetAttributes(filePath, FileAttributes.ReadOnly);
+
+        try
+        {
+            var result = await sut.DeletePresetAsync("stuck");
+
+            result.Success.Should().BeFalse();
+            result.ErrorCode.Should().Be(nameof(LayoutErrorCode.DeleteFailed));
+            sut.GetPreset("stuck").Should().NotBeNull();
+        }
+        finally
+        {
+            File.SetAttributes(filePath, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task DeletePresetAsync_WithBlankName_ReturnsInvalidName()
+    {
+        var sut = CreateSut();
+
+        var result = await sut.DeletePresetAsync("  ");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.InvalidName));
+    }
+
+    #endregion
+
+    #region Honest apply results
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenPresetNotFound_SetsPresetNotFoundErrorCode()
+    {
+        var sut = CreateSut();
+
+        var result = await sut.ApplyPresetAsync("nonexistent");
+
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenNoWindowMatches_ReportsFailureWithWindowNotFound()
+    {
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("nothing-open",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "chrome", launchCommand: "chrome")]));
+
+        var result = await sut.ApplyPresetAsync("nothing-open");
+
+        result.Success.Should().BeFalse();
+        result.WindowsArranged.Should().Be(0);
+        result.WindowsNotFound.Should().Be(1);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.WindowNotFound));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("chrome").And.Contain("launchMissing");
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenSomeWindowsMissing_ReportsPartialFailure()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("partial", placements:
+        [
+            TestDataFactory.CreateWindowPlacement(processName: "notepad", order: 0),
+            TestDataFactory.CreateWindowPlacement(processName: "missingapp", order: 1)
+        ]));
+
+        var result = await sut.ApplyPresetAsync("partial");
+
+        result.Success.Should().BeFalse();
+        result.WindowsArranged.Should().Be(1);
+        result.WindowsNotFound.Should().Be(1);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.WindowNotFound));
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenSetWindowBoundsFails_SetsArrangeFailed()
+    {
+        _mockWindowService.Setup(w => w.SetWindowBounds(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns(false);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("stuck-window",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad")]));
+
+        var result = await sut.ApplyPresetAsync("stuck-window");
+
+        result.Success.Should().BeFalse();
+        result.WindowsArranged.Should().Be(0);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenFocusFails_ReportsIt()
+    {
+        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(false);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
+
+        var result = await sut.ApplyPresetAsync("focus");
+
+        result.WindowsArranged.Should().Be(1);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("foreground");
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenFocusSucceeds_ReportsSuccess()
+    {
+        _mockWindowService.Setup(w => w.FocusWindow(It.IsAny<nint>())).Returns(true);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("focus-ok",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad", focus: true)]));
+
+        var result = await sut.ApplyPresetAsync("focus-ok");
+
+        result.Success.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.Errors.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenLaunchFails_SetsLaunchFailed()
+    {
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
+        _mockProcessService.Setup(p => p.LaunchApplication(
+                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
+            .Returns(new LaunchResult(Success: false, ErrorMessage: "Executable not found"));
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("launch-fail",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "app", launchCommand: "app.exe")]));
+
+        var result = await sut.ApplyPresetAsync("launch-fail", launchMissing: true);
+
+        result.Success.Should().BeFalse();
+        result.WindowsLaunched.Should().Be(0);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.LaunchFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("Executable not found");
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenLaunchedWindowCannotBeFound_ReportsLaunchFailedWithoutThrowing()
+    {
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
+        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(8888))).Returns((WindowInfo?)null);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("vanished",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "app", launchCommand: "app.exe")]));
+
+        var result = await sut.ApplyPresetAsync("vanished", launchMissing: true);
+
+        result.Success.Should().BeFalse();
+        result.WindowsLaunched.Should().Be(1);
+        result.WindowsArranged.Should().Be(0);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.LaunchFailed));
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_WhenAllPlacementsArranged_HasNoErrorCode()
+    {
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("all-good",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad")]));
+
+        var result = await sut.ApplyPresetAsync("all-good");
+
+        result.Success.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.Errors.Should().BeNull();
+    }
+
+    #endregion
+
+    private static string ToJson(LayoutPreset preset) => System.Text.Json.JsonSerializer.Serialize(
+        preset,
+        new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
 }

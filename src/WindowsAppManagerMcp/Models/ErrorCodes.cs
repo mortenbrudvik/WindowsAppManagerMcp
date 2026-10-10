@@ -44,7 +44,10 @@ public enum LaunchErrorCode
     /// <summary>The executable path is empty or null.</summary>
     EmptyExecutablePath = 1,
 
-    /// <summary>The executable path contains invalid characters (command injection attempt).</summary>
+    /// <summary>
+    /// The executable contains characters that are not valid in a Windows path (", &lt;, &gt;, |, *, ?, control characters),
+    /// or a bare name / relative path contains shell metacharacters.
+    /// </summary>
     InvalidCharacters = 2,
 
     /// <summary>Path traversal attempt detected (..).</summary>
@@ -69,7 +72,25 @@ public enum LaunchErrorCode
     ProcessStartFailed = 9,
 
     /// <summary>An exception occurred during launch.</summary>
-    LaunchException = 10
+    LaunchException = 10,
+
+    /// <summary>
+    /// An argument contains characters that cmd.exe would interpret (&amp; | &lt; &gt; ^ % ! " or control characters),
+    /// and the target is a batch file (.bat/.cmd) or could not be verified to be a native executable.
+    /// </summary>
+    UnsafeBatchArguments = 11,
+
+    /// <summary>
+    /// An element of the arguments array is null or contains a NUL character. Not to be confused with the
+    /// InvalidArguments tool error (ToolErrorReporting), which means the call's arguments could not be bound.
+    /// </summary>
+    InvalidArgumentValue = 12,
+
+    /// <summary>
+    /// A bare executable name was found only in the working directory. Bare names are never resolved
+    /// from the working directory, to avoid running a planted program.
+    /// </summary>
+    ExecutableInWorkingDirectory = 13
 }
 
 /// <summary>
@@ -92,14 +113,41 @@ public enum ProcessErrorCode
     /// <summary>Cannot terminate the current process.</summary>
     CannotTerminateSelf = 4,
 
-    /// <summary>Access denied - insufficient permissions to terminate the process.</summary>
+    /// <summary>
+    /// Access denied - insufficient permissions to terminate the process
+    /// (typically it runs elevated or as another user).
+    /// </summary>
     AccessDenied = 5,
 
     /// <summary>The confirmation parameter was not set to true.</summary>
     ConfirmationRequired = 6,
 
     /// <summary>An exception occurred during termination.</summary>
-    TerminationException = 7
+    TerminationException = 7,
+
+    /// <summary>
+    /// Graceful mode: the process has no main window that can receive a close request (windowless,
+    /// tray-only, or main window disabled by a modal dialog). The process was left running.
+    /// </summary>
+    NoClosableWindow = 8,
+
+    /// <summary>
+    /// Graceful mode: a close request was sent but the process was still running when the timeout
+    /// elapsed (for example it is showing a "save changes?" prompt). The process was left running.
+    /// </summary>
+    GracefulCloseTimedOut = 9,
+
+    /// <summary>The process name did not match expectedProcessName (the PID may have been reused). Nothing was done.</summary>
+    ProcessNameMismatch = 10,
+
+    /// <summary>The process is an ancestor of this server (for example the terminal or editor hosting the agent).</summary>
+    CannotTerminateHost = 11,
+
+    /// <summary>Forced termination was requested, but the process had not exited when the wait ended.</summary>
+    TerminationNotConfirmed = 12,
+
+    /// <summary>The graceful close timeout is outside the allowed range.</summary>
+    InvalidTimeout = 13
 }
 
 /// <summary>
@@ -126,7 +174,16 @@ public enum LayoutErrorCode
     ArrangeFailed = 5,
 
     /// <summary>Invalid layout name.</summary>
-    InvalidName = 6
+    InvalidName = 6,
+
+    /// <summary>The layout storage folder could not be created or used.</summary>
+    StorageUnavailable = 7,
+
+    /// <summary>No open window matched one or more placements in the layout.</summary>
+    WindowNotFound = 8,
+
+    /// <summary>No windows matched the capture filters, so nothing was saved.</summary>
+    NoWindowsCaptured = 9
 }
 
 /// <summary>
@@ -174,5 +231,35 @@ public enum BrowserErrorCode
     PortInUse = 12,
 
     /// <summary>Failed to launch browser with debug mode.</summary>
-    DebugLaunchFailed = 13
+    DebugLaunchFailed = 13,
+
+    // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
+    // browser error codes can be added above without renumbering.
+
+    /// <summary>The CDP endpoint could not be reached or did not answer like a DevTools endpoint.</summary>
+    CdpUnavailable = 30,
+
+    /// <summary>The browser or page did not answer a CDP request within the timeout.</summary>
+    CdpTimeout = 31,
+
+    /// <summary>No CDP tab could be matched to the window.</summary>
+    CdpTargetNotFound = 32,
+
+    /// <summary>More than one CDP tab matches the window, so the right one cannot be chosen.</summary>
+    CdpTargetAmbiguous = 33,
+
+    /// <summary>The CDP port is owned by a different process than the window.</summary>
+    CdpPortOwnerMismatch = 34,
+
+    /// <summary>The page has a JavaScript dialog (alert/confirm/prompt/beforeunload) open.</summary>
+    CdpDialogOpen = 35,
+
+    /// <summary>The page threw an exception or the browser rejected the evaluation.</summary>
+    CdpEvaluationFailed = 36,
+
+    /// <summary>The CDP connection closed early or returned a response that could not be read.</summary>
+    CdpProtocolError = 37,
+
+    /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
+    HtmlRequiresCdp = 38
 }

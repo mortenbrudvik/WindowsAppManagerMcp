@@ -10,72 +10,89 @@ Update the installed Windows App Manager plugin from development source.
 
 ## Process
 
-When invoked, perform these steps:
+When invoked, perform these steps in PowerShell (`pwsh`; in Windows PowerShell 5.1 the default
+execution policy blocks the script in step 2, so run it with
+`powershell -NoProfile -ExecutionPolicy Bypass -File ...`). Derive every path; never hard-code the
+repository location or the user name:
+
+```powershell
+$repo = git rev-parse --show-toplevel
+$version = (Get-Content "$repo\.claude-plugin\plugin.json" -Raw | ConvertFrom-Json).version
+$dest = Join-Path $env:USERPROFILE ".claude\plugins\cache\windows-app-manager-marketplace\windows-app-manager\$version"
+```
+
+The installed plugin runs `${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe`, which is
+`$dest\bin\WindowsAppManagerMcp.exe`.
 
 ### 1. Compare Versions
 
 Read and display:
-- **Development version**: from `.claude-plugin/plugin.json`
-- **Installed version**: from `~/.claude/plugins/installed_plugins.json` (look for entry with `name: "windows-app-manager"` and `marketplace: "windows-app-manager-marketplace"`)
+- **Development version**: `$version` (from `.claude-plugin/plugin.json`)
+- **Installed version**: from `~/.claude/plugins/installed_plugins.json`. In that file (format
+  `"version": 2`), `plugins` maps `"<plugin>@<marketplace>"` keys to arrays of install entries. Use
+  the `version` of the entry under `plugins["windows-app-manager@windows-app-manager-marketplace"]`
+  (the one with `"scope": "user"` if there are several).
+
+If that key is missing, the plugin is not installed. Stop and ask the user to install it first
+(`/plugin marketplace add mortenbrudvik/WindowsAppManagerMcp`, then
+`/plugin install windows-app-manager@windows-app-manager-marketplace`). This command only updates an
+existing install.
 
 Show the user the version comparison before proceeding.
 
-### 2. Build Latest Binary
+### 2. Build the Binary Into the Installed Plugin
 
-```bash
-dotnet publish src/WindowsAppManagerMcp/WindowsAppManagerMcp.csproj -c Release -o dist/
+```powershell
+& "$repo\scripts\Publish-Plugin.ps1" -OutputDirectory "$dest\bin" -AllowDirty
 ```
 
-Verify the build succeeded before proceeding.
+This publishes straight to `$dest\bin`, the path the plugin runs, and leaves the committed
+`bin/WindowsAppManagerMcp.exe` in the repository untouched (only `/commit` refreshes that one).
+`-AllowDirty` allows testing uncommitted changes; the script warns when a build input (`src/`,
+`config/` or a root build file) is dirty. With uncommitted changes it refuses to publish into the
+repository's `bin/`, so never drop the `-OutputDirectory` argument. If the installed exe is
+running (this session's MCP server), the script moves it aside and installs the new one; the new
+build is used after a restart. If copying the new exe still fails, the script moves the original
+back, so the plugin is never left without an exe.
+
+Verify the build succeeded and note the ProductVersion it prints before proceeding.
 
 ### 3. Copy Plugin Files
 
-Copy from project to installed cache location.
-
-**Source**: `C:\code\projects\WindowsAppManagerMcp`
-**Destination**: `C:\Users\morte\.claude\plugins\cache\windows-app-manager-marketplace\windows-app-manager\<version>`
-
-Where `<version>` is the version from `.claude-plugin/plugin.json`.
-
-Use PowerShell to copy files:
-
 ```powershell
-$version = "<version from plugin.json>"
-$dest = "$env:USERPROFILE\.claude\plugins\cache\windows-app-manager-marketplace\windows-app-manager\$version"
+New-Item -ItemType Directory -Force -Path "$dest\.claude-plugin", "$dest\skills", "$dest\.claude\commands" | Out-Null
 
-# Create destination directories if needed
-New-Item -ItemType Directory -Force -Path "$dest\.claude-plugin"
-New-Item -ItemType Directory -Force -Path "$dest\.claude-plugin\bin"
-New-Item -ItemType Directory -Force -Path "$dest\skills"
-New-Item -ItemType Directory -Force -Path "$dest\.claude\commands"
+# Plugin config
+Copy-Item -Force "$repo\.claude-plugin\plugin.json", "$repo\.claude-plugin\marketplace.json" "$dest\.claude-plugin\"
 
-# Copy plugin config and binary
-Copy-Item -Force ".claude-plugin\plugin.json" "$dest\.claude-plugin\"
-Copy-Item -Force ".claude-plugin\marketplace.json" "$dest\.claude-plugin\"
-Copy-Item -Recurse -Force ".claude-plugin\bin\*" "$dest\.claude-plugin\bin\"
+# Skills
+Copy-Item -Recurse -Force "$repo\skills\*" "$dest\skills\"
 
-# Copy skills
-Copy-Item -Recurse -Force "skills\*" "$dest\skills\"
+# Commands
+Copy-Item -Recurse -Force "$repo\.claude\commands\*" "$dest\.claude\commands\"
 
-# Copy commands
-Copy-Item -Recurse -Force ".claude\commands\*" "$dest\.claude\commands\"
+# Earlier versions of this command copied an old exe to .claude-plugin\bin, which the plugin never runs
+if (Test-Path "$dest\.claude-plugin\bin") { Remove-Item -Recurse -Force "$dest\.claude-plugin\bin" }
 ```
 
 ### 4. Update installed_plugins.json
 
-Read `~/.claude/plugins/installed_plugins.json` and update the entry for the windows-app-manager plugin:
+Read `~/.claude/plugins/installed_plugins.json` and update the entry found in step 1, under
+`plugins["windows-app-manager@windows-app-manager-marketplace"]`:
 
-- `version`: new version string from plugin.json
-- `installPath`: `C:\Users\morte\.claude\plugins\cache\windows-app-manager-marketplace\windows-app-manager\<version>`
+- `version`: `$version`
+- `installPath`: `$dest`
 - `lastUpdated`: current ISO 8601 timestamp (e.g., `2026-01-16T12:00:00.000Z`)
 - `gitCommitSha`: output of `git rev-parse HEAD`
 
-Write the updated JSON back to the file.
+Leave the other fields (`scope`, `installedAt`, ...) and the other plugins' entries unchanged, and
+write the updated JSON back to the file.
 
 ### 5. Confirm Update
 
 Display a summary:
 - Previous version -> New version
+- ProductVersion of `$dest\bin\WindowsAppManagerMcp.exe`
 - Files copied
 - Reminder: "Restart Claude Code to use the updated plugin"
 
@@ -85,11 +102,11 @@ Display a summary:
 === Plugin Update ===
 
 Versions:
-  Development: 1.6.1
-  Installed:   1.2.0
+  Development: 1.12.0
+  Installed:   1.11.0
 
 Building release binary...
-✓ Build succeeded
+✓ Published ...\windows-app-manager\1.12.0\bin\WindowsAppManagerMcp.exe (1.12.0+3f2a9c1...)
 
 Copying files to cache...
 ✓ .claude-plugin/ copied
@@ -97,7 +114,7 @@ Copying files to cache...
 ✓ .claude/commands/ copied
 
 Updating installed_plugins.json...
-✓ Version updated: 1.2.0 -> 1.6.1
+✓ Version updated: 1.11.0 -> 1.12.0
 
 Done! Restart Claude Code to use the updated plugin.
 ```

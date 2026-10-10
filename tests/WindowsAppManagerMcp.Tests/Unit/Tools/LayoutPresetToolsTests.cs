@@ -1,5 +1,6 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
@@ -93,7 +94,7 @@ public class LayoutPresetToolsTests
     #region GetLayout Tests
 
     [Fact]
-    public void GetLayout_ReturnsNull_WhenNotFound()
+    public void GetLayout_WhenNotFound_ThrowsPresetNotFoundToolErrorNamingThePreset()
     {
         // Arrange
         _mockLayoutService.Setup(l => l.GetPreset(It.IsAny<string>()))
@@ -101,10 +102,12 @@ public class LayoutPresetToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetLayout("nonexistent");
+        var act = () => sut.GetLayout("nonexistent");
 
-        // Assert
-        result.Should().BeNull();
+        // Assert - ToolErrorReporting turns this into an isError result with errorCode PresetNotFound
+        act.Should().Throw<ToolErrorException>()
+            .WithMessage("*nonexistent*")
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
     }
 
     [Fact]
@@ -180,7 +183,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(capturedPreset);
+            .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
         // Act
@@ -210,7 +213,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(capturedPreset);
+            .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
         // Act
@@ -243,7 +246,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(capturedPreset);
+            .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
         // Act
@@ -266,7 +269,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string[]?>(),
             It.IsAny<string[]?>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(capturedPreset);
+            .ReturnsAsync(new LayoutSaveResult(true, capturedPreset));
         var sut = CreateSut();
 
         // Act
@@ -391,7 +394,7 @@ public class LayoutPresetToolsTests
         _mockLayoutService.Setup(l => l.DeletePresetAsync(
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(new LayoutDeleteResult(true, "test"));
         var sut = CreateSut();
 
         // Act
@@ -410,7 +413,7 @@ public class LayoutPresetToolsTests
         _mockLayoutService.Setup(l => l.DeletePresetAsync(
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(new LayoutDeleteResult(true, "test"));
         var sut = CreateSut();
 
         // Act
@@ -428,7 +431,7 @@ public class LayoutPresetToolsTests
         _mockLayoutService.Setup(l => l.DeletePresetAsync(
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+            .ReturnsAsync(new LayoutDeleteResult(false, "test", "Failed to delete", nameof(LayoutErrorCode.DeleteFailed)));
         var sut = CreateSut();
 
         // Act
@@ -437,6 +440,123 @@ public class LayoutPresetToolsTests
         // Assert
         result.Success.Should().BeFalse();
         result.Error.Should().NotBeNullOrEmpty();
+    }
+
+    #endregion
+
+    #region Honest results
+
+    [Fact]
+    public void ListLayouts_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
+    {
+        _mockLayoutService.Setup(l => l.GetStorageError()).Returns("Folder X could not be created");
+        var sut = CreateSut();
+
+        var act = () => sut.ListLayouts();
+
+        act.Should().Throw<ToolErrorException>().WithMessage("*Folder X could not be created*")
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.StorageUnavailable));
+        _mockLayoutService.Verify(l => l.GetAllPresets(), Times.Never);
+    }
+
+    [Fact]
+    public void GetLayout_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
+    {
+        _mockLayoutService.Setup(l => l.GetStorageError()).Returns("Folder X could not be created");
+        var sut = CreateSut();
+
+        var act = () => sut.GetLayout("anything");
+
+        act.Should().Throw<ToolErrorException>().WithMessage("*Folder X could not be created*")
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.StorageUnavailable));
+    }
+
+    [Fact]
+    public async Task SaveLayout_WhenServiceReportsFailure_ReturnsFailure()
+    {
+        var capturedPreset = TestDataFactory.CreateLayoutPreset("failing");
+        _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(
+                Success: false,
+                Preset: capturedPreset,
+                ErrorMessage: "Disk full",
+                ErrorCode: nameof(LayoutErrorCode.SaveFailed)));
+        var sut = CreateSut();
+
+        var result = await sut.SaveLayout("failing");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Disk full");
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.SaveFailed));
+        result.LayoutName.Should().Be("failing");
+    }
+
+    [Fact]
+    public async Task SaveLayout_WhenNothingCaptured_ReturnsRequestedNameAndZeroWindows()
+    {
+        _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(
+                Success: false,
+                Preset: null,
+                ErrorMessage: "No windows",
+                ErrorCode: nameof(LayoutErrorCode.InvalidName)));
+        var sut = CreateSut();
+
+        var result = await sut.SaveLayout("requested");
+
+        result.Success.Should().BeFalse();
+        result.LayoutName.Should().Be("requested");
+        result.WindowCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SaveLayout_ReportsReplaced()
+    {
+        _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutSaveResult(true, TestDataFactory.CreateLayoutPreset("again"), Replaced: true));
+        var sut = CreateSut();
+
+        var result = await sut.SaveLayout("again");
+
+        result.Success.Should().BeTrue();
+        result.Replaced.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApplyLayout_MapsErrorCode()
+    {
+        _mockLayoutService.Setup(l => l.ApplyPresetAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsNotFound: 3,
+                Errors: ["No open window matched placement 1"],
+                ErrorCode: nameof(LayoutErrorCode.WindowNotFound)));
+        var sut = CreateSut();
+
+        var result = await sut.ApplyLayout("work-setup");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.WindowNotFound));
+    }
+
+    [Fact]
+    public async Task DeleteLayout_WhenPresetNotFound_ReturnsPresetNotFound()
+    {
+        _mockLayoutService.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutDeleteResult(
+                false, "typo", "Layout preset 'typo' was not found", nameof(LayoutErrorCode.PresetNotFound)));
+        var sut = CreateSut();
+
+        var result = await sut.DeleteLayout("typo");
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("typo");
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
     }
 
     #endregion
