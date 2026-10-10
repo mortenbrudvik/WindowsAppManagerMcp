@@ -35,6 +35,9 @@ public sealed class FakeHotkeyWrapper : INativeHotkeyWrapper
     /// <summary>What RegisterHotKey returns for a key; null succeeds.</summary>
     public Func<int, uint, uint, Win32CallResult>? OnRegister { get; set; }
 
+    /// <summary>Runs when the listener marks itself as a chord's holder, before the mark exists (to widen a race in a test).</summary>
+    public Action? OnMark { get; set; }
+
     /// <summary>The hotkeys registered and not freed, by ID.</summary>
     public IReadOnlyDictionary<int, (uint Modifiers, uint VirtualKey)> Registered => _registered;
 
@@ -93,7 +96,11 @@ public sealed class FakeHotkeyWrapper : INativeHotkeyWrapper
 
     public IDesktopPauseFlag OpenDesktopPause() => OpenFails is { } failure ? throw failure : Desktop.Pause;
 
-    public IDisposable MarkChordHolder(string chordId) => Desktop.Mark(chordId);
+    public IDisposable MarkChordHolder(string chordId)
+    {
+        OnMark?.Invoke();
+        return Desktop.Mark(chordId);
+    }
 
     public bool IsChordHeldByAServer(string chordId) => Desktop.IsMarked(chordId);
 }
