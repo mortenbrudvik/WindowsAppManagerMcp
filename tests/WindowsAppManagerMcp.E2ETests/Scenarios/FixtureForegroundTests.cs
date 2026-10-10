@@ -41,6 +41,7 @@ public class FixtureForegroundTests
         outcome.ForegroundProcessId.Should().Be(e2e.Fixture.ProcessId);
         outcome.BlockingPopup.Should().BeNull("the fixture has no dialog open");
         outcome.MenuClosed.Should().BeFalse("nothing put the fixture in menu mode");
+        outcome.InMenuMode.Should().BeFalse();
 
         // ... agrees with the desktop and with the fixture's own record: its edit box got keyboard focus
         E2ENative.GetAncestor(E2ENative.GetForegroundWindow(), E2ENative.GA_ROOTOWNER).Should().Be(main);

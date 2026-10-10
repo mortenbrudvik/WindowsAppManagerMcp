@@ -137,7 +137,8 @@ public class WindowManagerTools
     [Description("Bring a window to the foreground and verify it. Works around the Windows foreground lock without sending keys. " +
         "Returns isForeground (also as success), method (already, setForeground, attachThreadInput or inputUnlock), " +
         "the window actually in front (foregroundHandle, foregroundTitle, foregroundProcess) and blockingPopup, a dialog of the " +
-        "window that takes keyboard input instead of it. errorCode: FocusFailed, NotResponding, Cloaked or InvalidHandle. " +
+        "window that takes keyboard input instead of it. inMenuMode: a menu is still open, so typed letters would pick menu items. " +
+        "errorCode: FocusFailed, NotResponding, Cloaked or InvalidHandle. " +
         "The foreground can change again before your next call, so confirm with get_foreground_window immediately before keyboard or mouse input.")]
     public FocusResult FocusWindow(
         [Description("Window handle (as integer)")]

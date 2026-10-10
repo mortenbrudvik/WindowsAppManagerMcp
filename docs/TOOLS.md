@@ -441,7 +441,7 @@ Windows' foreground lock usually refuses a background process such as this serve
 4. **attachThreadInput**: if the foreground lock refused, the server's activation thread attaches its input to the foreground window's thread, activates the window and detaches again. Skipped when the foreground window is not responding or runs at a higher integrity level (elevated), where Windows refuses the attach.
 5. **inputUnlock**: last resort, a mouse move of zero distance makes the server the process that received the last input, then SetForegroundWindow again. No key is sent: an Alt press would reach the window in front, often the agent's terminal.
 
-If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), Esc is sent to close the menu, but only while the window is verified to be in front, and `menuClosed` is true.
+If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), one Esc is sent to close the menu, but only while the window is verified to be in front; `menuClosed` is true when the menu closed. No second Esc is sent: an Esc that arrives after the menu has closed would reach the window itself and could cancel a dialog. If a menu is still active when the call returns, `inMenuMode` is true. That includes a menu the user opened in a window that was already in front, which is left open. Typed letters would then pick menu items, so close the menu first (for example with `send_keys` `{ESC}` after checking a screenshot).
 
 The window counts as in front when the foreground window is the window itself or a window it owns, such as a dialog, also a dialog of that dialog. This includes WPF and WinForms dialogs, which Windows does not link to their owner through GA_ROOTOWNER, so the server follows the owner chain. A dialog in front is reported as `blockingPopup`, because keyboard input goes to the dialog. The foreground can change again before the next call, so confirm with [get_foreground_window](#get_foreground_window) immediately before keyboard or mouse input.
 
@@ -507,6 +507,7 @@ The window counts as in front when the foreground window is the window itself or
 | `foregroundHandle`, `foregroundTitle`, `foregroundProcess` | The window actually in front after the call; omitted when no window is in the foreground |
 | `blockingPopup` | `{ handle, title }` of a dialog of the window that takes keyboard input instead of it: the dialog in front, or the dialog of a window that a modal dialog disables |
 | `menuClosed` | `true` when the window was in menu mode and Esc closed the menu |
+| `inMenuMode` | `true` when a menu or the menu bar of the window in front is still active, so typed letters would pick menu items |
 
 | Error code | Meaning |
 |------------|---------|

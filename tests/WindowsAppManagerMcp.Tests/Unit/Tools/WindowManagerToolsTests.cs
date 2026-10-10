@@ -283,6 +283,30 @@ public class WindowManagerToolsTests
         _mockForegroundService.Verify(f => f.EnsureForeground(handle, ForegroundService.DefaultTimeoutMs), Times.Once);
     }
 
+    [Fact]
+    public void FocusWindow_WhenAMenuIsStillActive_ReportsInMenuMode()
+    {
+        // Arrange - in front, but typed keys would pick menu items
+        var handle = new nint(12345);
+        _mockForegroundService.Setup(f => f.EnsureForeground(handle, It.IsAny<int>())).Returns(new FocusOutcome
+        {
+            Target = handle,
+            IsForeground = true,
+            Method = FocusMethod.Already,
+            ForegroundHandle = handle,
+            InMenuMode = true
+        });
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.FocusWindow(12345);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.InMenuMode.Should().BeTrue();
+        result.MenuClosed.Should().BeNull();
+    }
+
     #endregion
 
     #region CloseWindow Tests

@@ -11,7 +11,7 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <param name="StepSettle">How long each step waits for its activation to show before the next step is tried.</param>
 /// <param name="PollInterval">How often the foreground window is read while waiting.</param>
-/// <param name="MenuSettle">How long to wait for a menu to close after Esc.</param>
+/// <param name="MenuSettle">How long to wait for a menu to close after the Esc.</param>
 /// <param name="ThreadGrace">
 /// How much longer than the caller's timeout the activation thread may take before the call gives up on
 /// it: the window calls themselves can block until a window answers.
@@ -22,7 +22,7 @@ public sealed record ForegroundTiming(TimeSpan StepSettle, TimeSpan PollInterval
     public static ForegroundTiming Default { get; } = new(
         StepSettle: TimeSpan.FromMilliseconds(200),
         PollInterval: TimeSpan.FromMilliseconds(15),
-        MenuSettle: TimeSpan.FromMilliseconds(100),
+        MenuSettle: TimeSpan.FromMilliseconds(250),
         ThreadGrace: TimeSpan.FromSeconds(2));
 }
 
@@ -38,9 +38,6 @@ public sealed class ForegroundService : IForegroundService
 
     /// <summary>The longest total wait, in milliseconds.</summary>
     public const int MaxTimeoutMs = 10_000;
-
-    /// <summary>Esc presses at most: one closes an open menu, the next leaves the menu bar.</summary>
-    private const int MaxMenuEscapes = 2;
 
     /// <summary>Owner chains are short; this only stops a loop on a corrupt chain.</summary>
     private const int MaxOwnerChainLength = 32;
@@ -119,7 +116,8 @@ public sealed class ForegroundService : IForegroundService
         var foreground = _windows.GetForegroundWindow();
         if (IsInFront(root, foreground) && !_windows.IsIconic(root))
         {
-            return Activation.InFront(root, FocusMethod.Already, foreground, menuClosed: false);
+            // A menu open in a window that was already in front is the user's: report it, leave it open
+            return Activation.InFront(root, FocusMethod.Already, foreground, menuClosed: false, IsInMenuMode(foreground));
         }
 
         if (_windows.IsHungAppWindow(root))
@@ -237,45 +235,42 @@ public sealed class ForegroundService : IForegroundService
 
     /// <summary>
     /// The window is in front after an activation step. If it is in menu mode, keys would select menu
-    /// items, so Esc closes the menu, but only while the window is verified to be in front: Esc goes to
-    /// whatever window has keyboard focus.
+    /// items, so one Esc closes the menu, but only while the window is verified to be in front: Esc goes
+    /// to whatever window has keyboard focus. There is no second Esc: nothing shows whether the window
+    /// has processed the first one yet, and an Esc that arrives after its menu has closed reaches the
+    /// window itself (IDCANCEL in a dialog). A menu that is still open afterwards is reported instead.
     /// </summary>
     private Activation Activated(nint root, string method, nint foreground, CancellationToken token)
     {
-        var menuClosed = false;
-        for (var escapes = 0; escapes < MaxMenuEscapes && !token.IsCancellationRequested; escapes++)
+        var escapeSent = false;
+        if (!token.IsCancellationRequested && IsInMenuMode(foreground))
         {
-            if (!IsInMenuMode(foreground))
-            {
-                break;
-            }
-
             foreground = _windows.GetForegroundWindow();
-            if (!IsInFront(root, foreground))
+            if (IsInFront(root, foreground))
             {
-                break;
+                escapeSent = _input.SendInput(
+                [
+                    InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYDOWN),
+                    InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYUP)
+                ]) != 0;
+                if (escapeSent)
+                {
+                    var menuWindow = foreground;
+                    WaitUntil(() => !IsInMenuMode(menuWindow), _timing.MenuSettle, token);
+                }
             }
-
-            var escape = _input.SendInput(
-            [
-                InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYDOWN),
-                InputEvent.Key(NativeEnums.VK_ESCAPE, NativeEnums.KEYEVENTF_KEYUP)
-            ]);
-            if (escape == 0)
-            {
-                break;
-            }
-
-            menuClosed = true;
-            WaitUntil(() => !IsInMenuMode(foreground), _timing.MenuSettle, token);
         }
 
-        // Verify once more: the outcome reports what is in front now
+        // Verify once more: the outcome reports what is in front now, and whether it is in menu mode
         foreground = _windows.GetForegroundWindow();
-        return IsInFront(root, foreground)
-            ? Activation.InFront(root, method, foreground, menuClosed)
-            : Activation.Failed(root, foreground, WindowErrorCode.FocusFailed,
-                "The window came to the front but lost the foreground again.") with { MenuClosed = menuClosed };
+        if (!IsInFront(root, foreground))
+        {
+            return Activation.Failed(root, foreground, WindowErrorCode.FocusFailed,
+                "The window came to the front but lost the foreground again.");
+        }
+
+        var inMenuMode = IsInMenuMode(foreground);
+        return Activation.InFront(root, method, foreground, menuClosed: escapeSent && !inMenuMode, inMenuMode);
     }
 
     /// <summary>
@@ -440,6 +435,7 @@ public sealed class ForegroundService : IForegroundService
             BlockingPopup = blockingPopup,
             BlockingPopupTitle = blockingPopup is { } popupHandle ? _windows.GetWindowText(popupHandle) : null,
             MenuClosed = activation.MenuClosed,
+            InMenuMode = activation.InMenuMode,
             ErrorCode = activation.ErrorCode,
             Error = error
         };
@@ -485,8 +481,14 @@ public sealed class ForegroundService : IForegroundService
     {
         public bool MenuClosed { get; init; }
 
-        public static Activation InFront(nint root, string method, nint foreground, bool menuClosed) =>
-            new(root, IsForeground: true, method, foreground, WindowErrorCode.None, Error: null) { MenuClosed = menuClosed };
+        public bool InMenuMode { get; init; }
+
+        public static Activation InFront(nint root, string method, nint foreground, bool menuClosed, bool inMenuMode) =>
+            new(root, IsForeground: true, method, foreground, WindowErrorCode.None, Error: null)
+            {
+                MenuClosed = menuClosed,
+                InMenuMode = inMenuMode
+            };
 
         public static Activation Failed(nint root, nint foreground, WindowErrorCode errorCode, string error) =>
             new(root, IsForeground: false, Method: null, foreground, errorCode, error);

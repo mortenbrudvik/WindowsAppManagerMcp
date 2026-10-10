@@ -26,8 +26,10 @@ public interface IForegroundService
     /// input, then SetForegroundWindow. No key is sent: an Alt tap would reach the window in front,
     /// often the agent's terminal, and can leave the target in menu mode.</item>
     /// </list>
-    /// When an activation step brought the window in front and it is in menu mode, Esc is sent to close
-    /// the menu, but only while the window is verified to be in front.
+    /// When an activation step brought the window in front and it is in menu mode, one Esc is sent to
+    /// close the menu, but only while the window is verified to be in front. A menu that is still active
+    /// afterwards, or that is open in a window that was already in front, is reported in
+    /// <see cref="FocusOutcome.InMenuMode"/>; keys would then select menu items.
     /// All attach and activation calls run on one dedicated long-lived thread, so an attach and its
     /// detach always happen on the same thread.
     /// </summary>

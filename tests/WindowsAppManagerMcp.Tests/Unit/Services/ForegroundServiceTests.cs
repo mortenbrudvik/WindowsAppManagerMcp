@@ -600,7 +600,26 @@ public class ForegroundServiceTests
         // Assert
         outcome.IsForeground.Should().BeTrue();
         outcome.MenuClosed.Should().BeTrue();
+        outcome.InMenuMode.Should().BeFalse();
         _calls.Should().Equal("SetForegroundWindow(Target) -> True", "SendInput(Esc down, Esc up) in front: Target");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheMenuIsStillActiveAfterTheEsc_SendsNoSecondEscAndReportsInMenuMode()
+    {
+        // Arrange - a submenu under a dropdown, or a thread that has not processed the Esc yet. A second
+        // Esc could arrive after the menu has closed and cancel a dialog (IDCANCEL)
+        _lock = ForegroundLock.Open;
+        _threads.Setup(t => t.GetGuiThreadInfo(TargetThread)).Returns(MenuState(inMenuMode: true));
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - in front, but keys would pick menu items, and the outcome says so
+        outcome.IsForeground.Should().BeTrue();
+        outcome.MenuClosed.Should().BeFalse();
+        outcome.InMenuMode.Should().BeTrue();
+        _calls.Should().Equal("SetForegroundWindow(Target) -> True", "SendInput(Esc down, Esc up)");
     }
 
     [Fact]
@@ -634,9 +653,10 @@ public class ForegroundServiceTests
         // Act
         var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
 
-        // Assert
+        // Assert - left open, but reported: typed keys would pick menu items
         outcome.Method.Should().Be(FocusMethod.Already);
         outcome.MenuClosed.Should().BeFalse();
+        outcome.InMenuMode.Should().BeTrue();
         _sentInput.Should().BeEmpty();
     }
 

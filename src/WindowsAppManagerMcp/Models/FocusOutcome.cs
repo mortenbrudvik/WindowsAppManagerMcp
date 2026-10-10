@@ -69,10 +69,19 @@ public sealed record FocusOutcome
     public string? BlockingPopupTitle { get; init; }
 
     /// <summary>
-    /// True when the window in front was in menu mode after the activation and Esc was sent to close
-    /// the menu, so that typed keys reach the window instead of selecting menu items.
+    /// True when the window in front was in menu mode after the activation and the one Esc that was sent
+    /// closed the menu, so that typed keys reach the window instead of selecting menu items.
     /// </summary>
     public bool MenuClosed { get; init; }
+
+    /// <summary>
+    /// True when the window in front is in menu mode when the call returns (a menu or the menu bar is
+    /// active), so typed keys would select menu items. A menu in a window that was already in front is
+    /// left open; after an activation one Esc is sent, never a second one, because a second Esc can reach
+    /// the window itself once the menu has closed (IDCANCEL in a dialog). Only set when the target is in
+    /// front.
+    /// </summary>
+    public bool InMenuMode { get; init; }
 
     /// <summary>
     /// <see cref="WindowErrorCode.None"/> when the target is in front; otherwise InvalidHandle,
