@@ -121,6 +121,29 @@ public class ToolDescriptionTests
         ParameterDescription("get_ui_elements", "controlTypes").Should().Contain("InvalidControlType");
     }
 
+    [Theory]
+    [InlineData("get_focused_element")]
+    [InlineData("get_element_at_point")]
+    public void ElementInspectionDescription_MarksElementTextAsUntrustedAndMentionsTheTimeout(string toolName)
+    {
+        var description = ServerToolCatalog.Description(toolName);
+
+        description.Should().Contain("untrusted", "element names and values come from the application");
+        description.Should().Contain("timeout", "a hung application can block UI Automation");
+    }
+
+    [Fact]
+    public void GetFocusedElementDescription_PointsToTheKeyboardTools()
+    {
+        ServerToolCatalog.Description("get_focused_element").Should().Contain("type_text").And.Contain("send_keys");
+    }
+
+    [Fact]
+    public void GetElementAtPointDescription_SaysCoordinatesAreScreenPixelsNotImagePixels()
+    {
+        ServerToolCatalog.Description("get_element_at_point").Should().Contain("not image pixels");
+    }
+
     private static string ParameterDescription(string toolName, string parameterName) =>
         ServerToolCatalog.AllDescriptions()
             .Single(d => d.Source == $"{toolName}.{parameterName}")

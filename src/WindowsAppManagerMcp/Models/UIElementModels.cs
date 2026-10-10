@@ -89,5 +89,98 @@ public enum UIElementErrorCode
     OperationException = 6,
 
     /// <summary>A controlTypes entry is not a known control type name.</summary>
-    InvalidControlType = 7
+    InvalidControlType = 7,
+
+    /// <summary>No element has keyboard focus, or there is no element at the point.</summary>
+    ElementNotFound = 8,
+
+    /// <summary>The point is not on any monitor.</summary>
+    CoordinatesOutOfBounds = 9
 }
+
+/// <summary>
+/// A detailed snapshot of one UI element, returned by get_focused_element and get_element_at_point.
+/// </summary>
+/// <param name="Bounds">The bounding box in physical screen pixels, or null when the element has no position on screen.</param>
+/// <param name="FrameworkId">The UI framework that provides the element, for example Win32, WPF, XAML,
+/// WinForm, DirectUI or Chrome.</param>
+/// <param name="Patterns">The action patterns the element supports: Invoke, Toggle, Value, SelectionItem,
+/// ExpandCollapse and RangeValue. Empty when it supports none.</param>
+/// <param name="Value">The element's value through the Value pattern, at most
+/// 200 characters. Null when it has none, and always null for password fields.</param>
+/// <param name="ValueTruncated">True when <paramref name="Value"/> was cut to 200 characters.</param>
+public record UIElementDetails(
+    string? Name,
+    string ControlType,
+    string? AutomationId,
+    string? ClassName,
+    string? FrameworkId,
+    BoundsDto? Bounds,
+    bool IsEnabled,
+    bool IsOffscreen,
+    bool IsKeyboardFocusable,
+    bool HasKeyboardFocus,
+    bool IsPassword,
+    IReadOnlyList<string> Patterns,
+    string? Value = null,
+    bool ValueTruncated = false
+);
+
+/// <summary>
+/// An element above another one in the UI Automation tree.
+/// </summary>
+public record UIElementAncestor(
+    string? Name,
+    string ControlType,
+    string? AutomationId,
+    string? ClassName,
+    BoundsDto? Bounds
+);
+
+/// <summary>
+/// Result of get_focused_element.
+/// </summary>
+/// <param name="Element">The element that has keyboard focus, or null when the call failed.</param>
+/// <param name="WindowHandle">The top-level window that contains the element, or null when it could not be
+/// determined (for example when the element has no window of its own above it).</param>
+/// <param name="WindowTitle">The title of <paramref name="WindowHandle"/>.</param>
+/// <param name="ProcessId">The process that provides the element.</param>
+/// <param name="ProcessName">The name of that process, without ".exe".</param>
+public record FocusedElementResult(
+    bool Success,
+    UIElementDetails? Element,
+    long? WindowHandle,
+    string? WindowTitle,
+    int? ProcessId,
+    string? ProcessName,
+    double ElapsedMilliseconds,
+    string? Error = null,
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None
+);
+
+/// <summary>
+/// Result of get_element_at_point.
+/// </summary>
+/// <param name="X">The point that was looked up, in physical screen pixels.</param>
+/// <param name="Element">The element at the point, or null when the call failed.</param>
+/// <param name="Ancestors">The elements above it, nearest first, up to the requested number and never above
+/// the top-level window. Empty when none were requested.</param>
+/// <param name="WindowHandle">The top-level window at the point (WindowFromPoint, then its root window), or
+/// null when there is none. Hidden and disabled windows are skipped.</param>
+/// <param name="WindowTitle">The title of <paramref name="WindowHandle"/>.</param>
+/// <param name="ProcessId">The process that provides the element.</param>
+/// <param name="ProcessName">The name of that process, without ".exe".</param>
+public record ElementAtPointResult(
+    bool Success,
+    int X,
+    int Y,
+    UIElementDetails? Element,
+    IReadOnlyList<UIElementAncestor>? Ancestors,
+    long? WindowHandle,
+    string? WindowTitle,
+    int? ProcessId,
+    string? ProcessName,
+    double ElapsedMilliseconds,
+    string? Error = null,
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None
+);

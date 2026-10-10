@@ -66,6 +66,10 @@ public class NativeCallGuardTests
         ["User32.MonitorFromWindow"] = "finds the monitor of a window",
         ["Shcore.GetDpiForMonitor"] = "reads the DPI of a monitor",
 
+        // Window hit testing for get_element_at_point (NativeHitTestWrapper)
+        ["User32.WindowFromPoint"] = "finds the window at a point",
+        ["User32.GetAncestor"] = "finds the top-level window of a window",
+
         // Screen capture into memory device contexts owned by the server (ScreenCaptureWrapper)
         ["User32.GetDC"] = "gets a device context to copy pixels from",
         ["User32.GetWindowDC"] = "gets the device context of a window to copy pixels from",
@@ -192,6 +196,7 @@ public class NativeCallGuardTests
 
     [Theory]
     [InlineData(typeof(UIElementService))]
+    [InlineData(typeof(ElementInspectionService))]
     public void UiaTreeServices_ReadUiAutomationOnlyThroughIUiaTree(Type service)
     {
         // Act - any call into System.Windows.Automation, reads included
