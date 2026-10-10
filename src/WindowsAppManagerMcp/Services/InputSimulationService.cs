@@ -1,4 +1,3 @@
-using System.Text;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -6,10 +5,19 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// Service for simulating mouse and keyboard input using Windows SendInput API.
+/// Service for simulating mouse and keyboard input using Windows SendInput API. Every call runs the input
+/// guard (<see cref="IInputTargetGuard"/>) inside the input gate before each SendInput batch, and reports
+/// where the input went.
 /// </summary>
 public class InputSimulationService : IInputSimulationService
 {
+    /// <summary>
+    /// type_text sends at most this many characters in one SendInput batch, and the guard checks the
+    /// foreground window again before each batch, so typing stops within this many characters of a focus
+    /// change. With a delay between keystrokes every character is its own batch.
+    /// </summary>
+    public const int TypeTextBatchSize = 32;
+
     /// <summary>
     /// Serializes input across the whole process. The MCP SDK runs tool calls concurrently, so
     /// without this gate two type_text calls would interleave their characters, and a mouse move
@@ -19,144 +27,25 @@ public class InputSimulationService : IInputSimulationService
 
     private readonly IMonitorService _monitorService;
     private readonly INativeInputWrapper _inputWrapper;
+    private readonly IInputTargetGuard _guard;
 
-    public InputSimulationService(IMonitorService monitorService, INativeInputWrapper inputWrapper)
+    public InputSimulationService(IMonitorService monitorService, INativeInputWrapper inputWrapper, IInputTargetGuard guard)
     {
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
+        _guard = guard ?? throw new ArgumentNullException(nameof(guard));
     }
 
-    public ClickResult Click(int x, int y)
-    {
-        if (!IsValidScreenCoordinate(x, y))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "left",
-                Error: "Coordinates are outside screen bounds",
-                ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        }
+    public ClickResult Click(int x, int y, InputTarget target = default) =>
+        ClickAt(x, y, target, "left", leftButton: true, clicks: 1, delayMs: 0);
 
-        using var gate = EnterInputGate();
+    public ClickResult RightClick(int x, int y, InputTarget target = default) =>
+        ClickAt(x, y, target, "right", leftButton: false, clicks: 1, delayMs: 0);
 
-        if (!SetCursorAndClick(x, y, leftButton: true))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "left",
-                Error: "SendInput failed",
-                ErrorCode: InputErrorCode.SendInputFailed);
-        }
+    public ClickResult DoubleClick(int x, int y, int delayMs = 50, InputTarget target = default) =>
+        ClickAt(x, y, target, "double", leftButton: true, clicks: 2, delayMs: delayMs);
 
-        return new ClickResult(
-            Success: true,
-            X: x,
-            Y: y,
-            ClickType: "left");
-    }
-
-    public ClickResult RightClick(int x, int y)
-    {
-        if (!IsValidScreenCoordinate(x, y))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "right",
-                Error: "Coordinates are outside screen bounds",
-                ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        }
-
-        using var gate = EnterInputGate();
-
-        if (!SetCursorAndClick(x, y, leftButton: false))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "right",
-                Error: "SendInput failed",
-                ErrorCode: InputErrorCode.SendInputFailed);
-        }
-
-        return new ClickResult(
-            Success: true,
-            X: x,
-            Y: y,
-            ClickType: "right");
-    }
-
-    public ClickResult DoubleClick(int x, int y, int delayMs = 50)
-    {
-        if (!IsValidScreenCoordinate(x, y))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "double",
-                Error: "Coordinates are outside screen bounds",
-                ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
-        }
-
-        using var gate = EnterInputGate();
-
-        // Move cursor to position first
-        if (!_inputWrapper.SetCursorPos(x, y))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "double",
-                Error: "Failed to set cursor position",
-                ErrorCode: InputErrorCode.SendInputFailed);
-        }
-
-        // Small delay to ensure cursor position is updated
-        Thread.Sleep(10);
-
-        // First click
-        if (!SendClickInputs(leftButton: true))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "double",
-                Error: "First click in double-click failed",
-                ErrorCode: InputErrorCode.SendInputFailed);
-        }
-
-        // Delay between clicks
-        Thread.Sleep(Math.Clamp(delayMs, 10, 500));
-
-        // Second click
-        if (!SendClickInputs(leftButton: true))
-        {
-            return new ClickResult(
-                Success: false,
-                X: x,
-                Y: y,
-                ClickType: "double",
-                Error: "Second click in double-click failed",
-                ErrorCode: InputErrorCode.SendInputFailed);
-        }
-
-        return new ClickResult(
-            Success: true,
-            X: x,
-            Y: y,
-            ClickType: "double");
-    }
-
-    public MouseMoveResult MoveMouse(int x, int y)
+    public MouseMoveResult MoveMouse(int x, int y, InputTarget target = default)
     {
         if (!IsValidScreenCoordinate(x, y))
         {
@@ -170,20 +59,18 @@ public class InputSimulationService : IInputSimulationService
 
         using var gate = EnterInputGate();
 
-        if (!_inputWrapper.SetCursorPos(x, y))
+        var approved = _guard.CheckMouse(x, y, target);
+        if (!approved.Allowed)
         {
-            return new MouseMoveResult(
-                Success: false,
-                X: x,
-                Y: y,
-                Error: "Failed to set cursor position",
-                ErrorCode: InputErrorCode.SendInputFailed);
+            return Finish(new MouseMoveResult(false, x, y, approved.Error, approved.ErrorCode), approved);
         }
 
-        return new MouseMoveResult(
-            Success: true,
-            X: x,
-            Y: y);
+        if (!_inputWrapper.SetCursorPos(x, y))
+        {
+            return Finish(new MouseMoveResult(false, x, y, "Failed to set cursor position", InputErrorCode.SendInputFailed), approved);
+        }
+
+        return Finish(new MouseMoveResult(Success: true, X: x, Y: y), approved);
     }
 
     public (int X, int Y)? GetCursorPosition()
@@ -199,33 +86,185 @@ public class InputSimulationService : IInputSimulationService
             y >= m.Bounds.Y && y < m.Bounds.Y + m.Bounds.Height);
     }
 
+    public TypeTextResult TypeText(string text, int delayBetweenKeysMs = 0, InputTarget target = default)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return new TypeTextResult(
+                Success: false,
+                Text: text ?? "",
+                CharactersTyped: 0,
+                Error: "Text cannot be empty",
+                ErrorCode: InputErrorCode.EmptyText);
+        }
+
+        delayBetweenKeysMs = Math.Clamp(delayBetweenKeysMs, 0, 100);
+        var charactersTyped = 0;
+
+        using var gate = EnterInputGate();
+
+        var approved = _guard.CheckKeyboard(target, KeyboardInputKind.Text, keys: null);
+        if (!approved.Allowed)
+        {
+            return Finish(new TypeTextResult(false, text, 0, approved.Error, approved.ErrorCode), approved);
+        }
+
+        foreach (var batch in Batches(text, delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
+        {
+            if (charactersTyped > 0)
+            {
+                if (delayBetweenKeysMs > 0)
+                {
+                    Thread.Sleep(delayBetweenKeysMs);
+                }
+
+                // Before every later batch: still the same window, or a dialog of the target?
+                var recheck = _guard.RecheckKeyboard(approved);
+                if (!recheck.Allowed)
+                {
+                    return Finish(new TypeTextResult(false, text, charactersTyped,
+                        $"Typing stopped after {charactersTyped} of {text.Length} characters, which went to " +
+                        $"{Describe(approved.ReceivingWindow)}. {recheck.Error}",
+                        recheck.ErrorCode), recheck);
+                }
+
+                approved = recheck;
+            }
+
+            var inputs = new List<InputEvent>(batch.Length * 2);
+            foreach (var character in batch)
+            {
+                inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
+                inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
+            }
+
+            var sent = _inputWrapper.SendInput(inputs);
+            if (sent != inputs.Count)
+            {
+                // A character counts once its key-down and key-up were both inserted
+                charactersTyped += (int)Math.Min(sent, (uint)inputs.Count) / 2;
+                return Finish(new TypeTextResult(false, text, charactersTyped,
+                    $"SendInput failed at character {charactersTyped}", InputErrorCode.SendInputFailed), approved);
+            }
+
+            charactersTyped += batch.Length;
+        }
+
+        return Finish(new TypeTextResult(Success: true, Text: text, CharactersTyped: charactersTyped), approved);
+    }
+
+    public SendKeysResult SendKeys(string keys, InputTarget target = default)
+    {
+        if (string.IsNullOrEmpty(keys))
+        {
+            return new SendKeysResult(
+                Success: false,
+                Keys: keys ?? "",
+                Error: "Keys cannot be empty",
+                ErrorCode: InputErrorCode.EmptyText);
+        }
+
+        List<InputEvent> inputs;
+        try
+        {
+            inputs = SendKeysParser.Parse(keys);
+        }
+        catch (ArgumentException ex)
+        {
+            return new SendKeysResult(
+                Success: false,
+                Keys: keys,
+                Error: ex.Message,
+                ErrorCode: InputErrorCode.UnknownKey);
+        }
+
+        if (inputs.Count == 0)
+        {
+            return new SendKeysResult(
+                Success: false,
+                Keys: keys,
+                Error: "No valid keys parsed from input",
+                ErrorCode: InputErrorCode.InvalidKeySpecification);
+        }
+
+        using var gate = EnterInputGate();
+
+        var approved = _guard.CheckKeyboard(target, KeyboardInputKind.Keys, inputs);
+        if (!approved.Allowed)
+        {
+            return Finish(new SendKeysResult(false, keys, approved.Error, approved.ErrorCode), approved);
+        }
+
+        var result = _inputWrapper.SendInput(inputs);
+        if (result != inputs.Count)
+        {
+            return Finish(new SendKeysResult(false, keys, "SendInput failed to send all keystrokes", InputErrorCode.SendInputFailed),
+                approved);
+        }
+
+        return Finish(new SendKeysResult(Success: true, Keys: keys), approved);
+    }
+
     /// <summary>
-    /// Holds the process-wide input gate until the returned scope is disposed, so the input one
-    /// call sends is never interleaved with input from a concurrent call.
+    /// A click or double click at a point: the guard checks the window at the point before the cursor
+    /// moves, and again before every button press, since moving the cursor can open a popup there.
     /// </summary>
-    private static InputGateScope EnterInputGate()
+    private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, bool leftButton, int clicks, int delayMs)
     {
-        Monitor.Enter(InputGate);
-        return new InputGateScope();
-    }
+        if (!IsValidScreenCoordinate(x, y))
+        {
+            return new ClickResult(
+                Success: false,
+                X: x,
+                Y: y,
+                ClickType: clickType,
+                Error: "Coordinates are outside screen bounds",
+                ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
+        }
 
-    private readonly struct InputGateScope : IDisposable
-    {
-        public void Dispose() => Monitor.Exit(InputGate);
-    }
+        using var gate = EnterInputGate();
 
-    private bool SetCursorAndClick(int x, int y, bool leftButton)
-    {
-        // Move cursor to position
+        var approved = _guard.CheckMouse(x, y, target);
+        if (!approved.Allowed)
+        {
+            return Finish(new ClickResult(false, x, y, clickType, approved.Error, approved.ErrorCode), approved);
+        }
+
         if (!_inputWrapper.SetCursorPos(x, y))
         {
-            return false;
+            return Finish(new ClickResult(false, x, y, clickType,
+                clicks == 1 ? "SendInput failed" : "Failed to set cursor position", InputErrorCode.SendInputFailed), approved);
         }
 
         // Small delay to ensure cursor position is updated
         Thread.Sleep(10);
 
-        return SendClickInputs(leftButton);
+        for (var click = 1; click <= clicks; click++)
+        {
+            if (click > 1)
+            {
+                // Delay between clicks
+                Thread.Sleep(Math.Clamp(delayMs, 10, 500));
+            }
+
+            var recheck = _guard.RecheckMouse(x, y, approved);
+            if (!recheck.Allowed)
+            {
+                var sentSoFar = click == 1 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
+                return Finish(new ClickResult(false, x, y, clickType, sentSoFar + recheck.Error, recheck.ErrorCode), recheck);
+            }
+
+            approved = recheck;
+            if (!SendClickInputs(leftButton))
+            {
+                var error = clicks == 1 ? "SendInput failed"
+                    : click == 1 ? "First click in double-click failed"
+                    : "Second click in double-click failed";
+                return Finish(new ClickResult(false, x, y, clickType, error, InputErrorCode.SendInputFailed), approved);
+            }
+        }
+
+        return Finish(new ClickResult(Success: true, X: x, Y: y, ClickType: clickType), approved);
     }
 
     private bool SendClickInputs(bool leftButton)
@@ -243,273 +282,87 @@ public class InputSimulationService : IInputSimulationService
         return result == inputs.Length;
     }
 
-    public TypeTextResult TypeText(string text, int delayBetweenKeysMs = 0)
+    /// <summary>Adds where the input went, what is in front now and where the cursor is.</summary>
+    private ClickResult Finish(ClickResult result, InputGuardResult guard)
     {
-        if (string.IsNullOrEmpty(text))
+        var cursor = _inputWrapper.GetCursorPos();
+        return result with
         {
-            return new TypeTextResult(
-                Success: false,
-                Text: text ?? "",
-                CharactersTyped: 0,
-                Error: "Text cannot be empty",
-                ErrorCode: InputErrorCode.EmptyText);
-        }
-
-        delayBetweenKeysMs = Math.Clamp(delayBetweenKeysMs, 0, 100);
-        var charactersTyped = 0;
-
-        using var gate = EnterInputGate();
-
-        foreach (var character in text)
-        {
-            var inputs = new[]
-            {
-                InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN),
-                InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP)
-            };
-
-            var result = _inputWrapper.SendInput(inputs);
-            if (result != inputs.Length)
-            {
-                return new TypeTextResult(
-                    Success: false,
-                    Text: text,
-                    CharactersTyped: charactersTyped,
-                    Error: $"SendInput failed at character {charactersTyped}",
-                    ErrorCode: InputErrorCode.SendInputFailed);
-            }
-
-            charactersTyped++;
-
-            if (delayBetweenKeysMs > 0 && charactersTyped < text.Length)
-            {
-                Thread.Sleep(delayBetweenKeysMs);
-            }
-        }
-
-        return new TypeTextResult(
-            Success: true,
-            Text: text,
-            CharactersTyped: charactersTyped);
-    }
-
-    public SendKeysResult SendKeys(string keys)
-    {
-        if (string.IsNullOrEmpty(keys))
-        {
-            return new SendKeysResult(
-                Success: false,
-                Keys: keys ?? "",
-                Error: "Keys cannot be empty",
-                ErrorCode: InputErrorCode.EmptyText);
-        }
-
-        try
-        {
-            var inputs = ParseSendKeysString(keys);
-            if (inputs.Count == 0)
-            {
-                return new SendKeysResult(
-                    Success: false,
-                    Keys: keys,
-                    Error: "No valid keys parsed from input",
-                    ErrorCode: InputErrorCode.InvalidKeySpecification);
-            }
-
-            using var gate = EnterInputGate();
-            var result = _inputWrapper.SendInput(inputs);
-
-            if (result != inputs.Count)
-            {
-                return new SendKeysResult(
-                    Success: false,
-                    Keys: keys,
-                    Error: "SendInput failed to send all keystrokes",
-                    ErrorCode: InputErrorCode.SendInputFailed);
-            }
-
-            return new SendKeysResult(
-                Success: true,
-                Keys: keys);
-        }
-        catch (ArgumentException ex)
-        {
-            return new SendKeysResult(
-                Success: false,
-                Keys: keys,
-                Error: ex.Message,
-                ErrorCode: InputErrorCode.UnknownKey);
-        }
-    }
-
-    private static List<InputEvent> ParseSendKeysString(string keys)
-    {
-        var inputs = new List<InputEvent>();
-        var modifiers = new List<ushort>();
-        var i = 0;
-
-        while (i < keys.Length)
-        {
-            var c = keys[i];
-
-            // Handle modifier prefixes
-            if (c == '^' || c == '%' || c == '+')
-            {
-                var modifierVk = c switch
-                {
-                    '^' => NativeEnums.VK_CONTROL,
-                    '%' => NativeEnums.VK_MENU,
-                    '+' => NativeEnums.VK_SHIFT,
-                    _ => (ushort)0
-                };
-
-                if (modifierVk != 0 && !modifiers.Contains(modifierVk))
-                {
-                    modifiers.Add(modifierVk);
-                    inputs.Add(InputEvent.Key(modifierVk, NativeEnums.KEYEVENTF_KEYDOWN));
-                }
-                i++;
-                continue;
-            }
-
-            // Handle special keys in braces
-            if (c == '{')
-            {
-                var endBrace = keys.IndexOf('}', i + 1);
-                if (endBrace == -1)
-                {
-                    throw new ArgumentException($"Unclosed brace at position {i}");
-                }
-
-                var keyName = keys.Substring(i + 1, endBrace - i - 1).ToUpperInvariant();
-                var vk = GetVirtualKeyCode(keyName);
-                var flags = IsExtendedKey(vk) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : NativeEnums.KEYEVENTF_KEYDOWN;
-
-                inputs.Add(InputEvent.Key(vk, flags));
-                inputs.Add(InputEvent.Key(vk, flags | NativeEnums.KEYEVENTF_KEYUP));
-
-                // Release modifiers after the key
-                ReleaseModifiers(inputs, modifiers);
-                modifiers.Clear();
-
-                i = endBrace + 1;
-                continue;
-            }
-
-            // Handle regular characters
-            var charVk = GetVirtualKeyForChar(c);
-            if (charVk != 0)
-            {
-                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYUP));
-            }
-            else
-            {
-                // Send as Unicode
-                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP));
-            }
-
-            // Release modifiers after the key
-            ReleaseModifiers(inputs, modifiers);
-            modifiers.Clear();
-
-            i++;
-        }
-
-        // Release any remaining modifiers
-        ReleaseModifiers(inputs, modifiers);
-
-        return inputs;
-    }
-
-    private static void ReleaseModifiers(List<InputEvent> inputs, List<ushort> modifiers)
-    {
-        // Release in reverse order
-        for (var i = modifiers.Count - 1; i >= 0; i--)
-        {
-            inputs.Add(InputEvent.Key(modifiers[i], NativeEnums.KEYEVENTF_KEYUP));
-        }
-    }
-
-    private static ushort GetVirtualKeyCode(string keyName)
-    {
-        return keyName switch
-        {
-            "ENTER" or "RETURN" => NativeEnums.VK_RETURN,
-            "TAB" => NativeEnums.VK_TAB,
-            "ESC" or "ESCAPE" => NativeEnums.VK_ESCAPE,
-            "BACKSPACE" or "BS" or "BKSP" => NativeEnums.VK_BACK,
-            "DELETE" or "DEL" => NativeEnums.VK_DELETE,
-            "INSERT" or "INS" => NativeEnums.VK_INSERT,
-            "UP" => NativeEnums.VK_UP,
-            "DOWN" => NativeEnums.VK_DOWN,
-            "LEFT" => NativeEnums.VK_LEFT,
-            "RIGHT" => NativeEnums.VK_RIGHT,
-            "HOME" => NativeEnums.VK_HOME,
-            "END" => NativeEnums.VK_END,
-            "PGUP" or "PAGEUP" => NativeEnums.VK_PRIOR,
-            "PGDN" or "PAGEDOWN" => NativeEnums.VK_NEXT,
-            "SPACE" => NativeEnums.VK_SPACE,
-            "F1" => NativeEnums.VK_F1,
-            "F2" => NativeEnums.VK_F2,
-            "F3" => NativeEnums.VK_F3,
-            "F4" => NativeEnums.VK_F4,
-            "F5" => NativeEnums.VK_F5,
-            "F6" => NativeEnums.VK_F6,
-            "F7" => NativeEnums.VK_F7,
-            "F8" => NativeEnums.VK_F8,
-            "F9" => NativeEnums.VK_F9,
-            "F10" => NativeEnums.VK_F10,
-            "F11" => NativeEnums.VK_F11,
-            "F12" => NativeEnums.VK_F12,
-            "CAPSLOCK" or "CAPS" => NativeEnums.VK_CAPITAL,
-            "NUMLOCK" => NativeEnums.VK_NUMLOCK,
-            "SCROLLLOCK" or "SCROLL" => NativeEnums.VK_SCROLL,
-            "PRTSC" or "PRINTSCREEN" => NativeEnums.VK_SNAPSHOT,
-            "PAUSE" or "BREAK" => NativeEnums.VK_PAUSE,
-            "WIN" or "LWIN" => NativeEnums.VK_LWIN,
-            "RWIN" => NativeEnums.VK_RWIN,
-            "APPS" or "CONTEXTMENU" => NativeEnums.VK_APPS,
-            "CTRL" or "CONTROL" => NativeEnums.VK_CONTROL,
-            "ALT" or "MENU" => NativeEnums.VK_MENU,
-            "SHIFT" => NativeEnums.VK_SHIFT,
-            _ => throw new ArgumentException($"Unknown key: {keyName}")
+            ReceivingWindow = guard.ReceivingWindow,
+            BlockingWindow = guard.BlockingWindow,
+            ForegroundAfter = _guard.DescribeForeground(),
+            ActualX = cursor?.X,
+            ActualY = cursor?.Y
         };
     }
 
-    private static bool IsExtendedKey(ushort vk)
+    private MouseMoveResult Finish(MouseMoveResult result, InputGuardResult guard)
     {
-        // Extended keys include arrow keys, Insert, Delete, Home, End, Page Up, Page Down,
-        // Num Lock, Print Screen, and the right-hand Alt and Ctrl keys
-        return vk == NativeEnums.VK_UP || vk == NativeEnums.VK_DOWN ||
-               vk == NativeEnums.VK_LEFT || vk == NativeEnums.VK_RIGHT ||
-               vk == NativeEnums.VK_INSERT || vk == NativeEnums.VK_DELETE ||
-               vk == NativeEnums.VK_HOME || vk == NativeEnums.VK_END ||
-               vk == NativeEnums.VK_PRIOR || vk == NativeEnums.VK_NEXT ||
-               vk == NativeEnums.VK_NUMLOCK || vk == NativeEnums.VK_SNAPSHOT ||
-               vk == NativeEnums.VK_RCONTROL || vk == NativeEnums.VK_RMENU ||
-               vk == NativeEnums.VK_LWIN || vk == NativeEnums.VK_RWIN ||
-               vk == NativeEnums.VK_APPS;
+        var cursor = _inputWrapper.GetCursorPos();
+        return result with
+        {
+            ReceivingWindow = guard.ReceivingWindow,
+            BlockingWindow = guard.BlockingWindow,
+            ForegroundAfter = _guard.DescribeForeground(),
+            ActualX = cursor?.X,
+            ActualY = cursor?.Y
+        };
     }
 
-    private static ushort GetVirtualKeyForChar(char c)
+    private TypeTextResult Finish(TypeTextResult result, InputGuardResult guard) => result with
     {
-        // For alphanumeric characters, return the VK code
-        if (c >= 'a' && c <= 'z')
-        {
-            return (ushort)('A' + (c - 'a'));
-        }
-        if (c >= 'A' && c <= 'Z')
-        {
-            return (ushort)c;
-        }
-        if (c >= '0' && c <= '9')
-        {
-            return (ushort)c;
-        }
+        ReceivingWindow = guard.ReceivingWindow,
+        BlockingWindow = guard.BlockingWindow,
+        ForegroundAfter = _guard.DescribeForeground()
+    };
 
-        // For other characters, return 0 to indicate Unicode should be used
-        return 0;
+    private SendKeysResult Finish(SendKeysResult result, InputGuardResult guard) => result with
+    {
+        ReceivingWindow = guard.ReceivingWindow,
+        BlockingWindow = guard.BlockingWindow,
+        ForegroundAfter = _guard.DescribeForeground()
+    };
+
+    /// <summary>
+    /// Splits <paramref name="text"/> into batches of at most <paramref name="size"/> UTF-16 code units,
+    /// never between the two halves of a surrogate pair (an emoji, for example), so a batch that is not
+    /// sent never leaves half a character typed.
+    /// </summary>
+    private static IEnumerable<string> Batches(string text, int size)
+    {
+        var start = 0;
+        while (start < text.Length)
+        {
+            var length = Math.Min(size, text.Length - start);
+            if (start + length < text.Length && char.IsHighSurrogate(text[start + length - 1]))
+            {
+                length++;
+            }
+
+            yield return text.Substring(start, length);
+            start += length;
+        }
+    }
+
+    private static string Describe(WindowSummary? window) => window switch
+    {
+        null => "no window",
+        { Title.Length: > 0 } => $"'{window.Title}' ({window.ProcessName})",
+        _ => $"an untitled window of {window.ProcessName}"
+    };
+
+    /// <summary>
+    /// Holds the process-wide input gate until the returned scope is disposed, so the input one
+    /// call sends is never interleaved with input from a concurrent call.
+    /// </summary>
+    private static InputGateScope EnterInputGate()
+    {
+        Monitor.Enter(InputGate);
+        return new InputGateScope();
+    }
+
+    private readonly struct InputGateScope : IDisposable
+    {
+        public void Dispose() => Monitor.Exit(InputGate);
     }
 }

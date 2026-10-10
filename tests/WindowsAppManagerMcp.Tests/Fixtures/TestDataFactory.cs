@@ -205,6 +205,29 @@ public static class TestDataFactory
         return mock;
     }
 
+    /// <summary>
+    /// An <see cref="IInputTargetGuard"/> that allows all input and reports <paramref name="receiving"/>
+    /// as the receiving window and the foreground window afterwards. For tests of what the input service
+    /// sends; the guard's own rules are tested in InputTargetGuardTests.
+    /// </summary>
+    public static Mock<IInputTargetGuard> CreateAllowingInputGuard(WindowSummary? receiving = null)
+    {
+        var window = receiving ?? new WindowSummary(0x5150, "Untitled - Notepad", "notepad", 5150);
+        var allowed = InputGuardResult.Allow(InputTarget.None, (nint)window.Handle, window, (nint)window.Handle);
+        var mock = new Mock<IInputTargetGuard>();
+
+        mock.Setup(g => g.CheckKeyboard(It.IsAny<InputTarget>(), It.IsAny<KeyboardInputKind>(), It.IsAny<IReadOnlyList<InputEvent>?>()))
+            .Returns((InputTarget target, KeyboardInputKind _, IReadOnlyList<InputEvent>? _) => allowed with { Target = target });
+        mock.Setup(g => g.CheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>()))
+            .Returns((int _, int _, InputTarget target) => allowed with { Target = target });
+        mock.Setup(g => g.RecheckKeyboard(It.IsAny<InputGuardResult>())).Returns((InputGuardResult approved) => approved);
+        mock.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) => approved);
+        mock.Setup(g => g.DescribeForeground()).Returns(window);
+
+        return mock;
+    }
+
     public static Mock<IBrowserDetectionService> CreateMockBrowserDetectionService(
         bool isBrowser = false,
         bool containsUrl = false,

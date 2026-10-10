@@ -170,6 +170,14 @@ public class NativeProcessWrapper : INativeProcessWrapper
             .ToList();
     }
 
+    public IReadOnlyList<int> GetAncestorsOf(int processId)
+    {
+        var parentByProcessId = SnapshotParentProcessIds();
+        return parentByProcessId == null || processId <= 0 || !parentByProcessId.ContainsKey(processId)
+            ? []
+            : FindAncestors(processId, parentByProcessId, TryGetStartTime);
+    }
+
     public DateTime? GetProcessStartTime(int processId) => TryGetStartTime(processId);
 
     public nint GetConsoleWindow() => NativeMethods.Kernel32.GetConsoleWindow();

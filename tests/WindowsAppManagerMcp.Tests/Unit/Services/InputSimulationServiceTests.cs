@@ -24,6 +24,7 @@ public class InputSimulationServiceTests
 
     private readonly Mock<IMonitorService> _mockMonitorService;
     private readonly Mock<INativeInputWrapper> _mockInputWrapper;
+    private readonly Mock<IInputTargetGuard> _guard = TestDataFactory.CreateAllowingInputGuard();
     private readonly List<InputEvent> _sentEvents = new();
 
     public InputSimulationServiceTests()
@@ -37,7 +38,7 @@ public class InputSimulationServiceTests
     }
 
     private InputSimulationService CreateSut() =>
-        new InputSimulationService(_mockMonitorService.Object, _mockInputWrapper.Object);
+        new InputSimulationService(_mockMonitorService.Object, _mockInputWrapper.Object, _guard.Object);
 
     private void SetupSingleMonitor()
     {
@@ -505,10 +506,8 @@ public class InputSimulationServiceTests
     [Fact]
     public void TypeText_WhenSendInputFailsMidway_ReportsCharactersTyped()
     {
-        // Arrange - the first two characters go through, the third fails
-        var calls = 0;
-        _mockInputWrapper.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
-            .Returns((IReadOnlyList<InputEvent> events) => ++calls <= 2 ? (uint)events.Count : 0u);
+        // Arrange - the batch is cut short: SendInput inserts 5 of its 8 events (two whole characters)
+        _mockInputWrapper.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(5u);
         var sut = CreateSut();
 
         // Act

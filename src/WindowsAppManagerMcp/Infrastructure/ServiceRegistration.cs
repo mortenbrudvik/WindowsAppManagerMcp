@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -73,6 +74,13 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessSecurityProbe, ProcessSecurityProbe>();
         services.AddSingleton<IHostGuard, HostGuard>();
         services.AddHostedService<HostGuardStartup>();
+
+        // The input guard (every input call, inside the input gate) and the target policy (input, close,
+        // kill and window captures), both configured by the user in the server's environment
+        services.AddSingleton<ITargetPolicy>(_ => new TargetPolicy(TargetPolicySettings.FromEnvironment()));
+        services.AddSingleton(_ => InputGuardOptions.FromEnvironment());
+        services.AddSingleton<IInputTargetGuard, InputTargetGuard>();
+        services.AddSingleton<IInputSafetyInfo, InputSafetyInfo>();
 
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();

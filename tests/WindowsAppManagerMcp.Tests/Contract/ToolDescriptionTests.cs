@@ -59,6 +59,37 @@ public class ToolDescriptionTests
             "a click lands on whatever window is at that point");
     }
 
+    [Theory]
+    [InlineData("click")]
+    [InlineData("right_click")]
+    [InlineData("double_click")]
+    [InlineData("mouse_move")]
+    [InlineData("type_text")]
+    [InlineData("send_keys")]
+    public void InputToolDescription_RecommendsWindowHandleAndNamesTheGuardResults(string toolName)
+    {
+        var description = ServerToolCatalog.Description(toolName);
+
+        description.Should().Contain("Pass windowHandle", "the target window is how input is kept off the wrong window (roadmap M1.5)");
+        description.Should().Contain("TargetIsAgentHost").And.Contain("receivingWindow");
+        ParameterDescription(toolName, "windowHandle").Should().Contain("Strongly recommended");
+        ParameterDescription(toolName, "allowHostTarget").Should().Contain("explicitly asked").And.Contain("windowHandle");
+    }
+
+    [Fact]
+    public void TypeTextDescription_StatesTheBatchSizeTheServerUses()
+    {
+        // The description cannot interpolate the constant, so this keeps them in step
+        ServerToolCatalog.Description("type_text").Should()
+            .Contain($"every {InputSimulationService.TypeTextBatchSize} characters").And.Contain("TargetLostFocus");
+    }
+
+    [Fact]
+    public void SendKeysDescription_SaysDestructiveChordsNeedWindowHandle()
+    {
+        ServerToolCatalog.Description("send_keys").Should().Contain("DestructiveChordNeedsTarget");
+    }
+
     [Fact]
     public void FocusWindowDescription_SaysToConfirmWithGetForegroundWindow()
     {
