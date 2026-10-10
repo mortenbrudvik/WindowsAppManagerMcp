@@ -1173,6 +1173,133 @@ public class InputTargetGuardTests
 
     #endregion
 
+    #region Mouse capture: a click goes to the window that captured the mouse
+
+    /// <summary>Lets <paramref name="window"/> capture the mouse (SetCapture) on its thread.</summary>
+    private void Captured(nint window)
+    {
+        var threadId = _threads.Object.GetWindowThreadId(window);
+        _threads.Setup(t => t.GetGuiThreadInfo(threadId)).Returns(new GuiThreadInfo(0, window, window, window, 0));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Mouse_TheForegroundAppCapturedTheMouse_IsMouseInUse(bool withTarget)
+    {
+        // Arrange - the user is selecting in the terminal, which has the capture: the click would go to it
+        _inFront = Terminal;
+        Captured(Terminal);
+        At(Notepad);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, withTarget ? To(Notepad) : InputTarget.None);
+
+        // Assert
+        result.Allowed.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("captured the mouse").And.Contain("pwsh");
+    }
+
+    [Fact]
+    public void Mouse_AnotherAppInFrontCapturedTheMouse_IsMouseInUse()
+    {
+        // Arrange - not the window at the point, and not on its thread
+        _inFront = Calculator;
+        Captured(Calculator);
+        At(Notepad);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, InputTarget.None).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void Mouse_TheWindowAtThePointHoldsTheCapture_IsAllowed()
+    {
+        // Arrange - a drag or a scroll bar inside the target itself
+        _inFront = Notepad;
+        Captured(Notepad);
+        At(Notepad);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, To(Notepad)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Mouse_AMenuOfTheTargetIsOpen_ItsCaptureOnTheTargetsThread_IsAllowed()
+    {
+        // Arrange - a context menu runs on the target's thread and captures the mouse for its owner; the
+        // point is on the menu, a popup of the target's process
+        _inFront = Notepad;
+        Captured(Notepad);
+        At(NotepadMenu);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, To(Notepad));
+
+        // Assert
+        result.Allowed.Should().BeTrue();
+        result.Receiving.Should().Be(NotepadMenu);
+    }
+
+    [Fact]
+    public void Mouse_ACaptureOnTheSameThreadByAWindowInputMayNotReach_IsMouseInUse()
+    {
+        // Arrange - the capture window shares the thread of the window at the point, but it is a host window
+        var hostHelper = new nint(0x240);
+        Window(hostHelper, NotepadPid, "notepad", "Host helper", style: WsPopup | WsVisible, exStyle: WsExToolWindow);
+        _hostGuard.Setup(g => g.IsHostWindow(hostHelper)).Returns(true);
+        _inFront = Notepad;
+        Captured(hostHelper);
+        At(Notepad);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, InputTarget.None).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void Mouse_TheTargetsCaptureOnTheThreadOfAPopupThatIsNotTheTargets_IsMouseInUse()
+    {
+        // Arrange - the point is on Notepad's popup, but the capture is held by another main window of Notepad's
+        // process, which the target rule does not accept for a click on Notepad
+        _inFront = Notepad;
+        Captured(SecondNotepad);
+        At(NotepadMenu);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, To(Notepad)).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void RecheckMouse_ACaptureThatStartedAfterTheCheck_IsMouseInUse()
+    {
+        // Arrange - same window at the point, but the terminal took the capture since the first check
+        _inFront = Notepad;
+        At(Notepad);
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, To(Notepad));
+        _inFront = Terminal;
+        Captured(Terminal);
+
+        // Act & Assert
+        sut.RecheckMouse(500, 300, approved).ErrorCode.Should().Be(InputErrorCode.MouseInUse);
+    }
+
+    [Fact]
+    public void Mouse_ACaptureInABackgroundThreadThatIsNotAtThePoint_DoesNotMatter()
+    {
+        // Arrange - a background window's capture gets the mouse only over itself (or with a button down,
+        // which the input tools refuse on their own)
+        _inFront = Notepad;
+        Captured(Calculator);
+        At(Notepad);
+
+        // Act & Assert
+        CreateSut().CheckMouse(500, 300, To(Notepad)).Allowed.Should().BeTrue();
+    }
+
+    #endregion
+
     #region Describing windows
 
     [Fact]

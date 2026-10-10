@@ -28,6 +28,9 @@ public enum KeyboardInputKind
 /// host checks as for a target; allowHostTarget lifts the host check only for the target's top-level window
 /// and the windows it owns. Keys never go to a modal dialog of the target (BlockedByModal).</item>
 /// <item>type_text only: TargetInMenuMode when a menu is active in the receiving window.</item>
+/// <item>Mouse only: MouseInUse when another window has captured the mouse (on the foreground thread, or on the
+/// thread of the window at the point), so the input would go there; a capture by the window at the point, or by a
+/// window of its thread that passes the same rules (a menu's owner), is fine.</item>
 /// </list>
 /// The re-checks before later batches are cheap while the receiving window stays the same.
 /// </summary>

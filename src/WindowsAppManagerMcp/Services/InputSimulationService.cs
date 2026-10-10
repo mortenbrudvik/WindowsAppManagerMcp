@@ -110,6 +110,12 @@ public class InputSimulationService : IInputSimulationService
                         : held.Apply(Finish(new MouseMoveResult(false, x, y, approved.Error, approved.ErrorCode), approved));
                 }
 
+                // A button the user holds: moving the pointer would move the user's drag
+                if (MouseButtonsDownNow("moved") is { } buttons)
+                {
+                    return held.Apply(Finish(new MouseMoveResult(false, x, y, buttons, InputErrorCode.MouseInUse), approved));
+                }
+
                 switch (_session.SetCursorPos(x, y))
                 {
                     case null:
@@ -475,6 +481,11 @@ public class InputSimulationService : IInputSimulationService
                         : held.Apply(Finish(new ClickResult(false, x, y, clickType, approved.Error, approved.ErrorCode), approved));
                 }
 
+                if (MouseButtonsDownNow("clicked") is { } buttons)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, buttons, InputErrorCode.MouseInUse), approved));
+                }
+
                 switch (_session.SetCursorPos(x, y))
                 {
                     case null:
@@ -521,6 +532,12 @@ public class InputSimulationService : IInputSimulationService
                         {
                             HeldModifiers = downNow.Names
                         }, approved));
+                    }
+
+                    // And a button the user pressed meanwhile would send the press to the window it went down on
+                    if (MouseButtonsDownNow("clicked") is { } buttonsNow)
+                    {
+                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + buttonsNow, InputErrorCode.MouseInUse), approved));
                     }
 
                     var sent = SendClickInputs(leftButton, absolute);
@@ -616,6 +633,29 @@ public class InputSimulationService : IInputSimulationService
 
         var names = down.Select(k => k.Name).ToList();
         return (names, ModifiersDownMessage(names, action, _session.IsPauseChordHeld(down)));
+    }
+
+    /// <summary>The mouse buttons, by their key-state codes (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2).</summary>
+    private static readonly (ushort VirtualKey, string Name)[] MouseButtons =
+    [
+        (0x01, "left mouse button"), (0x02, "right mouse button"), (0x04, "middle mouse button"),
+        (0x05, "X1 mouse button"), (0x06, "X2 mouse button")
+    ];
+
+    /// <summary>
+    /// The MouseInUse message when Windows reports a mouse button down right before the pointer is placed or a
+    /// button is pressed, or null when none is. The server releases its own buttons at the end of every call, so
+    /// a button that is down is the user's (dragging or selecting) or stuck: the mouse input would go to the window
+    /// the button went down on, not to the window the guard checked, and moving the pointer would move the drag.
+    /// </summary>
+    private string? MouseButtonsDownNow(string action)
+    {
+        var down = MouseButtons.Where(button => _inputWrapper.IsKeyDown(button.VirtualKey)).Select(button => button.Name).ToList();
+        return down.Count == 0
+            ? null
+            : $"The {string.Join(" and the ", down)} {(down.Count == 1 ? "is" : "are")} held down: the user is dragging or selecting, " +
+              $"so mouse input would go to the window under that press, not to the window the guard checked. Nothing (more) was {action}. " +
+              "Wait until the user has finished, then try again.";
     }
 
     private static string PointerMovedAway(int x, int y, (int X, int Y)? actual) =>

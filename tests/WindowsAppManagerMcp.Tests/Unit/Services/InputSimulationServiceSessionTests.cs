@@ -401,6 +401,67 @@ public class InputSimulationServiceSessionTests
 
     #endregion
 
+    #region Held mouse buttons
+
+    /// <summary>The input paths that move the pointer or press a button.</summary>
+    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_move" };
+
+    [Theory]
+    [MemberData(nameof(MousePaths))]
+    public async Task AMouseButtonTheUserHolds_IsMouseInUse_AndThePointerIsNotTouched(string path)
+    {
+        // Arrange - the user is dragging or selecting: the window under the press has the mouse, so a click
+        // would go to it, and moving the pointer would move the user's drag
+        _input.Press(0x01);
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Code.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("left mouse button");
+        _input.Batches.Should().BeEmpty();
+        _input.CursorMoves.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("double_click")]
+    public async Task Click_AMouseButtonPressedBeforeThePress_IsMouseInUse_AndNothingIsClicked(string path)
+    {
+        // Arrange - the user presses the right button after the guard checked the point
+        _guard.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) =>
+            {
+                _input.Press(0x02);
+                return approved;
+            });
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("right mouse button");
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("type_text")]
+    [InlineData("send_keys")]
+    public async Task AHeldMouseButton_DoesNotStopKeys(string path)
+    {
+        // Keys go to the window with keyboard focus, which the mouse capture does not change
+        _input.Press(0x01);
+
+        var result = await Call(CreateSut(), path);
+
+        result.Success.Should().BeTrue(result.Error);
+    }
+
+    #endregion
+
     #region The pointer check and the pause
 
     [Theory]
