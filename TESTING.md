@@ -1829,10 +1829,13 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --resul
 
 Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input and
 `INativeWindowWrapper` for window changes. Some tests use the real stack read-only: they read
-real system state (the monitor, window and process lists, UI Automation trees in
-`UIAutomationWrapperTests` and `UIElementServiceTests`, a small screen region in
-`ScreenCaptureWrapperIntegrationTests`, process tokens, the input desktop, the session state and the
-agent's host chain in `SecurityProbeIntegrationTests`) but change nothing.
+real system state (the monitor, window and process lists, the UI Automation root in `UiaTreeTests`
+and `UIAutomationWrapperTests`, a small screen region in `ScreenCaptureWrapperIntegrationTests`,
+process tokens, the input desktop, the session state and the agent's host chain in
+`SecurityProbeIntegrationTests`) but change nothing. Test classes that reach the real UI Automation
+client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomationCollection.Name)]`),
+which runs them one at a time: the client's first call in a process fails with E_FAIL when two
+threads make it at once.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked with a
@@ -1987,7 +1990,9 @@ public void GetUIElements_SeesTheEditBox()
 
 Compare the server's answers with the ready event (`e2e.Fixture.Ready`) and the event log
 (`e2e.Fixture.WaitForEvent(...)`), not with fixed coordinates: positions depend on the monitor and
-its DPI. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
+its DPI. A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
+as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless popup of the test
+process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
 `HarnessTests/` are ordinary tests of the harness and must never start the fixture.
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
