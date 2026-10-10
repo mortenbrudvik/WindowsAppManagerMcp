@@ -23,9 +23,10 @@ public enum KeyboardInputKind
 /// TargetDeniedByPolicy, TargetIsAgentHost unless allowHostTarget); then BlockedByModal when a modal
 /// dialog disables it.</item>
 /// <item>The receiving window (keys: the foreground window, after EnsureForeground brought the target to
-/// the front; mouse: the top-level window at the point). With a target it must belong to the target first
-/// (TargetNotForeground, TargetOccluded). Then the same probes, policy and host checks as for a target;
-/// without a target the host check always applies.</item>
+/// the front; mouse: the top-level window at the point; no window there is TargetOccluded). With a target it
+/// must belong to the target first (TargetNotForeground, TargetOccluded). Then the same probes, policy and
+/// host checks as for a target; allowHostTarget lifts the host check only for the target's top-level window
+/// and the windows it owns. Keys never go to a modal dialog of the target (BlockedByModal).</item>
 /// <item>type_text only: TargetInMenuMode when a menu is active in the receiving window.</item>
 /// </list>
 /// The re-checks before later batches are cheap while the receiving window stays the same.
@@ -48,9 +49,10 @@ public interface IInputTargetGuard
     InputGuardResult CheckKeyboard(InputTarget target, KeyboardInputKind kind, IReadOnlyList<InputEvent>? keys);
 
     /// <summary>
-    /// Checks again before a later batch of the same call. Allowed while the foreground window is the one
-    /// <paramref name="approved"/> named, or another window of the anchor (a dialog it opened) that passes the
-    /// window checks. Otherwise TargetLostFocus. Reads only.
+    /// Checks again right before every batch of the same call. Allowed while the foreground window is the one
+    /// <paramref name="approved"/> named, or another window of the anchor (a modeless dialog it opened) that
+    /// passes the window checks. A modal dialog that opened over the anchor or over the window that got the
+    /// keys is BlockedByModal; any other window is TargetLostFocus. Reads only.
     /// </summary>
     InputGuardResult RecheckKeyboard(InputGuardResult approved);
 

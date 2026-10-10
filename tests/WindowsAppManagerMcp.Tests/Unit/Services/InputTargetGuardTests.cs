@@ -33,6 +33,10 @@ public class InputTargetGuardTests
     private static readonly nint Calculator = 0x700;     // unrelated
     private static readonly nint StrangerPopup = 0x710;  // unowned popup of an unrelated process
     private static readonly nint CredentialPrompt = 0x800; // CredentialUIBroker dialog owned by Notepad
+    private static readonly nint ExplorerFolder = 0x500;   // a File Explorer window in the shell process (see Shell())
+    private static readonly nint Desktop = 0x510;          // Progman, the shell window
+    private static readonly nint Taskbar = 0x520;          // Shell_TrayWnd
+    private static readonly nint FullscreenBrowser = 0x720; // a browser in fullscreen: no caption
 
     private const int TerminalPid = 1001;
     private const int NotepadPid = 2001;
@@ -43,6 +47,8 @@ public class InputTargetGuardTests
     private const int CalculatorPid = 7001;
     private const int StrangerPid = 7101;
     private const int CredentialPid = 8001;
+    private const int ExplorerPid = 5001;
+    private const int BrowserPid = 7201;
 
     private static readonly ProcessIntegrity Medium = new(0, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null);
     private static readonly ProcessIntegrity High = new(0, IntegrityLevel.High, ProcessIntegrity.HighRid, true, null);
@@ -111,6 +117,22 @@ public class InputTargetGuardTests
     }
 
     private nint RootOf(nint handle) => handle == NotepadEdit ? Notepad : handle;
+
+    /// <summary>
+    /// The desktop shell: explorer.exe with a File Explorer window, the desktop and the taskbar, and a
+    /// borderless (fullscreen) browser window of a program it started.
+    /// </summary>
+    private void Shell()
+    {
+        Window(ExplorerFolder, ExplorerPid, "explorer", "Documents");
+        Window(Desktop, ExplorerPid, "explorer", "Program Manager", style: WsPopup | WsVisible);
+        Window(Taskbar, ExplorerPid, "explorer", "", style: WsPopup | WsVisible, exStyle: WsExToolWindow);
+        _windows.Setup(w => w.GetClassName(Desktop)).Returns("Progman");
+        _windows.Setup(w => w.GetClassName(Taskbar)).Returns("Shell_TrayWnd");
+        _windows.Setup(w => w.GetShellWindow()).Returns(Desktop);
+        Window(FullscreenBrowser, BrowserPid, "chrome", "YouTube - Google Chrome", style: WsPopup | WsVisible);
+        _processes.Setup(p => p.GetAncestorsOf(BrowserPid)).Returns([ExplorerPid]);
+    }
 
     private void Window(nint handle, int processId, string processName, string title, nint owner = 0,
         long style = WsOverlappedWindow | WsVisible, long exStyle = 0)
@@ -575,6 +597,27 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void Keyboard_Target_ForegroundIsAModalDialogOfItsModelessDialog_IsBlockedByModal()
+    {
+        // Arrange - Notepad is enabled, its modeless dialog opened a modal one, which is in front
+        var modal = new nint(0x250);
+        Window(modal, NotepadPid, "notepad", "Replace all?", owner: NotepadDialog);
+        Style(NotepadDialog, WsOverlappedWindow | WsVisible | WsDisabled);
+        _foreground.Setup(f => f.EnsureForeground(Notepad, It.IsAny<int>())).Returns(() =>
+        {
+            _inFront = modal;
+            return new FocusOutcome { Target = Notepad, IsForeground = true, Method = FocusMethod.Already, ForegroundHandle = modal };
+        });
+
+        // Act
+        var result = CreateSut().CheckKeyboard(To(Notepad), KeyboardInputKind.Keys, SendKeysParser.Parse("{ENTER}"));
+
+        // Assert - an Enter would answer the modal dialog
+        result.ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+        result.BlockingWindow!.Handle.Should().Be(modal);
+    }
+
+    [Fact]
     public void Keyboard_TargetIsTheHost_WithoutAllowHostTarget_IsRefused()
     {
         var result = CreateSut().CheckKeyboard(To(Terminal), KeyboardInputKind.Text, null);
@@ -685,6 +728,75 @@ public class InputTargetGuardTests
         sut.RecheckKeyboard(approved).ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
     }
 
+    [Fact]
+    public void RecheckKeyboard_TargetOpenedAModalDialogMidway_IsBlockedByModal()
+    {
+        // Arrange - typing into Notepad, then a modal prompt disables it and comes to the front
+        var sut = CreateSut();
+        var approved = sut.CheckKeyboard(To(Notepad), KeyboardInputKind.Text, null);
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        _inFront = NotepadDialog;
+
+        // Act
+        var result = sut.RecheckKeyboard(approved);
+
+        // Assert - letters and Enter could press the dialog's buttons
+        result.ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+        result.BlockingWindow!.Handle.Should().Be(NotepadDialog);
+        result.ReceivingWindow!.Handle.Should().Be(NotepadDialog);
+        result.Error.Should().Contain("Save As").And.Contain("modal");
+    }
+
+    [Fact]
+    public void RecheckKeyboard_NoTarget_AModalDialogOpenedOverTheWindow_IsBlockedByModal()
+    {
+        _inFront = Notepad;
+        var sut = CreateSut();
+        var approved = sut.CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        _inFront = NotepadDialog;
+
+        sut.RecheckKeyboard(approved).ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+    }
+
+    [Fact]
+    public void RecheckKeyboard_ItsModelessDialogOpenedAModalOne_IsBlockedByModal()
+    {
+        // Arrange - typing into Notepad's modeless dialog; that dialog opens a modal one (Notepad stays enabled)
+        var modal = new nint(0x250);
+        Window(modal, NotepadPid, "notepad", "Replace all?", owner: NotepadDialog);
+        var sut = CreateSut();
+        _foreground.Setup(f => f.EnsureForeground(Notepad, It.IsAny<int>())).Returns(() =>
+        {
+            _inFront = NotepadDialog;
+            return new FocusOutcome { Target = Notepad, IsForeground = true, Method = FocusMethod.Already, ForegroundHandle = NotepadDialog };
+        });
+        var approved = sut.CheckKeyboard(To(Notepad), KeyboardInputKind.Text, null);
+        approved.Receiving.Should().Be(NotepadDialog);
+        Style(NotepadDialog, WsOverlappedWindow | WsVisible | WsDisabled);
+        _inFront = modal;
+
+        // Act & Assert
+        sut.RecheckKeyboard(approved).ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+    }
+
+    [Fact]
+    public void RecheckKeyboard_NoTarget_AModalDialogTheUserHadInFront_OpenedAModelessChild_Continues()
+    {
+        // Arrange - the window in front at the start was itself a modal dialog (its owner is disabled)
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        _inFront = NotepadDialog;
+        var sut = CreateSut();
+        var approved = sut.CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+        approved.Allowed.Should().BeTrue(approved.Error);
+        var help = new nint(0x260);
+        Window(help, NotepadPid, "notepad", "Help", owner: NotepadDialog);
+        _inFront = help;
+
+        // Act & Assert - the dialog stays enabled, so its own modeless window is not a modal over it
+        sut.RecheckKeyboard(approved).Allowed.Should().BeTrue();
+    }
+
     #endregion
 
     #region Mouse without a target (M1.1)
@@ -725,14 +837,16 @@ public class InputTargetGuardTests
     }
 
     [Fact]
-    public void Mouse_NoTarget_NoWindowAtThePoint_IsAllowedWithoutAReceivingWindow()
+    public void Mouse_NoTarget_NoWindowAtThePoint_IsRefused()
     {
+        // Fails closed like keys with nothing in front: input with no known receiver is not sent
         At(nint.Zero);
 
         var result = CreateSut().CheckMouse(500, 300, InputTarget.None);
 
-        result.Allowed.Should().BeTrue();
+        result.ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
         result.ReceivingWindow.Should().BeNull();
+        result.Error.Should().Contain("(500, 300)");
     }
 
     #endregion
@@ -817,6 +931,108 @@ public class InputTargetGuardTests
         At(StrangerPopup);
 
         CreateSut().CheckMouse(500, 300, To(Notepad)).ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+    }
+
+    [Fact]
+    public void Mouse_Target_PointOnAPopupOfAGrandchildProcess_IsTargetOccluded()
+    {
+        // Only a program the target started itself counts (WebView2's browser process is a direct child)
+        var grandchildPopup = new nint(0x620);
+        const int grandchildPid = 6201;
+        Window(grandchildPopup, grandchildPid, "game", "", style: WsPopup | WsVisible);
+        _processes.Setup(p => p.GetAncestorsOf(grandchildPid)).Returns([WebViewPid, OutlookPid, 4]);
+        At(grandchildPopup);
+
+        CreateSut().CheckMouse(500, 300, To(Outlook)).ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+    }
+
+    [Fact]
+    public void Mouse_ShellTarget_PointOnABorderlessWindowOfAProgramTheShellStarted_IsTargetOccluded()
+    {
+        // Arrange - a File Explorer window in the shell process, which started almost every app; a fullscreen
+        // browser (no caption) covers the point
+        Shell();
+        At(FullscreenBrowser);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, To(ExplorerFolder));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+        result.ReceivingWindow!.ProcessName.Should().Be("chrome");
+    }
+
+    [Fact]
+    public void Mouse_ExplorerTarget_InAnotherExplorerProcess_IsTreatedLikeTheShell()
+    {
+        // "Launch folder windows in a separate process": that explorer.exe starts what the user opens too
+        const int folderPid = 5002;
+        var folder = new nint(0x530);
+        Shell();
+        Window(folder, folderPid, "explorer", "Downloads");
+        _processes.Setup(p => p.GetAncestorsOf(BrowserPid)).Returns([folderPid, ExplorerPid]);
+        At(FullscreenBrowser);
+
+        CreateSut().CheckMouse(500, 300, To(folder)).ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+    }
+
+    [Theory]
+    [InlineData(0x510)] // the desktop (Progman)
+    [InlineData(0x520)] // the taskbar (Shell_TrayWnd)
+    public void Mouse_ShellTarget_PointOnTheDesktopOrTheTaskbar_IsTargetOccluded(long shellWindow)
+    {
+        // Same process as the File Explorer window and without a caption, but not a popup of it
+        Shell();
+        At(new nint(shellWindow));
+
+        CreateSut().CheckMouse(500, 300, To(ExplorerFolder)).ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
+    }
+
+    [Fact]
+    public void Mouse_ShellTarget_PointOnItsContextMenu_IsAllowed()
+    {
+        Shell();
+        var contextMenu = new nint(0x540);
+        Window(contextMenu, ExplorerPid, "explorer", "", style: WsPopup | WsVisible, exStyle: WsExToolWindow);
+        At(contextMenu);
+
+        CreateSut().CheckMouse(500, 300, To(ExplorerFolder)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Mouse_AllowHostTarget_DoesNotLiftTheHostRuleForAPopupThatIsNotTheTargets()
+    {
+        // Arrange - the target is not the host; a host popup of the target's child process is at the point
+        _hostGuard.Setup(g => g.IsHostWindow(WebViewPopup)).Returns(true);
+        At(WebViewPopup);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, To(Outlook, allowHostTarget: true));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain("only for the window named in windowHandle");
+    }
+
+    [Fact]
+    public void Mouse_AllowHostTarget_DoesNotLiftTheHostRuleForAnUnownedPopupOfTheSameProcess()
+    {
+        _hostGuard.Setup(g => g.IsHostWindow(NotepadMenu)).Returns(true);
+        At(NotepadMenu);
+
+        CreateSut().CheckMouse(500, 300, To(Notepad, allowHostTarget: true)).ErrorCode
+            .Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void Mouse_HostTarget_WithAllowHostTarget_ItsOwnedDialogIsAllowed()
+    {
+        var hostDialog = new nint(0x110);
+        Window(hostDialog, TerminalPid, "WindowsTerminal", "Settings", owner: Terminal);
+        _hostGuard.Setup(g => g.IsHostWindow(hostDialog)).Returns(true);
+        At(hostDialog);
+
+        CreateSut().CheckMouse(500, 300, To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
     }
 
     [Fact]

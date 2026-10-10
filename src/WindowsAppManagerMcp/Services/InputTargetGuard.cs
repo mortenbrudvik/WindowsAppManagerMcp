@@ -119,9 +119,18 @@ public sealed class InputTargetGuard : IInputTargetGuard
             }
 
             var receiving = Read(foreground);
-            if (foreground != targetRoot && WindowRefusal(foreground, receiving, target, action) is { } receivingRefused)
+            if (foreground != targetRoot)
             {
-                return receivingRefused;
+                if (WindowRefusal(foreground, receiving, target, action, targetRoot) is { } receivingRefused)
+                {
+                    return receivingRefused;
+                }
+
+                // A modal dialog of a dialog the target owns: keys could answer it
+                if (IsModalOver(foreground, targetRoot))
+                {
+                    return ModalRefusal(target, receiving, $"Nothing was {action}.");
+                }
             }
 
             // 5. Letters typed into an active menu select its items
@@ -144,7 +153,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         var window = Read(current);
-        if (WindowRefusal(current, window, target, action) is { } windowRefused)
+        if (WindowRefusal(current, window, target, action, targetRoot: nint.Zero) is { } windowRefused)
         {
             return windowRefused;
         }
@@ -178,8 +187,19 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         var window = Read(foreground);
-        return WindowRefusal(foreground, window, approved.Target, "sent")
-               ?? InputGuardResult.Allow(approved.Target, foreground, window.Summary, approved.Anchor);
+        var anchorRoot = RootOf(approved.Anchor);
+        if (WindowRefusal(foreground, window, approved.Target, "sent", approved.Target.HasWindow ? anchorRoot : nint.Zero) is { } refused)
+        {
+            return refused;
+        }
+
+        // A modal dialog opened while typing (a "Save changes?" prompt): letters and Enter could press its buttons
+        if (IsModalOver(foreground, anchorRoot))
+        {
+            return ModalRefusal(approved.Target, window, "Nothing more was sent.");
+        }
+
+        return InputGuardResult.Allow(approved.Target, foreground, window.Summary, approved.Anchor);
     }
 
     public InputGuardResult CheckMouse(int x, int y, InputTarget target)
@@ -200,7 +220,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
             return CheckHitForTarget(x, y, hit, target, targetRoot);
         }
 
-        return CheckHitWithoutTarget(hit, target);
+        return CheckHitWithoutTarget(x, y, hit, target);
     }
 
     public InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved)
@@ -215,7 +235,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
 
         return approved.Target.HasWindow
             ? CheckHitForTarget(x, y, hit, approved.Target, approved.Anchor)
-            : CheckHitWithoutTarget(hit, approved.Target);
+            : CheckHitWithoutTarget(x, y, hit, approved.Target);
     }
 
     public WindowSummary? DescribeForeground()
@@ -237,7 +257,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         var window = Read(hit);
-        if (hit != targetRoot && WindowRefusal(hit, window, target, "sent") is { } refused)
+        if (hit != targetRoot && WindowRefusal(hit, window, target, "sent", targetRoot) is { } refused)
         {
             return refused;
         }
@@ -245,24 +265,32 @@ public sealed class InputTargetGuard : IInputTargetGuard
         return InputGuardResult.Allow(target, hit, window.Summary, anchor: targetRoot);
     }
 
-    private InputGuardResult CheckHitWithoutTarget(nint hit, InputTarget target)
+    private InputGuardResult CheckHitWithoutTarget(int x, int y, nint hit, InputTarget target)
     {
         if (hit == nint.Zero)
         {
-            return InputGuardResult.Allow(target, nint.Zero, null, nint.Zero);
+            // Fails closed, as keys do when no window is in front
+            return InputGuardResult.Refuse(InputErrorCode.TargetOccluded,
+                $"No window could be found at ({x}, {y}), so it is not known where the input would go. Nothing was sent. " +
+                "Take fresh coordinates from get_ui_elements or a screenshot, and pass windowHandle with the window you mean.",
+                target);
         }
 
         var window = Read(hit);
-        return WindowRefusal(hit, window, target, "sent") ?? InputGuardResult.Allow(target, hit, window.Summary, anchor: hit);
+        return WindowRefusal(hit, window, target, "sent", targetRoot: nint.Zero)
+               ?? InputGuardResult.Allow(target, hit, window.Summary, anchor: hit);
     }
 
     /// <summary>
     /// True when the top-level window <paramref name="hit"/> at the point takes input for the target: it is
     /// the target's top-level window, a window the target owns (GW_OWNER chain), or a popup (no title bar,
-    /// not an app window) of the target's process or of a process the target started. The last rule covers
-    /// WebView2 and Chromium dropdowns and menus, which msedgewebview2.exe creates unowned, and IME
-    /// windows. It is limited to popups so that another main window of the same process (a second Notepad,
-    /// Explorer or browser window, which share one process) still counts as covering the target.
+    /// not an app window) of the target's process or of a program the target started itself (a direct
+    /// child process). The last rule covers WebView2 and Chromium dropdowns and menus, which the WebView2
+    /// browser process (msedgewebview2.exe, started by the app) creates unowned, and IME windows. It is
+    /// limited to popups so that another main window of the same process (a second Notepad, Explorer or
+    /// browser window, which share one process) still counts as covering the target. The desktop and the
+    /// taskbars never count as a popup, and the child-process part never applies to the desktop shell
+    /// (explorer.exe), which starts almost every program the user opens.
     /// </summary>
     private bool BelongsToTarget(nint hit, nint targetRoot)
     {
@@ -271,7 +299,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
             return true;
         }
 
-        if (!IsPopup(hit))
+        if (!IsPopup(hit) || IsShellWindow(hit))
         {
             return false;
         }
@@ -283,7 +311,44 @@ public sealed class InputTargetGuard : IInputTargetGuard
             return false;
         }
 
-        return hitProcess == targetProcess || _processes.GetAncestorsOf(hitProcess).Contains(targetProcess);
+        if (hitProcess == targetProcess)
+        {
+            return true;
+        }
+
+        if (IsShellProcess(targetProcess))
+        {
+            return false;
+        }
+
+        var ancestors = _processes.GetAncestorsOf(hitProcess);
+        return ancestors is { Count: > 0 } && ancestors[0] == targetProcess;
+    }
+
+    /// <summary>The desktop (the shell window, Progman, WorkerW) or a taskbar.</summary>
+    private bool IsShellWindow(nint window)
+    {
+        var shellWindow = _windows.GetShellWindow();
+        return (shellWindow != nint.Zero && window == shellWindow) ||
+               WindowClassification.IsShellWindowClass(_windows.GetClassName(window));
+    }
+
+    /// <summary>
+    /// The desktop shell's process (the shell window's, or the one the host guard recorded), or any other
+    /// explorer.exe, which runs File Explorer windows in a separate process and starts what they open.
+    /// </summary>
+    private bool IsShellProcess(int processId)
+    {
+        var shellWindow = _windows.GetShellWindow();
+        if ((shellWindow != nint.Zero && (int)_windows.GetWindowThreadProcessId(shellWindow) == processId) ||
+            _hostGuard.Host?.ShellProcessId == processId)
+        {
+            return true;
+        }
+
+        var name = _windows.GetProcessName((uint)processId);
+        return name != null &&
+               string.Equals(TargetPolicySettings.NormalizeProcessName(name), "explorer", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -310,7 +375,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
 
         root = RootOf(handle);
         var window = Read(root);
-        if (WindowRefusal(root, window, target, "sent") is { } refused)
+        if (WindowRefusal(root, window, target, "sent", root) is { } refused)
         {
             return refused;
         }
@@ -331,10 +396,11 @@ public sealed class InputTargetGuard : IInputTargetGuard
 
     /// <summary>
     /// The probes, policy and host checks of a window the input would reach. The host check is skipped only
-    /// for an explicit target with allowHostTarget: the window has then been verified to be that target or
-    /// to belong to it.
+    /// for an explicit target with allowHostTarget, and only when the window is the target's top-level
+    /// window <paramref name="targetRoot"/> or a window it owns: a popup that is accepted only because it
+    /// belongs to the target's process or a child process is still checked.
     /// </summary>
-    private InputGuardResult? WindowRefusal(nint hWnd, WindowRead window, InputTarget target, string action)
+    private InputGuardResult? WindowRefusal(nint hWnd, WindowRead window, InputTarget target, string action, nint targetRoot)
     {
         // Probes: UIPI drops input to a more privileged process without an error
         foreach (var processId in new[] { (int)_windows.GetWindowThreadProcessId(hWnd), window.Info?.ProcessId ?? 0 }
@@ -364,12 +430,16 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         // Host: the agent's own terminal, editor or chat app
-        var explicitHost = target.HasWindow && target.AllowHostTarget;
+        var explicitHost = target.HasWindow && target.AllowHostTarget && targetRoot != nint.Zero &&
+                           (hWnd == targetRoot || WindowOwnerChain.IsOwnedBy(_windows, hWnd, targetRoot));
         if (!explicitHost && _hostGuard.IsHostWindow(hWnd))
         {
-            var hint = target.HasWindow
-                ? $"It belongs to the agent's host, and allowHostTarget was not set. Pass allowHostTarget=true only if the user explicitly asked for input to that window."
-                : "Pass windowHandle with the window you mean; the server brings it to the front for keys and checks that the point is on it for clicks. " +
+            var hint = target.HasWindow && target.AllowHostTarget
+                ? "allowHostTarget lifts this only for the window named in windowHandle and the windows it owns, and this window " +
+                  "is neither. Pass the host window's own handle as windowHandle, and only if the user explicitly asked for input to it."
+                : target.HasWindow
+                ? "It belongs to the agent's host, and allowHostTarget was not set. Pass allowHostTarget=true only if the user explicitly asked for input to that window."
+                :"Pass windowHandle with the window you mean; the server brings it to the front for keys and checks that the point is on it for clicks. " +
                   "To act on the host window itself, pass its handle as windowHandle with allowHostTarget=true, and only if the user explicitly asked for it." +
                   (target.AllowHostTarget ? " allowHostTarget has no effect without windowHandle." : string.Empty);
             return InputGuardResult.Refuse(InputErrorCode.TargetIsAgentHost,
@@ -406,6 +476,36 @@ public sealed class InputTargetGuard : IInputTargetGuard
             $"A menu is active in {Name(window.Summary)}, so typed letters would select menu items. Nothing was typed. " +
             "Close the menu first (send_keys {ESC} with windowHandle) or click into the text field, then type again.",
             target, window.Summary);
+
+    private static InputGuardResult ModalRefusal(InputTarget target, WindowRead dialog, string sent) =>
+        InputGuardResult.Refuse(InputErrorCode.BlockedByModal,
+            $"{Name(dialog.Summary)} is a modal dialog: the window it belongs to is disabled until it closes, and keys could " +
+            $"answer it (Enter, Esc or a letter can press its buttons). {sent} Deal with the dialog first (pass its handle as " +
+            "windowHandle), or ask the user.",
+            target, dialog.Summary, dialog.Summary);
+
+    /// <summary>
+    /// True when <paramref name="window"/> is a modal dialog within <paramref name="anchorRoot"/>'s windows: one
+    /// of its owners, up to and including <paramref name="anchorRoot"/>, is disabled. A modeless dialog leaves
+    /// its owner enabled.
+    /// </summary>
+    private bool IsModalOver(nint window, nint anchorRoot)
+    {
+        foreach (var owner in WindowOwnerChain.SelfAndOwners(_windows, window).Skip(1))
+        {
+            if (IsDisabled(owner))
+            {
+                return true;
+            }
+
+            if (owner == anchorRoot)
+            {
+                break;
+            }
+        }
+
+        return false;
+    }
 
     private InputGuardResult InvalidHandle(InputTarget target, nint handle) =>
         InputGuardResult.Refuse(InputErrorCode.InvalidHandle,
