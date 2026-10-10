@@ -17,7 +17,8 @@ public interface INativeProcessWrapper
 
     /// <summary>
     /// Runs where.exe for <paramref name="fileName"/> without a window and returns the first line it
-    /// prints, or null when it finds nothing, cannot be run or does not finish in time.
+    /// prints, or null when it finds nothing, cannot be run or does not finish within a few seconds.
+    /// The wait is bounded even if where.exe prints nothing; on timeout where.exe is killed.
     /// </summary>
     string? FindWithWhereExe(string fileName);
 

@@ -19,6 +19,11 @@ public class NativeProcessWrapper : INativeProcessWrapper
         return process == null ? null : new ProcessHandle(process);
     }
 
+    /// <summary>
+    /// Runs where.exe for <paramref name="fileName"/> without a window and returns the first line it
+    /// prints. Returns null when it finds nothing, cannot be run, or has not exited and closed its
+    /// output within 5 seconds; in that case where.exe (and anything it started) is killed.
+    /// </summary>
     public string? FindWithWhereExe(string fileName)
     {
         try
@@ -38,14 +43,74 @@ public class NativeProcessWrapper : INativeProcessWrapper
                 return null;
             }
 
-            var output = process.StandardOutput.ReadLine();
-            process.WaitForExit(WhereExeTimeoutMs);
-            return string.IsNullOrWhiteSpace(output) ? null : output;
+            // Read in the background, so the time limit also covers a where.exe that never prints
+            // anything (for example while it searches a PATH entry on an unreachable network share).
+            var output = process.StandardOutput.ReadToEndAsync();
+            return ReadFirstLineWithin(output, process.WaitForExit, () => KillProcessTree(process), WhereExeTimeoutMs);
         }
         catch (Exception)
         {
             // where.exe missing or not runnable: treat as not found
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Waits at most <paramref name="timeoutMs"/> in total for a process to exit and for its output
+    /// to be read to the end, then returns the first line of the output (null when it is blank).
+    /// When the process does not exit in time, its output is not complete in time, or reading it
+    /// fails, <paramref name="kill"/> is called and null is returned.
+    /// </summary>
+    /// <param name="output">The process's standard output, being read to the end.</param>
+    /// <param name="waitForExit">Waits up to the given milliseconds; returns true if the process exited.</param>
+    /// <param name="kill">Kills the process (and its children); must not throw.</param>
+    /// <param name="timeoutMs">Total time limit in milliseconds.</param>
+    public static string? ReadFirstLineWithin(
+        Task<string> output,
+        Func<int, bool> waitForExit,
+        Action kill,
+        int timeoutMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            if (waitForExit(timeoutMs))
+            {
+                var remainingMs = (int)Math.Max(0, timeoutMs - stopwatch.ElapsedMilliseconds);
+                if (output.Wait(remainingMs))
+                {
+                    using var reader = new StringReader(output.Result);
+                    var firstLine = reader.ReadLine();
+                    return string.IsNullOrWhiteSpace(firstLine) ? null : firstLine;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Reading the output failed: treat as not found
+        }
+
+        kill();
+
+        // The abandoned read fails once the process is disposed; observe that so it is not reported
+        // as an unobserved task exception.
+        output.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return null;
+    }
+
+    private static void KillProcessTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception)
+        {
+            // Already exited, or cannot be killed: nothing more to do
         }
     }
 
