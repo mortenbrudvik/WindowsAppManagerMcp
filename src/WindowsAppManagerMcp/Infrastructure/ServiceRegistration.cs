@@ -44,6 +44,9 @@ public static class ServiceRegistration
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
+        // UI Automation tree seam (UIElementService); UiaWorker runs every UI Automation read under a deadline
+        services.AddSingleton<IUiaTree, UiaTree>();
+        services.AddSingleton<IUiaWorker, UiaWorker>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

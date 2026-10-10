@@ -1,79 +1,48 @@
 using System.Diagnostics;
-using System.Windows.Automation;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// Service for retrieving UI element trees from windows using Windows UI Automation.
+/// Service for retrieving UI element trees from windows using Windows UI Automation. The tree is
+/// read through <see cref="IUiaTree"/>, on an <see cref="IUiaWorker"/> thread.
 /// </summary>
+/// <remarks>
+/// Walk rules:
+/// <list type="bullet">
+/// <item>maxDepth counts levels below the window: its children are level 1, and nothing below
+/// level maxDepth is read.</item>
+/// <item>The controlTypes, size and interactable filters decide only whether an element itself is
+/// returned. An element that fails one is left out, and the elements inside it that pass take its
+/// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
+/// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
+/// siblings. A timeout ends the walk and returns what was read so far.</item>
+/// </list>
+/// </remarks>
 public class UIElementService : IUIElementService
 {
     private const int MaxAllowedDepth = 10;
     private const int DefaultMaxDepth = 5;
 
-    // Map ControlType to readable string names
-    private static readonly Dictionary<ControlType, string> ControlTypeNames = new()
-    {
-        { ControlType.Button, "Button" },
-        { ControlType.Calendar, "Calendar" },
-        { ControlType.CheckBox, "CheckBox" },
-        { ControlType.ComboBox, "ComboBox" },
-        { ControlType.Custom, "Custom" },
-        { ControlType.DataGrid, "DataGrid" },
-        { ControlType.DataItem, "DataItem" },
-        { ControlType.Document, "Document" },
-        { ControlType.Edit, "Edit" },
-        { ControlType.Group, "Group" },
-        { ControlType.Header, "Header" },
-        { ControlType.HeaderItem, "HeaderItem" },
-        { ControlType.Hyperlink, "Hyperlink" },
-        { ControlType.Image, "Image" },
-        { ControlType.List, "List" },
-        { ControlType.ListItem, "ListItem" },
-        { ControlType.Menu, "Menu" },
-        { ControlType.MenuBar, "MenuBar" },
-        { ControlType.MenuItem, "MenuItem" },
-        { ControlType.Pane, "Pane" },
-        { ControlType.ProgressBar, "ProgressBar" },
-        { ControlType.RadioButton, "RadioButton" },
-        { ControlType.ScrollBar, "ScrollBar" },
-        { ControlType.Separator, "Separator" },
-        { ControlType.Slider, "Slider" },
-        { ControlType.Spinner, "Spinner" },
-        { ControlType.SplitButton, "SplitButton" },
-        { ControlType.StatusBar, "StatusBar" },
-        { ControlType.Tab, "Tab" },
-        { ControlType.TabItem, "TabItem" },
-        { ControlType.Table, "Table" },
-        { ControlType.Text, "Text" },
-        { ControlType.Thumb, "Thumb" },
-        { ControlType.TitleBar, "TitleBar" },
-        { ControlType.ToolBar, "ToolBar" },
-        { ControlType.ToolTip, "ToolTip" },
-        { ControlType.Tree, "Tree" },
-        { ControlType.TreeItem, "TreeItem" },
-        { ControlType.Window, "Window" }
-    };
+    /// <summary>
+    /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
+    /// tree. A walk still stuck in a UI Automation call after that is abandoned.
+    /// </summary>
+    private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
 
-    // Control types added in Windows 8. The managed client has no ControlType for them and returns
-    // null, so they are recognized by their LocalizedControlType ("app bar" and "semantic zoom" in English).
-    private static readonly string[] UnregisteredControlTypeNames = ["AppBar", "SemanticZoom"];
+    private readonly IUiaTree _tree;
+    private readonly IUiaWorker _worker;
+
+    public UIElementService(IUiaTree tree, IUiaWorker worker)
+    {
+        _tree = tree;
+        _worker = worker;
+    }
 
     /// <inheritdoc />
-    public bool IsAvailable()
-    {
-        try
-        {
-            var root = AutomationElement.RootElement;
-            return root != null;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public bool IsAvailable() => _tree.IsAvailable();
 
     /// <inheritdoc />
     public UIElementResult GetUIElements(
@@ -84,380 +53,338 @@ public class UIElementService : IUIElementService
     {
         var stopwatch = Stopwatch.StartNew();
 
-        // Validate handle
         if (windowHandle == nint.Zero)
         {
             return CreateErrorResult(
                 windowHandle,
-                stopwatch.Elapsed.TotalMilliseconds,
+                stopwatch,
                 "Invalid window handle (zero)",
                 UIElementErrorCode.InvalidHandle);
         }
 
-        // Clamp maxDepth to valid range
         maxDepth = Math.Clamp(maxDepth, 1, MaxAllowedDepth);
+
+        if (ParseControlTypes(filter?.ControlTypes, out var controlTypes) is { } invalidControlTypes)
+        {
+            return CreateErrorResult(windowHandle, stopwatch, invalidControlTypes, UIElementErrorCode.InvalidControlType);
+        }
 
         try
         {
-            // Check UI Automation availability
-            if (!IsAvailable())
+            return _worker.Run(
+                token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, token),
+                cancellationToken,
+                StopGrace);
+        }
+        catch (TimeoutException ex)
+        {
+            // The worker gave up on a read stuck in an application that does not answer
+            return CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+    }
+
+    /// <summary>
+    /// Validates the controlTypes filter. Returns an error message for unknown names, or null with
+    /// the canonical names in <paramref name="controlTypes"/> (null when the filter is not set).
+    /// </summary>
+    private static string? ParseControlTypes(string[]? names, out HashSet<string>? controlTypes)
+    {
+        controlTypes = null;
+        var requested = names?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+        if (requested is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var unknown = requested.Where(n => UiaControlTypes.Canonicalize(n) == null).ToList();
+        if (unknown.Count > 0)
+        {
+            return $"Unknown control type{(unknown.Count == 1 ? "" : "s")}: {string.Join(", ", unknown.Select(n => $"'{n.Trim()}'"))}. " +
+                   $"Valid names: {string.Join(", ", UiaControlTypes.Names)}.";
+        }
+
+        controlTypes = new HashSet<string>(
+            requested.Select(n => UiaControlTypes.Canonicalize(n)!),
+            StringComparer.OrdinalIgnoreCase);
+        return null;
+    }
+
+    /// <summary>Reads the tree on the worker thread.</summary>
+    private UIElementResult ReadTree(
+        nint windowHandle,
+        int maxDepth,
+        UIElementFilter? filter,
+        HashSet<string>? controlTypes,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!_tree.IsAvailable())
             {
                 return CreateErrorResult(
                     windowHandle,
-                    stopwatch.Elapsed.TotalMilliseconds,
+                    stopwatch,
                     "UI Automation is not available on this system",
                     UIElementErrorCode.AutomationUnavailable);
             }
 
-            // Get the automation element for the window
-            AutomationElement windowElement;
+            IUiaNode? window;
             try
             {
-                windowElement = AutomationElement.FromHandle(windowHandle);
-                if (windowElement == null)
-                {
-                    return CreateErrorResult(
-                        windowHandle,
-                        stopwatch.Elapsed.TotalMilliseconds,
-                        "Window not found or handle is invalid",
-                        UIElementErrorCode.WindowNotFound);
-                }
+                window = _tree.FromHandle(windowHandle);
             }
-            catch (ElementNotAvailableException)
+            catch (UiaElementUnavailableException)
+            {
+                window = null;
+            }
+
+            if (window == null)
             {
                 return CreateErrorResult(
                     windowHandle,
-                    stopwatch.Elapsed.TotalMilliseconds,
-                    "Window is no longer available",
+                    stopwatch,
+                    "Window not found or handle is invalid",
                     UIElementErrorCode.WindowNotFound);
             }
 
-            // Get window title
-            string? windowTitle = null;
-            try
-            {
-                windowTitle = windowElement.Current.Name;
-            }
-            catch
-            {
-                // Ignore - window title is optional
-            }
+            var windowTitle = TryReadName(window);
+            var walk = new Walk(_tree, maxDepth, filter, controlTypes, cancellationToken);
 
-            // Parse filter control types
-            HashSet<string>? filterControlTypes = null;
-            if (filter?.ControlTypes != null && filter.ControlTypes.Length > 0)
-            {
-                filterControlTypes = new HashSet<string>(
-                    filter.ControlTypes,
-                    StringComparer.OrdinalIgnoreCase);
-            }
+            // Errors reading the window's own children propagate: an empty tree would look like a
+            // window without controls
+            var elements = walk.ReadChildren(window, level: 1, isWindow: true);
 
-            // Traverse the element tree
-            var counters = new TraversalCounters();
-            var walker = TreeWalker.ControlViewWalker;
-            var elements = TraverseElements(
-                windowElement,
-                walker,
-                maxDepth,
-                currentDepth: 0,
-                filter,
-                filterControlTypes,
-                counters,
-                cancellationToken);
-
-            if (cancellationToken.IsCancellationRequested)
+            if (walk.TimedOut && walk.ElementCount == 0)
             {
                 return CreateErrorResult(
                     windowHandle,
-                    stopwatch.Elapsed.TotalMilliseconds,
-                    "Operation was cancelled due to timeout",
+                    stopwatch,
+                    "The timeout passed before any element was read. Try again with a larger timeoutMs; " +
+                    "if it keeps happening, the application may not be responding.",
                     UIElementErrorCode.OperationTimedOut,
                     windowTitle);
             }
 
-            stopwatch.Stop();
+            var truncationReason = walk.TimedOut
+                ? UIElementTruncationReason.Timeout
+                : walk.SkippedElementCount > 0 ? UIElementTruncationReason.ElementsSkipped : (UIElementTruncationReason?)null;
 
             return new UIElementResult(
                 Success: true,
                 WindowHandle: (long)windowHandle,
                 WindowTitle: windowTitle,
                 Elements: elements,
-                TotalElementCount: counters.ElementCount,
+                TotalElementCount: walk.ElementCount,
                 Depth: maxDepth,
                 ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
-                SkippedElementCount: counters.SkippedElementCount);
+                SkippedElementCount: walk.SkippedElementCount,
+                DepthReached: walk.DepthReached,
+                Truncated: truncationReason != null,
+                TruncationReason: truncationReason);
         }
-        catch (ElementNotAvailableException ex)
+        catch (UiaElementUnavailableException ex)
         {
             return CreateErrorResult(
                 windowHandle,
-                stopwatch.Elapsed.TotalMilliseconds,
+                stopwatch,
                 $"Element is no longer available: {ex.Message}",
                 UIElementErrorCode.ElementAccessFailed);
+        }
+        catch (TimeoutException ex)
+        {
+            return CreateErrorResult(
+                windowHandle,
+                stopwatch,
+                $"UI Automation did not answer in time: {ex.Message}",
+                UIElementErrorCode.OperationTimedOut);
         }
         catch (Exception ex)
         {
             return CreateErrorResult(
                 windowHandle,
-                stopwatch.Elapsed.TotalMilliseconds,
+                stopwatch,
                 $"Error accessing UI elements: {ex.Message}",
                 UIElementErrorCode.OperationException);
         }
     }
 
-    /// <summary>
-    /// Running totals for one traversal. A class rather than ref parameters so the sibling walk's
-    /// callback can update it.
-    /// </summary>
-    private sealed class TraversalCounters
+    private string? TryReadName(IUiaNode node)
     {
-        public int ElementCount;
-        public int SkippedElementCount;
-    }
-
-    private List<UIElementInfo> TraverseElements(
-        AutomationElement element,
-        TreeWalker walker,
-        int maxDepth,
-        int currentDepth,
-        UIElementFilter? filter,
-        HashSet<string>? filterControlTypes,
-        TraversalCounters counters,
-        CancellationToken cancellationToken)
-    {
-        var elements = new List<UIElementInfo>();
-
-        if (cancellationToken.IsCancellationRequested || currentDepth > maxDepth)
-        {
-            return elements;
-        }
-
-        // Keeps going when a child disappears mid-walk, instead of dropping its later siblings
-        var children = SiblingWalker.EnumerateChildren(
-            element,
-            walker.GetFirstChild,
-            walker.GetNextSibling,
-            IsSameElement,
-            onChildrenLost: () => counters.SkippedElementCount++);
-
         try
         {
+            return _tree.Read(node).Name;
+        }
+        catch (Exception)
+        {
+            // The window title is optional
+            return null;
+        }
+    }
+
+    /// <summary>The state of one tree walk.</summary>
+    private sealed class Walk(
+        IUiaTree tree,
+        int maxDepth,
+        UIElementFilter? filter,
+        HashSet<string>? controlTypes,
+        CancellationToken cancellationToken)
+    {
+        /// <summary>Elements returned, nested ones included.</summary>
+        public int ElementCount { get; private set; }
+
+        /// <summary>Elements, or lists of children, that could not be read.</summary>
+        public int SkippedElementCount { get; private set; }
+
+        /// <summary>The deepest level an element was read at (the window's children are level 1).</summary>
+        public int DepthReached { get; private set; }
+
+        /// <summary>The walk stopped early because the timeout passed.</summary>
+        public bool TimedOut { get; private set; }
+
+        /// <summary>
+        /// Reads the children of <paramref name="parent"/>, which are at <paramref name="level"/>, and
+        /// returns the elements to list under it.
+        /// </summary>
+        public List<UIElementInfo> ReadChildren(IUiaNode parent, int level, bool isWindow = false)
+        {
+            var output = new List<UIElementInfo>();
+            if (StopRequested())
+            {
+                return output;
+            }
+
+            IReadOnlyList<IUiaNode> children;
+            try
+            {
+                children = tree.GetChildren(parent, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                TimedOut = true;
+                return output;
+            }
+            catch (Exception) when (!isWindow)
+            {
+                // This element's children could not be read; the element itself is still returned
+                SkippedElementCount++;
+                return output;
+            }
+
             foreach (var child in children)
             {
-                if (cancellationToken.IsCancellationRequested)
+                if (StopRequested())
                 {
                     break;
                 }
 
-                var elementInfo = ExtractElementInfo(
-                    child,
-                    walker,
-                    maxDepth,
-                    currentDepth,
-                    filter,
-                    filterControlTypes,
-                    counters,
-                    cancellationToken);
+                Visit(child, level, output);
+            }
 
-                if (elementInfo != null)
+            return output;
+        }
+
+        /// <summary>
+        /// Adds <paramref name="node"/> with its returned children to <paramref name="output"/> when it
+        /// passes the filters; otherwise adds the children that pass in its place.
+        /// </summary>
+        private void Visit(IUiaNode node, int level, List<UIElementInfo> output)
+        {
+            UiaNodeProperties properties;
+            bool included;
+            try
+            {
+                properties = tree.Read(node);
+                DepthReached = Math.Max(DepthReached, level);
+
+                if (filter?.VisibleOnly == true && properties.IsOffscreen)
                 {
-                    elements.Add(elementInfo);
+                    // An offscreen element's subtree is offscreen too
+                    return;
                 }
+
+                included = PassesFilters(node, properties);
             }
-        }
-        catch (Exception) when (currentDepth > 0)
-        {
-            // This element's children could not be read: skip them. For the window itself the
-            // error propagates, so the caller reports it instead of returning an empty tree.
-            counters.SkippedElementCount++;
-        }
-
-        return elements;
-    }
-
-    private static bool IsSameElement(AutomationElement first, AutomationElement second)
-    {
-        try
-        {
-            return Automation.Compare(first, second);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
-
-    private UIElementInfo? ExtractElementInfo(
-        AutomationElement element,
-        TreeWalker walker,
-        int maxDepth,
-        int currentDepth,
-        UIElementFilter? filter,
-        HashSet<string>? filterControlTypes,
-        TraversalCounters counters,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var current = element.Current;
-
-            // Get control type string. ControlType is null for types the managed client does not know.
-            var controlType = current.ControlType;
-            var controlTypeName = GetControlTypeName(
-                controlType,
-                controlType == null ? TryGetLocalizedControlType(current) : null);
-
-            // Apply control type filter
-            if (filterControlTypes != null && !filterControlTypes.Contains(controlTypeName))
+            catch (Exception)
             {
-                // Still traverse children to find matching descendants
-                if (currentDepth < maxDepth)
+                // The element disappeared or its provider failed (ElementNotAvailable, COMException,
+                // TimeoutException, ...). Skip it; its siblings are still walked.
+                SkippedElementCount++;
+                return;
+            }
+
+            var children = level < maxDepth && !StopRequested()
+                ? ReadChildren(node, level + 1)
+                : [];
+
+            if (!included)
+            {
+                output.AddRange(children);
+                return;
+            }
+
+            ElementCount++;
+            output.Add(new UIElementInfo(
+                Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
+                ControlType: properties.ControlType,
+                AutomationId: string.IsNullOrEmpty(properties.AutomationId) ? null : properties.AutomationId,
+                Bounds: properties.Bounds.ToBounds(),
+                IsEnabled: properties.IsEnabled,
+                IsOffscreen: properties.IsOffscreen,
+                Children: children.Count > 0 ? children : null));
+        }
+
+        /// <summary>
+        /// The controlTypes, size and interactable filters, cheapest first: the interactable check
+        /// reads more properties, so it runs only for elements that pass the others.
+        /// </summary>
+        private bool PassesFilters(IUiaNode node, UiaNodeProperties properties)
+        {
+            if (controlTypes != null && !controlTypes.Contains(properties.ControlType))
+            {
+                return false;
+            }
+
+            if (filter?.MinWidth is not null || filter?.MinHeight is not null)
+            {
+                // An element without bounds has no size to compare
+                var bounds = properties.Bounds.ToBounds();
+                if (bounds == null ||
+                    (filter.MinWidth is { } minWidth && bounds.Width < minWidth) ||
+                    (filter.MinHeight is { } minHeight && bounds.Height < minHeight))
                 {
-                    var childElements = TraverseElements(
-                        element, walker, maxDepth, currentDepth + 1,
-                        filter, filterControlTypes, counters, cancellationToken);
-
-                    // Return children as top-level elements if parent was filtered
-                    foreach (var child in childElements)
-                    {
-                        counters.ElementCount++; // Count will be incremented in recursive call
-                    }
-                }
-                return null;
-            }
-
-            // Get bounds
-            var rect = current.BoundingRectangle;
-            var bounds = new BoundsDto(
-                (int)rect.X,
-                (int)rect.Y,
-                (int)rect.Width,
-                (int)rect.Height);
-
-            var isEnabled = current.IsEnabled;
-            var isOffscreen = current.IsOffscreen;
-
-            // Apply interactable filter
-            if (filter?.InteractableOnly == true && !isEnabled)
-            {
-                return null;
-            }
-
-            // Apply visible filter
-            if (filter?.VisibleOnly == true && isOffscreen)
-            {
-                return null;
-            }
-
-            // Apply size filters
-            if (filter?.MinWidth.HasValue == true && bounds.Width < filter.MinWidth.Value)
-            {
-                return null;
-            }
-
-            if (filter?.MinHeight.HasValue == true && bounds.Height < filter.MinHeight.Value)
-            {
-                return null;
-            }
-
-            // Read the remaining properties before walking the children, so a failure here
-            // cannot discard a subtree that was already read
-            var name = current.Name;
-            var automationId = current.AutomationId;
-
-            counters.ElementCount++;
-
-            // Get children if not at max depth
-            IReadOnlyList<UIElementInfo>? children = null;
-            if (currentDepth < maxDepth)
-            {
-                var childList = TraverseElements(
-                    element, walker, maxDepth, currentDepth + 1,
-                    filter, filterControlTypes, counters, cancellationToken);
-
-                if (childList.Count > 0)
-                {
-                    children = childList;
+                    return false;
                 }
             }
 
-            return new UIElementInfo(
-                Name: string.IsNullOrEmpty(name) ? null : name,
-                ControlType: controlTypeName,
-                AutomationId: string.IsNullOrEmpty(automationId) ? null : automationId,
-                Bounds: bounds,
-                IsEnabled: isEnabled,
-                IsOffscreen: isOffscreen,
-                Children: children);
-        }
-        catch (Exception)
-        {
-            // The element disappeared or its provider failed (ElementNotAvailableException,
-            // COMException, TimeoutException, ...). Skip it; its siblings are still walked.
-            counters.SkippedElementCount++;
-            return null;
-        }
-    }
-
-    private static string? TryGetLocalizedControlType(AutomationElement.AutomationElementInformation current)
-    {
-        try
-        {
-            return current.LocalizedControlType;
-        }
-        catch (Exception)
-        {
-            // The control type name is optional; never lose the element over it
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Gets a readable name for an element's control type.
-    /// </summary>
-    /// <param name="controlType">The element's control type. The managed UI Automation client returns
-    /// null for control types it does not know, such as AppBar (50040) and SemanticZoom (50039).</param>
-    /// <param name="localizedControlType">The element's LocalizedControlType, used when
-    /// <paramref name="controlType"/> is null.</param>
-    /// <returns>The control type name, a name derived from the localized control type, or "Unknown".</returns>
-    public static string GetControlTypeName(ControlType? controlType, string? localizedControlType = null)
-    {
-        if (controlType != null)
-        {
-            if (ControlTypeNames.TryGetValue(controlType, out var name))
+            if (filter?.InteractableOnly == true)
             {
-                return name;
-            }
-
-            // Fallback: extract name from ControlType's ProgrammaticName
-            var programmaticName = controlType.ProgrammaticName;
-            if (!string.IsNullOrEmpty(programmaticName))
-            {
-                var lastDot = programmaticName.LastIndexOf('.');
-                if (lastDot >= 0)
+                if (!properties.IsEnabled)
                 {
-                    return programmaticName[(lastDot + 1)..];
+                    return false;
                 }
-                return programmaticName;
+
+                var interaction = tree.ReadInteraction(node);
+                return interaction.IsKeyboardFocusable || interaction.ActionPatterns.Count > 0;
             }
+
+            return true;
         }
 
-        if (string.IsNullOrWhiteSpace(localizedControlType))
+        private bool StopRequested()
         {
-            return "Unknown";
+            if (cancellationToken.IsCancellationRequested)
+            {
+                TimedOut = true;
+            }
+
+            return TimedOut;
         }
-
-        // "app bar" -> "AppBar"; split on any whitespace
-        var words = localizedControlType.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        var pascalCased = string.Concat(words.Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
-
-        return UnregisteredControlTypeNames.FirstOrDefault(
-            n => n.Equals(pascalCased, StringComparison.OrdinalIgnoreCase)) ?? pascalCased;
     }
 
     private static UIElementResult CreateErrorResult(
         nint windowHandle,
-        double elapsedMs,
+        Stopwatch stopwatch,
         string error,
         UIElementErrorCode errorCode,
         string? windowTitle = null)
@@ -469,7 +396,7 @@ public class UIElementService : IUIElementService
             Elements: null,
             TotalElementCount: 0,
             Depth: 0,
-            ElapsedMilliseconds: Math.Round(elapsedMs, 2),
+            ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
             Error: error,
             ErrorCode: errorCode);
     }

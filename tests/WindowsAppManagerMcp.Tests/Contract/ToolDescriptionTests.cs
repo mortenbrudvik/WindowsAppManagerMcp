@@ -93,20 +93,36 @@ public class ToolDescriptionTests
     [Theory]
     [InlineData("get_ui_elements", "controlTypes")]
     [InlineData("get_ui_elements", "interactableOnly")]
-    [InlineData("get_ui_elements", "visibleOnly")]
     [InlineData("get_ui_elements", "minWidth")]
     [InlineData("get_ui_elements", "minHeight")]
     [InlineData("capture_with_elements", "controlTypes")]
     [InlineData("capture_with_elements", "interactableOnly")]
-    [InlineData("capture_with_elements", "visibleOnly")]
-    public void UIElementFilterDescription_SaysItDropsWholeSubtrees(string toolName, string parameterName)
+    public void UIElementFilterDescription_SaysMatchesInsideLeftOutElementsAreStillReturned(string toolName, string parameterName)
     {
-        // An element that fails a filter is dropped together with everything inside it, so a
-        // client that only sees tools/list must not be told the filters are a safe way to narrow the tree.
-        var description = ServerToolCatalog.AllDescriptions()
+        // These filters apply to each element on its own: an element that fails one is left out,
+        // and the elements inside it that pass are still returned (UIElementService).
+        ParameterDescription(toolName, parameterName).Should().Contain("still returned")
+            .And.NotContain("drops whole subtrees");
+    }
+
+    [Theory]
+    [InlineData("get_ui_elements")]
+    [InlineData("capture_with_elements")]
+    public void VisibleOnlyDescription_SaysItDropsWholeSubtrees(string toolName)
+    {
+        // visibleOnly is the one filter that leaves out everything inside an offscreen element, so a
+        // client that only sees tools/list must know to pass false for scrolled-out controls.
+        ParameterDescription(toolName, "visibleOnly").Should().Contain("drops whole subtrees");
+    }
+
+    [Fact]
+    public void ControlTypesDescription_SaysUnknownNamesFail()
+    {
+        ParameterDescription("get_ui_elements", "controlTypes").Should().Contain("InvalidControlType");
+    }
+
+    private static string ParameterDescription(string toolName, string parameterName) =>
+        ServerToolCatalog.AllDescriptions()
             .Single(d => d.Source == $"{toolName}.{parameterName}")
             .Text;
-
-        description.Should().Contain("drops whole subtrees");
-    }
 }

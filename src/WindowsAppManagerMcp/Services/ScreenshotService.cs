@@ -600,6 +600,16 @@ public class ScreenshotService : IScreenshotService
         bool highlightInteractable,
         List<AnnotatedElement> annotations)
     {
+        if (element.Bounds is null)
+        {
+            // No position on screen: no overlay, but the elements inside can have one
+            if (element.Children != null)
+            {
+                DrawElementOverlays(graphics, element.Children, windowBounds, imageWidth, imageHeight, highlightInteractable, annotations);
+            }
+            return;
+        }
+
         // Calculate image-relative coordinates
         var screenBounds = element.Bounds;
         var imageBounds = new BoundsDto(
