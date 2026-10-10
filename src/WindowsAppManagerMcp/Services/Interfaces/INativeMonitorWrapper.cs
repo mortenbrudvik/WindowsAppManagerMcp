@@ -1,0 +1,27 @@
+using WindowsAppManagerMcp.Models;
+
+namespace WindowsAppManagerMcp.Services.Interfaces;
+
+/// <summary>
+/// Abstraction over the native Windows monitor APIs (EnumDisplayMonitors, GetMonitorInfo,
+/// GetDpiForMonitor, MonitorFromWindow and MonitorFromPoint).
+/// This interface enables unit testing of MonitorService with fake monitor topologies.
+/// </summary>
+public interface INativeMonitorWrapper
+{
+    /// <summary>
+    /// Enumerates the connected monitors in EnumDisplayMonitors order.
+    /// Each call returns a new list whose monitor indices run from 0 in list order.
+    /// </summary>
+    IReadOnlyList<(nint Handle, MonitorInfo Info)> EnumerateMonitors();
+
+    /// <summary>
+    /// Gets the handle of the monitor that contains the window, or the nearest monitor.
+    /// </summary>
+    nint MonitorFromWindow(nint windowHandle);
+
+    /// <summary>
+    /// Gets the handle of the monitor that contains the point, or the nearest monitor.
+    /// </summary>
+    nint MonitorFromPoint(int x, int y);
+}

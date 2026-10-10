@@ -16,6 +16,8 @@ public record UIElementInfo(
 /// <summary>
 /// Result of a UI element retrieval operation.
 /// </summary>
+/// <param name="SkippedElementCount">Elements (or runs of siblings) left out because they disappeared
+/// or their provider failed while the tree was walked. Greater than zero means the tree may be incomplete.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -25,7 +27,8 @@ public record UIElementResult(
     int Depth,
     double ElapsedMilliseconds,
     string? Error = null,
-    UIElementErrorCode ErrorCode = UIElementErrorCode.None
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None,
+    int SkippedElementCount = 0
 );
 
 /// <summary>
