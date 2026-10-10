@@ -475,8 +475,9 @@ public class NativeCallGuardTests
         // Arrange - the shared pause and the chord holder marks are named events that every server on the desktop
         // opens (Local\WindowsAppManagerMcp.*). Code that created, opened or set one outside the wrapper the tests
         // replace with a fake would pause or resume the user's running servers from an ordinary test run. So every
-        // constructor of a WaitHandle type (EventWaitHandle, Mutex, Semaphore) that takes a name, and every
-        // OpenExisting or TryOpenExisting, stays in NativeHotkeyWrapper.
+        // constructor of a WaitHandle type (EventWaitHandle, Mutex, Semaphore) that takes a name, every
+        // OpenExisting or TryOpenExisting, and the AccessControl factories (EventWaitHandleAcl and the like) stay
+        // in NativeHotkeyWrapper.
 
         // Act
         var callers = FindCallers(IsNamedWaitHandleAccess);
@@ -578,13 +579,19 @@ public class NativeCallGuardTests
 
     /// <summary>
     /// A constructor of a <see cref="WaitHandle"/> type (EventWaitHandle, Mutex, Semaphore) that takes a name, or
-    /// OpenExisting/TryOpenExisting of one: an object shared with every process of the logon session.
+    /// OpenExisting/TryOpenExisting of one: an object shared with every process of the logon session. Also the
+    /// factories of System.Threading.AccessControl (EventWaitHandleAcl, MutexAcl, SemaphoreAcl), which create and
+    /// open the same named objects from static classes that are not wait handles, and any other method that takes a
+    /// string and returns a wait handle.
     /// </summary>
     private static bool IsNamedWaitHandleAccess(MethodBase callee) =>
         callee.DeclaringType is { } type &&
-        typeof(WaitHandle).IsAssignableFrom(type) &&
-        ((callee is ConstructorInfo && callee.GetParameters().Any(p => p.ParameterType == typeof(string))) ||
-         callee.Name is "OpenExisting" or "TryOpenExisting");
+        ((typeof(WaitHandle).IsAssignableFrom(type) &&
+          ((callee is ConstructorInfo && TakesAString(callee)) || callee.Name is "OpenExisting" or "TryOpenExisting")) ||
+         (type.Namespace == "System.Threading" && type.Name.EndsWith("Acl", StringComparison.Ordinal)) ||
+         (callee is MethodInfo method && typeof(WaitHandle).IsAssignableFrom(method.ReturnType) && TakesAString(callee)));
+
+    private static bool TakesAString(MethodBase method) => method.GetParameters().Any(p => p.ParameterType == typeof(string));
 
     private static List<string> Unexpected(Dictionary<Type, List<string>> callers, params Type[] allowedOwners) =>
         callers.Where(c => !allowedOwners.Contains(c.Key)).SelectMany(c => c.Value).ToList();
