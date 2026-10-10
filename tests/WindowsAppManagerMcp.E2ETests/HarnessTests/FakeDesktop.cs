@@ -33,4 +33,9 @@ internal sealed class FakeDesktop : IDesktopProbe
 
     public string GetWindowTitle(nint hwnd) =>
         hwnd == FixtureWindow ? "Fixture window" : hwnd == OtherWindow ? "Other window" : "";
+
+    /// <summary>The thread the guarded calls come from.</summary>
+    public uint CurrentThreadId { get; set; } = 1111;
+
+    public uint GetCurrentThreadId() => CurrentThreadId;
 }
