@@ -44,14 +44,31 @@ jobs:
 
       # bin/WindowsAppManagerMcp.exe is the exe the Claude Code plugin runs. A v* tag must ship an
       # exe built from the tagged sources with the tagged version (scripts/Publish-Plugin.ps1).
-      # On other refs a stale exe is expected until the next release, so it is only a warning.
+      # A push or pull request that changes the exe gets the same strict check (without the tag),
+      # so a stale or hand-built exe fails when it is committed; users install the plugin from main.
+      # Otherwise a stale exe is expected until the next release, so it is only a warning.
       - name: Verify committed plugin binary
         shell: pwsh
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             ./scripts/Test-PluginBinary.ps1 -Tag $env:GITHUB_REF_NAME
           } else {
-            ./scripts/Test-PluginBinary.ps1 -WarnOnly
+            . ./scripts/ReleaseCommon.ps1
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+              $change = Test-PluginBinaryChanged -Root $PWD.Path -Base $env:PR_BASE_SHA -Head $env:PR_HEAD_SHA -SinceMergeBase
+            } else {
+              $change = Test-PluginBinaryChanged -Root $PWD.Path -Base $env:PUSH_BEFORE_SHA -Head $env:GITHUB_SHA
+            }
+            Write-Host $change.Reason
+            if ($change.Changed) {
+              ./scripts/Test-PluginBinary.ps1
+            } else {
+              ./scripts/Test-PluginBinary.ps1 -WarnOnly
+            }
           }
 
       - name: Upload build artifact
@@ -80,8 +97,22 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path ./release/* -DestinationPath "WindowsAppManagerMcp-$env:GITHUB_REF_NAME-win-x64.zip"
 
+      # The GitHub CLI preinstalled on the runner creates the release, so no third-party action runs
+      # with this job's write token. --verify-tag refuses to create a missing tag. A re-run of the
+      # job replaces the asset of the release the first run created.
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: WindowsAppManagerMcp-${{ github.ref_name }}-win-x64.zip
-          generate_release_notes: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 'gh release view' fails when the release does not exist yet, the usual case.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:GITHUB_REF_NAME
+          $zip = "WindowsAppManagerMcp-$tag-win-x64.zip"
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip --clobber
+          } else {
+            gh release create $tag $zip --title $tag --generate-notes --verify-tag
+          }

@@ -307,7 +307,7 @@
      }
    }
    ```
-   Build command: `dotnet publish src/WindowsAppManagerMcp -c Release -r win-x64 --self-contained -o ./publish`
+   Build command: `dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish` (see README, "Option 3: Build from Source")
 
 2. **Optional Tasks:**
    - 6.4: Create appsettings.json for configuration
@@ -329,7 +329,7 @@
 |---|------|--------|-------|
 | 8.1 | Create `.claude-plugin/plugin.json` | ✅ Complete | Plugin metadata + MCP server config |
 | 8.2 | Create `.claude-plugin/marketplace.json` | ✅ Complete | Marketplace distribution manifest |
-| 8.3 | Build exe to `bin/` directory | ✅ Complete | `dotnet publish -o ./bin` |
+| 8.3 | Build exe to `bin/` directory | ✅ Complete | `scripts/Publish-Plugin.ps1` (see `/commit`); never publish into `bin/` by hand |
 | 8.4 | Create `skills/using-windows-app-manager/SKILL.md` | ✅ Complete | Skill file with trigger patterns |
 | 8.5 | Update README.md with plugin installation | ✅ Complete | Add Claude Code install instructions |
 | 8.6 | Test local plugin installation | ✅ Complete | `/plugin marketplace add`, `/plugin install` |

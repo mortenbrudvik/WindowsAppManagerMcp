@@ -6,12 +6,14 @@
 .DESCRIPTION
     1. Checks that Directory.Build.props, plugin.json and marketplace.json declare the same version.
     2. Refuses to build when a build input has uncommitted changes: src/, config/ (the sample layout
-       presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository root
-       (modified, untracked or ignored), and Directory.Build.props beyond the <Version> that
-       Set-Version.ps1 changes ($BuildInputPaths in scripts/ReleaseCommon.ps1 lists them). The exe
-       embeds the HEAD commit SHA in its ProductVersion, and CI (scripts/Test-PluginBinary.ps1) uses
-       that SHA to prove the committed binary matches its build inputs. Use -AllowDirty only for
-       local, uncommitted test builds.
+       presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository root, and
+       Directory.Build.props beyond the <Version> that Set-Version.ps1 changes ($BuildInputPaths in
+       scripts/ReleaseCommon.ps1 lists them). Modified, untracked and ignored files all count,
+       because MSBuild reads ignored files too (for example a *.csproj.user or a
+       Directory.Build.rsp); only the bin/ and obj/ build output next to each project is left out.
+       The exe embeds the HEAD commit SHA in its ProductVersion, and CI
+       (scripts/Test-PluginBinary.ps1) uses that SHA to prove the committed binary matches its build
+       inputs. Use -AllowDirty only for local, uncommitted test builds outside <repo>/bin.
     3. Runs dotnet publish (Release, win-x64, framework-dependent single file) into a staging folder
        under artifacts/ (gitignored).
     4. Checks the publish produced only WindowsAppManagerMcp.exe (plus symbols), because that single
@@ -27,7 +29,9 @@
 
 .PARAMETER AllowDirty
     Build even if a build input has uncommitted changes. The exe's commit SHA will then not
-    describe what it was built from, so never commit a binary built this way.
+    describe what it was built from, so never commit a binary built this way. Needs an
+    -OutputDirectory outside the repository's bin/: the script refuses to put a dirty build where
+    the committed plugin exe lives.
 
 .EXAMPLE
     ./scripts/Publish-Plugin.ps1
@@ -45,9 +49,16 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ReleaseCommon.ps1')
 
 $root = Get-RepoRoot
+$repoBin = Join-Path $root 'bin'
 if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $root 'bin'
+    $OutputDirectory = $repoBin
 }
+# Relative paths resolve against the PowerShell location, like any other path argument.
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+$publishesToRepoBin = [string]::Equals(
+    [System.IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\', '/'),
+    [System.IO.Path]::GetFullPath($repoBin).TrimEnd('\', '/'),
+    [System.StringComparison]::OrdinalIgnoreCase)
 
 # 1. Versions agree
 $version = Get-PropsVersion $root
@@ -67,7 +78,12 @@ $dirty = @(Get-UncommittedBuildInputs $root)
 if ($dirty.Count -gt 0) {
     $message = "Build inputs have uncommitted changes, so the exe's commit SHA ($headSha) would not describe what it was built from:`n  " + ($dirty -join "`n  ")
     if (-not $AllowDirty) {
-        throw "$message`nCommit them first, or pass -AllowDirty for a local test build that must not be committed."
+        throw "$message`nCommit them first, or pass -AllowDirty with -OutputDirectory for a local test build that must not be committed."
+    }
+    if ($publishesToRepoBin) {
+        # The exe in bin/ is committed, and it would report HEAD's SHA, so the release check
+        # (Test-PluginBinary.ps1) could not tell that it holds uncommitted code.
+        throw "$message`n-AllowDirty cannot publish into $repoBin, the committed plugin exe. Commit the changes first, or pass -OutputDirectory with a folder outside the repository's bin/ for a local test build."
     }
     Write-Warning $message
 }

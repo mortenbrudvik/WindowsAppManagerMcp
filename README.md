@@ -212,12 +212,17 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
   script refuses uncommitted changes to the build inputs and verifies the exe reports
   `<version>+<HEAD sha>`. The build inputs are `src/`, `config/` (the sample layout presets are
   embedded in the exe) and the MSBuild, NuGet and SDK files at the repository root; they are listed
-  once, in `scripts/ReleaseCommon.ps1`.
+  once, in `scripts/ReleaseCommon.ps1`. Ignored files count too, because MSBuild reads them (for
+  example a `*.csproj.user`); only each project's `bin/` and `obj/` build output is left out.
+  `-AllowDirty` builds anyway, but only into another folder (`-OutputDirectory`), never into `bin/`.
 - `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and that
-  no build input changed since the commit it was built from. The Build workflow runs it on pushes and pull requests as a warning and on `v*`
-  tags as an error, so a release cannot ship a stale exe. The tag's GitHub release gets
+  no build input changed since the commit it was built from. The Build workflow runs it as an error
+  on `v*` tags, so a release cannot ship a stale exe, and on pushes and pull requests that change
+  `bin/WindowsAppManagerMcp.exe`, so a stale or hand-built exe fails when it is committed. On other
+  pushes and pull requests it is only a warning. The tag's GitHub release gets
   `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
-  build from the committed exe, see [Option 4](#option-4-download-release)).
+  build from the committed exe, see [Option 4](#option-4-download-release)) and publishes with the
+  GitHub CLI.
 - `bin/` is gitignored, but `bin/WindowsAppManagerMcp.exe` is tracked, so staging it needs
   `git add -f -- bin/WindowsAppManagerMcp.exe`. The `/commit` command
   (`.claude/commands/commit.md`) does this.
@@ -243,7 +248,8 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
   system state, such as the window, monitor and process lists)
 - **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) are for
   tests with real side effects, such as starting processes or sending input. They are skipped
-  unless you opt in. Today the only ones are the gate's own canaries, which have no side effects:
+  unless you opt in; CI runs them without the opt-in and fails unless every one is reported as
+  skipped. Today the only ones are the gate's own canaries, which have no side effects. To opt in:
 
 ```powershell
 $env:WAM_ALLOW_DESKTOP_TESTS = "1"
