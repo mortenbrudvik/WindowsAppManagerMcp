@@ -599,7 +599,8 @@ public class WindowService : IWindowService
             IsCloaked = isCloaked,
             OwnerHandle = owner == nint.Zero ? null : owner,
             HostProcessName = process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null,
-            HostProcessId = process.HostProcessId is { } id ? (int)id : null
+            HostProcessId = process.HostProcessId is { } id ? (int)id : null,
+            IsAgentHost = _hostGuard.IsHostWindow(hWnd)
         };
     }
 

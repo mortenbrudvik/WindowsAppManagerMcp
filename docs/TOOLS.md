@@ -93,7 +93,7 @@ Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows))
 
 Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the `newBounds`/`newState` reads after window actions never apply it.
 
-Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply.
+Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply. `isAgentHost: true` marks a window of the agent's own host (the terminal, editor or chat app this server was started from, or a window it owns, as recorded when the server started); it is left out for every other window. The [Input guard](#input-guard) refuses input to such a window unless it is named as `windowHandle` with `allowHostTarget: true`, and [close_window](#close_window) refuses it without `force`.
 
 ### find_windows
 
@@ -282,9 +282,12 @@ Get information about the currently focused window. Any window is reported, with
   "isVisible": true,
   "monitorIndex": 0,
   "className": "Chrome_WidgetWin_1",
-  "isCloaked": false
+  "isCloaked": false,
+  "isAgentHost": true
 }
 ```
+
+Here the window in front is the editor the agent runs in, so it carries `isAgentHost: true`: typing without `windowHandle` would be refused with `TargetIsAgentHost` (see [Input guard](#input-guard)).
 
 ---
 

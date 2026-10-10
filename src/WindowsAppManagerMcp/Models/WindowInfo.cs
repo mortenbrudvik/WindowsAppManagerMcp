@@ -33,4 +33,11 @@ public record WindowInfo(
 
     /// <summary>For a UWP frame window: the ID of the frame host process; otherwise null.</summary>
     public int? HostProcessId { get; init; }
+
+    /// <summary>
+    /// Whether the window belongs to the agent's own host (IHostGuard.IsHostWindow): the terminal, editor
+    /// or chat app the server was started from, or a window it owns. Input tools refuse such a window
+    /// unless it is named explicitly with allowHostTarget, and close_window refuses it without force.
+    /// </summary>
+    public bool IsAgentHost { get; init; }
 }
