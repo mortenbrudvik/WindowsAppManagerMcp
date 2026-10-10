@@ -153,7 +153,7 @@ public class UIElementService : IUIElementService
             }
 
             // Traverse the element tree
-            var elementCount = 0;
+            var counters = new TraversalCounters();
             var walker = TreeWalker.ControlViewWalker;
             var elements = TraverseElements(
                 windowElement,
@@ -162,7 +162,7 @@ public class UIElementService : IUIElementService
                 currentDepth: 0,
                 filter,
                 filterControlTypes,
-                ref elementCount,
+                counters,
                 cancellationToken);
 
             if (cancellationToken.IsCancellationRequested)
@@ -182,9 +182,10 @@ public class UIElementService : IUIElementService
                 WindowHandle: (long)windowHandle,
                 WindowTitle: windowTitle,
                 Elements: elements,
-                TotalElementCount: elementCount,
+                TotalElementCount: counters.ElementCount,
                 Depth: maxDepth,
-                ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2));
+                ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
+                SkippedElementCount: counters.SkippedElementCount);
         }
         catch (ElementNotAvailableException ex)
         {
@@ -204,6 +205,16 @@ public class UIElementService : IUIElementService
         }
     }
 
+    /// <summary>
+    /// Running totals for one traversal. A class rather than ref parameters so the sibling walk's
+    /// callback can update it.
+    /// </summary>
+    private sealed class TraversalCounters
+    {
+        public int ElementCount;
+        public int SkippedElementCount;
+    }
+
     private List<UIElementInfo> TraverseElements(
         AutomationElement element,
         TreeWalker walker,
@@ -211,7 +222,7 @@ public class UIElementService : IUIElementService
         int currentDepth,
         UIElementFilter? filter,
         HashSet<string>? filterControlTypes,
-        ref int elementCount,
+        TraversalCounters counters,
         CancellationToken cancellationToken)
     {
         var elements = new List<UIElementInfo>();
@@ -221,50 +232,59 @@ public class UIElementService : IUIElementService
             return elements;
         }
 
+        // Keeps going when a child disappears mid-walk, instead of dropping its later siblings
+        var children = SiblingWalker.EnumerateChildren(
+            element,
+            walker.GetFirstChild,
+            walker.GetNextSibling,
+            IsSameElement,
+            onChildrenLost: () => counters.SkippedElementCount++);
+
         try
         {
-            var child = walker.GetFirstChild(element);
-            while (child != null && !cancellationToken.IsCancellationRequested)
+            foreach (var child in children)
             {
-                try
+                if (cancellationToken.IsCancellationRequested)
                 {
-                    var elementInfo = ExtractElementInfo(
-                        child,
-                        walker,
-                        maxDepth,
-                        currentDepth,
-                        filter,
-                        filterControlTypes,
-                        ref elementCount,
-                        cancellationToken);
-
-                    if (elementInfo != null)
-                    {
-                        elements.Add(elementInfo);
-                    }
-
-                    child = walker.GetNextSibling(child);
+                    break;
                 }
-                catch (ElementNotAvailableException)
+
+                var elementInfo = ExtractElementInfo(
+                    child,
+                    walker,
+                    maxDepth,
+                    currentDepth,
+                    filter,
+                    filterControlTypes,
+                    counters,
+                    cancellationToken);
+
+                if (elementInfo != null)
                 {
-                    // Element became unavailable, skip to next sibling
-                    try
-                    {
-                        child = walker.GetNextSibling(child);
-                    }
-                    catch
-                    {
-                        break;
-                    }
+                    elements.Add(elementInfo);
                 }
             }
         }
-        catch (ElementNotAvailableException)
+        catch (Exception) when (currentDepth > 0)
         {
-            // Parent element became unavailable
+            // This element's children could not be read: skip them. For the window itself the
+            // error propagates, so the caller reports it instead of returning an empty tree.
+            counters.SkippedElementCount++;
         }
 
         return elements;
+    }
+
+    private static bool IsSameElement(AutomationElement first, AutomationElement second)
+    {
+        try
+        {
+            return Automation.Compare(first, second);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private UIElementInfo? ExtractElementInfo(
@@ -274,7 +294,7 @@ public class UIElementService : IUIElementService
         int currentDepth,
         UIElementFilter? filter,
         HashSet<string>? filterControlTypes,
-        ref int elementCount,
+        TraversalCounters counters,
         CancellationToken cancellationToken)
     {
         try
@@ -295,12 +315,12 @@ public class UIElementService : IUIElementService
                 {
                     var childElements = TraverseElements(
                         element, walker, maxDepth, currentDepth + 1,
-                        filter, filterControlTypes, ref elementCount, cancellationToken);
+                        filter, filterControlTypes, counters, cancellationToken);
 
                     // Return children as top-level elements if parent was filtered
                     foreach (var child in childElements)
                     {
-                        elementCount++; // Count will be incremented in recursive call
+                        counters.ElementCount++; // Count will be incremented in recursive call
                     }
                 }
                 return null;
@@ -340,7 +360,12 @@ public class UIElementService : IUIElementService
                 return null;
             }
 
-            elementCount++;
+            // Read the remaining properties before walking the children, so a failure here
+            // cannot discard a subtree that was already read
+            var name = current.Name;
+            var automationId = current.AutomationId;
+
+            counters.ElementCount++;
 
             // Get children if not at max depth
             IReadOnlyList<UIElementInfo>? children = null;
@@ -348,7 +373,7 @@ public class UIElementService : IUIElementService
             {
                 var childList = TraverseElements(
                     element, walker, maxDepth, currentDepth + 1,
-                    filter, filterControlTypes, ref elementCount, cancellationToken);
+                    filter, filterControlTypes, counters, cancellationToken);
 
                 if (childList.Count > 0)
                 {
@@ -357,16 +382,19 @@ public class UIElementService : IUIElementService
             }
 
             return new UIElementInfo(
-                Name: string.IsNullOrEmpty(current.Name) ? null : current.Name,
+                Name: string.IsNullOrEmpty(name) ? null : name,
                 ControlType: controlTypeName,
-                AutomationId: string.IsNullOrEmpty(current.AutomationId) ? null : current.AutomationId,
+                AutomationId: string.IsNullOrEmpty(automationId) ? null : automationId,
                 Bounds: bounds,
                 IsEnabled: isEnabled,
                 IsOffscreen: isOffscreen,
                 Children: children);
         }
-        catch (ElementNotAvailableException)
+        catch (Exception)
         {
+            // The element disappeared or its provider failed (ElementNotAvailableException,
+            // COMException, TimeoutException, ...). Skip it; its siblings are still walked.
+            counters.SkippedElementCount++;
             return null;
         }
     }
