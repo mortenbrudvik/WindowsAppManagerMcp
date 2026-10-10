@@ -121,11 +121,13 @@ The model sees real pixels it can click from accurately. Keyboard and mouse inpu
 
 ### M1.1 Default host-window input guard
 
-**Priority:** P0 · **Effort:** S · **Kind:** fix
+**Priority:** P0 · **Effort:** S · **Kind:** fix · **Branch:** `m1-security-probes` (detection done; wiring open)
 
 Input that names no target still goes to the focused window, which is usually the agent's own terminal. A cheap HostGuard on the default input path makes that impossible unless the agent explicitly targets the host.
 
 **Design.** At startup a HostGuard singleton records three things. (a) The server's ancestor PIDs, from a Toolhelp parent walk with creation-time checks. (b) The root owner of GetConsoleWindow(). (c) GetForegroundWindow() at server start, which covers Windows Terminal default-terminal delegation, where WindowsTerminal.exe is not an ancestor. Before every SendInput batch, inside the input gate, resolve the receiving root window: GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) for keys, and WindowFromPoint (a new P/Invoke) plus GA_ROOT for mouse input. If that window is in the host set, return TargetIsAgentHost with the observed foreground window, unless the call explicitly targets it with allowHostTarget=true. Add WindowInfo.IsAgentHost and report the host set in get_server_info. Unit-test with mocked wrappers.
+
+**Shipped so far (detection only).** IHostGuard (HostGuard) is created at server start by a hosted service, so the foreground window it records is the one the agent was started from. It records the ancestors with their start times, the root owner of GetConsoleWindow() and the root owner of the startup foreground window, and answers IsHostProcess(pid) and IsHostWindow(hwnd), root-owner aware. Refinements: an ancestor PID that now belongs to a newer process stops counting, while one that cannot be verified still counts. The process that owns the console host window is a host process; the startup foreground window protects only itself and the popups it owns. The desktop shell (the owner of GetShellWindow()) is left out of the window rule, because explorer.exe is often an ancestor and also owns the taskbar, the desktop and File Explorer; a startup foreground window that belongs to the shell is not recorded. Still open: the input-path check with TargetIsAgentHost and allowHostTarget, the close guard (M1.7), WindowInfo.IsAgentHost and get_server_info.
 
 *Sources: r1:crit-missing:host-input-guard, r2:crit-missing:host-input-guard, r1:crit:R55, r1:R55, r2:crit:R8, r1:INP-1, r1:MCP-4, r2:MSP-3*
 
@@ -151,11 +153,13 @@ One routine that gets a window in front despite the foreground lock and reports 
 
 ### M1.4 Integrity, elevation and desktop-state probes
 
-**Priority:** P0 · **Effort:** S · **Kind:** extend
+**Priority:** P0 · **Effort:** S · **Kind:** extend · **Branch:** `m1-security-probes` (Done)
 
 A small mockable service that answers three questions: is the target more privileged than the server, is the input desktop available, and is the session locked. Without it, UIPI and secure-desktop failures are invisible to the agent.
 
 **Design.** IProcessSecurityProbe uses a new NativeMethods.Advapi32 (OpenProcessToken; GetTokenInformation with TokenElevation and TokenIntegrityLevel; GetSidSubAuthority), User32 OpenInputDesktop/CloseDesktop and WTSQuerySessionInformation. Results are cached per PID plus creation time. GetIntegrity(pid) returns Low/Medium/High/System/Unknown; ACCESS_DENIED on OpenProcessToken from a medium-integrity server maps to LikelyElevated. It also exposes ServerIntegrity, IsInputDesktopAvailable() and IsSessionLocked(). Consumers: the input guard (TargetElevated, DesktopUnavailable, SessionLocked before SendInput); UIA warnings for elevated targets; WindowService Win32 error mapping (5 to AccessDenied); get_server_info; list_processes (M6.6).
+
+**As shipped.** ProcessSecurityProbe sits on a read-only INativeSecurityWrapper, whose Advapi32, desktop and Wtsapi32 calls are on the NativeCallGuardTests allow-list. The levels add Untrusted and MediumPlus, and ProcessIntegrity.IsMorePrivilegedThan compares raw RIDs, as UIPI does. ACCESS_DENIED from OpenProcess maps to LikelyElevated too (system and protected processes deny it), but only while the server runs below high integrity; an elevated server reports Unknown. The cache key is the creation time that the token query itself read, so a PID reused in between is not mixed up; Unknown results are not cached, and the cache is bounded. IsInputDesktopAvailable also requires the input desktop to be the server's own desktop and the session not to be disconnected, because OpenInputDesktop still succeeds in a disconnected session. No consumer is wired yet: TargetElevated, DesktopUnavailable and SessionLocked arrive with M1.5.
 
 *Sources: r2:R7, r1:R26, r1:R52, r1:INP-5, r1:PAL-G4, r1:MCP-G5, r2:INP-3, r2:UIA-8, r2:WC-9, r2:PAL-G4, r2:PAL-14, r2:MSP-G7*
 
