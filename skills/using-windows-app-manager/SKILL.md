@@ -292,8 +292,8 @@ The `snap_window` tool supports 14 positions:
 ### Keyboard Automation
 1. Use `find_windows` to get the target window's handle
 2. Use `focus_window` with that handle
-3. If needed, `click` the text field (coordinates from `get_ui_elements`)
-4. Call `get_foreground_window` and confirm its `handle` is the target. Stop if it is not
+3. Call `get_foreground_window` and confirm its `handle` is the target. Stop if it is not
+4. If needed, `click` the text field (coordinates from `get_ui_elements`), then repeat step 3
 5. Use `type_text` to enter text, or `send_keys` for keys and shortcuts:
    - `^c` = Ctrl+C (copy)
    - `^v` = Ctrl+V (paste)
@@ -302,7 +302,7 @@ The `snap_window` tool supports 14 positions:
    - `{TAB}` = Tab key
    - `{ESC}` = Escape key
    - `+{HOME}` = Shift+Home (select to start)
-6. Repeat step 4 before each later `type_text` or `send_keys` call, then verify the result
+6. Repeat step 3 immediately before each later `type_text`, `send_keys` or click, then verify the result
 
 To close a window, use `close_window`, not a key chord.
 

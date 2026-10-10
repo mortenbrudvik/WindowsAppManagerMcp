@@ -2595,16 +2595,16 @@ Delete a layout preset. If no preset has that name, the call fails with `PresetN
 find_windows { "processName": "notepad" }
 ```
 
-2. Get UI elements with bounding boxes:
+2. Get UI elements with bounding boxes. Leave out the filters, which can drop whole subtrees (see [get_ui_elements](#get_ui_elements)), and pick the element from the result yourself:
 ```
-get_ui_elements { "handle": 12345, "interactableOnly": true }
+get_ui_elements { "handle": 12345 }
 ```
 
 3. Find the target element in the response and calculate center:
    - Element bounds: `{ "x": 100, "y": 200, "width": 80, "height": 30 }`
    - Center: x = 100 + 80/2 = 140, y = 200 + 30/2 = 215
 
-4. Bring the window to the front and confirm it (check that the returned `handle` is 12345):
+4. Bring the window to the front, then confirm it immediately before clicking. Stop if the returned `handle` is not 12345:
 ```
 focus_window { "handle": 12345 }
 get_foreground_window {}
@@ -2619,9 +2619,12 @@ click { "x": 140, "y": 215 }
 
 ### Keyboard Automation Workflow
 
-1. Focus the target window:
+Every `get_foreground_window` call below must return `handle` 12345. If it does not, call `focus_window` again and re-check, and stop if it still does not match.
+
+1. Focus the target window and confirm it before clicking:
 ```
 focus_window { "handle": 12345 }
+get_foreground_window {}
 ```
 
 2. Click on a text input field (get coordinates from get_ui_elements):
@@ -2629,57 +2632,65 @@ focus_window { "handle": 12345 }
 click { "x": 500, "y": 300 }
 ```
 
-3. Confirm the foreground window before typing. Stop if `handle` is not 12345:
+3. Confirm the foreground window again, then type text into the field:
 ```
 get_foreground_window {}
-```
-
-4. Type text into the field:
-```
 type_text { "text": "Hello World" }
 ```
 
-5. Use keyboard shortcuts (check `get_foreground_window` again if anything else could have taken focus):
+4. Use keyboard shortcuts, confirming the foreground window immediately before each one:
 ```
+get_foreground_window {}
 send_keys { "keys": "^a" }       // Select all
+get_foreground_window {}
 send_keys { "keys": "^c" }       // Copy
+get_foreground_window {}
 send_keys { "keys": "{TAB}" }    // Move to next field
+get_foreground_window {}
 send_keys { "keys": "^v" }       // Paste
+get_foreground_window {}
 send_keys { "keys": "{ENTER}" }  // Submit
 ```
 
+5. Verify the result, for example with `get_ui_elements` or a capture.
+
 ### Form Automation Example
 
-Complete a form with multiple fields:
+Complete a form with multiple fields. Every `get_foreground_window` call must return `handle` 12345; stop if it does not.
 
 ```
-// 1. Focus the window
+// 1. Focus the window and confirm it before clicking
 focus_window { "handle": 12345 }
+get_foreground_window {}
 
 // 2. Click first field
 click { "x": 500, "y": 100 }
 
-// 3. Confirm the form window is in front (handle 12345) before typing
+// 3. Confirm, then type name
 get_foreground_window {}
-
-// 4. Type name
 type_text { "text": "John Doe" }
 
-// 5. Tab to next field
+// 4. Confirm, then Tab to next field
+get_foreground_window {}
 send_keys { "keys": "{TAB}" }
 
-// 6. Type email
+// 5. Confirm, then type email
+get_foreground_window {}
 type_text { "text": "john@example.com" }
 
-// 7. Tab to next field
+// 6. Confirm, then Tab to next field
+get_foreground_window {}
 send_keys { "keys": "{TAB}" }
 
-// 8. Type message
+// 7. Confirm, then type message
+get_foreground_window {}
 type_text { "text": "This is my message" }
 
-// 9. Confirm the form window is still in front, then submit
+// 8. Confirm, then submit
 get_foreground_window {}
 send_keys { "keys": "{ENTER}" }
+
+// 9. Verify the result, for example with get_ui_elements or a capture
 ```
 
 ---
