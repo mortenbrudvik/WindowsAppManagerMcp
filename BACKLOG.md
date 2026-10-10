@@ -13,7 +13,7 @@
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | 1.1 | Create solution and project structure | ✅ Complete | `WindowsAppManagerMcp.sln` created |
-| 1.2 | Add NuGet packages (MCP SDK, Hosting, DI) | ✅ Complete | ModelContextProtocol 0.5.0-preview.1 |
+| 1.2 | Add NuGet packages (MCP SDK, Hosting, DI) | ✅ Complete | ModelContextProtocol 0.5.0-preview.1; 2.2.0 since M2.13 |
 | 1.3 | Create folder structure | ✅ Complete | Models, Native, Services, Tools |
 | 1.4 | Create base data models | ✅ Complete | WindowInfo, MonitorInfo, LayoutPreset, etc. |
 | 1.5 | Implement P/Invoke native methods | ✅ Complete | user32.dll, kernel32.dll |

@@ -95,6 +95,26 @@ Example: [take_screenshot](#take_screenshot) of a 3840 × 2160 monitor at (0, 0)
 
 A window can move after it was captured, so convert only from a fresh capture, and prefer element bounds for clicks.
 
+### Cancellation and progress
+
+A tool that can take long stops when the client cancels the request (`notifications/cancelled`). The request then gets no result, and what was already done stays done:
+
+| Tool | What a cancellation stops | Progress notifications |
+|------|---------------------------|------------------------|
+| [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | The UI Automation walk, before its `timeoutMs`; nothing is captured | Every 100 elements read |
+| [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | The wait for UI Automation | - |
+| [launch_application](#launch_application), [launch_browser_with_debug](#launch_browser_with_debug) | Before the start, the launch; after it, the wait for the window (the program keeps running) | - |
+| [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for a window | After each application: `i of n` and whether it started |
+| [apply_layout](#apply_layout) | The placements not arranged yet, and a launch's wait for its window | After each placement: `i of n` and its outcome |
+| [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch) | The windows not changed yet, and the pause between two windows | - |
+| [kill_process](#kill_process) | The wait for the process to exit; the close request or termination already sent stands | - |
+| [type_text](#type_text), [send_keys](#send_keys) | The keys not sent yet (see [Input guard](#input-guard)) | - |
+| [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [get_active_browser_url](#get_active_browser_url) | The CDP requests | - |
+
+The launch, layout, window batch and kill tools run inside the input gate (see [Window Control](#window-control)), so cancelling one also lets the input and window calls waiting for it go ahead at once.
+
+A client that sends a progress token with the call (`_meta.progressToken`) gets `notifications/progress` messages before the result: `progress` counts what is done and only grows, `total` is the number of items when it is known (not for a UI Automation walk), and `message` says what was just done. A client may use them to show progress or to keep a long call from timing out.
+
 ---
 
 ## Window Discovery

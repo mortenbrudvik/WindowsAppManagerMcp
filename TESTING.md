@@ -2143,6 +2143,40 @@ The largest typical results, measured in October 2026:
 Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
 
+### Protocol revisions, progress and cancellation
+
+The server uses the stable MCP C# SDK, `ModelContextProtocol` 2.2.0. It speaks two kinds of protocol revision,
+and the tests that depend on the difference run on both:
+
+- **2026-07-28**, which the SDK's own client prefers, so `InProcessMcpServer` negotiates it by default
+  (`InProcessMcpServer.LatestRevision`): `server/discover` instead of the `initialize` handshake, and
+  elicitation as a multi-round-trip request (the tool call returns `input_required`, and the client retries it
+  with the answer).
+- **The earlier revisions with the `initialize` handshake**, which stdio clients such as Claude Code and the CI
+  guard (`scripts/Test-ToolsSnapshot.ps1`, `2025-06-18`) use: elicitation is a request from the server while the
+  call is open. Pass `InProcessMcpServer.WithRevision(options, InProcessMcpServer.InitializeRevision)` as the
+  client options to test this path.
+
+`Contract/ProtocolRevisionContractTests` checks that both list exactly the snapshot's tools and return captures
+and tool errors alike. The elicitation (resume_input), cancellation and stdin EOF tests of
+`InputControlToolContractTests`, and the progress and cancellation tests of `UIElementToolContractTests` and
+`LongRunningToolContractTests`, are theories over `Revisions` (both paths). A new test of something
+protocol-level (elicitation, progress, cancellation, notifications) should be one too.
+
+**Progress.** Check progress notifications where the server wrote them: `InProcessMcpServer.ServerMessages`
+records every message the server writes, and `server.WaitForProgressSent(n)` waits for `n` progress
+notifications and checks that each one came before the call's result. The SDK client hands notifications to their
+handlers concurrently, in any order, and drops a progress notification whose handler runs after the call's
+result arrived, so an `IProgress` given to `Client.CallToolAsync` can see fewer reports, or the same reports in
+another order. Services report `OperationProgress`; test them with `Fixtures/RecordingProgress<T>`, which records
+on the reporting thread.
+
+**Cancellation.** Send `notifications/cancelled` with the call's JSON-RPC id, which a test filter captures (see
+`StartAsync` in `LongRunningToolContractTests`), as any MCP client does, instead of relying on when the SDK
+client sends it for its own token. A tool that changes windows waits for the input gate first, and the gate is
+shared by every test in the process: wait until the tool itself runs before you cancel, or the cancellation only
+ends the wait for the gate. A cancelled call gets no result, and the call log reports it as `cancelled`.
+
 ### Visual Studio
 
 | Action | Shortcut |
