@@ -97,6 +97,14 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial int GetWindowLongW(nint hWnd, int nIndex);
 
+        // Exported by 64-bit user32 only; NativeWindowWrapper falls back to GetWindowLongW in a 32-bit process.
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial nint GetWindowLongPtrW(nint hWnd, int nIndex);
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool IsHungAppWindow(nint hwnd);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial int SetWindowLongW(nint hWnd, int nIndex, int dwNewLong);
 

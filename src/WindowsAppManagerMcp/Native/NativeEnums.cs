@@ -54,6 +54,14 @@ internal static class NativeEnums
     public const uint WS_MAXIMIZE = 0x01000000;
     public const uint WS_CAPTION = 0x00C00000;
 
+    // Extended window styles (GWL_EXSTYLE)
+    public const long WS_EX_TOOLWINDOW = 0x00000080;
+    public const long WS_EX_APPWINDOW = 0x00040000;
+
+    // DwmGetWindowAttribute attributes
+    public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    public const uint DWMWA_CLOAKED = 14;
+
     // Monitor flags
     public const uint MONITOR_DEFAULTTONULL = 0;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
