@@ -113,6 +113,120 @@ public class ForegroundThreadTests
     }
 
     [Fact]
+    public async Task Run_TheWaitForAnEarlierCall_DoesNotCountAgainstTheWorksOwnTime()
+    {
+        // Arrange - an earlier call holds the thread for 1000 ms; this call allows 1600 ms and its work takes 800 ms
+        using var sut = new ForegroundThread();
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var earlier = Task.Run(() => sut.Run(_ =>
+        {
+            started.Set();
+            release.Wait(Long);
+            return 1;
+        }, Long));
+        started.Wait(Long).Should().BeTrue();
+
+        // Act - with one shared budget, only 600 ms would be left for 800 ms of work
+        var queued = Task.Run(() => sut.Run(_ =>
+        {
+            Thread.Sleep(800);
+            return 2;
+        }, TimeSpan.FromMilliseconds(1600)));
+        await Task.Delay(1000);
+        release.Set();
+
+        // Assert - neither was abandoned, so no thread was counted as blocked
+        (await earlier.WaitAsync(Long)).Should().Be(1);
+        (await queued.WaitAsync(Long)).Should().Be(2);
+        sut.StuckThreads.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Run_WhenAnEarlierCallHoldsTheThreadTooLong_ThrowsBusyWithoutRunningTheWorkOrRetiringTheThread()
+    {
+        // Arrange
+        using var sut = new ForegroundThread();
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var earlierThread = 0;
+        var earlier = Task.Run(() => sut.Run(_ =>
+        {
+            earlierThread = Environment.CurrentManagedThreadId;
+            started.Set();
+            release.Wait(Long);
+            return 1;
+        }, Long));
+        started.Wait(Long).Should().BeTrue();
+        var ran = false;
+
+        // Act
+        var act = () => sut.Run(_ => ran = true, TimeSpan.FromMilliseconds(50));
+
+        // Assert - busy is not a window that does not answer: the healthy earlier work keeps its thread
+        act.Should().Throw<ForegroundThreadBusyException>().WithMessage("Another window activation was still running*");
+        ran.Should().BeFalse();
+        sut.StuckThreads.Should().Be(0);
+        release.Set();
+        (await earlier.WaitAsync(Long)).Should().Be(1);
+        sut.Run(_ => Environment.CurrentManagedThreadId, Long).Should().Be(earlierThread);
+    }
+
+    [Fact]
+    public void RetireCurrentThread_FromTheWork_LetsTheWorkFinishAndTheNextCallGetsANewThread()
+    {
+        // Arrange - for example after a detach that Windows refused
+        using var sut = new ForegroundThread();
+        var retiredThread = 0;
+
+        // Act
+        var result = sut.Run(_ =>
+        {
+            retiredThread = Environment.CurrentManagedThreadId;
+            sut.RetireCurrentThread();
+            return 42;
+        }, Long);
+        var next = sut.Run(_ => Environment.CurrentManagedThreadId, Long);
+
+        // Assert
+        result.Should().Be(42);
+        next.Should().NotBe(retiredThread);
+        sut.Run(_ => Environment.CurrentManagedThreadId, Long).Should().Be(next, "the new thread is the long-lived one now");
+    }
+
+    [Fact]
+    public void RetireCurrentThread_ThenTheCallerGivesUpOnTheSameWork_ReportsTheTimeoutAndRecovers()
+    {
+        // Arrange - the work retires its thread and then blocks, so the caller retires it again
+        using var sut = new ForegroundThread();
+        using var release = new ManualResetEventSlim();
+
+        // Act
+        var act = () => sut.Run(_ =>
+        {
+            sut.RetireCurrentThread();
+            release.Wait(Long);
+            return 0;
+        }, TimeSpan.FromMilliseconds(100));
+
+        // Assert
+        act.Should().Throw<TimeoutException>().Which.Should().NotBeOfType<ForegroundThreadBusyException>();
+        release.Set();
+        SpinWait.SpinUntil(() => sut.StuckThreads == 0, Long).Should().BeTrue();
+        sut.Run(_ => 7, Long).Should().Be(7);
+    }
+
+    [Fact]
+    public void RetireCurrentThread_OutsideAnActivationThread_Throws()
+    {
+        using var sut = new ForegroundThread();
+
+        var act = sut.RetireCurrentThread;
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
     public void Run_AfterDispose_Throws()
     {
         var sut = new ForegroundThread();

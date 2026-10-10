@@ -348,6 +348,31 @@ public class ForegroundServiceTests
             "SetForegroundWindow(Target) -> True",
             $"AttachThreadInput({ActivationThread}, {TerminalThread}, detach)");
         _sentInput.Should().BeEmpty();
+        _activationThread.RetireRequests.Should().Be(0, "the detach worked, so the thread stays");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenWindowsRefusesTheDetach_RetiresTheActivationThread()
+    {
+        // Arrange - the attach works but the detach does not: the long-lived activation thread could stay
+        // attached to the terminal's input queue for the rest of the session
+        _threads.Setup(t => t.AttachThreadInput(It.IsAny<uint>(), It.IsAny<uint>(), It.IsAny<bool>()))
+            .Returns<uint, uint, bool>((from, to, attach) =>
+            {
+                _calls.Add($"AttachThreadInput({from}, {to}, {(attach ? "attach" : "detach")}) -> {attach}");
+                _attached = true;
+                return attach;
+            });
+        _lock = ForegroundLock.UntilAttached;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - the activation itself still counts; the next one starts on a new thread
+        outcome.IsForeground.Should().BeTrue();
+        outcome.Method.Should().Be(FocusMethod.AttachThreadInput);
+        _calls.Should().EndWith($"AttachThreadInput({ActivationThread}, {TerminalThread}, detach) -> False");
+        _activationThread.RetireRequests.Should().Be(1);
     }
 
     [Fact]
@@ -711,6 +736,24 @@ public class ForegroundServiceTests
     }
 
     [Fact]
+    public void EnsureForeground_WhenAnotherActivationStillHoldsTheThread_ReportsFocusFailedNotNotResponding()
+    {
+        // Arrange - no window was slow; another focus call was still running
+        var sut = new ForegroundService(_windows.Object, _threads.Object, _input.Object, _security.Object,
+            _windowService.Object, new BusyThread(), Timing(TimeSpan.Zero));
+
+        // Act
+        var outcome = sut.EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.FocusFailed);
+        outcome.Error.Should().Contain("Another window activation was still running").And.NotContain("not responding");
+        outcome.ForegroundHandle.Should().Be(Terminal);
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
     public void EnsureForeground_WhenRestoringBlocksPastTheDeadline_TakesNoFurtherStep()
     {
         // Arrange - ShowWindow on a slow window returns only after the caller stopped waiting
@@ -729,7 +772,7 @@ public class ForegroundServiceTests
         // Act
         sut.EnsureForeground(Target, timeoutMs: 0);
 
-        // Assert - a late activation would surprise the agent and the user
+        // Assert - once the caller has given up, no further step: no SetForegroundWindow, attach or input
         _calls.Should().Equal("ShowWindow(Target, 9)");
         _sentInput.Should().BeEmpty();
     }
@@ -844,6 +887,10 @@ public class ForegroundServiceTests
         public void Cancel() => _cancellation.Cancel();
 
         public T Run<T>(Func<CancellationToken, T> work, TimeSpan timeout) => work(_cancellation.Token);
+
+        public void RetireCurrentThread()
+        {
+        }
     }
 
     /// <summary>An activation thread whose work never finishes in time.</summary>
@@ -851,5 +898,21 @@ public class ForegroundServiceTests
     {
         public T Run<T>(Func<CancellationToken, T> work, TimeSpan timeout) =>
             throw new TimeoutException("Window activation did not finish in time: a window did not answer.");
+
+        public void RetireCurrentThread()
+        {
+        }
+    }
+
+    /// <summary>An activation thread that an earlier call still holds, so the work never starts.</summary>
+    private sealed class BusyThread : IForegroundThread
+    {
+        public T Run<T>(Func<CancellationToken, T> work, TimeSpan timeout) =>
+            throw new ForegroundThreadBusyException(
+                "Another window activation was still running after 3000 ms, so this one did not start. Try again.");
+
+        public void RetireCurrentThread()
+        {
+        }
     }
 }

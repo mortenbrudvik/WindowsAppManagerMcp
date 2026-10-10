@@ -510,7 +510,7 @@ The window counts as in front when the foreground window is the window itself or
 
 | Error code | Meaning |
 |------------|---------|
-| `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later |
+| `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later. Also returned, with nothing tried, when another focus call was still running |
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
 | `InvalidHandle` | The handle is not a window |
@@ -3121,7 +3121,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
-| `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | Windows kept another window in front; `foregroundTitle` and `error` say which and why |
+| `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InvalidArguments` | any tool (`isError: true`) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)) |

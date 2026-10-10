@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
@@ -13,9 +12,11 @@ namespace WindowsAppManagerMcp.Services;
 /// A call to another thread's window (ShowWindow, BringWindowToTop) can block until that thread
 /// answers. When work misses its deadline, its thread is retired: it finishes that work, including the
 /// detach in its finally block on the same thread, and then exits, and the next call starts a new thread.
-/// The work's token is cancelled first, so it takes no further step once the blocked call returns. While
-/// <see cref="MaxStuckThreads"/> retired threads are still blocked, calls fail at once instead of piling
-/// up more blocked threads.
+/// The work's token is cancelled first, so it takes no further step once the blocked call returns (the
+/// blocked call itself still completes). While <see cref="MaxStuckThreads"/> retired threads are still
+/// blocked, calls fail at once instead of piling up more blocked threads. The wait for an earlier call
+/// and the work have separate limits: an earlier call holds the thread at most for its own timeout, so
+/// a call that waited in line still gets its full time and is not mistaken for a blocked one.
 /// </remarks>
 public sealed class ForegroundThread : IForegroundThread, IDisposable
 {
@@ -50,11 +51,12 @@ public sealed class ForegroundThread : IForegroundThread, IDisposable
     {
         ArgumentNullException.ThrowIfNull(work);
         ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
-        var started = Stopwatch.GetTimestamp();
 
+        // The wait in line has its own limit; the work's time starts once it has the thread
         if (!_oneAtATime.Wait(timeout))
         {
-            throw new TimeoutException("Another window activation is still running.");
+            throw new ForegroundThreadBusyException(
+                $"Another window activation was still running after {timeout.TotalMilliseconds:0} ms, so this one did not start. Try again.");
         }
 
         try
@@ -71,8 +73,7 @@ public sealed class ForegroundThread : IForegroundThread, IDisposable
             var item = new WorkItem<T>(work, onAbandonedWorkReturned: () => Interlocked.Decrement(ref _stuckThreads));
             worker.Post(item.Execute);
 
-            var remaining = timeout - Stopwatch.GetElapsedTime(started);
-            if (item.Wait(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero))
+            if (item.Wait(timeout))
             {
                 return item.GetResult();
             }
@@ -94,6 +95,14 @@ public sealed class ForegroundThread : IForegroundThread, IDisposable
         {
             _oneAtATime.Release();
         }
+    }
+
+    /// <inheritdoc />
+    public void RetireCurrentThread()
+    {
+        var worker = Worker.Current ?? throw new InvalidOperationException(
+            "Only work running on an activation thread can retire it.");
+        Retire(worker);
     }
 
     /// <summary>Lets the activation thread exit once it has finished its current work.</summary>
@@ -131,7 +140,11 @@ public sealed class ForegroundThread : IForegroundThread, IDisposable
     /// <summary>The activation thread: runs posted work in order until it is retired.</summary>
     private sealed class Worker
     {
+        [ThreadStatic]
+        private static Worker? t_current;
+
         private readonly BlockingCollection<Action> _queue = new();
+        private int _retired;
 
         public Worker()
         {
@@ -143,13 +156,27 @@ public sealed class ForegroundThread : IForegroundThread, IDisposable
             thread.Start();
         }
 
+        /// <summary>The worker whose thread is the calling thread, or null on any other thread.</summary>
+        public static Worker? Current => t_current;
+
         public void Post(Action action) => _queue.Add(action);
 
-        /// <summary>The thread runs the work already posted, then exits.</summary>
-        public void Retire() => _queue.CompleteAdding();
+        /// <summary>
+        /// The thread runs the work already posted, then exits. Calling it again does nothing: both the
+        /// work (<see cref="RetireCurrentThread"/>) and a caller that gave up on it may retire it, and the
+        /// queue is disposed once the thread has exited.
+        /// </summary>
+        public void Retire()
+        {
+            if (Interlocked.Exchange(ref _retired, 1) == 0)
+            {
+                _queue.CompleteAdding();
+            }
+        }
 
         private void Loop()
         {
+            t_current = this;
             foreach (var action in _queue.GetConsumingEnumerable())
             {
                 action();

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -54,6 +55,7 @@ public sealed class ForegroundService : IForegroundService
     private readonly IWindowService _windowService;
     private readonly IForegroundThread _activationThread;
     private readonly ForegroundTiming _timing;
+    private readonly ILogger<ForegroundService>? _logger;
 
     public ForegroundService(
         INativeWindowWrapper windows,
@@ -62,7 +64,8 @@ public sealed class ForegroundService : IForegroundService
         IProcessSecurityProbe security,
         IWindowService windowService,
         IForegroundThread activationThread,
-        ForegroundTiming? timing = null)
+        ForegroundTiming? timing = null,
+        ILogger<ForegroundService>? logger = null)
     {
         _windows = windows;
         _threads = threads;
@@ -71,6 +74,7 @@ public sealed class ForegroundService : IForegroundService
         _windowService = windowService;
         _activationThread = activationThread;
         _timing = timing ?? ForegroundTiming.Default;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -87,6 +91,11 @@ public sealed class ForegroundService : IForegroundService
         try
         {
             activation = _activationThread.Run(token => Activate(handle, timeout, token), timeout + _timing.ThreadGrace);
+        }
+        catch (ForegroundThreadBusyException ex)
+        {
+            // Nothing was tried, and no window was slow: an earlier activation still held the thread
+            activation = Activation.Failed(RootOf(handle), _windows.GetForegroundWindow(), WindowErrorCode.FocusFailed, ex.Message);
         }
         catch (TimeoutException ex)
         {
@@ -125,9 +134,11 @@ public sealed class ForegroundService : IForegroundService
                 "The window is cloaked: it is on another virtual desktop or its app has hidden it, so it was not activated.");
         }
 
-        // Every change below first checks that the caller is still waiting: a call to another thread's
-        // window (ShowWindow, BringWindowToTop) can block past the deadline, and a late activation would
-        // surprise the agent and the user.
+        // Every step below first checks that the caller is still waiting: a call to another thread's
+        // window (ShowWindow, BringWindowToTop) can block past the deadline, and once the caller has given
+        // up no further step is taken. The blocked call itself still completes, and SW_RESTORE and
+        // BringWindowToTop activate, so the window can still come to the front late: callers check
+        // IsInFront again before input.
         if (token.IsCancellationRequested)
         {
             return Activation.Stopped(root, foreground);
@@ -182,7 +193,7 @@ public sealed class ForegroundService : IForegroundService
                 }
                 finally
                 {
-                    _threads.AttachThreadInput(currentThread, foregroundThread, attach: false);
+                    Detach(currentThread, foregroundThread);
                 }
 
                 if (WaitUntilInFront(root, accepted ? _timing.StepSettle : TimeSpan.Zero, deadline, token, out foreground))
@@ -265,6 +276,24 @@ public sealed class ForegroundService : IForegroundService
             ? Activation.InFront(root, method, foreground, menuClosed)
             : Activation.Failed(root, foreground, WindowErrorCode.FocusFailed,
                 "The window came to the front but lost the foreground again.") with { MenuClosed = menuClosed };
+    }
+
+    /// <summary>
+    /// Undoes the attach, from the thread that made it. If Windows refuses, this thread may still share
+    /// the other thread's input state (often the agent's terminal's), so it is retired: it exits after
+    /// this activation, and the next one starts on a new, unattached thread.
+    /// </summary>
+    private void Detach(uint currentThread, uint foregroundThread)
+    {
+        if (_threads.AttachThreadInput(currentThread, foregroundThread, attach: false))
+        {
+            return;
+        }
+
+        _logger?.LogWarning(
+            "Detaching the window activation thread {CurrentThread} from thread {ForegroundThread} failed; the activation thread is replaced",
+            currentThread, foregroundThread);
+        _activationThread.RetireCurrentThread();
     }
 
     /// <summary>Why the attach step must be skipped, or null when it may run.</summary>
@@ -462,7 +491,7 @@ public sealed class ForegroundService : IForegroundService
         public static Activation Failed(nint root, nint foreground, WindowErrorCode errorCode, string error) =>
             new(root, IsForeground: false, Method: null, foreground, errorCode, error);
 
-        /// <summary>The caller stopped waiting; nobody reads this result.</summary>
+        /// <summary>The caller stopped waiting; nobody reads this result, and no further step was taken.</summary>
         public static Activation Stopped(nint root, nint foreground) =>
             Failed(root, foreground, WindowErrorCode.NotResponding, "The activation was stopped because it took too long.");
     }
