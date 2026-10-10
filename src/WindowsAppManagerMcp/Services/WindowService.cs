@@ -621,22 +621,8 @@ public class WindowService : IWindowService
     private uint? FindHostedAppProcessId(nint frame, string title, uint hostProcessId, ReadSession session)
     {
         // While the app runs, its CoreWindow is a child of the frame.
-        var children = new List<nint>();
-        _nativeWrapper.EnumChildWindows(frame, child =>
-        {
-            children.Add(child);
-            return true;
-        });
-
-        foreach (var child in children)
-        {
-            if (!WindowClassification.IsCoreWindow(_nativeWrapper.GetClassName(child)))
-                continue;
-
-            var childProcessId = _nativeWrapper.GetWindowThreadProcessId(child);
-            if (childProcessId != 0 && childProcessId != hostProcessId)
-                return childProcessId;
-        }
+        if (UwpFrames.FindHostedAppProcessId(_nativeWrapper, frame, hostProcessId) is { } runningAppProcessId)
+            return runningAppProcessId;
 
         // While the app is minimized or suspended, Windows moves its CoreWindow out of the frame to the
         // top level. Match it by title, and only when exactly one other process has such a window; an
