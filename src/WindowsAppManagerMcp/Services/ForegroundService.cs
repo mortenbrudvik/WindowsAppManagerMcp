@@ -159,6 +159,13 @@ public sealed class ForegroundService : IForegroundService
                 "The window is cloaked: it is on another virtual desktop or its app has hidden it, so it was not activated.");
         }
 
+        // The user's policy for the windows the restore and the activation would put on screen, before anything changes
+        var allowed = new HashSet<nint>();
+        if (OwnedWindowRefusal(root, allowed) is { } deniedOwned)
+        {
+            return deniedOwned;
+        }
+
         // Every step below first checks that the caller is still waiting: a call to another thread's
         // window (ShowWindow, BringWindowToTop) can block past the deadline, and once the caller has given
         // up no further step is taken. The blocked call itself still completes, and SW_RESTORE and
@@ -169,17 +176,19 @@ public sealed class ForegroundService : IForegroundService
             return beforeRestore;
         }
 
+        var restored = false;
         if (_windows.IsIconic(root))
         {
             _windows.ShowWindow(root, NativeEnums.SW_RESTORE);
+            restored = true;
         }
 
         // A window that a modal dialog disables takes no input; activate the dialog, as the taskbar does
         var activate = root;
         if (IsDisabled(root) && EnabledPopup(root) is var popup && popup != nint.Zero)
         {
-            // The dialog can belong to another app, such as a credential prompt
-            if (PolicyRefusal(root, popup) is { } deniedPopup)
+            // Checked above, unless the dialog only showed up now (it opened meanwhile, or the restore made it visible)
+            if (!allowed.Contains(popup) && PolicyRefusal(root, popup, restored) is { } deniedPopup)
             {
                 return deniedPopup;
             }
@@ -369,15 +378,70 @@ public sealed class ForegroundService : IForegroundService
         _session != null ? _session.ReadModifiersDown().Count > 0 : KeyNames.SidedModifiers.Any(_input.IsKeyDown);
 
     /// <summary>
-    /// The refusal when the server's target policy denies <paramref name="window"/>, the window that would be
-    /// activated for <paramref name="root"/> (the root itself, or a modal dialog of it); null when it allows it.
+    /// The refusal when the target policy denies a window that restoring or activating <paramref name="root"/> would
+    /// put on screen, checked before anything changes: the modal dialog that activation goes to when one disables the
+    /// root (it can belong to another app, such as a credential prompt), and, for a minimized root, every window it
+    /// owns, because the restore shows them again. Windows hides the windows a minimized window owns, and
+    /// GW_ENABLEDPOPUP finds only visible ones, so those are found by enumerating the top-level windows. The windows
+    /// the policy allows are added to <paramref name="allowed"/>. Null when it allows them all.
     /// </summary>
-    private Activation? PolicyRefusal(nint root, nint window) =>
-        _windowService.EvaluateTargetPolicy(window) is { Allowed: false } verdict
-            ? Activation.Failed(root, _windows.GetForegroundWindow(), WindowErrorCode.TargetDeniedByPolicy,
-                $"The window is refused by the server's target policy: {verdict.Reason}. It was not activated or restored. The policy " +
-                "is set by the user in the server's environment and no tool argument changes it; ask the user to do this step.")
-            : null;
+    private Activation? OwnedWindowRefusal(nint root, HashSet<nint> allowed)
+    {
+        var owned = new List<nint>();
+        if (IsDisabled(root) && EnabledPopup(root) is var popup && popup != nint.Zero)
+        {
+            owned.Add(popup);
+        }
+
+        if (_windows.IsIconic(root))
+        {
+            _windows.EnumWindows(window =>
+            {
+                if (window != root && !owned.Contains(window) && WindowOwnerChain.IsOwnedBy(_windows, window, root))
+                {
+                    owned.Add(window);
+                }
+
+                return true;
+            });
+        }
+
+        foreach (var window in owned)
+        {
+            if (PolicyRefusal(root, window) is { } refusal)
+            {
+                return refusal;
+            }
+
+            allowed.Add(window);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The refusal when the server's target policy denies <paramref name="window"/>: <paramref name="root"/> itself,
+    /// or a window it owns that restoring or activating it would put on screen. Null when the policy allows it.
+    /// <paramref name="restored"/>: the minimized root was already restored when the window was found.
+    /// </summary>
+    private Activation? PolicyRefusal(nint root, nint window, bool restored = false)
+    {
+        if (_windowService.EvaluateTargetPolicy(window) is not { Allowed: false } verdict)
+        {
+            return null;
+        }
+
+        var refusal = window == root
+            ? $"The window is refused by the server's target policy: {verdict.Reason}. Nothing was restored or activated."
+            : $"Window {window}, which the window owns (the modal dialog that activating it would bring to the front, or a window " +
+              $"that restoring it would show), is refused by the server's target policy: {verdict.Reason}. " +
+              (restored
+                  ? "The minimized window was restored before that dialog was found (it was not among the windows it owned when " +
+                    "the restore was checked), so the dialog may be on screen now; nothing was activated."
+                  : "Nothing was restored or activated.");
+        return Activation.Failed(root, _windows.GetForegroundWindow(), WindowErrorCode.TargetDeniedByPolicy,
+            refusal + " The policy is set by the user in the server's environment and no tool argument changes it; ask the user to do this step.");
+    }
 
     /// <summary>
     /// Why no further activation step may be taken: the caller stopped waiting, or the user paused input (the

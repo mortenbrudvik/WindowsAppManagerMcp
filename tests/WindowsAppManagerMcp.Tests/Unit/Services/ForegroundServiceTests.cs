@@ -367,7 +367,101 @@ public class ForegroundServiceTests
         // Assert
         outcome.IsForeground.Should().BeFalse();
         outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
-        _calls.Should().NotContain(call => call.StartsWith("SetForegroundWindow"));
+        outcome.Error.Should().Contain("CredentialUIBroker is on the deny list").And.Contain("Nothing was restored or activated");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsMinimizedAndThePolicyDeniesItsModalDialog_RestoresNothing()
+    {
+        // Arrange - a minimized window that a credential prompt of another process disables: restoring the owner
+        // would show the prompt again
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(new nint(WsDisabled));
+        _windows.Setup(w => w.GetWindow(Target, GW_ENABLEDPOPUP)).Returns(Dialog);
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Dialog))
+            .Returns(TargetPolicyVerdict.Deny("CredentialUIBroker", "CredentialUIBroker is on the deny list"));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - decided before the restore, and the message says so
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("Nothing was restored or activated").And.NotContain("was restored before");
+        _calls.Should().BeEmpty("nothing may be shown on screen for a denied dialog");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsMinimizedAndOwnsADeniedWindowThatTheRestoreWouldShow_RestoresNothing()
+    {
+        // Arrange - Windows hides the windows a minimized window owns, so GW_ENABLEDPOPUP finds none (the mock returns
+        // the window itself); the owned dialog is found by enumerating the top-level windows
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(new nint(WsDisabled));
+        TopLevelWindows(Terminal, Target, OtherDialog, Dialog);
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Dialog))
+            .Returns(TargetPolicyVerdict.Deny("CredentialUIBroker", "CredentialUIBroker is on the deny list"));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("CredentialUIBroker is on the deny list").And.Contain("Nothing was restored or activated");
+        _calls.Should().BeEmpty();
+        _windowService.Verify(w => w.EvaluateTargetPolicy(Terminal), Times.Never, "the terminal is not owned by the target");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsMinimizedAndTheWindowsItOwnsAreAllowed_RestoresAndActivatesIt()
+    {
+        // Arrange
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        TopLevelWindows(Terminal, Target, Dialog, WpfDialog, WpfNestedDialog);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - each window the restore shows again was checked, through the whole owner chain
+        outcome.Method.Should().Be(FocusMethod.SetForeground);
+        _calls.Should().Equal($"ShowWindow(Target, {SW_RESTORE})", "SetForegroundWindow(Target) -> True");
+        foreach (var owned in new[] { Dialog, WpfDialog, WpfNestedDialog })
+        {
+            _windowService.Verify(w => w.EvaluateTargetPolicy(owned), Times.Once);
+        }
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenADeniedDialogShowsUpOnlyAfterTheRestore_RefusesAndSaysTheWindowWasRestored()
+    {
+        // Arrange - nothing the minimized window owns is known before the restore; afterwards a modal dialog of a
+        // denied app disables it (for example one that opened meanwhile)
+        var restored = false;
+        _windows.Setup(w => w.IsIconic(Target)).Returns(() => !restored);
+        _windows.Setup(w => w.ShowWindow(Target, SW_RESTORE)).Returns(() =>
+        {
+            _calls.Add($"ShowWindow(Target, {SW_RESTORE})");
+            restored = true;
+            return true;
+        });
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(() => restored ? new nint(WsDisabled) : nint.Zero);
+        _windows.Setup(w => w.GetWindow(Target, GW_ENABLEDPOPUP)).Returns(() => restored ? Dialog : Target);
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Dialog))
+            .Returns(TargetPolicyVerdict.Deny("CredentialUIBroker", "CredentialUIBroker is on the deny list"));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - refused, and truthful about the restore that already happened
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("was restored before").And.NotContain("Nothing was restored");
+        _calls.Should().Equal($"ShowWindow(Target, {SW_RESTORE})");
     }
 
     #endregion
@@ -967,6 +1061,19 @@ public class ForegroundServiceTests
     private ForegroundService CreateSut(TimeSpan? stepSettle = null) =>
         new(_windows.Object, _threads.Object, _input.Object, _security.Object, _windowService.Object, _activationThread,
             Timing(stepSettle ?? TimeSpan.Zero));
+
+    /// <summary>The top-level windows EnumWindows lists, in Z order.</summary>
+    private void TopLevelWindows(params nint[] windows) =>
+        _windows.Setup(w => w.EnumWindows(It.IsAny<Func<nint, bool>>())).Callback((Func<nint, bool> callback) =>
+        {
+            foreach (var window in windows)
+            {
+                if (!callback(window))
+                {
+                    break;
+                }
+            }
+        });
 
     private static ForegroundTiming Timing(TimeSpan stepSettle) =>
         new(StepSettle: stepSettle, PollInterval: TimeSpan.FromMilliseconds(1), MenuSettle: TimeSpan.Zero, ThreadGrace: Grace);
