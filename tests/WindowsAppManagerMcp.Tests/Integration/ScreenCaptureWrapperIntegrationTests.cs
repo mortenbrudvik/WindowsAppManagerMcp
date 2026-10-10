@@ -56,7 +56,8 @@ public class ScreenCaptureWrapperIntegrationTests
         result.Height.Should().Be(height);
     }
 
-    [Fact]
+    // Reads real screen pixels (no input); new desktop reads are opt-in, like every other desktop test.
+    [DesktopFact]
     public void CaptureScreenRegion_ReportsTheRegionOriginAsScreenOrigin()
     {
         // Act
