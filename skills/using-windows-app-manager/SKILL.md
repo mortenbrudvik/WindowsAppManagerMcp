@@ -288,7 +288,7 @@ The `snap_window` tool supports 14 positions:
 ### Save and Restore Workspace
 1. Arrange windows as desired
 2. Use `save_layout` with a descriptive name
-3. Later, use `apply_layout` to restore. `success: false` lists every placement that was not found, launched, arranged or focused in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error. Check `get_foreground_window` before typing
+3. Later, use `apply_layout` to restore. `success: false` lists every placement that was not found, launched, arranged or focused in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result. Check `get_foreground_window` before typing
 
 ### Multi-Monitor Setup
 1. Use `get_monitors` to see available displays and `primaryIndex`

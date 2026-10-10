@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -97,7 +98,7 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "apply_layout")]
-    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged (and focused, for a placement with focus); otherwise errorCode and errors say which placements were not found, launched, arranged or focused. A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).")]
+    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged (and focused, for a placement with focus); otherwise errorCode and errors say which placements were not found, launched, arranged or focused. focus lists the outcome of each focus placement that was arranged, with the same fields as focus_window (isForeground, foregroundHandle, blockingPopup, inMenuMode, errorCode). A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).")]
     public async Task<ApplyLayoutResultDto> ApplyLayout(
         [Description("Name of the layout preset to apply")]
         string name,
@@ -116,7 +117,8 @@ public class LayoutPresetTools
             WindowsNotFound: result.WindowsNotFound,
             WindowsLaunched: result.WindowsLaunched,
             Errors: result.Errors,
-            ErrorCode: result.ErrorCode
+            ErrorCode: result.ErrorCode,
+            Focus: result.Focus
         );
     }
 
@@ -184,6 +186,11 @@ public record SaveLayoutResultDto(
     bool Replaced = false
 );
 
+/// <summary>Result of apply_layout.</summary>
+/// <param name="Focus">
+/// One entry for each placement with focus set whose window was arranged, in placement order: what the verified
+/// activation found, with the same fields as focus_window. Null when no such placement was activated.
+/// </param>
 public record ApplyLayoutResultDto(
     bool Success,
     string PresetName,
@@ -191,7 +198,8 @@ public record ApplyLayoutResultDto(
     int WindowsNotFound,
     int WindowsLaunched,
     IReadOnlyList<string>? Errors,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    IReadOnlyList<FocusResult>? Focus = null
 );
 
 public record DeleteLayoutResultDto(

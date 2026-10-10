@@ -3141,7 +3141,7 @@ Only the windows that [get_all_windows](#get_all_windows) lists are matched. A w
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
-A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). The result does not list the focus outcomes: a focus that fails adds an `ArrangeFailed` error whose text names the [focus_window](#focus_window) error code (for example `FocusFailed`, `NotResponding` or `PausedByUser`) and the reason, and a focus that succeeds adds nothing. Confirm what is in front with [get_foreground_window](#get_foreground_window) before typing. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error. A window whose application does not answer (see `NotResponding` under [Window Control](#window-control)) is not arranged and adds an `ArrangeFailed` error with the reason; the other placements still run.
+A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window), once the window is arranged. `focus` lists the outcome of each such activation, in placement order, with the fields of a [focus_window](#focus_window) result (`handle`, `isForeground`, `method`, `foregroundHandle`, `foregroundTitle`, `foregroundProcess`, `blockingPopup`, `menuClosed`, `inMenuMode`, `error`, `errorCode`); it is left out when no window of a focus placement was arranged. A focus that fails also adds an `ArrangeFailed` error whose text names the [focus_window](#focus_window) error code (for example `FocusFailed`, `NotResponding` or `PausedByUser`) and the reason. The foreground can change again after the call, so confirm what is in front with [get_foreground_window](#get_foreground_window) before typing. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error. A window whose application does not answer (see `NotResponding` under [Window Control](#window-control)) is not arranged and adds an `ArrangeFailed` error with the reason; the other placements still run.
 
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
@@ -3190,7 +3190,19 @@ A placement with `focus: true` brings its window to the front with the same veri
   "errors": [
     "Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): SetForegroundWindow was refused (foreground lock); ..."
   ],
-  "errorCode": "ArrangeFailed"
+  "errorCode": "ArrangeFailed",
+  "focus": [
+    {
+      "success": false,
+      "handle": 2884384,
+      "isForeground": false,
+      "foregroundHandle": 1312934,
+      "foregroundTitle": "Administrator: Windows PowerShell",
+      "foregroundProcess": "WindowsTerminal",
+      "error": "The window could not be brought to the foreground; 'Administrator: Windows PowerShell' (WindowsTerminal) is in front: SetForegroundWindow was refused (foreground lock); ...",
+      "errorCode": "FocusFailed"
+    }
+  ]
 }
 ```
 

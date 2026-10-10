@@ -137,6 +137,42 @@ public class ToolResultSerializationTests
         json.GetProperty("userDataDir").GetString().Should().Be(userDataDir);
     }
 
+    [Fact]
+    public async Task ApplyLayout_ThroughMcpServer_ReturnsTheFocusOutcomeOfEachFocusedPlacement()
+    {
+        // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
+        var layoutService = new Mock<ILayoutService>();
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsArranged: 1,
+                Errors: ["Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): ..."],
+                ErrorCode: nameof(LayoutErrorCode.ArrangeFailed),
+                Focus:
+                [
+                    new FocusResult(false, 2884384, false, ForegroundHandle: 1312934, ForegroundTitle: "pwsh",
+                        ForegroundProcess: "WindowsTerminal", Error: "SetForegroundWindow was refused (foreground lock)",
+                        ErrorCode: nameof(WindowErrorCode.FocusFailed))
+                ]));
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.WithTools(new LayoutPresetTools(layoutService.Object)));
+
+        // Act - goes through the SDK's own argument binding and result serialization
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });
+
+        // Assert
+        var text = result.Content.OfType<TextContentBlock>().Single().Text;
+        var json = JsonDocument.Parse(text).RootElement;
+        json.GetProperty("errorCode").GetString().Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        var focus = json.GetProperty("focus").EnumerateArray().Should().ContainSingle().Subject;
+        focus.GetProperty("handle").GetInt64().Should().Be(2884384);
+        focus.GetProperty("isForeground").GetBoolean().Should().BeFalse();
+        focus.GetProperty("foregroundProcess").GetString().Should().Be("WindowsTerminal");
+        focus.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.FocusFailed));
+        focus.GetProperty("error").GetString().Should().Contain("foreground lock");
+    }
+
     /// <summary>
     /// The type the SDK serializes for the tool: its return type, unwrapped from Task, or for a tool
     /// that returns <see cref="CallToolResult"/> the payload type of its text block. Null when there
