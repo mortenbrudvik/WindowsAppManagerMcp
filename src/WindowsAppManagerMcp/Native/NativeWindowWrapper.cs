@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Native;
@@ -91,5 +92,20 @@ public class NativeWindowWrapper : INativeWindowWrapper
     public uint GetCurrentProcessId()
     {
         return NativeMethods.Kernel32.GetCurrentProcessId();
+    }
+
+    public string? GetProcessName(uint processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return process.ProcessName;
+        }
+        catch (Exception)
+        {
+            // The process has exited (ArgumentException, InvalidOperationException) or cannot be
+            // queried (Win32Exception); callers report it as "Unknown".
+            return null;
+        }
     }
 }

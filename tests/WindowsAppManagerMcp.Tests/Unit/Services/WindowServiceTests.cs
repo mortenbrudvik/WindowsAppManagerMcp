@@ -177,6 +177,43 @@ public class WindowServiceTests
     }
 
     [Fact]
+    public void FindWindows_WithProcessName_UsesTheProcessNamesFromTheNativeWrapper()
+    {
+        // Arrange - the names come from the mocked wrapper, not from whichever real processes
+        // happen to own the fake process IDs
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1001, "Document.txt - Notepad", "notepad", 5001),
+            TestDataFactory.CreateWindowInfo(1002, "Google Chrome - Search", "chrome", 5002)
+        };
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper(testWindows);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act
+        var result = sut.FindWindows(processName: "notepad");
+
+        // Assert
+        result.Should().ContainSingle().Which.ProcessName.Should().Be("notepad");
+    }
+
+    [Fact]
+    public void GetWindowInfo_WhenTheProcessNameCannotBeRead_ReportsUnknown()
+    {
+        // Arrange - the process exited or cannot be opened
+        var window = TestDataFactory.CreateWindowInfo(1001, "Orphaned Window", "gone", 5001);
+        var mockNativeWrapper = TestDataFactory.CreateMockNativeWindowWrapper([window]);
+        mockNativeWrapper.Setup(n => n.GetProcessName(5001u)).Returns((string?)null);
+        var sut = new WindowService(_mockMonitorService.Object, mockNativeWrapper.Object);
+
+        // Act
+        var result = sut.GetWindowInfo(window.Handle);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.ProcessName.Should().Be("Unknown");
+    }
+
+    [Fact]
     public void FindWindows_WithProcessName_FiltersCorrectly()
     {
         // Arrange
