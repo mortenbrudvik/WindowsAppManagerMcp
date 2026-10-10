@@ -207,8 +207,8 @@ public class InputControlTools
                  "could not release (normally none; every input call releases its own). With releaseHeldModifiers: true it also " +
                  "releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it; use that " +
                  "only when an input tool returned ModifiersHeld and nobody is pressing the key, or the user asked. Works while input is " +
-                 "paused, except for releaseHeldModifiers. Modifiers that make up the pause hotkey's chord are never released: the user " +
-                 "may be pressing it.")]
+                 "paused, except for releaseHeldModifiers. While any modifier that is down belongs to the pause hotkey's chord, none is " +
+                 "released (ModifiersHeld): the user may be pressing the hotkey, so ask the user to press and release the key.")]
     public ReleaseInputResult ReleaseAllInput(
         [Description("Also release modifier keys that are down although the server did not press them (the user's, or stuck). Default: false")]
         bool releaseHeldModifiers = false)

@@ -135,7 +135,8 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "capture_window")]
-    [Description("Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized. " +
+    [Description("Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized (CaptureFailed). " +
+                 "A window of an app the user's policy denies is refused (TargetDeniedByPolicy). " +
                  ImageResultDescription +
                  "capturedRegion and imageToScreen use the window's real screen position: the window's corner, or the client area's corner when includeFrame is false. " +
                  ImageToScreenDescription)]
@@ -179,7 +180,8 @@ public class ScreenshotTools
     [Description("Capture a window with UI element bounding boxes drawn on it. " + ImageResultDescription +
                  "The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). " +
                  "Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +
-                 "The overlays line up with or without the frame. " + ImageToScreenDescription)]
+                 "The overlays line up with or without the frame. A minimized window is refused (CaptureFailed), and so is a window of an app the user's policy denies (TargetDeniedByPolicy). " +
+                 ImageToScreenDescription)]
     [ToolResultPayload(typeof(AnnotatedScreenshotResult))]
     public CallToolResult CaptureWithElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
@@ -200,7 +202,7 @@ public class ScreenshotTools
         bool visibleOnly = true,
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
-        [Description("Timeout for UI element retrieval in ms. Default: 5000")]
+        [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn; with none found, the call fails with OperationTimedOut. Default: 5000")]
         int timeoutMs = 5000,
         [Description(MaxDimensionDescription + " imageBounds are scaled with the image; screenBounds stay in screen pixels.")]
         int? maxDimension = null,
