@@ -2023,7 +2023,7 @@ Close or terminate a process by ID (requires confirmation).
 
 To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
 
-**Force mode** returns `success: true` only after the process has actually exited. Otherwise it returns `TerminationNotConfirmed`.
+**Force mode** returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
 
 **Example 1:** Close gracefully
 > "Close Notepad (PID 12456)"
@@ -2122,7 +2122,7 @@ The first time a layout tool runs, the server:
 
 Neither step overwrites an existing preset, and a preset you delete is not added back on the next start. Preset files you add or edit by hand are picked up on the next layout tool call, without a restart.
 
-If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points to a read-only location), the layout tools fail with `StorageUnavailable` and a message naming the folder. The other tools keep working.
+If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points to a read-only location), the layout tools fail with `StorageUnavailable` and a message naming the folder. The other tools keep working. The server checks this when a layout tool first uses the folder, by listing it and creating and deleting a temporary file in it, and checks again on every call until the folder is usable. If the folder stops being writable later, `save_layout` fails with `SaveFailed` and a message naming the file.
 
 **Layout error codes:**
 
@@ -2138,7 +2138,7 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 | `ArrangeFailed` | apply_layout | A matched window could not be moved, resized or brought to the foreground |
 | `StorageUnavailable` | all layout tools | The layouts folder could not be created or used |
 
-`list_layouts` and `get_layout` return plain data, so they report `PresetNotFound` and `StorageUnavailable` as a tool error (`isError: true`) whose message contains the code. The other layout tools return `success: false` with `error` and `errorCode` fields.
+`list_layouts` and `get_layout` return plain data, so they report `PresetNotFound` and `StorageUnavailable` as a tool error (`isError: true`) with that `errorCode` (see [Tool errors](#tool-errors)). The other layout tools return `success: false` with `error` and `errorCode` fields.
 
 ### list_layouts
 
@@ -2180,7 +2180,7 @@ List all layout presets in the layouts folder, sorted by name.
 
 ### get_layout
 
-Get full details of a layout preset. If no preset has that name, the call returns a tool error whose message contains `PresetNotFound`.
+Get full details of a layout preset. If no preset has that name, the call returns a tool error (`isError: true`) with `errorCode: "PresetNotFound"`.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -2700,11 +2700,17 @@ send_keys { "keys": "{ENTER}" }
 
 ## Error Codes
 
-### Unexpected tool errors
+### Tool errors
 
-If a tool throws an unexpected exception, or its result cannot be serialized, the call returns
-`isError: true` with a JSON body that names the exception, and the server logs the exception with
-its stack trace to stderr:
+Most tools report an expected failure in their normal result, with `success: false`, `error` and
+`errorCode`. When a call fails before the tool can return that result, it returns `isError: true`
+with a JSON body instead. Its `errorCode` says what kind of failure it was:
+
+| errorCode | Meaning | What to do |
+|-----------|---------|------------|
+| `InvalidArguments` | A required argument is missing, or a value has the wrong type. The tool did not run. | Fix the arguments to match the tool's input schema and call again |
+| `ToolError`, or a tool-specific code such as `PresetNotFound` | The tool reported an error on purpose. `error` is its message, unchanged | Read the message; the tool's section lists its codes |
+| `UnhandledException` | The tool threw an unexpected exception, or its result could not be serialized. The server logs the exception with its stack trace to stderr | Usually a server bug; `error` names the exception and its message |
 
 ```json
 {
@@ -2716,13 +2722,28 @@ its stack trace to stderr:
 }
 ```
 
+```json
+{
+  "success": false,
+  "error": "Layout preset 'typo' was not found. Call list_layouts to see the available presets.",
+  "errorCode": "PresetNotFound",
+  "tool": "get_layout"
+}
+```
+
+`exceptionType` names the .NET exception for `InvalidArguments` (`System.ArgumentException` for a
+missing argument, `System.Text.Json.JsonException` for a value of the wrong type) and for
+`UnhandledException`. It is left out for errors a tool reports on purpose.
+
 An unknown tool name is still reported as a JSON-RPC protocol error, not as a tool result.
 
 ### Error code reference
 
 | Code | Description |
 |------|-------------|
-| `UnhandledException` | The tool threw an unexpected exception (see above) |
+| `UnhandledException` | The tool threw an unexpected exception (see [Tool errors](#tool-errors)) |
+| `InvalidArguments` | A required argument is missing or has the wrong type (see [Tool errors](#tool-errors)) |
+| `ToolError` | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
 | `WindowNotFound` | Window handle is invalid or window closed |
 | `InvalidHandle` | Handle parameter is missing or invalid |
 | `OperationFailed` | Window operation failed (permission denied, etc.) |

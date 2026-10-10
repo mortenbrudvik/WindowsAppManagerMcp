@@ -1,6 +1,6 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
-using ModelContextProtocol;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 /// <summary>
@@ -94,7 +94,7 @@ public class LayoutPresetToolsTests
     #region GetLayout Tests
 
     [Fact]
-    public void GetLayout_WhenNotFound_ThrowsMcpExceptionNamingThePreset()
+    public void GetLayout_WhenNotFound_ThrowsPresetNotFoundToolErrorNamingThePreset()
     {
         // Arrange
         _mockLayoutService.Setup(l => l.GetPreset(It.IsAny<string>()))
@@ -104,10 +104,10 @@ public class LayoutPresetToolsTests
         // Act
         var act = () => sut.GetLayout("nonexistent");
 
-        // Assert - the SDK turns McpException into an isError tool result with this message
-        act.Should().Throw<McpException>()
+        // Assert - ToolErrorReporting turns this into an isError result with errorCode PresetNotFound
+        act.Should().Throw<ToolErrorException>()
             .WithMessage("*nonexistent*")
-            .WithMessage("*PresetNotFound*");
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.PresetNotFound));
     }
 
     [Fact]
@@ -447,26 +447,28 @@ public class LayoutPresetToolsTests
     #region Honest results
 
     [Fact]
-    public void ListLayouts_WhenStorageUnavailable_ThrowsMcpExceptionWithReason()
+    public void ListLayouts_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
     {
         _mockLayoutService.Setup(l => l.GetStorageError()).Returns("Folder X could not be created");
         var sut = CreateSut();
 
         var act = () => sut.ListLayouts();
 
-        act.Should().Throw<McpException>().WithMessage("*Folder X could not be created*");
+        act.Should().Throw<ToolErrorException>().WithMessage("*Folder X could not be created*")
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.StorageUnavailable));
         _mockLayoutService.Verify(l => l.GetAllPresets(), Times.Never);
     }
 
     [Fact]
-    public void GetLayout_WhenStorageUnavailable_ThrowsMcpExceptionWithReason()
+    public void GetLayout_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
     {
         _mockLayoutService.Setup(l => l.GetStorageError()).Returns("Folder X could not be created");
         var sut = CreateSut();
 
         var act = () => sut.GetLayout("anything");
 
-        act.Should().Throw<McpException>().WithMessage("*Folder X could not be created*");
+        act.Should().Throw<ToolErrorException>().WithMessage("*Folder X could not be created*")
+            .Which.ErrorCode.Should().Be(nameof(LayoutErrorCode.StorageUnavailable));
     }
 
     [Fact]

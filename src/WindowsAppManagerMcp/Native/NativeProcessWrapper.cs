@@ -6,10 +6,49 @@ namespace WindowsAppManagerMcp.Native;
 
 /// <summary>
 /// Production implementation of INativeProcessWrapper backed by System.Diagnostics.Process and
-/// a Toolhelp32 process snapshot.
+/// a Toolhelp32 process snapshot. This is the only type in the server that calls Process.Start,
+/// Process.Kill or Process.CloseMainWindow (enforced by NativeCallGuardTests).
 /// </summary>
 public class NativeProcessWrapper : INativeProcessWrapper
 {
+    private const int WhereExeTimeoutMs = 5000;
+
+    public IProcessHandle? StartProcess(ProcessStartInfo startInfo)
+    {
+        var process = Process.Start(startInfo);
+        return process == null ? null : new ProcessHandle(process);
+    }
+
+    public string? FindWithWhereExe(string fileName)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "where.exe",
+                Arguments = fileName,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                return null;
+            }
+
+            var output = process.StandardOutput.ReadLine();
+            process.WaitForExit(WhereExeTimeoutMs);
+            return string.IsNullOrWhiteSpace(output) ? null : output;
+        }
+        catch (Exception)
+        {
+            // where.exe missing or not runnable: treat as not found
+            return null;
+        }
+    }
+
     public IProcessHandle? OpenProcess(int processId)
     {
         try
@@ -132,6 +171,12 @@ public class NativeProcessWrapper : INativeProcessWrapper
         public string ProcessName => process.ProcessName;
 
         public bool HasExited => process.HasExited;
+
+        public nint RefreshMainWindowHandle()
+        {
+            process.Refresh();
+            return process.MainWindowHandle;
+        }
 
         public bool CloseMainWindow() => process.CloseMainWindow();
 

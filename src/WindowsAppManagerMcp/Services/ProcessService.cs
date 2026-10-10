@@ -52,7 +52,7 @@ public class ProcessService : IProcessService
 
         try
         {
-            var process = Process.Start(plan.StartInfo!);
+            using var process = _processWrapper.StartProcess(plan.StartInfo!);
             if (process == null)
             {
                 return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
@@ -537,16 +537,17 @@ public class ProcessService : IProcessService
     /// </summary>
     private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
     {
-        string? warning = null;
+        AggregateException? treeFailures = null;
         try
         {
             process.Kill(entireProcessTree: true);
         }
-        catch (AggregateException ex) when (!IsAccessDenied(ex))
+        catch (AggregateException ex)
         {
-            // The runtime reports processes in the tree it could not terminate; the root may still be gone
-            warning = "Some child processes could not be terminated: " +
-                      string.Join("; ", ex.InnerExceptions.Select(e => e.Message));
+            // Kill(entireProcessTree: true) tries the root and every descendant, then reports all
+            // failures together without saying which process failed. Whether the root is gone,
+            // which decides the outcome, is checked below.
+            treeFailures = ex;
         }
         catch (InvalidOperationException) when (HasExitedSafe(process))
         {
@@ -556,6 +557,13 @@ public class ProcessService : IProcessService
         {
             return KillFailureFromException(ex, processId, processName);
         }
+
+        var accessDenied = treeFailures != null && IsAccessDenied(treeFailures);
+        var warning = treeFailures == null
+            ? null
+            : "Some child processes could not be terminated and may still be running" +
+              (accessDenied ? " (access denied: they probably run elevated or as another user)" : "") +
+              ": " + string.Join("; ", treeFailures.InnerExceptions.Select(e => e.Message));
 
         bool exited;
         try
@@ -570,6 +578,17 @@ public class ProcessService : IProcessService
         if (exited)
         {
             return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Forced: true, Exited: true, Warning: warning);
+        }
+
+        if (accessDenied)
+        {
+            // The root is still running, so the denial most likely came from the root itself
+            return KillFailureFromException(treeFailures!, processId, processName) with
+            {
+                Forced = true,
+                Warning = "Termination was attempted for the whole process tree, so some of its child processes may " +
+                          "have been terminated even though the process itself is still running."
+            };
         }
 
         return new KillResult(
@@ -656,7 +675,7 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    private nint? WaitForMainWindow(Process process, int timeoutMs)
+    private nint? WaitForMainWindow(IProcessHandle process, int timeoutMs)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -664,11 +683,10 @@ public class ProcessService : IProcessService
         {
             try
             {
-                process.Refresh();
-
-                if (process.MainWindowHandle != nint.Zero)
+                var mainWindowHandle = process.RefreshMainWindowHandle();
+                if (mainWindowHandle != nint.Zero)
                 {
-                    return process.MainWindowHandle;
+                    return mainWindowHandle;
                 }
 
                 // Also try to find windows belonging to this process
@@ -832,7 +850,7 @@ public class ProcessService : IProcessService
         return arguments;
     }
 
-    private static string? ResolveBrowserPath(string browser)
+    private string? ResolveBrowserPath(string browser)
     {
         // Check common paths
         if (BrowserPaths.TryGetValue(browser, out var paths))
@@ -847,40 +865,16 @@ public class ProcessService : IProcessService
         }
 
         // Fall back to PATH lookup
-        try
+        var executableName = browser switch
         {
-            var processInfo = new ProcessStartInfo
-            {
-                FileName = "where.exe",
-                Arguments = browser switch
-                {
-                    "chrome" => "chrome.exe",
-                    "edge" => "msedge.exe",
-                    "brave" => "brave.exe",
-                    _ => $"{browser}.exe"
-                },
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            "chrome" => "chrome.exe",
+            "edge" => "msedge.exe",
+            "brave" => "brave.exe",
+            _ => $"{browser}.exe"
+        };
 
-            using var process = Process.Start(processInfo);
-            if (process != null)
-            {
-                var output = process.StandardOutput.ReadLine();
-                process.WaitForExit(5000);
-                if (!string.IsNullOrWhiteSpace(output) && File.Exists(output))
-                {
-                    return output;
-                }
-            }
-        }
-        catch
-        {
-            // Ignore errors from where.exe
-        }
-
-        return null;
+        var output = _processWrapper.FindWithWhereExe(executableName);
+        return !string.IsNullOrWhiteSpace(output) && File.Exists(output) ? output : null;
     }
 
     private static bool IsPortInUse(int port)

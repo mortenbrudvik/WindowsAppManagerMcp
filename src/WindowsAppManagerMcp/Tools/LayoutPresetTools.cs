@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -41,8 +41,9 @@ public class LayoutPresetTools
         ThrowIfStorageUnavailable();
 
         var preset = _layoutService.GetPreset(name)
-            ?? throw new McpException(
-                $"[{nameof(LayoutErrorCode.PresetNotFound)}] Layout preset '{name}' was not found. Call list_layouts to see the available presets.");
+            ?? throw new ToolErrorException(
+                nameof(LayoutErrorCode.PresetNotFound),
+                $"Layout preset '{name}' was not found. Call list_layouts to see the available presets.");
 
         return new LayoutDetailDto(
             Name: preset.Name,
@@ -136,13 +137,13 @@ public class LayoutPresetTools
 
     /// <summary>
     /// list_layouts and get_layout return plain data, so an unusable storage folder is reported as a
-    /// tool error (the SDK turns McpException into an isError result carrying this message).
+    /// tool error (isError=true) with errorCode StorageUnavailable and this message.
     /// </summary>
     private void ThrowIfStorageUnavailable()
     {
         var storageError = _layoutService.GetStorageError();
         if (storageError != null)
-            throw new McpException($"[{nameof(LayoutErrorCode.StorageUnavailable)}] {storageError}");
+            throw new ToolErrorException(nameof(LayoutErrorCode.StorageUnavailable), storageError);
     }
 }
 

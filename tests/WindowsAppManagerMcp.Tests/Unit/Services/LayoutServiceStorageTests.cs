@@ -40,11 +40,12 @@ public class LayoutServiceStorageTests : IDisposable
         }
     }
 
-    private LayoutService CreateSut(LayoutStorageOptions options) => new(
+    private LayoutService CreateSut(LayoutStorageOptions options, ILayoutFolderAccess? folderAccess = null) => new(
         _mockWindowService.Object,
         _mockMonitorService.Object,
         _mockProcessService.Object,
-        options);
+        options,
+        folderAccess);
 
     private LayoutService CreateSutWithPath(string path) => new(
         _mockWindowService.Object,
@@ -140,6 +141,101 @@ public class LayoutServiceStorageTests : IDisposable
 
         sut.GetStorageError().Should().Contain("absolute");
         Directory.Exists(Path.Combine(Environment.CurrentDirectory, "relative")).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Directory.CreateDirectory succeeds for a folder that already exists even if it is read-only
+    /// for this user, so writing is checked separately. The denial is simulated through the
+    /// injected folder access; no permissions are changed on a real folder.
+    /// </summary>
+    [Fact]
+    public async Task ExistingFolderThatCannotBeWritten_ReportsStorageUnavailable()
+    {
+        // Arrange
+        Directory.CreateDirectory(_layoutsPath);
+        var access = new Mock<ILayoutFolderAccess>();
+        access.Setup(a => a.CheckCanWrite(_layoutsPath))
+            .Throws(new UnauthorizedAccessException($"Access to the path '{_layoutsPath}' is denied."));
+        var sut = CreateSut(OptionsWith(samples: [Sample("sample")]), access.Object);
+
+        // Act
+        var error = sut.GetStorageError();
+
+        // Assert
+        error.Should().Contain(_layoutsPath).And.Contain("cannot be written")
+            .And.Contain(LayoutStorageOptions.LayoutsPathEnvironmentVariable);
+        sut.GetAllPresets().Should().BeEmpty();
+        var save = await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("x"));
+        save.ErrorCode.Should().Be(nameof(LayoutErrorCode.StorageUnavailable));
+        Directory.EnumerateFileSystemEntries(_layoutsPath).Should().BeEmpty("nothing is seeded into an unusable folder");
+    }
+
+    [Fact]
+    public void ExistingFolderThatCannotBeListed_ReportsStorageUnavailable()
+    {
+        // Arrange
+        Directory.CreateDirectory(_layoutsPath);
+        var access = new Mock<ILayoutFolderAccess>();
+        access.Setup(a => a.CheckCanList(_layoutsPath))
+            .Throws(new UnauthorizedAccessException($"Access to the path '{_layoutsPath}' is denied."));
+        var sut = CreateSut(OptionsWith(), access.Object);
+
+        // Act
+        var error = sut.GetStorageError();
+
+        // Assert - before, the folder looked empty and list_layouts returned [] without an error
+        error.Should().Contain(_layoutsPath).And.Contain("cannot be read")
+            .And.Contain(LayoutStorageOptions.LayoutsPathEnvironmentVariable);
+        sut.GetPreset("anything").Should().BeNull();
+    }
+
+    [Fact]
+    public void FolderAccessDenied_IsCheckedAgainUntilItWorks()
+    {
+        // Arrange
+        var access = new Mock<ILayoutFolderAccess>();
+        access.SetupSequence(a => a.CheckCanWrite(_layoutsPath))
+            .Throws(new UnauthorizedAccessException("denied"))
+            .Pass();
+        var sut = CreateSut(OptionsWith(samples: [Sample("sample")]), access.Object);
+
+        // Act
+        var first = sut.GetStorageError();
+        var second = sut.GetStorageError();
+
+        // Assert
+        first.Should().NotBeNull();
+        second.Should().BeNull();
+        sut.GetPreset("sample").Should().NotBeNull("first-run seeding happens once the folder is usable");
+    }
+
+    [Fact]
+    public void LayoutFolderAccess_OnWritableFolder_PassesAndLeavesNothingBehind()
+    {
+        // Arrange
+        Directory.CreateDirectory(_layoutsPath);
+        var access = new LayoutFolderAccess();
+
+        // Act
+        var act = () =>
+        {
+            access.CheckCanList(_layoutsPath);
+            access.CheckCanWrite(_layoutsPath);
+        };
+
+        // Assert
+        act.Should().NotThrow();
+        Directory.EnumerateFileSystemEntries(_layoutsPath).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LayoutFolderAccess_OnMissingFolder_Throws()
+    {
+        var access = new LayoutFolderAccess();
+        var missing = Path.Combine(_root, "missing");
+
+        access.Invoking(a => a.CheckCanList(missing)).Should().Throw<IOException>();
+        access.Invoking(a => a.CheckCanWrite(missing)).Should().Throw<IOException>();
     }
 
     #endregion

@@ -43,6 +43,7 @@ public class LayoutService : ILayoutService
     private readonly IMonitorService _monitorService;
     private readonly IProcessService _processService;
     private readonly LayoutStorageOptions _options;
+    private readonly ILayoutFolderAccess _folderAccess;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -74,16 +75,19 @@ public class LayoutService : ILayoutService
     /// the folder is prepared on first use, so an unusable location is reported as
     /// <see cref="LayoutErrorCode.StorageUnavailable"/> instead of failing service construction.
     /// </summary>
+    /// <param name="folderAccess">Checks that the folder can be listed and written; defaults to the real file system.</param>
     public LayoutService(
         IWindowService windowService,
         IMonitorService monitorService,
         IProcessService processService,
-        LayoutStorageOptions options)
+        LayoutStorageOptions options,
+        ILayoutFolderAccess? folderAccess = null)
     {
         _windowService = windowService;
         _monitorService = monitorService;
         _processService = processService;
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _folderAccess = folderAccess ?? new LayoutFolderAccess();
     }
 
     public string LayoutsPath => _options.LayoutsPath;
@@ -520,8 +524,9 @@ public class LayoutService : ILayoutService
     #region Storage (callers must hold _gate)
 
     /// <summary>
-    /// Creates the folder and, the first time, migrates legacy presets and seeds the samples.
-    /// Returns null when storage is usable, otherwise why it is not. Retries on every call until it succeeds.
+    /// Creates the folder, checks that it can be listed and written, and the first time, migrates
+    /// legacy presets and seeds the samples. Returns null when storage is usable, otherwise why it
+    /// is not. Retries on every call until it succeeds.
     /// </summary>
     private string? EnsureStorage()
     {
@@ -541,6 +546,28 @@ public class LayoutService : ILayoutService
         catch (Exception ex) when (IsFileSystemError(ex))
         {
             return $"Layout storage folder '{LayoutsPath}' could not be created: {ex.Message} " +
+                   $"Set the {LayoutStorageOptions.LayoutsPathEnvironmentVariable} environment variable to a writable folder.";
+        }
+
+        // CreateDirectory also succeeds for an existing folder this user cannot use, which would
+        // otherwise look empty to list_layouts and only fail later in save_layout.
+        try
+        {
+            _folderAccess.CheckCanList(LayoutsPath);
+        }
+        catch (Exception ex) when (IsFileSystemError(ex))
+        {
+            return $"Layout storage folder '{LayoutsPath}' exists but cannot be read: {ex.Message} " +
+                   $"Set the {LayoutStorageOptions.LayoutsPathEnvironmentVariable} environment variable to a folder this user can read and write.";
+        }
+
+        try
+        {
+            _folderAccess.CheckCanWrite(LayoutsPath);
+        }
+        catch (Exception ex) when (IsFileSystemError(ex))
+        {
+            return $"Layout storage folder '{LayoutsPath}' exists but cannot be written: {ex.Message} " +
                    $"Set the {LayoutStorageOptions.LayoutsPathEnvironmentVariable} environment variable to a writable folder.";
         }
 
