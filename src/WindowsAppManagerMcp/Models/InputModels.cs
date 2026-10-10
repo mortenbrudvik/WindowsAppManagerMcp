@@ -61,6 +61,12 @@ public record ClickResult(
 
     /// <summary>With BlockedByModal: the dialog that disables the target window.</summary>
     public WindowSummary? BlockingWindow { get; init; }
+
+    /// <summary>With ModifiersHeld: the modifier keys that are down (for example "LeftCtrl").</summary>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <summary>With releaseHeldModifiers: the modifier keys the server released before sending the input.</summary>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
 }
 
 /// <summary>
@@ -88,6 +94,12 @@ public record MouseMoveResult(
 
     /// <inheritdoc cref="ClickResult.BlockingWindow"/>
     public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
 }
 
 /// <summary>
@@ -112,6 +124,12 @@ public record TypeTextResult(
 
     /// <inheritdoc cref="ClickResult.BlockingWindow"/>
     public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
 }
 
 /// <summary>
@@ -132,6 +150,12 @@ public record SendKeysResult(
 
     /// <inheritdoc cref="ClickResult.BlockingWindow"/>
     public WindowSummary? BlockingWindow { get; init; }
+
+    /// <inheritdoc cref="ClickResult.HeldModifiers"/>
+    public IReadOnlyList<string>? HeldModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
+    public IReadOnlyList<string>? ReleasedModifiers { get; init; }
 }
 
 /// <summary>
@@ -250,5 +274,36 @@ public enum InputErrorCode
     /// send_keys: keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc,
     /// the Windows key, Alt+Space or a closing chord), so they would reach a window the guard never checked.
     /// </summary>
-    KeysAfterFocusChange = 33
+    KeysAfterFocusChange = 33,
+
+    // Input session codes (roadmap M1.10). Nothing (more) was sent.
+
+    /// <summary>
+    /// The user paused the server's input with the pause hotkey. Nothing (more) was sent: a call that was
+    /// running stopped (CharactersTyped says how much it typed). Only the user resumes input: the hotkey
+    /// again, or resume_input confirmed by the user.
+    /// </summary>
+    PausedByUser = 34,
+
+    /// <summary>
+    /// A modifier key (Shift, Ctrl, Alt or Windows) is down: the user is holding it, or it is stuck. Keys
+    /// would become shortcuts and clicks Ctrl- or Shift-clicks, so nothing was sent; releaseHeldModifiers
+    /// releases them first. Also returned when keys the server pressed earlier could not be released.
+    /// </summary>
+    ModifiersHeld = 35,
+
+    /// <summary>Another call held the input gate for longer than the wait limit, so nothing was sent.</summary>
+    InputBusy = 36,
+
+    /// <summary>send_keys: the keys contain the user's pause hotkey chord, which only the user may press.</summary>
+    PauseChordNotAllowed = 37,
+
+    /// <summary>
+    /// resume_input: the MCP client cannot ask the user (it does not support elicitation), so only the user
+    /// can resume input, with the pause hotkey. Input stays paused.
+    /// </summary>
+    ResumeNeedsUser = 38,
+
+    /// <summary>resume_input: the user declined or dismissed the question, or did not answer in time. Input stays paused.</summary>
+    ResumeDeclined = 39
 }
