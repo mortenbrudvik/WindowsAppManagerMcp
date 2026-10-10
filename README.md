@@ -249,9 +249,21 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 - **Desktop tests** (`[DesktopFact]`/`[DesktopTheory]`, trait `Category=Desktop`) are for
   tests with real side effects, such as starting processes or sending input. They are skipped
   unless you opt in; CI runs them without the opt-in and fails unless every one is reported as
-  skipped. Today the only ones are the gate's own canaries, which have no side effects. To opt in:
+  skipped. A narrower tier, `[DesktopNoInputFact]` (also `Category=DesktopNoInput`), only starts
+  the suite's own fixture app and reads or captures it; `WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1` opts in
+  to that tier alone.
+- **End-to-end tests** (`tests/WindowsAppManagerMcp.E2ETests`) drive the real server services
+  against `tests/FixtureApp`, a small WPF app the suite owns, never against your own windows. They
+  are desktop tests of both tiers; on GitHub they run only on demand (`.github/workflows/e2e.yml`).
+  To opt in:
 
 ```powershell
+# Only the no-input tier: start the fixture app, read and capture it
+$env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = "1"
+dotnet test --filter "Category=DesktopNoInput"
+Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
+
+# Both tiers: also bring the fixture app to the front and type into it
 $env:WAM_ALLOW_DESKTOP_TESTS = "1"
 dotnet test --filter "Category=Desktop"
 Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
@@ -279,7 +291,7 @@ WindowsAppManagerMcp/
 │   ├── Native/          # P/Invoke declarations and native wrappers
 │   ├── Services/        # Business logic
 │   └── Tools/           # MCP tool definitions
-├── tests/               # Unit and integration tests
+├── tests/               # Unit and integration tests, plus end-to-end tests against tests/FixtureApp
 ├── config/layouts/      # Example layout presets
 └── docs/                # Documentation
 ```
