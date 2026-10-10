@@ -98,4 +98,57 @@ public interface INativeWindowWrapper
     /// "msedge"). Returns null when the process has exited or its name cannot be read.
     /// </summary>
     string? GetProcessName(uint processId);
+
+    // Window identity and state reads (M1.6). All of them only read; none can change a window.
+
+    /// <summary>
+    /// Enumerates the child windows of <paramref name="hWndParent"/>, including their descendants,
+    /// by calling the callback for each one until it returns false. A zero handle has no children
+    /// (unlike the Win32 call, it does not list the top-level windows).
+    /// </summary>
+    void EnumChildWindows(nint hWndParent, Func<nint, bool> callback);
+
+    /// <summary>
+    /// Gets the window class name (for example "Notepad", "#32770" for a dialog or "Shell_TrayWnd" for
+    /// the taskbar). Returns an empty string when the handle is not a window.
+    /// </summary>
+    string GetClassName(nint hWnd);
+
+    /// <summary>
+    /// Reads a window value with GetWindowLongPtr, for example GWL_EXSTYLE (-20) or GWL_STYLE (-16).
+    /// Returns 0 when the handle is not a window.
+    /// </summary>
+    nint GetWindowLongPtr(nint hWnd, int index);
+
+    /// <summary>
+    /// Gets a related window with GetWindow, for example GW_OWNER (4) or GW_ENABLEDPOPUP (6).
+    /// Returns 0 when there is none.
+    /// </summary>
+    nint GetWindow(nint hWnd, uint command);
+
+    /// <summary>
+    /// Whether DWM cloaks the window (DWMWA_CLOAKED): it is on another virtual desktop, is a suspended
+    /// UWP frame, or its app hid it this way. IsWindowVisible is still true for a cloaked window, but
+    /// nothing of it is on screen. Returns false when the attribute cannot be read.
+    /// </summary>
+    bool IsCloaked(nint hWnd);
+
+    /// <summary>
+    /// Gets the visible frame of the window (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible
+    /// resize borders that GetWindowRect includes, in physical screen pixels. Returns null when the
+    /// attribute cannot be read.
+    /// </summary>
+    (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd);
+
+    /// <summary>
+    /// Whether Windows considers the window's thread hung (IsHungAppWindow: it has not processed
+    /// messages for several seconds).
+    /// </summary>
+    bool IsHungAppWindow(nint hWnd);
+
+    /// <summary>
+    /// Gets the DPI of the window (GetDpiForWindow), for example 96 at 100% scaling. Returns 0 when
+    /// the handle is not a window.
+    /// </summary>
+    uint GetDpiForWindow(nint hWnd);
 }

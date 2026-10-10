@@ -69,6 +69,17 @@ A window can move after it was captured, so convert only from a fresh capture an
 
 Tools for finding and listing windows on the system.
 
+Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows)) return only **user-facing app windows**. They leave out:
+
+- cloaked windows: windows on other virtual desktops and suspended apps, which are not on screen even though Windows calls them visible
+- tool windows (`WS_EX_TOOLWINDOW` without `WS_EX_APPWINDOW`): floating palettes, menus and helper windows that are kept out of the taskbar and Alt+Tab
+- shell windows: the desktop (`Progman`, `WorkerW`) and the taskbars (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`)
+- untitled windows, and the server's own windows
+
+Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the `newBounds`/`newState` reads after window actions never apply it.
+
+Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply.
+
 ### find_windows
 
 Find windows matching specific criteria.
@@ -77,10 +88,14 @@ Find windows matching specific criteria.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | titleContains | string | No | - | Partial text to match in window title (case-insensitive) |
-| processName | string | No | - | Process name to match (e.g., 'notepad', 'chrome') |
-| processId | int | No | - | Process ID to match |
-| handle | long | No | - | Specific window handle to find |
+| processName | string | No | - | Process name to match (e.g., 'notepad', 'chrome'). For a UWP app, both the app process and `ApplicationFrameHost` match |
+| processId | int | No | - | Process ID to match. For a UWP app, both the app process and its host process match |
+| handle | long | No | - | Specific window handle to find. Skips the user-facing filter |
 | visibleOnly | bool | No | true | Only return visible windows |
+| className | string | No | - | Exact window class name (case-insensitive), e.g. 'Notepad', '#32770' (dialog), 'Shell_TrayWnd' (taskbar). Skips the user-facing filter |
+| includeCloaked | bool | No | false | Also return cloaked windows (other virtual desktops, suspended apps) |
+| includeToolWindows | bool | No | false | Also return tool windows (palettes and helper windows kept out of the taskbar and Alt+Tab) |
+| includeShell | bool | No | false | Skip the user-facing filter: also return the desktop, taskbar and tray, and tool, cloaked and untitled windows |
 
 **Example:**
 > "Find all Chrome windows"
@@ -105,7 +120,9 @@ Find windows matching specific criteria.
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
     "state": "normal",
     "isVisible": true,
-    "monitorIndex": 0
+    "monitorIndex": 0,
+    "className": "Chrome_WidgetWin_1",
+    "isCloaked": false
   },
   {
     "handle": 1445556,
@@ -115,7 +132,41 @@ Find windows matching specific criteria.
     "bounds": { "x": 100, "y": 100, "width": 1200, "height": 800 },
     "state": "normal",
     "isVisible": true,
-    "monitorIndex": 1
+    "monitorIndex": 1,
+    "className": "Chrome_WidgetWin_1",
+    "isCloaked": false
+  }
+]
+```
+
+**Example:**
+> "Find the taskbar"
+
+The taskbar is an untitled shell window, so listings leave it out. A `className` reaches it:
+
+```json
+{
+  "name": "find_windows",
+  "arguments": {
+    "className": "Shell_TrayWnd"
+  }
+}
+```
+
+**Response:**
+```json
+[
+  {
+    "handle": 65826,
+    "title": "",
+    "processName": "explorer",
+    "processId": 5124,
+    "bounds": { "x": 0, "y": 1032, "width": 1920, "height": 48 },
+    "state": "normal",
+    "isVisible": true,
+    "monitorIndex": 0,
+    "className": "Shell_TrayWnd",
+    "isCloaked": false
   }
 ]
 ```
@@ -124,7 +175,7 @@ Find windows matching specific criteria.
 
 ### get_all_windows
 
-List all visible top-level windows on the system.
+List the visible user-facing app windows on the system (see [Window Discovery](#window-discovery) for what is left out). Use [find_windows](#find_windows) with `className`, `includeCloaked`, `includeToolWindows` or `includeShell` for other windows.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -152,17 +203,36 @@ List all visible top-level windows on the system.
     "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
     "state": "maximized",
     "isVisible": true,
-    "monitorIndex": 0
+    "monitorIndex": 0,
+    "className": "Chrome_WidgetWin_1",
+    "isCloaked": false
   },
   {
     "handle": 2884384,
-    "title": "Windows Terminal",
-    "processName": "WindowsTerminal",
+    "title": "Calculator",
+    "processName": "CalculatorApp",
     "processId": 15672,
-    "bounds": { "x": 960, "y": 0, "width": 960, "height": 1040 },
+    "bounds": { "x": 960, "y": 0, "width": 480, "height": 760 },
     "state": "normal",
     "isVisible": true,
-    "monitorIndex": 1
+    "monitorIndex": 1,
+    "className": "ApplicationFrameWindow",
+    "isCloaked": false,
+    "hostProcessName": "ApplicationFrameHost",
+    "hostProcessId": 9120
+  },
+  {
+    "handle": 1771890,
+    "title": "Save As",
+    "processName": "Code",
+    "processId": 8432,
+    "bounds": { "x": 520, "y": 240, "width": 880, "height": 560 },
+    "state": "normal",
+    "isVisible": true,
+    "monitorIndex": 0,
+    "className": "#32770",
+    "isCloaked": false,
+    "ownerHandle": 330390
   }
 ]
 ```
@@ -171,7 +241,7 @@ List all visible top-level windows on the system.
 
 ### get_foreground_window
 
-Get information about the currently focused window.
+Get information about the currently focused window. Any window is reported, with no listing filter: when a menu, a popup or the taskbar has focus, `title` is empty and `className` tells what it is. The result is null only when no window is in the foreground.
 
 **Parameters:** None
 
@@ -195,11 +265,14 @@ Get information about the currently focused window.
   "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
   "state": "maximized",
   "isVisible": true,
-  "monitorIndex": 0
+  "monitorIndex": 0,
+  "className": "Chrome_WidgetWin_1",
+  "isCloaked": false
 }
 ```
 
 ---
+
 
 ## Window Control
 

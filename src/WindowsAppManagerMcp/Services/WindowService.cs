@@ -15,72 +15,49 @@ public class WindowService : IWindowService
         _nativeWrapper = nativeWrapper;
     }
 
-    public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true)
-    {
-        var windows = new List<WindowInfo>();
-
-        _nativeWrapper.EnumWindows(hWnd =>
-        {
-            if (!_nativeWrapper.IsWindowVisible(hWnd))
-                return true;
-
-            var info = GetWindowInfoInternal(hWnd);
-            if (info != null)
-            {
-                if (includeMinimized || info.State != WindowState.Minimized)
-                {
-                    windows.Add(info);
-                }
-            }
-            return true;
-        });
-
-        return windows;
-    }
+    public IReadOnlyList<WindowInfo> GetAllWindows(bool includeMinimized = true) =>
+        FindWindows(new WindowQuery { IncludeMinimized = includeMinimized });
 
     public IReadOnlyList<WindowInfo> FindWindows(
         string? titleContains = null,
         string? processName = null,
         int? processId = null,
         nint? handle = null,
-        bool visibleOnly = true)
-    {
-        var windows = new List<WindowInfo>();
-
-        _nativeWrapper.EnumWindows(hWnd =>
+        bool visibleOnly = true) =>
+        FindWindows(new WindowQuery
         {
-            if (visibleOnly && !_nativeWrapper.IsWindowVisible(hWnd))
-                return true;
-
-            // Filter by handle if specified
-            if (handle.HasValue && hWnd != handle.Value)
-                return true;
-
-            var info = GetWindowInfoInternal(hWnd);
-            if (info == null)
-                return true;
-
-            // Filter by process ID
-            if (processId.HasValue && info.ProcessId != processId.Value)
-                return true;
-
-            // Filter by process name
-            if (!string.IsNullOrEmpty(processName))
-            {
-                if (!info.ProcessName.Contains(processName, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-
-            // Filter by title
-            if (!string.IsNullOrEmpty(titleContains))
-            {
-                if (!info.Title.Contains(titleContains, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-
-            windows.Add(info);
-            return true;
+            TitleContains = titleContains,
+            ProcessName = processName,
+            ProcessId = processId,
+            Handle = handle,
+            VisibleOnly = visibleOnly
         });
+
+    public IReadOnlyList<WindowInfo> FindWindows(WindowQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        // A handle is read directly. Otherwise collect the top-level windows first and inspect them
+        // afterwards, so no filter code runs inside the native enumeration callback.
+        IReadOnlyList<nint>? topLevelWindows = null;
+        IReadOnlyList<nint> candidates;
+        if (query.Handle is { } handle)
+        {
+            candidates = IsValidWindow(handle) ? [handle] : [];
+        }
+        else
+        {
+            topLevelWindows = EnumerateTopLevelWindows(_nativeWrapper);
+            candidates = topLevelWindows;
+        }
+
+        var session = new ReadSession(_nativeWrapper, topLevelWindows);
+        var windows = new List<WindowInfo>();
+        foreach (var hWnd in candidates)
+        {
+            if (Match(hWnd, query, session) is { } info)
+                windows.Add(info);
+        }
 
         return windows;
     }
@@ -91,7 +68,7 @@ public class WindowService : IWindowService
         if (hWnd == nint.Zero)
             return null;
 
-        return GetWindowInfoInternal(hWnd);
+        return ReadWindowInfo(hWnd);
     }
 
     public WindowInfo? GetWindowInfo(nint handle)
@@ -99,8 +76,19 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return null;
 
-        return GetWindowInfoInternal(handle);
+        return ReadWindowInfo(handle);
     }
+
+    public bool IsUserFacingAppWindow(nint handle) =>
+        IsValidWindow(handle) &&
+        _nativeWrapper.IsWindowVisible(handle) &&
+        PassesUserFacingRules(
+            handle,
+            _nativeWrapper.GetClassName(handle) ?? string.Empty,
+            _nativeWrapper.GetWindowText(handle) ?? string.Empty,
+            includeToolWindows: false,
+            includeCloaked: false,
+            out _);
 
     public bool MoveWindow(nint handle, int x, int y, bool bringToFront = true)
     {
@@ -456,53 +444,224 @@ public class WindowService : IWindowService
         return results;
     }
 
-    private WindowInfo? GetWindowInfoInternal(nint hWnd)
+    /// <summary>
+    /// Applies <paramref name="query"/> to one window and reads it if it matches. The cheap native
+    /// reads and filters come first; the process name lookup comes last.
+    /// </summary>
+    private WindowInfo? Match(nint hWnd, WindowQuery query, ReadSession session)
     {
-        // Get window title
-        var title = _nativeWrapper.GetWindowText(hWnd);
+        if (query.VisibleOnly && !_nativeWrapper.IsWindowVisible(hWnd))
+            return null;
 
-        // Skip windows with empty titles (usually not user-facing windows)
+        var className = _nativeWrapper.GetClassName(hWnd) ?? string.Empty;
+        if (!string.IsNullOrEmpty(query.ClassName) &&
+            !string.Equals(className, query.ClassName, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var title = _nativeWrapper.GetWindowText(hWnd) ?? string.Empty;
+        bool isCloaked;
+        if (query.SkipsUserFacingFilter)
+        {
+            isCloaked = _nativeWrapper.IsCloaked(hWnd);
+        }
+        else if (!PassesUserFacingRules(hWnd, className, title, query.IncludeToolWindows, query.IncludeCloaked, out isCloaked))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(query.TitleContains) &&
+            !title.Contains(query.TitleContains, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var windowProcessId = _nativeWrapper.GetWindowThreadProcessId(hWnd);
+        if (!query.SkipsUserFacingFilter && windowProcessId == session.CurrentProcessId)
+            return null; // the server's own windows are not app windows
+
+        var process = ResolveProcess(hWnd, className, title, windowProcessId, session);
+        if (query.ProcessId is { } processId && !process.Has(processId))
+            return null;
+
+        if (!string.IsNullOrEmpty(query.ProcessName) &&
+            !session.ProcessName(process.ProcessId).Contains(query.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+            !(process.HostProcessId is { } hostId &&
+              session.ProcessName(hostId).Contains(query.ProcessName, StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var info = BuildWindowInfo(hWnd, title, className, isCloaked, process, session);
+        if (info == null || (!query.IncludeMinimized && info.State == WindowState.Minimized))
+            return null;
+
+        return info;
+    }
+
+    /// <summary>
+    /// The user-facing rules that come after visibility, cheapest first: not the desktop or a
+    /// taskbar, not a tool window, a title, and not cloaked. Owned windows (dialogs) pass: they are
+    /// what an agent most often looks for, and some apps make even their main window an owned window.
+    /// <paramref name="isCloaked"/> is read only when the cheaper rules pass.
+    /// </summary>
+    private bool PassesUserFacingRules(
+        nint hWnd, string className, string title, bool includeToolWindows, bool includeCloaked, out bool isCloaked)
+    {
+        isCloaked = false;
+
+        if (WindowClassification.IsShellWindowClass(className))
+            return false;
+
+        if (!includeToolWindows &&
+            WindowClassification.IsToolWindow(_nativeWrapper.GetWindowLongPtr(hWnd, NativeEnums.GWL_EXSTYLE)))
+            return false;
+
         if (string.IsNullOrEmpty(title))
-            return null;
+            return false;
 
-        // Get process ID and name
-        var processId = _nativeWrapper.GetWindowThreadProcessId(hWnd);
-        var processName = GetProcessName(processId);
+        isCloaked = _nativeWrapper.IsCloaked(hWnd);
+        return includeCloaked || !isCloaked;
+    }
 
-        // Skip our own process
-        if (processId == _nativeWrapper.GetCurrentProcessId())
-            return null;
+    /// <summary>
+    /// Reads any window, with no listing filter: untitled, cloaked, tool and shell windows and the
+    /// server's own windows are described too. Null only when the window cannot be read (it is gone).
+    /// </summary>
+    private WindowInfo? ReadWindowInfo(nint hWnd)
+    {
+        var session = new ReadSession(_nativeWrapper, topLevelWindows: null);
+        var className = _nativeWrapper.GetClassName(hWnd) ?? string.Empty;
+        var title = _nativeWrapper.GetWindowText(hWnd) ?? string.Empty;
+        var process = ResolveProcess(hWnd, className, title, _nativeWrapper.GetWindowThreadProcessId(hWnd), session);
 
-        // Get window rectangle
+        return BuildWindowInfo(hWnd, title, className, _nativeWrapper.IsCloaked(hWnd), process, session);
+    }
+
+    private WindowInfo? BuildWindowInfo(
+        nint hWnd, string title, string className, bool isCloaked, WindowProcess process, ReadSession session)
+    {
         var rect = _nativeWrapper.GetWindowRect(hWnd);
         if (rect == null)
             return null;
 
-        // Get window state
         var state = WindowState.Normal;
         if (_nativeWrapper.IsIconic(hWnd))
             state = WindowState.Minimized;
         else if (_nativeWrapper.IsZoomed(hWnd))
             state = WindowState.Maximized;
 
-        // Get monitor index
-        var monitorIndex = _monitorService.GetMonitorIndex(hWnd);
-
-        // Check if this is visible
-        var isVisible = _nativeWrapper.IsWindowVisible(hWnd);
+        var owner = _nativeWrapper.GetWindow(hWnd, NativeEnums.GW_OWNER);
 
         return new WindowInfo(
             Handle: hWnd,
             Title: title,
-            ProcessName: processName,
-            ProcessId: (int)processId,
+            ProcessName: session.ProcessName(process.ProcessId),
+            ProcessId: (int)process.ProcessId,
             Bounds: WindowRect.FromLTRB(rect.Value.Left, rect.Value.Top, rect.Value.Right, rect.Value.Bottom),
             State: state,
-            IsVisible: isVisible,
-            MonitorIndex: monitorIndex
-        );
+            IsVisible: _nativeWrapper.IsWindowVisible(hWnd),
+            MonitorIndex: _monitorService.GetMonitorIndex(hWnd))
+        {
+            ClassName = className,
+            IsCloaked = isCloaked,
+            OwnerHandle = owner == nint.Zero ? null : owner,
+            HostProcessName = process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null,
+            HostProcessId = process.HostProcessId is { } id ? (int)id : null
+        };
     }
 
-    /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
-    private string GetProcessName(uint processId) => _nativeWrapper.GetProcessName(processId) ?? "Unknown";
+    /// <summary>
+    /// The process a window belongs to. A UWP frame window (ApplicationFrameWindow) belongs to
+    /// ApplicationFrameHost, but the app runs in the process of the CoreWindow that the frame hosts:
+    /// report that process, with ApplicationFrameHost as the host.
+    /// </summary>
+    private WindowProcess ResolveProcess(nint hWnd, string className, string title, uint windowProcessId, ReadSession session)
+    {
+        if (!WindowClassification.IsApplicationFrameWindow(className))
+            return new WindowProcess(windowProcessId, HostProcessId: null);
+
+        return FindHostedAppProcessId(hWnd, title, windowProcessId, session) is { } appProcessId
+            ? new WindowProcess(appProcessId, HostProcessId: windowProcessId)
+            : new WindowProcess(windowProcessId, HostProcessId: null);
+    }
+
+    private uint? FindHostedAppProcessId(nint frame, string title, uint hostProcessId, ReadSession session)
+    {
+        // While the app runs, its CoreWindow is a child of the frame.
+        var children = new List<nint>();
+        _nativeWrapper.EnumChildWindows(frame, child =>
+        {
+            children.Add(child);
+            return true;
+        });
+
+        foreach (var child in children)
+        {
+            if (!WindowClassification.IsCoreWindow(_nativeWrapper.GetClassName(child)))
+                continue;
+
+            var childProcessId = _nativeWrapper.GetWindowThreadProcessId(child);
+            if (childProcessId != 0 && childProcessId != hostProcessId)
+                return childProcessId;
+        }
+
+        // While the app is minimized or suspended, Windows moves its CoreWindow out of the frame to the
+        // top level. Match it by title, and only when exactly one other process has such a window; an
+        // ambiguous title leaves the frame attributed to its host.
+        if (string.IsNullOrEmpty(title))
+            return null;
+
+        var candidates = session.TopLevelCoreWindows
+            .Where(w => w.ProcessId != 0 && w.ProcessId != hostProcessId && string.Equals(w.Title, title, StringComparison.Ordinal))
+            .Select(w => w.ProcessId)
+            .Distinct()
+            .ToList();
+
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    private static List<nint> EnumerateTopLevelWindows(INativeWindowWrapper nativeWrapper)
+    {
+        var handles = new List<nint>();
+        nativeWrapper.EnumWindows(hWnd =>
+        {
+            handles.Add(hWnd);
+            return true;
+        });
+        return handles;
+    }
+
+    /// <summary>The process of a window, and for a UWP frame window also the frame host process.</summary>
+    private readonly record struct WindowProcess(uint ProcessId, uint? HostProcessId)
+    {
+        public bool Has(int processId) => ProcessId == processId || HostProcessId == processId;
+    }
+
+    /// <summary>
+    /// Values shared by the reads of one call: each process name is looked up once, and the
+    /// top-level UWP CoreWindows are listed only when a frame needs them.
+    /// </summary>
+    private sealed class ReadSession(INativeWindowWrapper nativeWrapper, IReadOnlyList<nint>? topLevelWindows)
+    {
+        private readonly Dictionary<uint, string> _processNames = [];
+        private uint? _currentProcessId;
+        private List<(string Title, uint ProcessId)>? _topLevelCoreWindows;
+
+        public uint CurrentProcessId => _currentProcessId ??= nativeWrapper.GetCurrentProcessId();
+
+        /// <summary>The top-level CoreWindows: (title, process ID).</summary>
+        public IReadOnlyList<(string Title, uint ProcessId)> TopLevelCoreWindows =>
+            _topLevelCoreWindows ??= (topLevelWindows ?? EnumerateTopLevelWindows(nativeWrapper))
+                .Where(hWnd => WindowClassification.IsCoreWindow(nativeWrapper.GetClassName(hWnd)))
+                .Select(hWnd => (nativeWrapper.GetWindowText(hWnd) ?? string.Empty, nativeWrapper.GetWindowThreadProcessId(hWnd)))
+                .ToList();
+
+        /// <summary>The name of the process, or "Unknown" when it has exited or cannot be read.</summary>
+        public string ProcessName(uint processId)
+        {
+            if (!_processNames.TryGetValue(processId, out var name))
+            {
+                name = nativeWrapper.GetProcessName(processId) ?? "Unknown";
+                _processNames[processId] = name;
+            }
+
+            return name;
+        }
+    }
 }

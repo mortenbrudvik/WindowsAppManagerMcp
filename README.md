@@ -8,7 +8,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 ## Features
 
-- **Window Discovery** - Find and list windows by title, process name, or handle
+- **Window Discovery** - Find and list app windows by title, process name, class name, or handle, without hidden cloaked, tool or shell windows; UWP apps are reported under their own process
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays

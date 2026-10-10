@@ -46,6 +46,22 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public string? GetProcessName(uint processId) => inner.GetProcessName(processId);
 
+    public void EnumChildWindows(nint hWndParent, Func<nint, bool> callback) => inner.EnumChildWindows(hWndParent, callback);
+
+    public string GetClassName(nint hWnd) => inner.GetClassName(hWnd);
+
+    public nint GetWindowLongPtr(nint hWnd, int index) => inner.GetWindowLongPtr(hWnd, index);
+
+    public nint GetWindow(nint hWnd, uint command) => inner.GetWindow(hWnd, command);
+
+    public bool IsCloaked(nint hWnd) => inner.IsCloaked(hWnd);
+
+    public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd) => inner.GetExtendedFrameBounds(hWnd);
+
+    public bool IsHungAppWindow(nint hWnd) => inner.IsHungAppWindow(hWnd);
+
+    public uint GetDpiForWindow(nint hWnd) => inner.GetDpiForWindow(hWnd);
+
     // Window changes: refused before anything reaches the wrapped instance
 
     public bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags) =>

@@ -16,6 +16,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// patterns and text ranges. A new P/Invoke, a new NativeMethods class or a UI Automation action
 /// (Invoke, SetValue, Toggle, SetFocus, ...) therefore fails until it is moved behind a mockable
 /// wrapper or reviewed onto a list.</item>
+/// <item>The NativeWindowWrapper queries that read-only tests run against the real desktop (through
+/// ReadOnlyNativeWindowWrapper) may call only the read-only APIs.</item>
 /// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, and starting
 /// or stopping processes.</item>
 /// </list>
@@ -100,6 +102,25 @@ public class NativeCallGuardTests
         ["User32.GetUserObjectInformationW"] = "reads the name of a desktop",
         ["Wtsapi32.WTSQuerySessionInformationW"] = "reads whether the server's session is locked or disconnected",
         ["Wtsapi32.WTSFreeMemory"] = "frees memory that WTSQuerySessionInformationW returned",
+        // Window reads: the NativeWindowWrapper queries that ReadOnlyNativeWindowWrapper forwards
+        // (see NativeWindowWrapperQueries_CallOnlyReadOnlyNativeApis)
+        ["User32.EnumWindows"] = "lists the top-level windows",
+        ["User32.EnumChildWindows"] = "lists the child windows of a window",
+        ["User32.IsWindowVisible"] = "reads whether a window has WS_VISIBLE",
+        ["User32.IsIconic"] = "reads whether a window is minimized",
+        ["User32.IsZoomed"] = "reads whether a window is maximized",
+        ["User32.GetWindowTextLengthW"] = "reads the length of a window title",
+        ["User32.GetWindowTextW"] = "reads a window title",
+        ["User32.GetClassNameW"] = "reads the class name of a window",
+        ["User32.GetWindowThreadProcessId"] = "reads which process owns a window",
+        ["User32.GetForegroundWindow"] = "reads which window is in the foreground",
+        ["User32.GetWindowLongW"] = "reads a style value of a window (SetWindowLongW, which changes it, is not listed)",
+        ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
+        ["User32.GetWindow"] = "reads a related window, such as the owner or the enabled popup",
+        ["User32.IsHungAppWindow"] = "reads whether the thread of a window is hung",
+        ["User32.GetDpiForWindow"] = "reads the DPI of a window",
+        ["Dwmapi.DwmGetWindowAttribute"] = "reads a DWM attribute such as cloaking or the visible frame (DwmSetWindowAttribute, which changes them, is not listed)",
+        ["Kernel32.GetCurrentProcessId"] = "reads the server's own process ID",
     };
 
     /// <summary>
@@ -156,6 +177,45 @@ public class NativeCallGuardTests
                 "outside {0} only the read-only NativeMethods APIs on the allow-list may be called; move other " +
                 "calls behind a mockable wrapper, or review them onto ReadOnlyNativeApis",
                 string.Join(", ", ActionWrappers.Select(w => w.Name)));
+    }
+
+    [Fact]
+    public void NativeWindowWrapperQueries_CallOnlyReadOnlyNativeApis()
+    {
+        // Arrange - ReadOnlyNativeWindowWrapper forwards every query to the real NativeWindowWrapper,
+        // so read-only tests run these methods against the user's desktop. NativeWindowWrapper is an
+        // action wrapper and may call anything, so check its queries separately: each must reach only
+        // read-only APIs, or a "read" could change a real window during the default test run.
+        var windowChanges = Tests.Unit.Infrastructure.ReadOnlyNativeWindowWrapperTests.WindowChanges()
+            .Select(row => (string)row[0])
+            .ToHashSet(StringComparer.Ordinal);
+        var queries = typeof(INativeWindowWrapper).GetMethods()
+            .Select(m => m.Name)
+            .Where(name => !windowChanges.Contains(name))
+            .ToList();
+
+        // Act - native calls made by each query and by the lambdas it declares ("<Query>b__0")
+        var queryCalls = FindCalls(IsNativeMethodsApi)
+            .Where(c => c.Owner == typeof(NativeWindowWrapper))
+            .Where(c => queries.Any(q => IsCallFrom(c, q)))
+            .ToList();
+
+        // Assert
+        queries.Should().Contain(nameof(INativeWindowWrapper.IsCloaked)).And.NotContain(nameof(INativeWindowWrapper.SetWindowPos));
+        queryCalls.Should().Contain(c => c.Api == "Dwmapi.DwmGetWindowAttribute",
+            "the scan must see the queries' own native calls");
+        queryCalls
+            .Where(c => !ReadOnlyNativeApis.ContainsKey(c.Api))
+            .Select(c => c.Description)
+            .Should().BeEmpty(
+                "a NativeWindowWrapper query must only read; put a new read API on ReadOnlyNativeApis after review, " +
+                "and make a method that changes a window throw in ReadOnlyNativeWindowWrapper");
+
+        static bool IsCallFrom(Call call, string method)
+        {
+            var caller = call.Caller[(call.Caller.LastIndexOf('.') + 1)..];
+            return caller == method || caller.StartsWith($"<{method}>", StringComparison.Ordinal);
+        }
     }
 
     [Fact]
