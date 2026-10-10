@@ -2654,6 +2654,8 @@ If no visible window matches the filters, nothing is saved (an existing preset w
 | includeProcesses | string | No | - | Only save these processes (comma-separated) |
 | excludeProcesses | string | No | - | Exclude these processes (comma-separated) |
 
+The process filters match part of the process name, case-insensitive. As in [find_windows](#find_windows), a Store (UWP) app's window matches both its own process name and `ApplicationFrameHost`. Each saved placement stores the app's own process name (for example `CalculatorApp`).
+
 **Example 1:** Save all windows
 > "Save my current layout as 'morning-routine'"
 
@@ -2720,6 +2722,8 @@ Apply a saved layout preset.
 - `process_and_title` - Match by process name AND window title
 - `process_only` - Match by process name only
 - `title_only` - Match by window title only
+
+A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows.
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 

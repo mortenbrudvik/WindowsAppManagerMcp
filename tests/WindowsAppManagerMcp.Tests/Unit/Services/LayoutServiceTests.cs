@@ -337,6 +337,29 @@ public class LayoutServiceTests : IDisposable
         result.Preset.Placements[0].Matcher.ProcessName.Should().Be("notepad");
     }
 
+    [Theory]
+    [InlineData("ApplicationFrameHost")]
+    [InlineData("CalculatorApp")]
+    public async Task CaptureCurrentLayoutAsync_ProcessFilters_MatchTheUwpAppAndItsFrameHost(string processName)
+    {
+        // Arrange
+        var testWindows = new List<WindowInfo>
+        {
+            TestDataFactory.CreateWindowInfo(1, "Calculator", "CalculatorApp") with { HostProcessName = "ApplicationFrameHost", HostProcessId = 4300 },
+            TestDataFactory.CreateWindowInfo(2, "Notepad", "notepad")
+        };
+        _mockWindowService.Setup(w => w.GetAllWindows(false)).Returns(testWindows);
+        var sut = CreateSut();
+
+        // Act
+        var included = await sut.CaptureCurrentLayoutAsync("uwp-include", includeProcesses: [processName]);
+        var excluded = await sut.CaptureCurrentLayoutAsync("uwp-exclude", excludeProcesses: [processName]);
+
+        // Assert - the placement stores the app's own process name
+        included.Preset!.Placements.Select(p => p.Matcher.ProcessName).Should().Equal("CalculatorApp");
+        excluded.Preset!.Placements.Select(p => p.Matcher.ProcessName).Should().Equal("notepad");
+    }
+
     [Fact]
     public async Task CaptureCurrentLayoutAsync_WithExcludeFilter_ExcludesSpecifiedProcesses()
     {
@@ -413,6 +436,34 @@ public class LayoutServiceTests : IDisposable
                 testWindow.Handle,
                 It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_PlacementSavedForTheUwpFrameHost_StillMatchesTheUwpWindow()
+    {
+        // Arrange - presets saved before UWP windows were attributed to the app name ApplicationFrameHost
+        var calculator = TestDataFactory.CreateWindowInfo(4100, "Calculator", "CalculatorApp", processId: 4200) with
+        {
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 4300
+        };
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns([calculator]);
+
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "legacy-uwp",
+            placements: [TestDataFactory.CreateWindowPlacement(processName: "ApplicationFrameHost")]));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("legacy-uwp");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.WindowsArranged.Should().Be(1);
+        result.WindowsNotFound.Should().Be(0);
+        _mockWindowService.Verify(
+            w => w.SetWindowBounds(calculator.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()),
             Times.Once);
     }
 

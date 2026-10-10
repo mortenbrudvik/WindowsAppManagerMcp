@@ -264,16 +264,16 @@ public class LayoutService : ILayoutService
 
         foreach (var window in windows)
         {
-            // Filter by process name
+            // Filter by process name, the app's or (for UWP windows) the frame host's, as find_windows does
             if (includeProcesses?.Length > 0)
             {
-                if (!includeProcesses.Any(p => window.ProcessName.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                if (!includeProcesses.Any(p => ProcessNameContains(window, p)))
                     continue;
             }
 
             if (excludeProcesses?.Length > 0)
             {
-                if (excludeProcesses.Any(p => window.ProcessName.Contains(p, StringComparison.OrdinalIgnoreCase)))
+                if (excludeProcesses.Any(p => ProcessNameContains(window, p)))
                     continue;
             }
 
@@ -499,8 +499,17 @@ public class LayoutService : ILayoutService
         if (string.IsNullOrEmpty(matcher.ProcessName))
             return true;
 
-        return window.ProcessName.Contains(matcher.ProcessName, StringComparison.OrdinalIgnoreCase);
+        return ProcessNameContains(window, matcher.ProcessName);
     }
+
+    /// <summary>
+    /// True when <paramref name="name"/> is part of the window's process name or, for a UWP window, of
+    /// its frame host's (ApplicationFrameHost), the same rule as find_windows. Presets saved before
+    /// UWP windows were attributed to the app store ApplicationFrameHost as their process name.
+    /// </summary>
+    private static bool ProcessNameContains(WindowInfo window, string name) =>
+        window.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase) ||
+        window.HostProcessName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
 
     private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher)
     {
