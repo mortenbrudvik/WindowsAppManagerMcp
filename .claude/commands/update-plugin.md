@@ -10,8 +10,10 @@ Update the installed Windows App Manager plugin from development source.
 
 ## Process
 
-When invoked, perform these steps in PowerShell. Derive every path; never hard-code the repository
-location or the user name:
+When invoked, perform these steps in PowerShell (`pwsh`; in Windows PowerShell 5.1 the default
+execution policy blocks the script in step 2, so run it with
+`powershell -NoProfile -ExecutionPolicy Bypass -File ...`). Derive every path; never hard-code the
+repository location or the user name:
 
 ```powershell
 $repo = git rev-parse --show-toplevel
@@ -26,7 +28,15 @@ The installed plugin runs `${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe`, 
 
 Read and display:
 - **Development version**: `$version` (from `.claude-plugin/plugin.json`)
-- **Installed version**: from `~/.claude/plugins/installed_plugins.json` (look for entry with `name: "windows-app-manager"` and `marketplace: "windows-app-manager-marketplace"`)
+- **Installed version**: from `~/.claude/plugins/installed_plugins.json`. In that file (format
+  `"version": 2`), `plugins` maps `"<plugin>@<marketplace>"` keys to arrays of install entries. Use
+  the `version` of the entry under `plugins["windows-app-manager@windows-app-manager-marketplace"]`
+  (the one with `"scope": "user"` if there are several).
+
+If that key is missing, the plugin is not installed. Stop and ask the user to install it first
+(`/plugin marketplace add mortenbrudvik/WindowsAppManagerMcp`, then
+`/plugin install windows-app-manager@windows-app-manager-marketplace`). This command only updates an
+existing install.
 
 Show the user the version comparison before proceeding.
 
@@ -64,14 +74,16 @@ if (Test-Path "$dest\.claude-plugin\bin") { Remove-Item -Recurse -Force "$dest\.
 
 ### 4. Update installed_plugins.json
 
-Read `~/.claude/plugins/installed_plugins.json` and update the entry for the windows-app-manager plugin:
+Read `~/.claude/plugins/installed_plugins.json` and update the entry found in step 1, under
+`plugins["windows-app-manager@windows-app-manager-marketplace"]`:
 
 - `version`: `$version`
 - `installPath`: `$dest`
 - `lastUpdated`: current ISO 8601 timestamp (e.g., `2026-01-16T12:00:00.000Z`)
 - `gitCommitSha`: output of `git rev-parse HEAD`
 
-Write the updated JSON back to the file.
+Leave the other fields (`scope`, `installedAt`, ...) and the other plugins' entries unchanged, and
+write the updated JSON back to the file.
 
 ### 5. Confirm Update
 
