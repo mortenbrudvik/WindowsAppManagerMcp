@@ -22,6 +22,36 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     /// <summary>How long <see cref="CallToolAsync"/> waits for a tool call by default.</summary>
     public static readonly TimeSpan DefaultCallTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// The revision the SDK's own client prefers, and what a test client negotiates by default: server/discover instead of
+    /// the initialize handshake, and elicitation as a multi-round-trip request (the tool call returns input_required and
+    /// the client retries it with the answer).
+    /// </summary>
+    public const string LatestRevision = "2026-07-28";
+
+    /// <summary>
+    /// A revision with the initialize handshake, as stdio clients such as Claude Code and the CI guard
+    /// (scripts/Test-ToolsSnapshot.ps1) negotiate it: elicitation is a request from the server to the client while the
+    /// tool call is open. Pass <see cref="WithRevision"/> as the client options to test this path.
+    /// </summary>
+    public const string InitializeRevision = "2025-06-18";
+
+    /// <summary>
+    /// <paramref name="options"/> (or new options) pinned to <paramref name="revision"/>; null leaves the SDK's default,
+    /// <see cref="LatestRevision"/> with a fallback to the initialize handshake.
+    /// </summary>
+    public static McpClientOptions? WithRevision(McpClientOptions? options, string? revision)
+    {
+        if (revision == null)
+        {
+            return options;
+        }
+
+        options ??= new McpClientOptions();
+        options.ProtocolVersion = revision;
+        return options;
+    }
+
     private readonly IHost _host;
     private readonly PipeWriter _serverInput;
 

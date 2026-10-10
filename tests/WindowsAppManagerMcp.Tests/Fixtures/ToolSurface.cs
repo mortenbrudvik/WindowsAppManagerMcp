@@ -36,7 +36,7 @@ public static class ToolSurface
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    private static readonly Lazy<Task<JsonArray>> LazyTools = new(ListToolsFromServerAsync);
+    private static readonly Lazy<Task<JsonArray>> LazyTools = new(() => ListToolsFromServerAsync(revision: null));
 
     public static string SnapshotPath => RepositoryFiles.PathOf(SnapshotRelativePath);
 
@@ -76,9 +76,16 @@ public static class ToolSurface
         tools.OfType<JsonObject>().SingleOrDefault(t => (string?)t["name"] == name)
         ?? throw new KeyNotFoundException($"tools/list has no tool named '{name}'.");
 
-    private static async Task<JsonArray> ListToolsFromServerAsync()
+    /// <summary>
+    /// Lists the tools of a new in-process server whose client negotiates <paramref name="revision"/> (null: the SDK
+    /// client's default, <see cref="InProcessMcpServer.LatestRevision"/>), sorted by name.
+    /// </summary>
+    public static async Task<JsonArray> ListToolsFromServerAsync(string? revision)
     {
-        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools());
+        await using var server = await InProcessMcpServer.StartAsync(
+            [],
+            builder => builder.AddWindowsAppManagerTools(),
+            clientOptions: InProcessMcpServer.WithRevision(null, revision));
 
         var tools = new List<JsonObject>();
         string? cursor = null;

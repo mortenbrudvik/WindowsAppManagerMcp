@@ -47,7 +47,7 @@ public class CaptureToolResultContractTests
         metadata.GetProperty("coordinateSpace").GetString().Should().Be("physical-virtual-screen");
         metadata.TryGetProperty("imageData", out _).Should().BeFalse("the image is sent once, as image content");
 
-        var bytes = Convert.FromBase64String(image.Data);
+        var bytes = image.DecodedData.ToArray();
         metadata.GetProperty("byteSize").GetInt64().Should().Be(bytes.Length);
         DecodeSize(bytes).Should().Be((metadata.GetProperty("width").GetInt32(), metadata.GetProperty("height").GetInt32()));
         metadata.GetProperty("width").GetInt32().Should().Be(1568, "the default long edge is 1568");

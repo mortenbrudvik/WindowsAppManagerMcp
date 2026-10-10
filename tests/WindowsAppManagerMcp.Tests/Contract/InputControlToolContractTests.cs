@@ -15,10 +15,14 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// that can ask), release_all_input, the request's cancellation and the user's pause stopping type_text, the
 /// pause shared by two servers, window-changing tools refused while paused, and the release of held input when
 /// the client closes the server's stdin. The input layer, the hotkey and the shared pause are fakes: nothing is
-/// sent, registered or opened for real.
+/// sent, registered or opened for real. The elicitation, cancellation and stdin EOF tests run on both protocol paths
+/// (<see cref="Revisions"/>): the SDK client's default revision, where elicitation is a multi-round-trip request, and the
+/// initialize handshake of today's stdio clients, where it is a request from the server while the call is open.
 /// </summary>
 public sealed class InputControlToolContractTests : IDisposable
 {
+    public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision };
+
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
     private const ushort VkControl = 0x11, VkLControl = 0xA2, VkLMenu = 0xA4, VkLShift = 0xA0, VkLWin = 0x5B;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -43,7 +47,8 @@ public sealed class InputControlToolContractTests : IDisposable
         TaskCompletionSource<RequestId>? requestId = null,
         TaskCompletionSource? callEnded = null,
         InputSession? session = null,
-        FakeInputWrapper? input = null)
+        FakeInputWrapper? input = null,
+        string? revision = null)
     {
         session ??= _session;
         input ??= _input;
@@ -77,7 +82,7 @@ public sealed class InputControlToolContractTests : IDisposable
             builder =>
             {
                 builder
-                    .AddCallToolFilter(next => async (request, token) =>
+                    .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, token) =>
                     {
                         // The JSON-RPC id of the call, which a client names when it cancels the call
                         requestId?.TrySetResult(request.JsonRpcRequest.Id);
@@ -89,7 +94,7 @@ public sealed class InputControlToolContractTests : IDisposable
                         {
                             callEnded?.TrySetResult();
                         }
-                    })
+                    }))
                     .AddToolErrorReporting()
                     .AddInputGateSerialization()
                     .WithTools(new InputSimulationTools(service));
@@ -101,7 +106,7 @@ public sealed class InputControlToolContractTests : IDisposable
                     ? builder.WithTools(new InputControlTools(session, _hotkey, timeout))
                     : builder.WithTools<InputControlTools>();
             },
-            clientOptions: options,
+            clientOptions: InProcessMcpServer.WithRevision(options, revision),
             configureServices: services => services
                 .AddSingleton<IInputSession>(session)
                 .AddSingleton<IPauseHotkey>(_hotkey));
@@ -214,12 +219,13 @@ public sealed class InputControlToolContractTests : IDisposable
         _questions.Should().Be(0);
     }
 
-    [Fact]
-    public async Task ResumeInput_ClientWithoutElicitation_IsResumeNeedsUser_AndStaysPaused()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ResumeInput_ClientWithoutElicitation_IsResumeNeedsUser_AndStaysPaused(string? revision)
     {
         // The agent cannot resume itself: with no way to ask the user, only the hotkey resumes
         _session.Pause(InputControlSources.Hotkey);
-        await using var server = await StartAsync();
+        await using var server = await StartAsync(revision: revision);
 
         var result = Payload(await server.CallToolAsync("resume_input"));
 
@@ -229,12 +235,13 @@ public sealed class InputControlToolContractTests : IDisposable
         _session.IsPaused.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task ResumeInput_TheUserConfirms_Resumes()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ResumeInput_TheUserConfirms_Resumes(string? revision)
     {
         // Arrange
         _session.Pause(InputControlSources.Hotkey);
-        await using var server = await StartAsync(answer: (_, _) => Answer("accept", true));
+        await using var server = await StartAsync(answer: (_, _) => Answer("accept", true), revision: revision);
 
         // Act
         var result = Payload(await server.CallToolAsync("resume_input"));
@@ -269,8 +276,9 @@ public sealed class InputControlToolContractTests : IDisposable
         _questions.Should().Be(1);
     }
 
-    [Fact]
-    public async Task ResumeInput_TheUserDoesNotAnswer_StaysPaused()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ResumeInput_TheUserDoesNotAnswer_StaysPaused(string? revision)
     {
         _session.Pause(InputControlSources.Hotkey);
         await using var server = await StartAsync(
@@ -279,7 +287,8 @@ public sealed class InputControlToolContractTests : IDisposable
                 await Task.Delay(Timeout, token);
                 return new ElicitResult { Action = "accept" };
             },
-            answerTimeout: TimeSpan.FromMilliseconds(100));
+            answerTimeout: TimeSpan.FromMilliseconds(100),
+            revision: revision);
 
         var result = Payload(await server.CallToolAsync("resume_input"));
 
@@ -288,18 +297,21 @@ public sealed class InputControlToolContractTests : IDisposable
         _session.IsPaused.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task ResumeInput_ASecondCallWhileTheFirstAsks_IsDeclined_WithoutAskingAgain()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ResumeInput_ASecondCallWhileTheFirstAsks_IsDeclined_WithoutAskingAgain(string? revision)
     {
         // Arrange - the first question stays open until the test answers it
         _session.Pause(InputControlSources.Hotkey);
         var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var answer = new TaskCompletionSource<ElicitResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = await StartAsync(answer: (_, _) =>
-        {
-            asked.TrySetResult();
-            return new ValueTask<ElicitResult>(answer.Task);
-        });
+        await using var server = await StartAsync(
+            answer: (_, _) =>
+            {
+                asked.TrySetResult();
+                return new ValueTask<ElicitResult>(answer.Task);
+            },
+            revision: revision);
         var first = server.CallToolAsync("resume_input");
         await asked.Task.WaitAsync(Timeout);
 
@@ -480,22 +492,23 @@ public sealed class InputControlToolContractTests : IDisposable
 
     #region Cancellation, pause and stdin EOF through MCP
 
-    [Fact]
-    public async Task TypeText_CancelledByTheClient_StopsTypingOnTheServer()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task TypeText_CancelledByTheClient_StopsTypingOnTheServer(string? revision)
     {
         // Arrange - fifty characters 100 ms apart, five seconds of typing
         const string text = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx";
         var requestId = new TaskCompletionSource<RequestId>(TaskCreationOptions.RunContinuationsAsynchronously);
         var callEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = await StartAsync(requestId: requestId, callEnded: callEnded);
+        await using var server = await StartAsync(requestId: requestId, callEnded: callEnded, revision: revision);
         using var clientGivesUp = new CancellationTokenSource();
         var call = server.CallToolAsync("type_text",
             new Dictionary<string, object?> { ["text"] = text, ["delayMs"] = 100 }, cancellationToken: clientGivesUp.Token);
         var id = await requestId.Task.WaitAsync(Timeout);
         SpinWait.SpinUntil(() => _input.Batches.Count >= 2, Timeout).Should().BeTrue();
 
-        // Act - the client cancels the call. MCP clients send notifications/cancelled with the call's id; the C#
-        // SDK client (0.5.0-preview.1) does not send it when its own token is cancelled, so the test sends it.
+        // Act - the client cancels the call: MCP clients send notifications/cancelled with the call's id. The test sends
+        // it itself, as any client does, so it does not depend on when the SDK client sends it for its own token.
         await server.Client.SendNotificationAsync(NotificationMethods.CancelledNotification,
             new CancelledNotificationParams { RequestId = id, Reason = "the user cancelled" });
 
@@ -596,14 +609,16 @@ public sealed class InputControlToolContractTests : IDisposable
         _input.Batches.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task ClosingTheServersStdin_ReleasesHeldInput()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task ClosingTheServersStdin_ReleasesHeldInput(string? revision)
     {
         // Arrange - the server as Program.cs runs it, with the session start-up service and a fake hotkey; a key
         // the server pressed is still down
         var native = new FakeHotkeyWrapper();
         await using var server = await InProcessMcpServer.StartAsync(
             [],
+            clientOptions: InProcessMcpServer.WithRevision(null, revision),
             configureServices: services => services
                 .AddSingleton<IInputSession>(_session)
                 .AddSingleton<IPauseHotkey>(new PauseHotkeyListener(native, PauseHotkeyOptions.Default))

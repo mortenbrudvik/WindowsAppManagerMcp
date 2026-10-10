@@ -74,7 +74,10 @@
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "overwrite": {
@@ -144,7 +147,10 @@
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "overwrite": {
@@ -203,7 +209,10 @@
           },
           "controlTypes": {
             "description": "Comma-separated control types to keep (e.g., 'Button,Edit'). Leave empty for all types. Matching elements inside containers of other types are still returned: the containers are left out and their matches take their place. Unknown names fail with InvalidControlType, which lists the valid names. Common types: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, TabItem, Text, Hyperlink, Image, Pane, Group.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "interactableOnly": {
@@ -241,7 +250,10 @@
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "overwrite": {
@@ -438,12 +450,18 @@
         "properties": {
           "titleContains": {
             "description": "Partial text to match in window title (case-insensitive)",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "processName": {
             "description": "Process name to match (e.g., 'notepad', 'chrome'). For a UWP app, both the app process (e.g., 'CalculatorApp') and its host 'ApplicationFrameHost' match",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "processId": {
@@ -469,7 +487,10 @@
           },
           "className": {
             "description": "Exact window class name to match (case-insensitive), e.g. 'Notepad', '#32770' for a dialog or 'Shell_TrayWnd' for the taskbar. Skips the user-facing filter, so untitled and shell windows of that class are found too",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "includeCloaked": {
@@ -738,7 +759,10 @@
           },
           "controlTypes": {
             "description": "Comma-separated control types to keep (e.g., 'Button,Edit'). Leave empty for all types. Matching elements inside containers of other types are still returned: the containers are left out and their matches take their place. Unknown names fail with InvalidControlType, which lists the valid names. Common types: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, TabItem, Text, Hyperlink, Image, Pane, Group.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "interactableOnly": {
@@ -804,7 +828,10 @@
           },
           "expectedProcessName": {
             "description": "Optional guard against PID reuse: the expected process name as shown by list_processes (e.g. 'notepad' or 'notepad.exe'). If the PID now belongs to a different process, nothing is done and errorCode is ProcessNameMismatch.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           }
         },
@@ -826,15 +853,24 @@
           },
           "arguments": {
             "description": "Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.",
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "default": null
           },
           "workingDirectory": {
             "description": "Working directory for the application",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "waitForWindow": {
@@ -920,7 +956,10 @@
           },
           "url": {
             "description": "URL to open (optional)",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "port": {
@@ -930,7 +969,10 @@
           },
           "userDataDir": {
             "description": "Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           }
         }
@@ -952,7 +994,10 @@
         "properties": {
           "nameFilter": {
             "description": "Filter processes by name (partial match, case-insensitive)",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "includeWindowless": {
@@ -1171,17 +1216,26 @@
           },
           "description": {
             "description": "Optional description of the layout",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "includeProcesses": {
             "description": "Only save windows from these processes (comma-separated). Leave empty to save all visible windows.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "excludeProcesses": {
             "description": "Exclude windows from these processes (comma-separated)",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           }
         },
@@ -1494,7 +1548,10 @@
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null
           },
           "overwrite": {

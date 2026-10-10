@@ -140,7 +140,7 @@ public class ToolPayloadBudgetTests
             imageTokens.Should().BeLessThanOrEqualTo(ImageTokenBudget,
                 "the {0} x {1} image of '{2}' costs about {3} tokens; captures are scaled to 1568 pixels on the long edge by default",
                 width, height, tool, imageTokens);
-            image.Data.Should().NotBeEmpty();
+            image.DecodedData.ToArray().Should().NotBeEmpty();
         }
     }
 

@@ -68,7 +68,7 @@ public static class ToolErrorReporting
     public static IMcpServerBuilder AddToolErrorReporting(this IMcpServerBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        return builder.AddCallToolFilter(Filter);
+        return builder.WithRequestFilters(filters => filters.AddCallToolFilter(Filter));
     }
 
     /// <summary>

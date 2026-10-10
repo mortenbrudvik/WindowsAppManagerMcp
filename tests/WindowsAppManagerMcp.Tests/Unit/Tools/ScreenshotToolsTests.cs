@@ -150,7 +150,7 @@ public class ScreenshotToolsTests
         result.Content.Should().HaveCount(2);
         var imageBlock = result.Content[0].Should().BeOfType<ImageContentBlock>().Subject;
         imageBlock.MimeType.Should().Be("image/jpeg");
-        Convert.FromBase64String(imageBlock.Data).Should().Equal(image.Data);
+        imageBlock.DecodedData.ToArray().Should().Equal(image.Data);
         var json = Metadata(result);
         json.GetProperty("success").GetBoolean().Should().BeTrue();
         json.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(-2560);

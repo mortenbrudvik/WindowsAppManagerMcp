@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Infrastructure;
 
@@ -26,8 +27,25 @@ public class ToolImagesTests
         var imageBlock = result.Content[0].Should().BeOfType<ImageContentBlock>().Subject;
         imageBlock.Type.Should().Be("image");
         imageBlock.MimeType.Should().Be("image/png");
-        imageBlock.Data.Should().Be(Convert.ToBase64String(image.Data));
+        imageBlock.DecodedData.ToArray().Should().Equal(image.Data);
         result.Content[1].Should().BeOfType<TextContentBlock>();
+    }
+
+    [Fact]
+    public void ToCallToolResult_WithImage_SendsTheImageAsBase64Once()
+    {
+        // Arrange - the image file's bytes go to the SDK as they are; on the wire MCP carries them as base64
+        var image = new EncodedImage([1, 2, 3, 250], "image/png");
+        var capture = new ScreenCapture<ScreenshotResult>(TestDataFactory.CreateScreenshotResult(imageFormat: "png"), image);
+
+        // Act
+        var wire = JsonSerializer.SerializeToElement(ToolImages.ToCallToolResult(capture), McpJsonUtilities.DefaultOptions);
+
+        // Assert
+        var block = wire.GetProperty("content")[0];
+        block.GetProperty("type").GetString().Should().Be("image");
+        block.GetProperty("data").GetString().Should().Be(Convert.ToBase64String(image.Data), "the bytes are base64-encoded exactly once");
+        block.GetProperty("mimeType").GetString().Should().Be("image/png");
     }
 
     [Fact]

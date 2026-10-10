@@ -173,8 +173,9 @@ public class EveryToolContractTests
         var image = result.Content[0].Should().BeOfType<ImageContentBlock>(
             "the model must see the capture as an image, before its metadata").Subject;
         image.MimeType.Should().StartWith("image/");
-        Convert.FromBase64String(image.Data).Should().NotBeEmpty();
-        result.Content[1].Should().BeOfType<TextContentBlock>().Which.Text.Should().NotContain(image.Data[..64],
+        image.DecodedData.ToArray().Should().NotBeEmpty();
+        result.Content[1].Should().BeOfType<TextContentBlock>().Which.Text.Should().NotContain(
+            System.Text.Encoding.ASCII.GetString(image.Data.Span[..64]),
             "the image is sent once, as image content");
     }
 

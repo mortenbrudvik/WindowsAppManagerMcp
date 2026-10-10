@@ -204,12 +204,7 @@ public static partial class ToolDocGenerator
     /// <summary>The JSON type of a schema: integer, string, boolean, number, object, or T[] for an array.</summary>
     public static string TypeName(JsonNode? property)
     {
-        var type = property?["type"] switch
-        {
-            JsonValue value => (string?)value,
-            JsonArray union => union.Select(t => (string?)t).FirstOrDefault(t => t != "null"),
-            _ => null
-        } ?? "any";
+        var type = PrimaryType(property) ?? "any";
 
         if (type == "array")
         {
@@ -248,8 +243,19 @@ public static partial class ToolDocGenerator
         _ => value.ToJsonString()
     };
 
+    /// <summary>
+    /// The JSON type of a schema, without "null": the SDK describes a nullable parameter (string?, string[]?) as the
+    /// union ["string", "null"], which the tables show as its non-null type. Null when the schema names no type.
+    /// </summary>
+    private static string? PrimaryType(JsonNode? property) => property?["type"] switch
+    {
+        JsonValue value => (string?)value,
+        JsonArray union => union.Select(t => (string?)t).FirstOrDefault(t => t != "null"),
+        _ => null
+    };
+
     private static JsonObject? ObjectItems(JsonNode? property) =>
-        property?["items"] is JsonObject items && (string?)items["type"] == "object" && items["properties"] is JsonObject
+        property?["items"] is JsonObject items && PrimaryType(items) == "object" && items["properties"] is JsonObject
             ? items
             : null;
 

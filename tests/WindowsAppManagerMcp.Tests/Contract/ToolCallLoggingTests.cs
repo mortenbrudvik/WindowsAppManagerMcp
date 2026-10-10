@@ -175,7 +175,7 @@ public class ToolCallLoggingTests
         // Arrange - with a threshold of zero, every call counts as slow
         await using var server = await InProcessMcpServer.StartAsync(
             Tools(),
-            builder => builder.AddCallToolFilter(ToolErrorReporting.CreateFilter(TimeSpan.Zero)));
+            builder => builder.WithRequestFilters(filters => filters.AddCallToolFilter(ToolErrorReporting.CreateFilter(TimeSpan.Zero))));
 
         // Act
         await server.CallToolAsync(EchoTool, new Dictionary<string, object?> { ["text"] = "hello" });
@@ -293,9 +293,9 @@ public class ToolCallLoggingTests
     };
 
     private static RequestContext<CallToolRequestParams> CreateRequest(IServiceProvider services) =>
-        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
+        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall },
+            new CallToolRequestParams { Name = "some_tool" })
         {
-            Params = new CallToolRequestParams { Name = "some_tool" },
             Services = services
         };
 }

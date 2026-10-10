@@ -96,10 +96,8 @@ public class InputSimulationServiceConcurrencyTests
         });
         var request = new ModelContextProtocol.Server.RequestContext<ModelContextProtocol.Protocol.CallToolRequestParams>(
             new Mock<ModelContextProtocol.Server.McpServer>().Object,
-            new ModelContextProtocol.Protocol.JsonRpcRequest { Method = ModelContextProtocol.Protocol.RequestMethods.ToolsCall })
-        {
-            Params = new ModelContextProtocol.Protocol.CallToolRequestParams { Name = "focus_window" }
-        };
+            new ModelContextProtocol.Protocol.JsonRpcRequest { Method = ModelContextProtocol.Protocol.RequestMethods.ToolsCall },
+            new ModelContextProtocol.Protocol.CallToolRequestParams { Name = "focus_window" });
 
         // Act - the agent races focus_window (its own terminal) against type_text
         await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => focusWindow(request, CancellationToken.None).AsTask());
