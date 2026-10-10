@@ -288,6 +288,33 @@ public class NativeCallGuardTests
     }
 
     [Fact]
+    public void LastWin32Error_IsOnlyReadInTheNativeWrappers()
+    {
+        // Arrange - the last error is only meaningful right after the call that set it: any native call in
+        // between (in the runtime, a logger, or the E2E guard proxy around a wrapper) can overwrite it. So
+        // the wrapper that makes the call reads it and returns it (Win32CallResult); services never do.
+        string[] lastErrorReads =
+        [
+            nameof(System.Runtime.InteropServices.Marshal.GetLastPInvokeError),
+            nameof(System.Runtime.InteropServices.Marshal.GetLastWin32Error),
+            nameof(System.Runtime.InteropServices.Marshal.GetLastSystemError)
+        ];
+
+        // Act
+        var calls = FindCalls(callee =>
+            callee.DeclaringType == typeof(System.Runtime.InteropServices.Marshal) && lastErrorReads.Contains(callee.Name));
+
+        // Assert
+        calls.Should().Contain(c => c.Owner == typeof(NativeWindowWrapper) && c.Callee.Name == "GetLastPInvokeError",
+            "the scan must see the window wrapper's own read after PostMessage");
+        calls.Where(c => c.Owner.Namespace != typeof(NativeWindowWrapper).Namespace)
+            .Select(c => c.Description)
+            .Should().BeEmpty(
+                "read the Win32 error inside the Native wrapper that made the call and return it; " +
+                "outside, another call may already have overwritten it");
+    }
+
+    [Fact]
     public void NativeInputMethods_AreOnlyCalledByNativeInputWrapper()
     {
         // Arrange

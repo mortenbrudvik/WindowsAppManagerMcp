@@ -95,9 +95,12 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return NativeMethods.User32.GetShellWindow();
     }
 
-    public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam)
+    public Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam)
     {
-        return NativeMethods.User32.PostMessageW(hWnd, msg, wParam, lParam);
+        // The error must be read here, right after the call: nothing else may run in between
+        return NativeMethods.User32.PostMessageW(hWnd, msg, wParam, lParam)
+            ? Win32CallResult.Ok
+            : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
     }
 
     public uint GetCurrentProcessId()

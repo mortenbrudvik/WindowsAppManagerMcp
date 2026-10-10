@@ -293,7 +293,7 @@ public class WindowService : IWindowService
             return false;
 
         // Send WM_CLOSE for graceful close - the application can cancel this
-        return _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero);
+        return _nativeWrapper.PostMessage(handle, NativeEnums.WM_CLOSE, nint.Zero, nint.Zero).Succeeded;
     }
 
     public IReadOnlyList<(nint Handle, bool Success, string? Error)> SetWindowBoundsBatch(

@@ -84,9 +84,13 @@ public interface INativeWindowWrapper
     nint GetShellWindow();
 
     /// <summary>
-    /// Posts a message to the message queue of the specified window.
+    /// Posts a message to the message queue of the specified window. When Windows refuses it, the
+    /// result carries the Win32 error read right after the call: ERROR_ACCESS_DENIED (5) when User
+    /// Interface Privilege Isolation blocks the message because the window belongs to a more privileged
+    /// process, ERROR_INVALID_WINDOW_HANDLE (1400) when the window is gone, ERROR_NOT_ENOUGH_QUOTA
+    /// (1816) when its message queue is full.
     /// </summary>
-    bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
+    Win32CallResult PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
     /// <summary>
     /// Gets the process ID of the current process.

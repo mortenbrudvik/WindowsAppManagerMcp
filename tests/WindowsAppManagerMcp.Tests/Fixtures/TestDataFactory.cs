@@ -260,7 +260,7 @@ public static class TestDataFactory
             .Returns(true);
         mock.Setup(n => n.PostMessage(It.Is<nint>(h => h != nint.Zero),
                 It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
 
         // GetForegroundWindow - return first test window or zero
         mock.Setup(n => n.GetForegroundWindow())
