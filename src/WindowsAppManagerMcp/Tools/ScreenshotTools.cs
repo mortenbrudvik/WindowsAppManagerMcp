@@ -240,6 +240,12 @@ public class ScreenshotTools
             return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
         }
 
+        // A minimized window cannot be captured, and its elements are offscreen: refuse before the walk
+        if (windowInfo?.State == WindowState.Minimized)
+        {
+            return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.CaptureFailed), ScreenshotService.MinimizedMessage);
+        }
+
         // Parse filter parameters
         string[]? controlTypeArray = null;
         if (!string.IsNullOrWhiteSpace(controlTypes))

@@ -119,4 +119,14 @@ public class PauseHotkeyOptionsTests
         chord.IsPressedBy(SendKeysParser.Parse("^%{F12}")).Should().BeTrue();
         chord.IsPressedBy(SendKeysParser.Parse("^{F12}")).Should().BeFalse();
     }
+
+    [Fact]
+    public void IsPressedBy_AChordOnSpace_SpelledAsALiteralSpace()
+    {
+        // send_keys sends a literal space as a character; with Ctrl and Alt held it is still Ctrl+Alt+Space
+        var chord = From("Ctrl+Alt+Space").Chord!;
+
+        chord.IsPressedBy(SendKeysParser.Parse("^% ")).Should().BeTrue();
+        chord.IsPressedBy(SendKeysParser.Parse("^%{SPACE}")).Should().BeTrue();
+    }
 }

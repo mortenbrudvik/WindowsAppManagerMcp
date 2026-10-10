@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 using static WindowsAppManagerMcp.Models.WindowErrorCode;
 
@@ -37,6 +38,11 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
+        }
+
         return ReportingNotResponding(() =>
         {
             var success = _windowService.MoveWindow(hwnd, x, y, bringToFront);
@@ -63,6 +69,11 @@ public class WindowManagerTools
         if (!_windowService.IsValidWindow(hwnd))
         {
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
+        }
+
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
         }
 
         return ReportingNotResponding(() =>
@@ -99,6 +110,11 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
+        }
+
         return ReportingNotResponding(() =>
         {
             var success = _windowService.SetWindowBounds(hwnd, x, y, width, height, bringToFront);
@@ -123,6 +139,11 @@ public class WindowManagerTools
         if (!_windowService.IsValidWindow(hwnd))
         {
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
+        }
+
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
         }
 
         var windowState = state.ToLowerInvariant() switch
@@ -150,7 +171,8 @@ public class WindowManagerTools
         "Returns isForeground (also as success), method (already, setForeground, attachThreadInput or inputUnlock), " +
         "the window actually in front (foregroundHandle, foregroundTitle, foregroundProcess) and blockingPopup, a dialog of the " +
         "window that takes keyboard input instead of it. inMenuMode: a menu is still open, so typed letters would pick menu items. " +
-        "errorCode: FocusFailed, NotResponding, Cloaked or InvalidHandle. " +
+        "errorCode: FocusFailed, NotResponding, Cloaked, WindowHidden (the window is hidden, so keys would go to a window the user cannot see), " +
+        "TargetDeniedByPolicy (the user's policy denies the app), PausedByUser or InvalidHandle. " +
         "The foreground can change again before your next call, so confirm with get_foreground_window immediately before keyboard or mouse input.")]
     public FocusResult FocusWindow(
         [Description("Window handle (as integer)")]
@@ -255,6 +277,11 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: $"Invalid snap position: {position}", ErrorCode: nameof(InvalidSnapPosition));
         }
 
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
+        }
+
         return ReportingNotResponding(() =>
         {
             var success = _windowService.SnapWindow(hwnd, snapPosition.Value, monitorIndex, bringToFront);
@@ -285,6 +312,11 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
+        if (PolicyRefusal(hwnd) is { } denied)
+        {
+            return denied;
+        }
+
         return ReportingNotResponding(() =>
         {
             var success = _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront);
@@ -305,12 +337,13 @@ public class WindowManagerTools
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50)
     {
-        var servicePlacements = placements.Select(p =>
+        var refusals = placements.Select(p => BatchPolicyRefusal(p.Handle)).ToList();
+        var servicePlacements = placements.Where((_, i) => refusals[i] == null).Select(p =>
             ((nint)p.Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront)).ToList();
 
         var results = _windowService.SetWindowBoundsBatch(servicePlacements, delayBetweenMs);
 
-        var items = results.Select(r =>
+        var items = InOrder(refusals, results.Select(r =>
         {
             var newInfo = r.Success ? _windowService.GetWindowInfo(r.Handle) : null;
             return new WindowResultItem(
@@ -319,7 +352,7 @@ public class WindowManagerTools
                 NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null,
                 Error: r.Error
             );
-        }).ToList();
+        }));
 
         return new BatchWindowResult(
             TotalRequested: placements.Length,
@@ -337,49 +370,26 @@ public class WindowManagerTools
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50)
     {
-        var servicePlacements = new List<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)>();
-
-        foreach (var p in placements)
-        {
-            var snapPos = ParseSnapPosition(p.Position);
-            if (snapPos == null)
-            {
-                // We'll handle invalid positions in the results
-                continue;
-            }
-            servicePlacements.Add(((nint)p.Handle, snapPos.Value, p.MonitorIndex, p.BringToFront));
-        }
+        // Invalid positions and windows the policy denies get their item here; the others go to the service
+        var refusals = placements.Select(p => ParseSnapPosition(p.Position) == null
+            ? new WindowResultItem(Handle: p.Handle, Success: false, Error: $"Invalid snap position: {p.Position}")
+            : BatchPolicyRefusal(p.Handle)).ToList();
+        var servicePlacements = placements.Where((_, i) => refusals[i] == null)
+            .Select(p => ((nint)p.Handle, ParseSnapPosition(p.Position)!.Value, p.MonitorIndex, p.BringToFront))
+            .ToList();
 
         var results = _windowService.SnapWindowsBatch(servicePlacements, delayBetweenMs);
 
-        var items = new List<WindowResultItem>();
-        var resultIndex = 0;
-
-        foreach (var p in placements)
+        var items = InOrder(refusals, results.Select(r =>
         {
-            var snapPos = ParseSnapPosition(p.Position);
-            if (snapPos == null)
-            {
-                items.Add(new WindowResultItem(
-                    Handle: p.Handle,
-                    Success: false,
-                    Error: $"Invalid snap position: {p.Position}"
-                ));
-                continue;
-            }
-
-            if (resultIndex < results.Count)
-            {
-                var r = results[resultIndex++];
-                var newInfo = r.Success ? _windowService.GetWindowInfo(r.Handle) : null;
-                items.Add(new WindowResultItem(
-                    Handle: r.Handle.ToInt64(),
-                    Success: r.Success,
-                    NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null,
-                    Error: r.Error
-                ));
-            }
-        }
+            var newInfo = r.Success ? _windowService.GetWindowInfo(r.Handle) : null;
+            return new WindowResultItem(
+                Handle: r.Handle.ToInt64(),
+                Success: r.Success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null,
+                Error: r.Error
+            );
+        }));
 
         return new BatchWindowResult(
             TotalRequested: placements.Length,
@@ -397,7 +407,8 @@ public class WindowManagerTools
         [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
         int delayBetweenMs = 30)
     {
-        var serviceChanges = changes.Select(c =>
+        var refusals = changes.Select(c => BatchPolicyRefusal(c.Handle)).ToList();
+        var serviceChanges = changes.Where((_, i) => refusals[i] == null).Select(c =>
         {
             var state = c.State.ToLowerInvariant() switch
             {
@@ -411,7 +422,7 @@ public class WindowManagerTools
 
         var results = _windowService.SetWindowStateBatch(serviceChanges, delayBetweenMs);
 
-        var items = results.Select(r =>
+        var items = InOrder(refusals, results.Select(r =>
         {
             var newInfo = r.Success ? _windowService.GetWindowInfo(r.Handle) : null;
             return new WindowResultItem(
@@ -420,7 +431,7 @@ public class WindowManagerTools
                 NewState: newInfo?.State.ToString().ToLowerInvariant(),
                 Error: r.Error
             );
-        }).ToList();
+        }));
 
         return new BatchWindowResult(
             TotalRequested: changes.Length,
@@ -445,6 +456,44 @@ public class WindowManagerTools
         {
             return new WindowOperationResult(false, Error: ex.Message, ErrorCode: nameof(NotResponding));
         }
+    }
+
+    /// <summary>
+    /// The refusal of a change to a window the user's target policy denies (TargetDeniedByPolicy), or null when
+    /// it allows the window. A denied window is never restored, raised or moved, so a screenshot cannot show it.
+    /// </summary>
+    private WindowOperationResult? PolicyRefusal(nint handle) =>
+        _windowService.EvaluateTargetPolicy(handle) is { Allowed: false } verdict
+            ? new WindowOperationResult(false, Error: WindowService.WindowChangeRefusal(handle, verdict), ErrorCode: nameof(TargetDeniedByPolicy))
+            : null;
+
+    /// <summary>A batch item for a window the target policy denies, or null when the window is allowed or not a window.</summary>
+    private WindowResultItem? BatchPolicyRefusal(long handle) =>
+        _windowService.IsValidWindow((nint)handle) && PolicyRefusal((nint)handle) is { } denied
+            ? new WindowResultItem(Handle: handle, Success: false, Error: denied.Error, ErrorCode: denied.ErrorCode)
+            : null;
+
+    /// <summary>
+    /// The batch's items in request order: the refusal where there is one, and the service's results, in order,
+    /// for the other requests.
+    /// </summary>
+    private static List<WindowResultItem> InOrder(IReadOnlyList<WindowResultItem?> refusals, IEnumerable<WindowResultItem> results)
+    {
+        using var done = results.GetEnumerator();
+        var items = new List<WindowResultItem>(refusals.Count);
+        foreach (var refusal in refusals)
+        {
+            if (refusal != null)
+            {
+                items.Add(refusal);
+            }
+            else if (done.MoveNext())
+            {
+                items.Add(done.Current);
+            }
+        }
+
+        return items;
     }
 
     private static SnapPosition? ParseSnapPosition(string position)

@@ -66,8 +66,9 @@ public interface IInputSession
     bool SharesDesktopPause { get; }
 
     /// <summary>
-    /// True when <paramref name="modifiersDown"/> hold every modifier of the pause hotkey's chord: the user may be
-    /// about to press it. Releasing them would make the chord miss, so they are never released for the agent.
+    /// True when <paramref name="modifiersDown"/> hold any modifier of the pause hotkey's chord: the user may be
+    /// pressing it, and presses its modifiers one after another, so any of them can be the start of the chord.
+    /// Releasing one would make the chord miss, so none is released for the agent while one of them is down.
     /// </summary>
     bool IsPauseChordHeld(IReadOnlyList<HeldInput> modifiersDown);
 

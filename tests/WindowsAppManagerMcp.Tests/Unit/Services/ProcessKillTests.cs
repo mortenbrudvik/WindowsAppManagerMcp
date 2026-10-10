@@ -461,6 +461,41 @@ public class ProcessKillTests
     }
 
     [Fact]
+    public void KillProcess_ForceKill_WhenTheProcessTreeCannotBeRead_RefusesInsteadOfKillingAnUncheckedTree()
+    {
+        // Arrange - the process snapshot failed: the children are unknown, so neither the policy nor the
+        // host check could look at them, and Kill(entireProcessTree) would still end them all
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true, forceKill: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeUnreadable));
+        result.ErrorMessage.Should().Contain("child processes").And.Contain("without forceKill");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void KillProcess_Graceful_WhenTheProcessTreeCannotBeRead_StillAsksTheWindowToClose()
+    {
+        // Arrange - a graceful close never ends the children, so it does not need the tree
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns((IReadOnlyList<(int, string)>?)null);
+        _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+
+        // Act
+        var result = CreateSut().KillProcess(Pid, confirm: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
     public void KillProcess_ForceKill_TreeWithoutHostProcesses_AsksTheHostGuardAboutEveryProcess()
     {
         // Arrange

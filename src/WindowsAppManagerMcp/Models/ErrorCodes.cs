@@ -74,7 +74,14 @@ public enum WindowErrorCode
     /// The user paused the server's input with the pause hotkey (roadmap M1.10), so the window was not
     /// activated: activating takes the keyboard focus from the user and can send input. Nothing was done.
     /// </summary>
-    PausedByUser = 26
+    PausedByUser = 26,
+
+    /// <summary>
+    /// The window (its top-level window) is hidden: it does not have WS_VISIBLE, for example an app that hid
+    /// its window in the notification area. It was not activated, because keyboard input would then go to a
+    /// window the user cannot see.
+    /// </summary>
+    WindowHidden = 27
 }
 
 /// <summary>
@@ -186,8 +193,8 @@ public enum ProcessErrorCode
 
     /// <summary>
     /// The process belongs to the agent's host (IHostGuard.IsHostProcess: an ancestor of this server such as the
-    /// terminal or editor hosting the agent, the console host's process, or the startup foreground window's
-    /// process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
+    /// terminal or editor hosting the agent, the console host's process or the console server behind it, or the
+    /// startup foreground window's process), or, with forceKill, one of the child processes the forced kill would end does. Nothing was done.
     /// </summary>
     CannotTerminateHost = 11,
 
@@ -201,7 +208,13 @@ public enum ProcessErrorCode
     /// The server's target policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES) refuses the process (roadmap
     /// M1.12). Nothing was done.
     /// </summary>
-    TargetDeniedByPolicy = 14
+    TargetDeniedByPolicy = 14,
+
+    /// <summary>
+    /// forceKill: the process list could not be read, so the child processes the forced kill would also end
+    /// could not be checked against the target policy and the host guard. Nothing was terminated.
+    /// </summary>
+    ProcessTreeUnreadable = 15
 }
 
 /// <summary>

@@ -51,10 +51,11 @@ The policy applies to:
 
 - every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
 - [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
+- [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): a denied window is not moved, resized, restored, maximized, minimized, raised or activated, so the agent cannot bring it on screen;
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
 
-[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works. The UI Automation and browser reading tools are not covered yet.
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area; keep such windows minimized or on another desktop while the agent works (the Window Control tools cannot restore or raise them, but an app can still bring its own window forward, for example when it is started again). The UI Automation and browser reading tools are not covered yet.
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart.
 
@@ -311,6 +312,8 @@ Tools for manipulating window position, size, and state.
 
 `bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window).
 
+A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): the agent cannot restore, raise or move it onto the screen.
+
 Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
 
 ### move_window
@@ -468,13 +471,15 @@ Bring a window to the foreground, verify it, and report which window is actually
 
 Windows' foreground lock usually refuses a background process such as this server when it asks to bring a window to the front. `focus_window` works around that without sending keys, and checks the foreground window after every step (for about a second in total):
 
+A window that the user's [target policy](#target-policy) denies is refused before anything else (`TargetDeniedByPolicy`): it is neither restored nor activated. So is a hidden window (`WindowHidden`), one without the WS_VISIBLE style, such as an app's window hidden in the notification area: keys would go to a window the user cannot see.
+
 1. **already**: the window, or a dialog it owns, is already in front. Nothing is changed.
-2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead.
+2. A window that is not responding (`NotResponding`) or is cloaked, for example on another virtual desktop (`Cloaked`), is refused. A minimized window is restored. If a modal dialog disables the window, the dialog is activated instead, unless the target policy denies the dialog's app (`TargetDeniedByPolicy`).
 3. **setForeground**: SetForegroundWindow.
 4. **attachThreadInput**: if the foreground lock refused, the server's activation thread attaches its input to the foreground window's thread, activates the window and detaches again. Skipped when the foreground window is not responding or runs at a higher integrity level (elevated), where Windows refuses the attach.
 5. **inputUnlock**: last resort, a mouse move of zero distance makes the server the process that received the last input, then SetForegroundWindow again. No key is sent: an Alt press would reach the window in front, often the agent's terminal.
 
-If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), one Esc is sent to close the menu, but only while the window is verified to be in front; `menuClosed` is true when the menu closed. No second Esc is sent: an Esc that arrives after the menu has closed would reach the window itself and could cancel a dialog. If a menu is still active when the call returns, `inMenuMode` is true. That includes a menu the user opened in a window that was already in front, which is left open. Typed letters would then pick menu items, so close the menu first (for example with `send_keys` `{ESC}` after checking a screenshot).
+If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), one Esc is sent to close the menu, but only while the window is verified to be in front and no modifier key (Shift, Ctrl, Alt, Windows) is down: with a modifier down the Esc would be a shortcut (Ctrl+Esc opens Start, Alt+Esc sends the window to the back), so the menu is left open. `menuClosed` is true when the menu closed. No second Esc is sent: an Esc that arrives after the menu has closed would reach the window itself and could cancel a dialog. If a menu is still active when the call returns, `inMenuMode` is true. That includes a menu the user opened in a window that was already in front, which is left open. Typed letters would then pick menu items, so close the menu first (for example with `send_keys` `{ESC}` after checking a screenshot).
 
 The window counts as in front when the foreground window is the window itself or a window it owns, such as a dialog, also a dialog of that dialog. This includes WPF and WinForms dialogs, which Windows does not link to their owner through GA_ROOTOWNER, so the server follows the owner chain. A dialog in front is reported as `blockingPopup`, because keyboard input goes to the dialog. The foreground can change again before the next call, so confirm with [get_foreground_window](#get_foreground_window) immediately before keyboard or mouse input.
 
@@ -547,6 +552,8 @@ The window counts as in front when the foreground window is the window itself or
 | `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later. Also returned, with nothing tried, when another focus call was still running |
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
+| `WindowHidden` | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area); it was not activated, because keys would go to a window the user cannot see. Show it from the app first, or ask the user |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app, or the app of the modal dialog that would be activated for it; nothing was restored or activated. Ask the user |
 | `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done; a pause during the activation stops it at the next step. While paused, `focus_window` itself is refused before it runs (`isError`, see [Pause hotkey](#pause-hotkey)). Stop and ask the user |
 | `InvalidHandle` | The handle is not a window |
 
@@ -1587,7 +1594,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `children`: the returned elements inside this one; absent when there are none.
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
-- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
 **Error Codes:**
@@ -1598,7 +1605,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 | `AutomationUnavailable` | UI Automation not available |
 | `ElementAccessFailed` | The window's elements disappeared while they were read |
 | `InvalidControlType` | A `controlTypes` name is not a known control type; `error` lists the valid names |
-| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
+| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering before one was (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
 
 ---
@@ -2046,7 +2053,7 @@ Every input call can be stopped. Cancelling the MCP request (`notifications/canc
 
 ### Input guard
 
-Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. The modifiers of the pause hotkey are never released that way: when all of them are down, the user may be pressing it, and the call returns `ModifiersHeld` even with `releaseHeldModifiers: true`. Every input call reads the modifiers again right before each batch it sends, so one that goes down meanwhile (the user taking the keyboard, or starting to press the pause hotkey) stops it with `ModifiersHeld` too, instead of turning keys into shortcuts or a click into a Shift-click.
+Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. The modifiers of the pause hotkey are never released that way: while any of them is down, the user may be pressing it (a chord's modifiers go down one after another), and the call returns `ModifiersHeld` even with `releaseHeldModifiers: true`. Every input call reads the modifiers again right before each batch it sends, so one that goes down meanwhile (the user taking the keyboard, or starting to press the pause hotkey) stops it with `ModifiersHeld` too, instead of turning keys into shortcuts or a click into a Shift-click.
 
 Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
@@ -2055,6 +2062,7 @@ Right before every batch of input it sends, each input tool checks where the inp
 3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
 4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`); a modal dialog of a window the target owns is `BlockedByModal`, so keys never answer a modal prompt. For the mouse, the top-level window at the point (no window there: `TargetOccluded`). With a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a program the target started itself (a direct child process, such as the WebView2 process that shows an app's dropdowns), otherwise `TargetOccluded`. Another main window of the same process counts as covering the target, and so do the desktop and the taskbar. The child-process rule does not apply to File Explorer windows and the desktop shell (explorer.exe), which start almost every program. Then the window checks below.
 5. **`type_text` only.** A menu is active in the receiving window, so letters would select menu items (`TargetInMenuMode`). Close it with `send_keys` `{ESC}`, or click into the field.
+6. **The mouse only.** Another window has captured the mouse, so the click or move would go to it instead of the window at the point (`MouseInUse`): the foreground app is in a selection, a drag or an open menu, or the window at the point's own thread captured it for another window. A capture by the window at the point, or by a window of its thread that the input may reach (an open menu captures the mouse for its owner), is fine. Right before the pointer is placed and before every press, the click and move tools also refuse while a mouse button is held down (`MouseInUse`): the user is dragging or selecting, and the press would go to the window under that button.
 
 The window checks, in order: the window's process runs at a higher integrity level than the server, for example as administrator, so Windows would silently drop the input (`TargetElevated`); the server's [target policy](#target-policy) refuses the process (`TargetDeniedByPolicy`); the window is the agent's own host or a window it owns (`TargetIsAgentHost`), unless the call names that host window as `windowHandle` with `allowHostTarget: true`. `allowHostTarget` lifts this check only for the `windowHandle` window and the windows it owns, never for a popup that is accepted because of its process.
 
@@ -2089,6 +2097,7 @@ Every input result reports:
 | `DestructiveChordNeedsTarget` | `send_keys`: a closing, quitting or locking chord without `windowHandle` | Pass `windowHandle`; to close a window, use [close_window](#close_window) |
 | `KeysAfterFocusChange` | `send_keys`: keys after a chord that hands the keyboard to another window | Make that chord the last key; send the rest in a new call |
 | `CursorNotAtPoint` | Mouse: the pointer does not stay at the point | Try again; if it repeats, ask the user (a game or remote session may hold the mouse) |
+| `MouseInUse` | Mouse: a mouse button is held down, or another window has captured the mouse (a selection, drag or open menu), so the input would go to that window | Wait until the user has finished, or close the menu first, then try again |
 | `TargetElevated` | The window runs with higher privileges than the server; Windows would drop the input | Ask the user to do the step, or to run the server elevated |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the window's app | Ask the user to do the step; no tool argument changes it |
 | `DesktopUnavailable`, `SessionLocked` | Input cannot reach the desktop | Wait for the user, then retry |
@@ -2598,7 +2607,7 @@ When input is not paused, `success` is true and `wasPaused` false, and nobody is
 
 ### release_all_input
 
-Release keys and mouse buttons that are stuck down. Sends the up event of every key and button the server pressed and could not release; normally there are none, because every input call releases its own, also after a failed or interrupted batch, and the server releases them when it stops. With `releaseHeldModifiers: true` it also releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it, for example after an input tool returned `ModifiersHeld` and nobody is pressing the key. Releasing Alt or Windows first sends an unassigned key, so no menu opens. Works while input is paused, except for `releaseHeldModifiers` (`PausedByUser`). When the modifiers that are down make up the pause hotkey's chord, they are left alone (`ModifiersHeld`): the user may be pressing it.
+Release keys and mouse buttons that are stuck down. Sends the up event of every key and button the server pressed and could not release; normally there are none, because every input call releases its own, also after a failed or interrupted batch, and the server releases them when it stops. With `releaseHeldModifiers: true` it also releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it, for example after an input tool returned `ModifiersHeld` and nobody is pressing the key. Releasing Alt or Windows first sends an unassigned key, so no menu opens. Works while input is paused, except for `releaseHeldModifiers` (`PausedByUser`). While any modifier that is down is one of the pause hotkey's, none is released (`ModifiersHeld`): the user may be pressing the hotkey.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -2804,7 +2813,7 @@ Close or terminate a process by ID (requires confirmation).
 
 To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
 
-**Force mode** checks the whole process tree first, because it ends every process in it: if a child process is refused by the [target policy](#target-policy) (`TargetDeniedByPolicy`) or belongs to the agent's host (`CannotTerminateHost`), nothing is terminated and the error names the child. A graceful close asks only the process's own main window to close, so it does not check the children. Force mode returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
+**Force mode** checks the whole process tree first, because it ends every process in it: if a child process is refused by the [target policy](#target-policy) (`TargetDeniedByPolicy`) or belongs to the agent's host (`CannotTerminateHost`), nothing is terminated and the error names the child. When the process list cannot be read, the children cannot be checked, so nothing is terminated either (`ProcessTreeUnreadable`). A graceful close asks only the process's own main window to close, so it does not check the children. Force mode returns `success: true` only after the process has actually exited. If the process exited but some of its child processes could not be terminated (for example an elevated child), the result is still `success: true` with `forced: true` and `exited: true`, and `warning` says which child processes may still be running. If the process itself is still running, the result is `AccessDenied` (with `forced: true`, because some child processes may already have been terminated) or `TerminationNotConfirmed`.
 
 **Example 1:** Close gracefully
 > "Close Notepad (PID 12456)"
@@ -2875,9 +2884,10 @@ To end the process anyway, call again with `forceKill: true`. This ends the proc
 | `ProcessNotFound` | No such process (it may have exited) |
 | `ProtectedProcess` | Protected system or shell process (see below) |
 | `CannotTerminateSelf` | The PID is this server |
-| `CannotTerminateHost` | The PID belongs to the agent's host: an ancestor of this server such as the terminal or editor hosting the agent, the process that shows the server's console, or the app that was in front when the server started. With `forceKill: true`, also when one of its child processes does (a forced kill ends the whole process tree; the error names the child). Nothing was done |
+| `CannotTerminateHost` | The PID belongs to the agent's host: an ancestor of this server such as the terminal or editor hosting the agent, the process that shows the server's console or the console server behind it (`conhost` or `OpenConsole`), or the app that was in front when the server started. With `forceKill: true`, also when one of its child processes does (a forced kill ends the whole process tree; the error names the child). Nothing was done |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the process, or, with `forceKill: true`, one of its child processes (a forced kill ends the whole process tree; the error names the child). `forceKill` does not override it; nothing was done |
 | `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
+| `ProcessTreeUnreadable` | Force mode: the process list could not be read, so the child processes a forced kill would also end could not be checked; nothing was terminated. Try again, or close without `forceKill` |
 | `NoClosableWindow` | Graceful mode: no closable main window; process left running |
 | `GracefulCloseTimedOut` | Graceful mode: still running after the timeout; process left running |
 | `AccessDenied` | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
@@ -3108,7 +3118,7 @@ Only the windows that [get_all_windows](#get_all_windows) lists are matched. A w
 
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
-A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error.
+A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error.
 
 **Example 1:** Basic apply
 > "Apply my work-setup layout"
@@ -3397,7 +3407,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
-| `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console, or the app in front when it started), or, with `forceKill`, one of its child processes does |
+| `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
 | `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels, for example because the window is minimized; `error` has the reason |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
@@ -3451,7 +3461,8 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, or its window did not appear |
-| `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). The modifiers of the [pause hotkey](#pause-hotkey) are never released for the agent: when all of them are down, ask the user |
+| `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). The modifiers of the [pause hotkey](#pause-hotkey) are never released for the agent: while one of them is down, ask the user |
+| `MouseInUse` | [click](#click), right_click, double_click, mouse_move | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point; nothing (more) was sent |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
@@ -3468,6 +3479,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |
 | `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
+| `ProcessTreeUnreadable` | [kill_process](#kill_process) | Force mode: the process list could not be read, so the child processes a forced kill would also end could not be checked against the target policy and the agent's host; nothing was terminated |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window) | The window is part of the desktop shell or of the agent's own host, and `force` was not true; nothing was sent |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
@@ -3476,7 +3488,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [close_window](#close_window), close_windows_batch (per window), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
@@ -3492,4 +3504,5 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
+| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
 | `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

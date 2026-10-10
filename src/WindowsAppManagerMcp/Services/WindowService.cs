@@ -31,8 +31,10 @@ public class WindowService : IWindowService
     /// <param name="nativeWrapper">The window calls.</param>
     /// <param name="hostGuard">Recognizes the agent's host windows (close guard, WindowInfo.IsAgentHost).</param>
     /// <param name="targetPolicy">
-    /// The server's target policy, which close_window and close_windows_batch enforce (roadmap M1.12).
-    /// The server always passes it; without it no window is refused by policy.
+    /// The server's target policy (roadmap M1.12). Closing a window and every window change (move, resize,
+    /// bounds, state, snap, move to a monitor, and their batches) refuse a window it denies, so a denied
+    /// window is never restored, raised or moved onto the screen. The server always passes it; without it no
+    /// window is refused by policy.
     /// </param>
     /// <param name="windowCalls">
     /// Runs the calls that can block on another thread's window (SetWindowPos, ShowWindow) with a deadline;
@@ -137,7 +139,7 @@ public class WindowService : IWindowService
 
     public bool MoveWindow(nint handle, int x, int y, bool bringToFront = true)
     {
-        if (!IsValidWindow(handle))
+        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
             return false;
 
         var rect = _nativeWrapper.GetWindowRect(handle);
@@ -161,7 +163,7 @@ public class WindowService : IWindowService
 
     public bool ResizeWindow(nint handle, int width, int height)
     {
-        if (!IsValidWindow(handle))
+        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
             return false;
 
         var rect = _nativeWrapper.GetWindowRect(handle);
@@ -174,11 +176,12 @@ public class WindowService : IWindowService
             NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
     }
 
-    public bool SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true)
-    {
-        if (!IsValidWindow(handle))
-            return false;
+    public bool SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
+        IsValidWindow(handle) && !IsDeniedByPolicy(handle) && ApplyBounds(handle, x, y, width, height, bringToFront);
 
+    /// <summary>Places a window that was checked already, restoring it first if it is minimized.</summary>
+    private bool ApplyBounds(nint handle, int x, int y, int width, int height, bool bringToFront)
+    {
         // Restore window first if minimized
         if (_nativeWrapper.IsIconic(handle))
         {
@@ -188,11 +191,12 @@ public class WindowService : IWindowService
         return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
-    public bool SetWindowState(nint handle, WindowState state)
-    {
-        if (!IsValidWindow(handle))
-            return false;
+    public bool SetWindowState(nint handle, WindowState state) =>
+        IsValidWindow(handle) && !IsDeniedByPolicy(handle) && ApplyState(handle, state);
 
+    /// <summary>Changes the show state of a window that was checked already.</summary>
+    private bool ApplyState(nint handle, WindowState state)
+    {
         var cmd = state switch
         {
             WindowState.Minimized => NativeEnums.SW_MINIMIZE,
@@ -206,18 +210,18 @@ public class WindowService : IWindowService
 
     public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
     {
-        if (!IsValidWindow(handle))
+        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
             return false;
 
         var targetMonitor = monitorIndex ?? _monitorService.GetMonitorIndex(handle);
         var bounds = _monitorService.CalculateSnapBounds(targetMonitor, position);
 
-        return SetWindowBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height, bringToFront);
+        return ApplyBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height, bringToFront);
     }
 
     public bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center", bool bringToFront = true)
     {
-        if (!IsValidWindow(handle))
+        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
             return false;
 
         var monitors = _monitorService.GetAllMonitors();
@@ -269,10 +273,10 @@ public class WindowService : IWindowService
                 break;
 
             case "maximize":
-                return SetWindowState(handle, WindowState.Maximized);
+                return ApplyState(handle, WindowState.Maximized);
 
             case "restore":
-                return SetWindowBounds(handle, workArea.X, workArea.Y, width, height, bringToFront);
+                return ApplyBounds(handle, workArea.X, workArea.Y, width, height, bringToFront);
 
             default:
                 x = workArea.X + (workArea.Width - width) / 2;
@@ -367,26 +371,38 @@ public class WindowService : IWindowService
         return null;
     }
 
+    private bool IsDeniedByPolicy(nint handle) => EvaluateTargetPolicy(handle) is { Allowed: false };
+
+    /// <summary>
+    /// The error of a window change that the target policy refuses with <paramref name="verdict"/>: the
+    /// Window Control tools report it with TargetDeniedByPolicy.
+    /// </summary>
+    public static string WindowChangeRefusal(nint handle, TargetPolicyVerdict verdict) =>
+        $"Window {handle} is refused by the server's target policy: {verdict.Reason}. Nothing was changed: the window was not " +
+        "moved, restored, raised or activated. The policy is set by the user in the server's environment and no tool argument " +
+        "changes it; ask the user to do this step.";
+
     /// <summary>
     /// Why the target policy refuses the window, or null when it allows it (or there is no policy). The
     /// window is matched by its process, and a UWP frame also by the app it hosts, as the listings report it.
     /// </summary>
-    private string? FindPolicyRefusal(nint handle)
+    private string? FindPolicyRefusal(nint handle) =>
+        EvaluateTargetPolicy(handle) is { Allowed: false } verdict
+            ? $"Window {handle} is refused by the server's target policy: {verdict.Reason}. Nothing was sent. The policy is set by " +
+              "the user in the server's environment; force does not override it. Ask the user to close this window."
+            : null;
+
+    public TargetPolicyVerdict EvaluateTargetPolicy(nint handle)
     {
         if (_targetPolicy == null)
-            return null;
+            return TargetPolicyVerdict.Allow;
 
         var session = new ReadSession(_nativeWrapper, topLevelWindows: null);
         var className = _nativeWrapper.GetClassName(handle) ?? string.Empty;
         var title = _nativeWrapper.GetWindowText(handle) ?? string.Empty;
         var process = ResolveProcess(handle, className, title, _nativeWrapper.GetWindowThreadProcessId(handle), session);
-        var verdict = _targetPolicy.Evaluate(
+        return _targetPolicy.Evaluate(
             [session.ProcessName(process.ProcessId), process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null]);
-
-        return verdict.Allowed
-            ? null
-            : $"Window {handle} is refused by the server's target policy: {verdict.Reason}. Nothing was sent. The policy is set by " +
-              "the user in the server's environment; force does not override it. Ask the user to close this window.";
     }
 
     /// <summary>

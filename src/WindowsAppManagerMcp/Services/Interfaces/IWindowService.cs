@@ -59,6 +59,13 @@ public interface IWindowService
     bool IsValidWindow(nint handle);
 
     /// <summary>
+    /// The server's target policy's verdict on the window (roadmap M1.12): it is matched by its process, and a
+    /// UWP frame window also by the app it hosts, as the listings report them. The Window Control tools,
+    /// close_window and window activation refuse a window it denies. Allowed when the server has no policy.
+    /// </summary>
+    TargetPolicyVerdict EvaluateTargetPolicy(nint handle);
+
+    /// <summary>
     /// Asks the window to close by posting WM_CLOSE; the application can still prompt to save or refuse.
     /// Unless <paramref name="force"/> is true, nothing is posted to a protected window
     /// (<see cref="WindowErrorCode.ProtectedWindow"/>): the desktop shell (the window, the top-level window

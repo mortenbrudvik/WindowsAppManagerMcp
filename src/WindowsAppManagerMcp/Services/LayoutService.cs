@@ -384,10 +384,12 @@ public class LayoutService : ILayoutService
         var launched = 0;
         List<FocusResult>? focusResults = null;
 
-        void AddError(LayoutErrorCode code, string message)
+        void AddError(LayoutErrorCode code, string message) => AddErrorWithCode(code.ToString(), message);
+
+        void AddErrorWithCode(string code, string message)
         {
             errors.Add(message);
-            errorCode ??= code.ToString();
+            errorCode ??= code;
         }
 
         // Sort placements by order
@@ -437,6 +439,15 @@ public class LayoutService : ILayoutService
                         $"Launched '{placement.LaunchCommand}' for {label}, but its window could not be found");
                     continue;
                 }
+            }
+
+            // The user's policy: a denied window is neither placed nor focused (restoring or raising it would put it
+            // on screen, where a screenshot shows it)
+            if (_windowService.EvaluateTargetPolicy(window.Handle) is { Allowed: false } verdict)
+            {
+                AddErrorWithCode(nameof(WindowErrorCode.TargetDeniedByPolicy),
+                    $"Did not arrange window '{window.Title}' for {label}: {WindowService.WindowChangeRefusal(window.Handle, verdict)}");
+                continue;
             }
 
             // Apply placement to the first matching window

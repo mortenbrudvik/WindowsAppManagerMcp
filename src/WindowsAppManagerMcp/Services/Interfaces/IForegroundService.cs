@@ -10,14 +10,16 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 public interface IForegroundService
 {
     /// <summary>
-    /// Brings <paramref name="handle"/> (its top-level window) to the foreground and verifies it. The
-    /// steps, each followed by a check of the foreground window:
+    /// Brings <paramref name="handle"/> (its top-level window) to the foreground and verifies it. A window the
+    /// server's target policy denies is refused first (TargetDeniedByPolicy), and so is a hidden one
+    /// (WindowHidden: keys would go to a window the user cannot see). Then the steps, each followed by a check
+    /// of the foreground window:
     /// <list type="number">
     /// <item>Already in front (the window or a dialog it owns, by the owner chain): done, nothing is
     /// changed.</item>
     /// <item>A window that is not responding or is cloaked is refused (NotResponding, Cloaked).</item>
     /// <item>A minimized window is restored. A window that a modal dialog disables is activated through
-    /// that dialog.</item>
+    /// that dialog, unless the policy denies the dialog's app (TargetDeniedByPolicy).</item>
     /// <item>SetForegroundWindow.</item>
     /// <item>If the foreground lock refused it: attach the activation thread's input to the foreground
     /// thread, BringWindowToTop and SetForegroundWindow, and detach again. Skipped when the foreground
@@ -27,7 +29,8 @@ public interface IForegroundService
     /// often the agent's terminal, and can leave the target in menu mode.</item>
     /// </list>
     /// When an activation step brought the window in front and it is in menu mode, one Esc is sent to
-    /// close the menu, but only while the window is verified to be in front. A menu that is still active
+    /// close the menu, but only while the window is verified to be in front and no modifier key is down
+    /// (the Esc would be a shortcut such as Ctrl+Esc or Alt+Esc; the menu is left open). A menu that is still active
     /// afterwards, or that is open in a window that was already in front, is reported in
     /// <see cref="FocusOutcome.InMenuMode"/>; keys would then select menu items.
     /// All attach and activation calls run on one dedicated long-lived thread, so an attach and its

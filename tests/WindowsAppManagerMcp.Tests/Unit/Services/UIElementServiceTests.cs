@@ -795,6 +795,144 @@ public class UIElementServiceTests
         result.Error.Should().Contain("did not answer");
     }
 
+    [Fact]
+    public void GetUIElements_WhenTheProviderHangsMidWalk_ReturnsWhatWasReadBeforeIt()
+    {
+        // Arrange - B2's provider stops answering while the walk reads it; the worker abandons the walk
+        using var worker = new AbandoningUiaWorker();
+        Window(
+            Node("Button", "A"),
+            Node("Pane", "B").With(
+                Node("Button", "B1"),
+                new FakeUiaNode("Button", "B2") { OnRead = worker.Hang }),
+            Node("Button", "C"));
+
+        // Act
+        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+
+        // Assert - the elements read so far, the one being walked included, as after a cooperative timeout
+        result.Success.Should().BeTrue(result.Error);
+        result.ErrorCode.Should().Be(UIElementErrorCode.None);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(UIElementTruncationReason.Timeout);
+        Shape(result.Elements).Should().Be("A,B(B1)");
+        result.TotalElementCount.Should().Be(3);
+        result.WindowTitle.Should().Be("Main window");
+        result.DepthReached.Should().Be(2);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheAbandonedWalkGoesOnLater_TheReturnedTreeDoesNotChange()
+    {
+        // Arrange
+        using var worker = new AbandoningUiaWorker();
+        Window(
+            Node("Pane", "B").With(
+                Node("Button", "B1"),
+                new FakeUiaNode("Button", "B2") { OnRead = worker.Hang },
+                Node("Button", "B3")),
+            Node("Button", "C"));
+        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+
+        // Act - the provider answers again, and the abandoned walk reads the rest
+        worker.ReleaseAndWait();
+
+        // Assert
+        _tree.ReadNodes.Should().Contain("C", "the walk went on after it was abandoned");
+        Shape(result.Elements).Should().Be("B(B1)");
+        CountAll(result.Elements).Should().Be(2);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheProviderHangsInAFilteredOutElement_ReturnsItsMatchingChildrenInItsPlace()
+    {
+        // Arrange - the Pane is not returned (controlTypes), so the Buttons read inside it take its place
+        using var worker = new AbandoningUiaWorker();
+        Window(
+            Node("Button", "A"),
+            Node("Pane", "P").With(
+                Node("Button", "P1"),
+                new FakeUiaNode("Button", "P2") { OnRead = worker.Hang }));
+
+        // Act
+        var result = new UIElementService(_tree, worker).GetUIElements(
+            Handle, filter: new UIElementFilter(ControlTypes: ["Button"]));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        Shape(result.Elements).Should().Be("A,P1");
+        result.TotalElementCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheProviderHangsBeforeAnyElementMatches_ReturnsOperationTimedOut()
+    {
+        // Arrange
+        using var worker = new AbandoningUiaWorker();
+        Window(new FakeUiaNode("Button", "A") { OnRead = worker.Hang });
+
+        // Act
+        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("did not answer");
+        result.Elements.Should().BeNull();
+    }
+
+    /// <summary>
+    /// A worker that runs the read on its own thread and gives up on it, as <see cref="UiaWorker"/> does past the
+    /// deadline, as soon as the read is stuck in a node's provider (<see cref="Hang"/>). The stuck read goes on
+    /// when <see cref="ReleaseAndWait"/> is called, or when the test ends.
+    /// </summary>
+    private sealed class AbandoningUiaWorker : IUiaWorker, IDisposable
+    {
+        private readonly ManualResetEventSlim _stuck = new();
+        private readonly ManualResetEventSlim _release = new();
+        private Thread? _thread;
+
+        /// <summary>Called from inside a provider call: blocks it, as a hung application does.</summary>
+        public void Hang()
+        {
+            _stuck.Set();
+            _release.Wait(TimeSpan.FromSeconds(30));
+        }
+
+        public void ReleaseAndWait()
+        {
+            _release.Set();
+            _thread?.Join(TimeSpan.FromSeconds(30));
+        }
+
+        public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        {
+            _thread = new Thread(() =>
+            {
+                try
+                {
+                    read(cancellationToken);
+                }
+                catch (Exception)
+                {
+                    // An abandoned read's outcome is never read
+                }
+            })
+            { IsBackground = true };
+            _thread.Start();
+
+            _stuck.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue("the read reaches the hanging provider");
+            throw new TimeoutException("UI Automation did not answer in time. The application may not be responding.");
+        }
+
+        public void Dispose()
+        {
+            ReleaseAndWait();
+            _stuck.Dispose();
+            _release.Dispose();
+        }
+    }
+
     #endregion
 
     #region Result

@@ -16,8 +16,9 @@ public sealed class HostGuard : IHostGuard
     private readonly ILogger<HostGuard>? _logger;
 
     /// <summary>
-    /// The processes, besides the server, all of whose windows are host windows: the ancestors and the
-    /// console host. <see cref="IsHostProcess"/> also counts the startup foreground window's process.
+    /// The processes, besides the server, all of whose windows are host windows: the ancestors, the
+    /// console host and the console server. <see cref="IsHostProcess"/> also counts the startup foreground
+    /// window's process.
     /// </summary>
     private readonly IReadOnlyList<HostProcess> _hostProcesses;
 
@@ -31,9 +32,10 @@ public sealed class HostGuard : IHostGuard
         _logger = logger;
 
         Host = Record();
-        _hostProcesses = Host.ConsoleHostWindow is { } consoleHost
-            ? [.. Host.Ancestors, consoleHost.Process]
-            : Host.Ancestors;
+        _hostProcesses = Host.Ancestors
+            .Concat(Host.ConsoleHostWindow is { } consoleHost ? [consoleHost.Process] : [])
+            .Concat(Host.ConsoleServerProcesses)
+            .ToList();
         _hostWindows = new[] { Host.ConsoleHostWindow, Host.StartupForegroundWindow }
             .OfType<HostWindow>()
             .ToList();
@@ -42,10 +44,11 @@ public sealed class HostGuard : IHostGuard
         // this category, see ServiceRegistration.AddWindowsAppManagerLogLevels)
         _logger?.LogInformation(
             "Agent host recorded: ancestors {Ancestors}, console host window {ConsoleHost} (process {ConsoleHostProcess}), " +
-            "startup foreground window {Foreground} (process {ForegroundProcess}), shell process {ShellProcess}",
+            "console servers {ConsoleServers}, startup foreground window {Foreground} (process {ForegroundProcess}), shell process {ShellProcess}",
             string.Join(", ", Host.Ancestors.Select(a => a.ProcessId)),
             Host.ConsoleHostWindow?.Handle,
             Host.ConsoleHostWindow?.Process.ProcessId,
+            string.Join(", ", Host.ConsoleServerProcesses.Select(p => p.ProcessId)),
             Host.StartupForegroundWindow?.Handle,
             Host.StartupForegroundWindow?.Process.ProcessId,
             Host.ShellProcessId);
@@ -147,6 +150,9 @@ public sealed class HostGuard : IHostGuard
 
         var consoleWindow = Read("console window", _processes.GetConsoleWindow, nint.Zero);
         var consoleHostWindow = consoleWindow == nint.Zero ? null : Read("console host window", () => RecordRootOwner(consoleWindow), null);
+        IReadOnlyList<HostProcess> consoleServers = consoleWindow == nint.Zero
+            ? []
+            : Read("console server processes", () => RecordConsoleServers(consoleWindow, consoleHostWindow, shellProcessId), []);
 
         var foreground = Read("foreground window", _windows.GetForegroundWindow, nint.Zero);
         var startupForeground = foreground == nint.Zero ? null : Read("foreground window owner", () => RecordRootOwner(foreground), null);
@@ -162,8 +168,45 @@ public sealed class HostGuard : IHostGuard
             ConsoleWindow: consoleWindow,
             ConsoleHostWindow: consoleHostWindow,
             StartupForegroundWindow: startupForeground,
-            ShellProcessId: shellProcessId == 0 ? null : shellProcessId);
+            ShellProcessId: shellProcessId == 0 ? null : shellProcessId)
+        {
+            ConsoleServerProcesses = consoleServers
+        };
     }
+
+    /// <summary>
+    /// The console server of the server's console: the process that owns the console window, and every
+    /// conhost.exe or OpenConsole.exe that the process showing the console (the terminal) started. Windows can
+    /// report a console window as owned by its first client rather than by the console server; the terminal
+    /// starts the console server of each of its consoles (ConPTY), so the second rule finds it either way. The
+    /// desktop shell is left out: it starts the console servers of every console the user opens.
+    /// </summary>
+    private IReadOnlyList<HostProcess> RecordConsoleServers(nint consoleWindow, HostWindow? consoleHostWindow, int shellProcessId)
+    {
+        var processIds = new List<int>();
+        var owner = (int)_windows.GetWindowThreadProcessId(consoleWindow);
+        if (owner != 0)
+        {
+            processIds.Add(owner);
+        }
+
+        if (consoleHostWindow is { } host && host.Process.ProcessId != shellProcessId)
+        {
+            processIds.AddRange((_processes.GetDescendantsOf(host.Process.ProcessId) ?? [])
+                .Where(process => IsConsoleServerImage(process.ImageName))
+                .Select(process => process.ProcessId));
+        }
+
+        return processIds
+            .Distinct()
+            .Select(processId => new HostProcess(processId, _processes.GetProcessStartTime(processId)))
+            .ToList();
+    }
+
+    private static bool IsConsoleServerImage(string imageName) =>
+        TargetPolicySettings.NormalizeProcessName(imageName) is var name &&
+        (string.Equals(name, "conhost", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(name, "OpenConsole", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Records the window at the top of a window's owner chain (<see cref="WindowOwnerChain.TopOwner"/>)

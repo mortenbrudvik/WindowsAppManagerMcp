@@ -34,13 +34,15 @@ public class InputSimulationTools
 
     internal const string ReleaseHeldModifiersDescription =
         "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with " +
-        "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Default: false";
+        "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a " +
+        "modifier of the user's pause hotkey is down. Default: false";
 
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
         "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
         " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
+        " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there." +
         GuardNote;
 
     private const string KeyboardTargetNote =
@@ -124,7 +126,7 @@ public class InputSimulationTools
 
     [McpServerTool(Name = "mouse_move")]
     [Description("Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
-                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint)." + GuardNote)]
+                 " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." + GuardNote)]
     public MouseMoveResult MouseMove(
         [Description(XDescription)]
         int x,

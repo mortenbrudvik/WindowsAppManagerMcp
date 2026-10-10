@@ -18,13 +18,26 @@ public class ScreenshotService : IScreenshotService
     /// <summary>How wide capture_with_elements' overlay lines are in the returned image, in pixels.</summary>
     private const float OutputOverlayLineWidth = 2f;
 
+    /// <summary>
+    /// The CaptureFailed message for a minimized window: Windows does not draw it, and its rectangle is the
+    /// icon's at (-32000, -32000), so the capture would succeed with a tiny or black image.
+    /// </summary>
+    public const string MinimizedMessage =
+        "The window is minimized, so it cannot be captured: Windows does not draw a minimized window, and its elements are " +
+        "offscreen. Restore it first with set_window_state (state 'restore') or focus_window, then capture again.";
+
     private readonly IScreenCaptureWrapper _captureWrapper;
     private readonly IMonitorService _monitorService;
+    private readonly INativeWindowWrapper _windows;
 
-    public ScreenshotService(IScreenCaptureWrapper captureWrapper, IMonitorService monitorService)
+    /// <param name="captureWrapper">The pixel capture.</param>
+    /// <param name="monitorService">Monitor lookups.</param>
+    /// <param name="windows">Window reads: a minimized window is refused before its pixels are read.</param>
+    public ScreenshotService(IScreenCaptureWrapper captureWrapper, IMonitorService monitorService, INativeWindowWrapper windows)
     {
         _captureWrapper = captureWrapper;
         _monitorService = monitorService;
+        _windows = windows ?? throw new ArgumentNullException(nameof(windows));
     }
 
     public ScreenListResult ListScreens()
@@ -98,6 +111,7 @@ public class ScreenshotService : IScreenshotService
                 throw new CaptureException(ScreenshotErrorCode.InvalidHandle, "Invalid window handle or window no longer exists");
             }
 
+            ThrowIfMinimized(windowHandle);
             var capture = _captureWrapper.CaptureWindow(windowHandle, includeFrame);
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0);
@@ -120,6 +134,7 @@ public class ScreenshotService : IScreenshotService
                 throw new CaptureException(ScreenshotErrorCode.InvalidHandle, "Invalid window handle or window no longer exists");
             }
 
+            ThrowIfMinimized(windowHandle);
             var captureStopwatch = Stopwatch.StartNew();
             var capture = CaptureOrFail("window", () => _captureWrapper.CaptureWindow(windowHandle, includeFrame));
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
@@ -180,6 +195,19 @@ public class ScreenshotService : IScreenshotService
                 AnnotatedFailure(windowHandle, windowTitle, ScreenshotErrorCode.CaptureFailed,
                     $"Failed to capture window with elements: {ex.Message}"),
                 null);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a minimized window, or a window inside one (a control of a minimized window is offscreen with it),
+    /// with <see cref="ScreenshotErrorCode.CaptureFailed"/>.
+    /// </summary>
+    private void ThrowIfMinimized(nint windowHandle)
+    {
+        var root = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
+        if (_windows.IsIconic(windowHandle) || (root != nint.Zero && root != windowHandle && _windows.IsIconic(root)))
+        {
+            throw new CaptureException(ScreenshotErrorCode.CaptureFailed, MinimizedMessage);
         }
     }
 

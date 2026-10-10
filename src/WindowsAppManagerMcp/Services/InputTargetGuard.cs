@@ -219,25 +219,89 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 return refused;
             }
 
-            return CheckHitForTarget(x, y, hit, target, targetRoot);
+            return WithCaptureCheck(x, y, CheckHitForTarget(x, y, hit, target, targetRoot));
         }
 
-        return CheckHitWithoutTarget(x, y, hit, target);
+        return WithCaptureCheck(x, y, CheckHitWithoutTarget(x, y, hit, target));
     }
 
     public InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved)
     {
         ArgumentNullException.ThrowIfNull(approved);
 
+        // The capture is read again even when the same window is at the point: it can start at any moment
         var hit = RootAt(x, y);
         if (hit == approved.Receiving)
         {
-            return approved;
+            return WithCaptureCheck(x, y, approved);
         }
 
-        return approved.Target.HasWindow
+        return WithCaptureCheck(x, y, approved.Target.HasWindow
             ? CheckHitForTarget(x, y, hit, approved.Target, approved.Anchor)
-            : CheckHitWithoutTarget(x, y, hit, approved.Target);
+            : CheckHitWithoutTarget(x, y, hit, approved.Target));
+    }
+
+    /// <summary>
+    /// <paramref name="result"/>, unless another window has captured the mouse (SetCapture) and the input would
+    /// go there instead of to the approved window at the point: then <see cref="InputErrorCode.MouseInUse"/>.
+    /// The foreground thread's capture takes mouse input wherever the pointer is (a selection or drag the user
+    /// started, a menu that is open), and the capture of the thread of the window at the point takes it over that
+    /// thread's windows. A capture by the window at the point is fine; so is one by another window of its thread
+    /// that the input may reach by the same rules (a menu runs on its owner's thread and captures the mouse for
+    /// it). A held mouse button, which also routes the mouse to the window it went down on, is refused by the
+    /// input tools.
+    /// </summary>
+    private InputGuardResult WithCaptureCheck(int x, int y, InputGuardResult result)
+    {
+        if (!result.Allowed)
+        {
+            return result;
+        }
+
+        var hit = result.Receiving;
+        var hitThread = _threads.GetWindowThreadId(hit);
+        var foreground = _windows.GetForegroundWindow();
+        var threads = new[] { foreground == nint.Zero ? 0u : _threads.GetWindowThreadId(foreground), hitThread }
+            .Where(thread => thread != 0)
+            .Distinct();
+        foreach (var thread in threads)
+        {
+            if (_threads.GetGuiThreadInfo(thread) is not { CaptureWindow: var capture } || capture == nint.Zero)
+            {
+                continue;
+            }
+
+            var captureRoot = RootOf(capture);
+            if (captureRoot == hit || (thread == hitThread && MayReceive(captureRoot, result)))
+            {
+                continue;
+            }
+
+            var captor = Describe(captureRoot);
+            return InputGuardResult.Refuse(InputErrorCode.MouseInUse,
+                $"{Name(captor)} has captured the mouse (a selection, drag or menu in progress), so input at ({x}, {y}) would go to " +
+                $"it instead of {Name(result.ReceivingWindow)}. Nothing was sent. Wait until the user has finished, or close the " +
+                "menu first, then try again.",
+                result.Target, captor);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// True when the mouse input may reach <paramref name="window"/> by the rules that approved the window at the
+    /// point: for an explicit target it must be the target's (<see cref="BelongsToTarget"/>), and the probes,
+    /// policy and host checks must pass.
+    /// </summary>
+    private bool MayReceive(nint window, InputGuardResult approved)
+    {
+        var targetRoot = approved.Target.HasWindow ? approved.Anchor : nint.Zero;
+        if (approved.Target.HasWindow && !BelongsToTarget(window, targetRoot))
+        {
+            return false;
+        }
+
+        return WindowRefusal(window, Read(window), approved.Target, "sent", targetRoot) == null;
     }
 
     public WindowSummary? DescribeForeground()

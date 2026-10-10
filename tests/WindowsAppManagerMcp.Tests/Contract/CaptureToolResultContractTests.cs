@@ -232,7 +232,7 @@ public class CaptureToolResultContractTests
 
     private Task<InProcessMcpServer> StartServerAsync()
     {
-        var screenshotService = new ScreenshotService(_captureWrapper.Object, _monitorService.Object);
+        var screenshotService = new ScreenshotService(_captureWrapper.Object, _monitorService.Object, Mock.Of<INativeWindowWrapper>());
         var tools = new ScreenshotTools(screenshotService, _uiElementService.Object, _windowService.Object,
             new TargetPolicy(TargetPolicySettings.Default));
         return InProcessMcpServer.StartAsync([], builder => builder.AddToolErrorReporting().WithTools(tools));

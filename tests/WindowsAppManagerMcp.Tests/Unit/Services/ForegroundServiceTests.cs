@@ -35,6 +35,7 @@ public class ForegroundServiceTests
     private const ushort VK_MENU = 0x12;
     private const ushort VK_LMENU = 0xA4;
     private const ushort VK_RMENU = 0xA5;
+    private const ushort VK_LCONTROL = 0xA2;
 
     private readonly Mock<INativeWindowWrapper> _windows = new();
     private readonly Mock<INativeThreadInputWrapper> _threads = new();
@@ -54,6 +55,7 @@ public class ForegroundServiceTests
     {
         var windows = new[] { Target, Terminal, Dialog, OtherDialog, WpfDialog, WpfNestedDialog };
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns<nint>(h => windows.Contains(h));
+        _windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns<nint>(h => windows.Contains(h));
         _windows.Setup(w => w.GetForegroundWindow()).Returns(() => _foreground);
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Root)).Returns<nint, WindowAncestor>((h, _) => h);
         // The Win32 dialogs (WS_POPUP) are owned by the target: their root owner is the target. The WPF
@@ -288,6 +290,84 @@ public class ForegroundServiceTests
         outcome.IsForeground.Should().BeFalse();
         outcome.ErrorCode.Should().Be(WindowErrorCode.Cloaked);
         _calls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EnsureForeground_WhenTheTargetIsHidden_RefusesWithWindowHidden(bool alreadyInFront)
+    {
+        // Arrange - an app that hid its window in the notification area; SetForegroundWindow can still make
+        // it the foreground window, and keys would then go to a window the user cannot see
+        _windows.Setup(w => w.IsWindowVisible(Target)).Returns(false);
+        _foreground = alreadyInFront ? Target : Terminal;
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.WindowHidden);
+        outcome.Error.Should().Contain("hidden");
+        _calls.Should().BeEmpty();
+        _sentInput.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsAChildOfAHiddenWindow_RefusesWithWindowHidden()
+    {
+        // Arrange - the window that would be activated is the target's top-level window
+        nint child = 0x110;
+        _windows.Setup(w => w.IsWindow(child)).Returns(true);
+        _windows.Setup(w => w.GetAncestor(child, WindowAncestor.Root)).Returns(Target);
+        _windows.Setup(w => w.IsWindowVisible(Target)).Returns(false);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(child, timeoutMs: 0);
+
+        // Assert
+        outcome.ErrorCode.Should().Be(WindowErrorCode.WindowHidden);
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenThePolicyDeniesTheTarget_RefusesWithTargetDeniedByPolicy_BeforeAnyStep()
+    {
+        // Arrange - a minimized password manager: restoring and activating it would put it on screen
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Target)).Returns(TargetPolicyVerdict.Deny("KeePass", "KeePass is on the deny list"));
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("KeePass is on the deny list");
+        _calls.Should().BeEmpty();
+        _activationThread.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenThePolicyDeniesTheModalDialogItWouldActivate_RefusesWithTargetDeniedByPolicy()
+    {
+        // Arrange - the target is disabled by a credential prompt of another process
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(new nint(WsDisabled));
+        _windows.Setup(w => w.GetWindow(Target, GW_ENABLEDPOPUP)).Returns(Dialog);
+        _windowService.Setup(w => w.EvaluateTargetPolicy(Dialog))
+            .Returns(TargetPolicyVerdict.Deny("CredentialUIBroker", "CredentialUIBroker is on the deny list"));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        _calls.Should().NotContain(call => call.StartsWith("SetForegroundWindow"));
     }
 
     #endregion
@@ -619,6 +699,26 @@ public class ForegroundServiceTests
         outcome.MenuClosed.Should().BeFalse();
         outcome.InMenuMode.Should().BeTrue();
         _calls.Should().Equal("SetForegroundWindow(Target) -> True", "SendInput(Esc down, Esc up)");
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenAModifierIsDownWhileTheWindowIsInMenuMode_SendsNoEscAndReportsInMenuMode()
+    {
+        // Arrange - the user holds Ctrl (or starts the pause chord): the Esc would become Ctrl+Esc (Start),
+        // Alt+Esc (the next window) or Ctrl+Shift+Esc (Task Manager)
+        _lock = ForegroundLock.Open;
+        _threads.Setup(t => t.GetGuiThreadInfo(TargetThread)).Returns(MenuState(inMenuMode: true));
+        _input.Setup(i => i.IsKeyDown(VK_LCONTROL)).Returns(true);
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - in front, the menu left open and reported, no key sent
+        outcome.IsForeground.Should().BeTrue();
+        outcome.MenuClosed.Should().BeFalse();
+        outcome.InMenuMode.Should().BeTrue();
+        _sentInput.Should().BeEmpty();
+        _calls.Should().Equal("SetForegroundWindow(Target) -> True");
     }
 
     [Fact]

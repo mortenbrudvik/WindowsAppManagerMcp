@@ -17,7 +17,9 @@ public enum KeyModifiers
 /// <summary>
 /// One key press and the modifiers held down while it happens, for example Alt+F4. <see cref="Kind"/> and
 /// <see cref="Code"/> are those of the key's <see cref="InputEvent"/>: a virtual-key code, or a character
-/// sent as Unicode.
+/// sent as Unicode. A character that has a key of its own (a space, a letter or digit, Tab, Enter,
+/// Backspace, Esc) counts as that virtual key, so every spelling of a chord matches it: send_keys sends a
+/// literal space as a character, and Alt with that character opens the window menu as Alt+{SPACE} does.
 /// </summary>
 public readonly record struct KeyChord(KeyModifiers Modifiers, InputEventKind Kind, ushort Code)
 {
@@ -148,7 +150,7 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                chords.Add(new KeyChord(held, e.Kind, e.Code));
+                chords.Add(Press(held, e));
             }
         }
 
@@ -191,13 +193,33 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                presses.Add(new KeyChord(held, e.Kind, e.Code));
+                presses.Add(Press(held, e));
                 tapCandidate = 0;
             }
         }
 
         return presses;
     }
+
+    /// <summary>
+    /// The press of <paramref name="key"/> with <paramref name="held"/> down. A character sent as Unicode that
+    /// has a key of its own counts as that virtual key (see <see cref="KeyChord"/>).
+    /// </summary>
+    private static KeyChord Press(KeyModifiers held, InputEvent key) =>
+        key.Kind == InputEventKind.Unicode && VirtualKeyOfCharacter((char)key.Code) is var vk && vk != 0
+            ? new KeyChord(held, InputEventKind.VirtualKey, vk)
+            : new KeyChord(held, key.Kind, key.Code);
+
+    /// <summary>The virtual key that types <paramref name="c"/> by itself, or 0 when it has none.</summary>
+    private static ushort VirtualKeyOfCharacter(char c) => c switch
+    {
+        ' ' => NativeEnums.VK_SPACE,
+        '\t' => NativeEnums.VK_TAB,
+        '\r' or '\n' => NativeEnums.VK_RETURN,
+        '\b' => NativeEnums.VK_BACK,
+        '\u001b' => NativeEnums.VK_ESCAPE,
+        _ => GetVirtualKeyForChar(c)
+    };
 
     private static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch
     {

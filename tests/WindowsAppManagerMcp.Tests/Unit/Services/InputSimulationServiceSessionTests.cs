@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class InputSimulationServiceSessionTests
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
-    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4;
+    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4, VkLWin = 0x5B;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeInputWrapper _input = new();
@@ -283,11 +283,12 @@ public class InputSimulationServiceSessionTests
     [MemberData(nameof(InputPaths))]
     public async Task ReleaseHeldModifiers_ReleasesThemFirst_AndReportsIt(string path)
     {
-        // Arrange - Ctrl is stuck down
+        // Arrange - Ctrl is stuck down, and the pause hotkey does not use Ctrl
         _input.Press(VkLControl);
+        var session = new InputSession(_input, PauseHotkeyOptions.FromEnvironment(_ => "Alt+Shift+F12"));
 
         // Act
-        var result = await Call(CreateSut(), path, releaseHeldModifiers: true);
+        var result = await Call(CreateSut(session: session), path, releaseHeldModifiers: true);
 
         // Assert - the first batch releases it, then the input is sent
         result.Success.Should().BeTrue(result.Error);
@@ -376,6 +377,102 @@ public class InputSimulationServiceSessionTests
         result.Released.Should().BeNull();
         VerifyNothingSentOrChecked();
         new[] { VkLControl, VkLMenu, VkLShift }.Should().OnlyContain(key => _input.IsKeyDown(key));
+    }
+
+    [Theory]
+    [MemberData(nameof(InputPaths))]
+    public async Task SomeOfThePauseChordsModifiers_AreNotReleasedEither(string path)
+    {
+        // Arrange - the user has pressed Ctrl and Alt and is reaching for Shift: releasing them would make the
+        // chord miss when the rest goes down
+        _input.Press(VkLControl);
+        _input.Press(VkLMenu);
+
+        // Act
+        var result = await Call(CreateSut(), path, releaseHeldModifiers: true);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Error.Should().Contain("pause hotkey").And.Contain("not released");
+        result.Released.Should().BeNull();
+        VerifyNothingSentOrChecked();
+        new[] { VkLControl, VkLMenu }.Should().OnlyContain(key => _input.IsKeyDown(key));
+    }
+
+    [Fact]
+    public async Task AStuckModifierOutsideThePauseChord_IsStillReleasedWhenAsked()
+    {
+        // Arrange - the default chord is Ctrl+Alt+Shift+Pause; a stuck Windows key is not part of it
+        _input.Press(VkLWin);
+
+        // Act
+        var result = await CreateSut().SendKeysAsync("a", releaseHeldModifiers: true);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.ReleasedModifiers.Should().Equal("LeftWin");
+        _input.IsKeyDown(VkLWin).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Held mouse buttons
+
+    /// <summary>The input paths that move the pointer or press a button.</summary>
+    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_move" };
+
+    [Theory]
+    [MemberData(nameof(MousePaths))]
+    public async Task AMouseButtonTheUserHolds_IsMouseInUse_AndThePointerIsNotTouched(string path)
+    {
+        // Arrange - the user is dragging or selecting: the window under the press has the mouse, so a click
+        // would go to it, and moving the pointer would move the user's drag
+        _input.Press(0x01);
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Code.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("left mouse button");
+        _input.Batches.Should().BeEmpty();
+        _input.CursorMoves.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("double_click")]
+    public async Task Click_AMouseButtonPressedBeforeThePress_IsMouseInUse_AndNothingIsClicked(string path)
+    {
+        // Arrange - the user presses the right button after the guard checked the point
+        _guard.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) =>
+            {
+                _input.Press(0x02);
+                return approved;
+            });
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.MouseInUse);
+        result.Error.Should().Contain("right mouse button");
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("type_text")]
+    [InlineData("send_keys")]
+    public async Task AHeldMouseButton_DoesNotStopKeys(string path)
+    {
+        // Keys go to the window with keyboard focus, which the mouse capture does not change
+        _input.Press(0x01);
+
+        var result = await Call(CreateSut(), path);
+
+        result.Success.Should().BeTrue(result.Error);
     }
 
     #endregion

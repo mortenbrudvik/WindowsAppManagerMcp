@@ -626,9 +626,12 @@ public class InputSessionTests
     [InlineData(new ushort[] { 0xA2, 0xA4, 0xA0 }, true)] // LeftCtrl, LeftAlt, LeftShift
     [InlineData(new ushort[] { 0xA3, 0xA5, 0xA1 }, true)] // the right-hand ones
     [InlineData(new ushort[] { 0xA2, 0xA4, 0xA0, 0x5B }, true)] // and Windows too
-    [InlineData(new ushort[] { 0xA2, 0xA4 }, false)] // Shift is missing
-    [InlineData(new ushort[] { 0xA2 }, false)] // a stuck Ctrl alone
-    public void IsPauseChordHeld_WhenEveryModifierOfTheChordIsDown(ushort[] down, bool expected)
+    [InlineData(new ushort[] { 0xA2, 0xA4 }, true)] // Shift is not down yet: the user presses the modifiers one by one
+    [InlineData(new ushort[] { 0xA2 }, true)] // Ctrl alone: the start of the chord, or a stuck key
+    [InlineData(new ushort[] { 0xA1 }, true)] // RightShift alone
+    [InlineData(new ushort[] { 0x5B }, false)] // the Windows key is not part of the chord
+    [InlineData(new ushort[0], false)]
+    public void IsPauseChordHeld_WhenAnyModifierOfTheChordIsDown(ushort[] down, bool expected)
     {
         var keys = down.Select(vk => HeldInput.Key(vk)).ToList();
 
