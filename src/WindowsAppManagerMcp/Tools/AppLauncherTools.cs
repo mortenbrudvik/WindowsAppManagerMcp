@@ -20,7 +20,7 @@ public class AppLauncherTools
     public LaunchResultDto LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com')")]
         string executable,
-        [Description("Command line arguments to pass to the application")]
+        [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.")]
         string[]? arguments = null,
         [Description("Working directory for the application")]
         string? workingDirectory = null,

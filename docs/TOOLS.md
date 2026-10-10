@@ -719,6 +719,8 @@ Each application object contains:
 }
 ```
 
+Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`).
+
 ---
 
 ## Monitor Info
@@ -1660,6 +1662,29 @@ Launch an application by path, name, or protocol URI.
 }
 ```
 
+**How the executable is resolved:**
+- **Absolute paths** may contain any character that is valid in a Windows path, including `(x86)`, `&`, `'`, `;`, `$` and `{GUID}`. Only `" < > | * ?` and control characters are rejected. Applications are started with ShellExecute, which does not pass the path through a shell.
+- **Bare names and relative paths** (`notepad`, `tools\app.exe`) must not contain shell metacharacters (`` & | ; < > $ ` " ' ( ) { } ``).
+- **Bare names** are looked up in the Windows directory, System32, the absolute entries of `PATH` and then App Paths (HKCU, HKLM). The resolved absolute path is what gets started. The current and working directories are **never** searched, so a `notepad.exe` or `code.cmd` planted in a repository cannot hijack the launch. If the name exists only in the working directory, the launch is refused with `ExecutableInWorkingDirectory`; pass the full path to run that file on purpose.
+- **`file://` URIs** are converted to their local or UNC path and validated like a plain path. `http`, `https`, `mailto` and `tel` URIs are passed to their handler. Other protocols are blocked (`BlockedProtocol`, `UnknownProtocol`).
+
+**How arguments are passed:**
+- Each array element is passed as exactly one argument, quoted with the standard Windows rules. Spaces, embedded quotes, trailing backslashes (`C:\My Folder\`) and empty strings are preserved. Do not add your own quotes.
+- **Batch files** (`.bat`/`.cmd`, including shims such as VS Code's `code` → `bin\code.cmd` and `npm` → `npm.cmd`) are run by Windows through `cmd.exe`, which would treat parts of an argument as commands or variables. If the target is a batch file, or cannot be verified to be a native `.exe`/`.com` (URIs, documents, shortcuts, scripts, unresolved names), arguments containing `& | < > ^ % ! "` or control characters are refused with `UnsafeBatchArguments`. To pass such an argument, launch the program's `.exe` by its full path, for example `...\Microsoft VS Code\Code.exe` instead of `code`.
+
+**Error codes:**
+| Code | Meaning |
+|------|---------|
+| `EmptyExecutablePath` | `executable` is empty |
+| `InvalidCharacters` | Character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
+| `PathTraversal` | Path contains `..` |
+| `BlockedProtocol` / `UnknownProtocol` / `InvalidUri` | URI not allowed or malformed |
+| `InvalidWorkingDirectory` | Working directory contains invalid characters |
+| `InvalidArguments` | An argument is null or contains a NUL character |
+| `UnsafeBatchArguments` | Argument would be interpreted by `cmd.exe` (see above) |
+| `ExecutableInWorkingDirectory` | Bare name found only in the current or working directory |
+| `ProcessStartFailed` / `LaunchException` | Windows failed to start the target |
+
 ---
 
 ### list_processes
@@ -1708,41 +1733,108 @@ List running processes with optional filtering.
 
 ### kill_process
 
-Terminate a process by ID (requires confirmation).
+Close or terminate a process by ID (requires confirmation).
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | processId | int | Yes | - | Process ID to terminate |
 | confirm | bool | Yes | - | Must be true to confirm termination |
-| forceKill | bool | No | false | Force immediate termination |
+| forceKill | bool | No | false | `false`: graceful close only. `true`: terminate the process **and all of its child processes** immediately |
+| gracefulTimeoutMs | int | No | 5000 | Graceful mode: how long to wait for the process to exit after the close request (0-60000) |
+| expectedProcessName | string | No | - | PID-reuse guard: expected name as shown by `list_processes` (`notepad` or `notepad.exe`, case-insensitive) |
 
-**Example:**
-> "Terminate process 12456"
+**Graceful mode (default) never escalates.** It sends `WM_CLOSE` to the process's main window and waits up to `gracefulTimeoutMs`:
+- The process exits: `success: true`.
+- The process has no main window that can be closed (windowless, notification-area only, or its window is blocked by a modal dialog): `success: false`, `errorCode: "NoClosableWindow"`. The process is left running.
+- The process is still running after the timeout, for example because it is showing a "Save changes?" prompt or runs elevated: `success: false`, `errorCode: "GracefulCloseTimedOut"`. The process is left running.
+
+To end the process anyway, call again with `forceKill: true`. This ends the process and all of its child processes immediately, and unsaved work is lost.
+
+**Force mode** returns `success: true` only after the process has actually exited. Otherwise it returns `TerminationNotConfirmed`.
+
+**Example 1:** Close gracefully
+> "Close Notepad (PID 12456)"
 
 ```json
 {
   "name": "kill_process",
   "arguments": {
     "processId": 12456,
-    "confirm": true
+    "confirm": true,
+    "expectedProcessName": "notepad"
   }
 }
 ```
 
-**Response:**
+**Response (closed):**
 ```json
 {
   "success": true,
   "processId": 12456,
-  "processName": "chrome"
+  "processName": "notepad",
+  "closeRequested": true,
+  "forced": false,
+  "exited": true
 }
 ```
 
+**Response (still running, e.g. a save prompt is open):**
+```json
+{
+  "success": false,
+  "processId": 12456,
+  "processName": "notepad",
+  "error": "A close request was sent to 'notepad' (PID 12456), but it was still running after 5000 ms. ...",
+  "errorCode": "GracefulCloseTimedOut",
+  "closeRequested": true,
+  "forced": false,
+  "exited": false
+}
+```
+
+**Example 2:** Force terminate
+```json
+{
+  "name": "kill_process",
+  "arguments": {
+    "processId": 12456,
+    "confirm": true,
+    "forceKill": true
+  }
+}
+```
+
+**Response fields:**
+| Field | Description |
+|-------|-------------|
+| success | `true` only when the process is confirmed to have exited |
+| closeRequested | A close request (WM_CLOSE) was posted to the main window |
+| forced | A forced termination of the process tree was issued |
+| exited | The process is confirmed to have exited |
+| warning | Additional information, e.g. child processes that could not be terminated |
+
+**Error codes:**
+| Code | Meaning |
+|------|---------|
+| `ConfirmationRequired` | `confirm` was not true |
+| `InvalidProcessId` / `InvalidTimeout` | Parameter out of range |
+| `ProcessNotFound` | No such process (it may have exited) |
+| `ProtectedProcess` | Protected system or shell process (see below) |
+| `CannotTerminateSelf` | The PID is this server |
+| `CannotTerminateHost` | The PID is an ancestor of this server, such as the terminal or editor hosting the agent |
+| `ProcessNameMismatch` | The PID belongs to a different process than `expectedProcessName`; nothing was done |
+| `NoClosableWindow` | Graceful mode: no closable main window; process left running |
+| `GracefulCloseTimedOut` | Graceful mode: still running after the timeout; process left running |
+| `AccessDenied` | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
+| `TerminationNotConfirmed` | Force mode: the process had not exited when the wait ended |
+| `TerminationException` | Unexpected error |
+
 **Protected Processes:**
-The following system processes cannot be terminated:
+The following system and shell processes cannot be terminated:
 - System, smss, csrss, wininit, services, lsass, lsm
 - svchost, winlogon, dwm, explorer, Registry, Memory Compression
+- sihost, ctfmon, StartMenuExperienceHost, ShellExperienceHost, SearchHost, TextInputHost, fontdrvhost
 
 ---
 
