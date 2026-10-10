@@ -722,6 +722,27 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public void GetUIElements_OfAUwpFrame_CountsTheWalkAgainstTheAppNotItsFrameHost()
+    {
+        // Arrange - ApplicationFrameHost owns the frame of every UWP app; the app runs in its CoreWindow's process
+        BuildToolbarWindow();
+        var coreWindow = new nint(0x6001);
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetClassName(Handle)).Returns("ApplicationFrameWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(6000u);
+        windows.Setup(w => w.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(coreWindow)).Returns(7000u);
+        windows.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, callback) => callback(coreWindow));
+
+        // Act
+        new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+
+        // Assert - a hung UWP app then blocks only walks of itself, not of every other UWP app
+        _worker.LastTargetProcessId.Should().Be(7000);
+    }
+
+    [Fact]
     public void GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
     {
         // Arrange

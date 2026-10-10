@@ -40,8 +40,9 @@ public class UIElementService : IUIElementService
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
-    /// <param name="windows">Identifies the process that owns the window, so a hung application blocks
-    /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count.</param>
+    /// <param name="windows">Identifies the application whose window is read (for a UWP app its own
+    /// process, see <see cref="UwpFrames"/>), so a hung application blocks only reads of itself (see
+    /// <see cref="IUiaWorker"/>). Without it all reads share one count.</param>
     public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null)
     {
         _tree = tree;
@@ -92,12 +93,15 @@ public class UIElementService : IUIElementService
         }
     }
 
-    /// <summary>The process that owns the window, or 0 when it is not known.</summary>
+    /// <summary>
+    /// The process of the app that the window shows, or 0 when it is not known. For a UWP frame window
+    /// that is the app's own process, not the ApplicationFrameHost that owns the frames of every UWP app.
+    /// </summary>
     private int TargetProcessId(nint windowHandle)
     {
         try
         {
-            return (int)(_windows?.GetWindowThreadProcessId(windowHandle) ?? 0);
+            return _windows == null ? 0 : (int)UwpFrames.AppProcessId(_windows, windowHandle);
         }
         catch (Exception)
         {

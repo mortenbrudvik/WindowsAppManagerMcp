@@ -118,17 +118,17 @@ public class WindowService : IWindowService
         var width = rect.Value.Right - rect.Value.Left;
         var height = rect.Value.Bottom - rect.Value.Top;
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
+
+    /// <summary>
+    /// The SetWindowPos flags for a placement. With <paramref name="bringToFront"/> the window goes to
+    /// the top of the z-order (HWND_TOP), but it is never activated: SWP_NOACTIVATE stays set.
+    /// BringWindowToTop is not used, because it activates the window, so keyboard input would follow it
+    /// whenever the server happened to have the foreground rights. focus_window activates, verified.
+    /// </summary>
+    private static uint PlacementFlags(bool bringToFront) =>
+        bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
 
     public bool ResizeWindow(nint handle, int width, int height)
     {
@@ -156,16 +156,7 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool SetWindowState(nint handle, WindowState state)
@@ -266,16 +257,7 @@ public class WindowService : IWindowService
             _nativeWrapper.ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        var flags = bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
-
-        var success = _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags);
-
-        if (success && bringToFront)
-        {
-            _nativeWrapper.BringWindowToTop(handle);
-        }
-
-        return success;
+        return _nativeWrapper.SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
     }
 
     public bool IsValidWindow(nint handle)
@@ -306,17 +288,28 @@ public class WindowService : IWindowService
     /// window that owns it (<see cref="WindowOwnerChain"/>: GW_OWNER as well as GA_ROOTOWNER, so an owned
     /// overlapped helper counts too): DefWindowProc destroys any window that gets WM_CLOSE, so a child or
     /// an owned helper popup of the taskbar (its task list, a tooltip) is as unsafe to close as the
-    /// taskbar itself. The host rule is <see cref="IHostGuard.IsHostWindow"/>, which follows the same chain.
+    /// taskbar itself. A shell window is the shell's desktop window, or a window of a shell class that
+    /// belongs to the shell's process (<see cref="WindowClassification.IsShellWindow"/>), so another app's
+    /// WorkerW helper is not one. A dialog that the user can see is checked alone, without its owners:
+    /// WM_CLOSE on a dialog works like its Cancel button (DefDlgProc turns it into IDCANCEL), and an owned
+    /// window that closes leaves its owner alone, so a dialog of the shell such as Shut Down Windows can be
+    /// dismissed. The host rule is <see cref="IHostGuard.IsHostWindow"/>, which follows the owner chain on
+    /// its own, so a dialog of the agent's host stays protected.
     /// </summary>
     private string? FindCloseProtection(nint handle)
     {
         var shellWindow = _nativeWrapper.GetShellWindow();
-        var windows = WindowOwnerChain.SelfAndOwners(_nativeWrapper, handle);
+        var shellProcessId = shellWindow == nint.Zero ? 0u : _nativeWrapper.GetWindowThreadProcessId(shellWindow);
+        var root = _nativeWrapper.GetAncestor(handle, WindowAncestor.Root);
+        IReadOnlyList<nint> windows = IsVisibleTopLevelDialog(handle, root)
+            ? [handle]
+            : WindowOwnerChain.SelfAndOwners(_nativeWrapper, handle);
 
-        foreach (var window in windows)
+        foreach (var window in windows.Where(w => w != nint.Zero).Distinct())
         {
             var className = _nativeWrapper.GetClassName(window);
-            if (WindowClassification.IsShellWindowClass(className) || (shellWindow != nint.Zero && window == shellWindow))
+            if (WindowClassification.IsShellWindow(
+                    window, className, _nativeWrapper.GetWindowThreadProcessId(window), shellWindow, shellProcessId))
             {
                 var part = window == handle ? "is" : $"belongs to {window}, which is";
                 return $"Window {handle} {part} part of the desktop shell ({className}): the desktop or a taskbar. " +
@@ -356,6 +349,15 @@ public class WindowService : IWindowService
             : $"Window {handle} is refused by the server's target policy: {verdict.Reason}. Nothing was sent. The policy is set by " +
               "the user in the server's environment; force does not override it. Ask the user to close this window.";
     }
+
+    /// <summary>
+    /// A dialog box (#32770) that the user can see and dismiss: visible and top-level, not a child
+    /// dialog (a property page) inside another window. A hidden one is a helper window, not a prompt.
+    /// </summary>
+    private bool IsVisibleTopLevelDialog(nint handle, nint root) =>
+        root == handle &&
+        WindowClassification.IsDialogClass(_nativeWrapper.GetClassName(handle)) &&
+        _nativeWrapper.IsWindowVisible(handle);
 
     /// <summary>Maps the Win32 error of a PostMessage(WM_CLOSE) that Windows refused.</summary>
     private static WindowCloseResult CloseNotPosted(nint handle, int win32Error) => win32Error switch
@@ -658,22 +660,8 @@ public class WindowService : IWindowService
     private uint? FindHostedAppProcessId(nint frame, string title, uint hostProcessId, ReadSession session)
     {
         // While the app runs, its CoreWindow is a child of the frame.
-        var children = new List<nint>();
-        _nativeWrapper.EnumChildWindows(frame, child =>
-        {
-            children.Add(child);
-            return true;
-        });
-
-        foreach (var child in children)
-        {
-            if (!WindowClassification.IsCoreWindow(_nativeWrapper.GetClassName(child)))
-                continue;
-
-            var childProcessId = _nativeWrapper.GetWindowThreadProcessId(child);
-            if (childProcessId != 0 && childProcessId != hostProcessId)
-                return childProcessId;
-        }
+        if (UwpFrames.FindHostedAppProcessId(_nativeWrapper, frame, hostProcessId) is { } runningAppProcessId)
+            return runningAppProcessId;
 
         // While the app is minimized or suspended, Windows moves its CoreWindow out of the frame to the
         // top level. Match it by title, and only when exactly one other process has such a window; an

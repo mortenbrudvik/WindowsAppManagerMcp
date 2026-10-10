@@ -401,12 +401,16 @@ public class HostGuardTests
     {
         // Arrange - the server started while another application was in front
         _windows.Setup(w => w.GetForegroundWindow()).Returns(OtherWindow);
+        var otherAppSecondWindow = new nint(0x420); // another top-level window of that application, unowned
+        Window(otherAppSecondWindow, OtherPid);
         var sut = CreateSut();
 
         // Act & Assert - fail-safe for the process; input still reaches its other windows
         sut.IsHostWindow(OtherWindow).Should().BeTrue();
         sut.IsHostWindow(OtherDialog).Should().BeTrue("the dialog is owned by the recorded window");
         sut.IsHostProcess(OtherPid).Should().BeTrue();
+        sut.IsHostWindow(otherAppSecondWindow).Should().BeFalse(
+            "only the recorded window and the popups it owns are host windows, not every window of its process");
     }
 
     [Fact]

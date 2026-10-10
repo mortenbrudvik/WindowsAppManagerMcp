@@ -53,7 +53,7 @@ public class ElementInspectionService : IElementInspectionService
 
         // Keyboard focus is in the foreground window, so a hung foreground application is the one
         // that can block this read
-        var targetProcessId = ProcessOf(SafeRead(_windows.GetForegroundWindow));
+        var targetProcessId = AppProcessOf(SafeRead(_windows.GetForegroundWindow));
 
         return Read(
             targetProcessId,
@@ -112,12 +112,12 @@ public class ElementInspectionService : IElementInspectionService
         var ancestorCount = Math.Clamp(ancestors, 0, MaxAncestors);
 
         // The top-level window hit-tested at the point. WindowFromPoint and GetAncestor do not wait
-        // for the window's application, so this runs before the read, and the application that owns
-        // the window is the one that can block it.
+        // for the window's application, so this runs before the read, and the application that the
+        // window shows (for a UWP frame, the app it hosts) is the one that can block it.
         var hitWindow = SafeRead(() => _hitTest.GetRootWindow(_hitTest.WindowFromPoint(x, y)));
 
         return Read(
-            ProcessOf(hitWindow),
+            AppProcessOf(hitWindow),
             () =>
             {
                 if (!_tree.IsAvailable())
@@ -207,9 +207,14 @@ public class ElementInspectionService : IElementInspectionService
         }
     }
 
-    /// <summary>The process that owns <paramref name="window"/>, or 0 when there is none or it cannot be read.</summary>
-    private int ProcessOf(nint window) =>
-        window == nint.Zero ? 0 : (int)SafeRead(() => _windows.GetWindowThreadProcessId(window));
+    /// <summary>
+    /// The process of the application that <paramref name="window"/> (a top-level window) shows, or 0
+    /// when there is none or it cannot be read. For a UWP app that is the app's own process, not the
+    /// ApplicationFrameHost that owns the frames of every UWP app: stuck reads are counted per process,
+    /// and one hung UWP app must not block reads of the others.
+    /// </summary>
+    private int AppProcessOf(nint window) =>
+        window == nint.Zero ? 0 : (int)SafeRead(() => UwpFrames.AppProcessId(_windows, window));
 
     /// <summary>
     /// A Win32 read made before the UI Automation read. A failure only means "unknown": the worker then

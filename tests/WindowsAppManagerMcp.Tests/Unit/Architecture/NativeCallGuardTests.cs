@@ -348,22 +348,61 @@ public class NativeCallGuardTests
             service.Name);
     }
 
+    /// <summary>The Marshal methods that return the last error.</summary>
+    private static bool IsDirectLastErrorRead(MethodBase callee) =>
+        callee.DeclaringType == typeof(System.Runtime.InteropServices.Marshal) &&
+        callee.Name is nameof(System.Runtime.InteropServices.Marshal.GetLastPInvokeError)
+            or nameof(System.Runtime.InteropServices.Marshal.GetLastWin32Error)
+            or nameof(System.Runtime.InteropServices.Marshal.GetLastSystemError);
+
+    /// <summary>
+    /// Framework members that read the last error themselves: the Win32Exception constructors that take
+    /// no error code (new Win32Exception() and new Win32Exception(message) call GetLastPInvokeError), and
+    /// Marshal.GetHRForLastWin32Error and GetLastPInvokeErrorMessage.
+    /// </summary>
+    private static bool IsIndirectLastErrorRead(MethodBase callee) => callee switch
+    {
+        ConstructorInfo { IsStatic: false } ctor when ctor.DeclaringType == typeof(System.ComponentModel.Win32Exception) =>
+            ctor.GetParameters().FirstOrDefault()?.ParameterType != typeof(int),
+        MethodInfo method when method.DeclaringType == typeof(System.Runtime.InteropServices.Marshal) =>
+            method.Name is nameof(System.Runtime.InteropServices.Marshal.GetHRForLastWin32Error)
+                or nameof(System.Runtime.InteropServices.Marshal.GetLastPInvokeErrorMessage),
+        _ => false
+    };
+
+    [Fact]
+    public void IndirectLastErrorReads_AreTheFrameworkMembersThatReadTheLastError()
+    {
+        // Arrange - keeps IsIndirectLastErrorRead true to the runtime: each member is classified by whether
+        // its own IL reads the last error
+        var members = typeof(System.ComponentModel.Win32Exception)
+            .GetConstructors(BindingFlags.Public | BindingFlags.Instance).Cast<MethodBase>()
+            .Append(typeof(System.Runtime.InteropServices.Marshal).GetMethod(nameof(System.Runtime.InteropServices.Marshal.GetHRForLastWin32Error))!)
+            .Append(typeof(System.Runtime.InteropServices.Marshal).GetMethod(nameof(System.Runtime.InteropServices.Marshal.GetLastPInvokeErrorMessage))!)
+            .ToList();
+
+        // Act
+        var misclassified = members
+            .Where(m => GetCalledMethods(m).Any(IsDirectLastErrorRead) != IsIndirectLastErrorRead(m))
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})")
+            .ToList();
+
+        // Assert
+        misclassified.Should().BeEmpty();
+        members.Where(IsIndirectLastErrorRead).Should().HaveCount(5, "Win32Exception(), Win32Exception(string), " +
+            "Win32Exception(string, Exception), GetHRForLastWin32Error and GetLastPInvokeErrorMessage read the last error");
+    }
+
     [Fact]
     public void LastWin32Error_IsOnlyReadInTheNativeWrappers()
     {
         // Arrange - the last error is only meaningful right after the call that set it: any native call in
         // between (in the runtime, a logger, or the E2E guard proxy around a wrapper) can overwrite it. So
-        // the wrapper that makes the call reads it and returns it (Win32CallResult); services never do.
-        string[] lastErrorReads =
-        [
-            nameof(System.Runtime.InteropServices.Marshal.GetLastPInvokeError),
-            nameof(System.Runtime.InteropServices.Marshal.GetLastWin32Error),
-            nameof(System.Runtime.InteropServices.Marshal.GetLastSystemError)
-        ];
+        // the wrapper that makes the call reads it and returns it (Win32CallResult); services never do,
+        // neither directly nor through a framework member that reads it (new Win32Exception() and others).
 
         // Act
-        var calls = FindCalls(callee =>
-            callee.DeclaringType == typeof(System.Runtime.InteropServices.Marshal) && lastErrorReads.Contains(callee.Name));
+        var calls = FindCalls(callee => IsDirectLastErrorRead(callee) || IsIndirectLastErrorRead(callee));
 
         // Assert
         calls.Should().Contain(c => c.Owner == typeof(NativeWindowWrapper) && c.Callee.Name == "GetLastPInvokeError",

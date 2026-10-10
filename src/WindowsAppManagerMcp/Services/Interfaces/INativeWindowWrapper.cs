@@ -48,7 +48,8 @@ public interface INativeWindowWrapper
     (int Left, int Top, int Right, int Bottom)? GetWindowRect(nint hWnd);
 
     /// <summary>
-    /// Sets the window position and size.
+    /// Sets the window position and size. The window also goes to the top of the Z order (HWND_TOP)
+    /// unless <paramref name="flags"/> has SWP_NOZORDER, and it is activated unless they have SWP_NOACTIVATE.
     /// </summary>
     bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
 
@@ -63,7 +64,9 @@ public interface INativeWindowWrapper
     bool SetForegroundWindow(nint hWnd);
 
     /// <summary>
-    /// Brings the window to the top of the Z order.
+    /// Brings the window to the top of the Z order and activates it (it is SetWindowPos without
+    /// SWP_NOACTIVATE). To raise a window without activating it, use <see cref="SetWindowPos"/> without
+    /// SWP_NOZORDER and with SWP_NOACTIVATE.
     /// </summary>
     bool BringWindowToTop(nint hWnd);
 

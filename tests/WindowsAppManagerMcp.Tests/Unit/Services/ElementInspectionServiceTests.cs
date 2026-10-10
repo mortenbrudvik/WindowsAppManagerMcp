@@ -548,4 +548,57 @@ public class ElementInspectionServiceTests
     }
 
     #endregion
+
+    #region Stuck reads of Store (UWP) apps
+
+    private static readonly nint UwpFrame = 0x6000;
+    private static readonly nint UwpCoreWindow = 0x6001;
+    private const int FrameHostPid = 6000; // ApplicationFrameHost.exe, shared by every UWP app
+    private const int UwpAppPid = 7000;
+
+    /// <summary>A UWP app: the frame window of ApplicationFrameHost hosts the app's own CoreWindow.</summary>
+    private void AddUwpApp()
+    {
+        _windows.Setup(w => w.GetClassName(UwpFrame)).Returns("ApplicationFrameWindow");
+        _windows.Setup(w => w.GetWindowThreadProcessId(UwpFrame)).Returns((uint)FrameHostPid);
+        _windows.Setup(w => w.GetClassName(UwpCoreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        _windows.Setup(w => w.GetWindowThreadProcessId(UwpCoreWindow)).Returns((uint)UwpAppPid);
+        _windows.Setup(w => w.EnumChildWindows(UwpFrame, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, callback) => callback(UwpCoreWindow));
+        _hitTest.Setup(h => h.GetRootWindow(UwpCoreWindow)).Returns(UwpFrame);
+        _hitTest.Setup(h => h.GetRootWindow(UwpFrame)).Returns(UwpFrame);
+    }
+
+    [Fact]
+    public void GetFocusedElement_InAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
+    {
+        // Arrange
+        AddUwpApp();
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(UwpFrame);
+        _tree.Focused = new FakeUiaNode("Edit", "Display") { ProcessId = UwpAppPid };
+
+        // Act
+        CreateSut().GetFocusedElement(Timeout);
+
+        // Assert - otherwise two stuck reads of one hung UWP app would block reads of every other UWP app
+        _worker.LastTargetProcessId.Should().Be(UwpAppPid);
+    }
+
+    [Fact]
+    public void GetElementAtPoint_OverAUwpApp_CountsTheReadAgainstTheAppNotItsFrameHost()
+    {
+        // Arrange
+        AddUwpApp();
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(UwpCoreWindow);
+        _tree.AtPoint = (_, _) => new FakeUiaNode("Button", "Seven") { ProcessId = UwpAppPid };
+
+        // Act
+        var result = CreateSut().GetElementAtPoint(150, 210, 0, Timeout);
+
+        // Assert
+        _worker.LastTargetProcessId.Should().Be(UwpAppPid);
+        result.WindowHandle.Should().Be(UwpFrame, "the reported window is still the top-level frame");
+    }
+
+    #endregion
 }

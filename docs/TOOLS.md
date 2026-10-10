@@ -306,6 +306,8 @@ Here the window in front is the editor the agent runs in, so it carries `isAgent
 
 Tools for manipulating window position, size, and state.
 
+`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window). Restoring a minimized window (set_window_bounds, snap_window, move_window_to_monitor) can still activate it.
+
 ### move_window
 
 Move a window to a specific screen position.
@@ -316,7 +318,7 @@ Move a window to a specific screen position.
 | handle | long | Yes | - | Window handle from find_windows |
 | x | int | Yes | - | X coordinate (left edge) |
 | y | int | Yes | - | Y coordinate (top edge) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Move Notepad to position 100, 200"
@@ -389,7 +391,7 @@ Move and resize a window in a single operation.
 | y | int | Yes | - | Y coordinate (top edge) |
 | width | int | Yes | - | New width in pixels |
 | height | int | Yes | - | New height in pixels |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Position the window at 50,50 with size 1000x700"
@@ -574,10 +576,10 @@ Close a window gracefully (sends WM_CLOSE message). Protected windows are refuse
 ```
 
 **Protected windows.** Without `force: true`, close_window sends nothing to these windows and returns `ProtectedWindow`:
-- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor), or the shell's desktop window whatever its class. Child windows and owned windows of these count too (owned through any number of owners, including WPF and WinForms windows owned without WS_POPUP): a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
+- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor) that belongs to the shell's process (normally explorer.exe), or the shell's desktop window whatever its class. Another app's window of one of those classes (apps create `WorkerW` helper windows too) is not protected; while no shell is running, the class alone counts. Child windows and owned windows of shell windows count too (owned through any number of owners, including WPF and WinForms windows owned without WS_POPUP): a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. A dialog of the shell that you can see, such as Shut Down Windows, is the exception: WM_CLOSE cancels a dialog, so it is not protected. Closing Program Manager opens the Shut Down Windows dialog.
 - The agent's own host: the terminal, editor or chat app this server was started from (its ancestor processes, the window that shows its console, and the window that was in front when the server started), and every window owned by one of those, directly or through other owned windows. Closing it can end the agent's session.
 
-File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar.
+File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar. A visible dialog box (class `#32770`) that the shell owns, such as Shut Down Windows, is not protected either: WM_CLOSE on a dialog works like its Cancel button, so close_window cancels the dialog, and the shell window that owns it stays.
 
 ```json
 {
@@ -610,7 +612,7 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see table below) |
 | monitorIndex | int | No | current | Target monitor (0-based index) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Snap Positions:**
 
@@ -678,7 +680,7 @@ Move a window to a specific monitor.
 | handle | long | Yes | - | Window handle |
 | monitorIndex | int | Yes | - | Target monitor (0-based index) |
 | positioning | string | No | "center" | Position on monitor (see below) |
-| bringToFront | bool | No | true | Bring window to front of z-order |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Positioning Options:**
 - `center` - Center of monitor
@@ -735,7 +737,7 @@ Each placement object contains:
 | y | int | Yes | - | Y coordinate |
 | width | int | Yes | - | Width in pixels |
 | height | int | Yes | - | Height in pixels |
-| bringToFront | bool | No | true | Bring window to front |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
 
 **Example:**
 > "Position Notepad and Calculator side by side"
@@ -783,7 +785,7 @@ Each placement object contains:
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see snap_window) |
 | monitorIndex | int | No | current | Target monitor |
-| bringToFront | bool | No | true | Bring window to front |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
 
 **Example:**
 > "Snap VS Code to left half and Terminal to right half"
@@ -2942,6 +2944,8 @@ Apply a saved layout preset.
 
 A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows.
 
+Only the windows that [get_all_windows](#get_all_windows) lists are matched. A window on another virtual desktop (cloaked) or a tool window is not, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again.
+
 `success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
 
 A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window). `focus` has one entry per focused placement, in order, with the same fields as the focus_window result (`isForeground`, `method`, `foregroundHandle`, `blockingPopup`, `errorCode`, ...). A focus that fails also adds an `ArrangeFailed` error.
@@ -3293,7 +3297,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `NotResponding` | [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`) | The window is not responding, or a call to it did not return in time, so it was not activated |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | Unexpected error while reading; see `error` |
-| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck) |
+| `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |

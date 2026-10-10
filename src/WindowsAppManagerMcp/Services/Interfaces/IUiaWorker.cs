@@ -12,9 +12,10 @@ public interface IUiaWorker
     /// Runs <paramref name="read"/> on a worker thread and waits for it.
     /// </summary>
     /// <param name="targetProcessId">The process whose UI the read reads (the owner of the window, of
-    /// the window at the point, or of the foreground window), or 0 when it is not known. Reads that
-    /// miss their deadline are counted per target, so an application that hangs blocks further reads
-    /// of itself, not reads of other applications.</param>
+    /// the window at the point, or of the foreground window; for a UWP frame window the app's own
+    /// process, see <see cref="Services.UwpFrames.AppProcessId"/>, not the ApplicationFrameHost shared by
+    /// every UWP app), or 0 when it is not known. Reads that miss their deadline are counted per target,
+    /// so an application that hangs blocks further reads of itself, not reads of other applications.</param>
     /// <param name="read">The UI Automation read. It receives <paramref name="cancellationToken"/> and
     /// should stop early, returning what it has, once that is cancelled.</param>
     /// <param name="cancellationToken">Asks the read to stop. The deadline is when this is cancelled
