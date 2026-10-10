@@ -32,6 +32,14 @@ public class NativeCallGuardTests
 
     private static readonly Assembly ServerAssembly = typeof(WindowService).Assembly;
 
+    /// <summary>
+    /// The server's own types. CI collects code coverage, and Coverlet injects its tracker types
+    /// (namespace Coverlet.Core.Instrumentation, which create a named Mutex) into the server assembly;
+    /// they are not server code, so the guards leave them out.
+    /// </summary>
+    private static IEnumerable<Type> ServerTypes() =>
+        ServerAssembly.GetTypes().Where(t => t.Namespace?.StartsWith("Coverlet.", StringComparison.Ordinal) != true);
+
     private static readonly Type NativeMethodsType =
         ServerAssembly.GetType("WindowsAppManagerMcp.Native.NativeMethods", throwOnError: true)!;
 
@@ -303,7 +311,7 @@ public class NativeCallGuardTests
     public void PlatformInvokeDeclarations_AreOnlyInNativeMethods()
     {
         // Arrange - a [DllImport] declared elsewhere would bypass the allow-list above
-        var imports = ServerAssembly.GetTypes()
+        var imports = ServerTypes()
             .SelectMany(t => t.GetMethods(DeclaredMembers))
             .Where(m => m.Attributes.HasFlag(MethodAttributes.PinvokeImpl))
             .ToList();
@@ -500,7 +508,7 @@ public class NativeCallGuardTests
         string[] sharedNames = ["WindowsAppManagerMcp.InputPaused", "WindowsAppManagerMcp.PauseHotkeyHolder"];
 
         // Act
-        var uses = ServerAssembly.GetTypes()
+        var uses = ServerTypes()
             .SelectMany(type => type.GetMethods(DeclaredMembers).Cast<MethodBase>()
                 .Concat(type.GetConstructors(DeclaredMembers))
                 .SelectMany(method => GetLoadedStrings(method)
@@ -562,7 +570,7 @@ public class NativeCallGuardTests
         ];
 
         // Act
-        var imports = ServerAssembly.GetTypes()
+        var imports = ServerTypes()
             .SelectMany(t => t.GetMethods(DeclaredMembers))
             .Select(m => (Method: m, Import: m.GetCustomAttribute<System.Runtime.InteropServices.DllImportAttribute>()))
             .Where(m => m.Import != null)
@@ -613,7 +621,7 @@ public class NativeCallGuardTests
     {
         var calls = new List<Call>();
 
-        foreach (var type in ServerAssembly.GetTypes())
+        foreach (var type in ServerTypes())
         {
             var owner = OutermostType(type);
             var members = type.GetMethods(DeclaredMembers).Cast<MethodBase>()
