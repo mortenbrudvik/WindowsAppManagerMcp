@@ -727,7 +727,7 @@ Tools for getting information about connected displays.
 
 ### get_monitors
 
-Get information about all connected monitors.
+Get information about all connected monitors. The server reuses monitor information for up to 250 ms, so a display change can take that long to appear.
 
 **Parameters:** None
 
@@ -1135,7 +1135,9 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 | timeoutMs | int | No | 10000 | Timeout for UI traversal in ms (max 30000) |
 
 **Supported Control Types:**
-Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
+AppBar, Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
+
+AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's localized control type, so on a non-English Windows they may appear under a localized name. An element with no recognizable type is reported as `Unknown`.
 
 **Example:**
 > "Get all UI elements from the Notepad window"
@@ -1202,9 +1204,12 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
   ],
   "totalElementCount": 45,
   "depth": 5,
-  "elapsedMilliseconds": 127.5
+  "elapsedMilliseconds": 127.5,
+  "skippedElementCount": 0
 }
 ```
+
+> **Note:** If an element disappears or its UI Automation provider fails while the tree is walked, that element is skipped and the walk continues with its siblings. `skippedElementCount` counts these skips. A value above 0 means the tree may be incomplete, so call again if a control you expect is missing. Errors reading the window itself still fail the call.
 
 **Error Codes:**
 | Code | Description |
@@ -1220,6 +1225,8 @@ Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit
 ## Input Simulation
 
 Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to find element coordinates, then calculate center points for clicking. Keyboard input is sent to the currently focused window.
+
+Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time.
 
 ### click
 
