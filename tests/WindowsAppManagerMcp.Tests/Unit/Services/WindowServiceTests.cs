@@ -8,8 +8,9 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// Tests T2.1-T2.12 from BACKLOG-TECHNICAL.md.
 ///
 /// Note: WindowService uses P/Invoke for window management.
-/// These tests focus on behavior that can be safely tested without side effects.
-/// Tests use the real NativeWindowWrapper to verify actual Windows API behavior.
+/// Read-only tests (enumerating and querying windows) use the real NativeWindowWrapper to
+/// verify actual Windows API behavior. Tests of methods that move, resize, minimize or focus
+/// windows use a mocked wrapper, so they never change a real window.
 /// </summary>
 public class WindowServiceTests
 {
@@ -23,6 +24,30 @@ public class WindowServiceTests
     }
 
     private WindowService CreateSut() => new WindowService(_mockMonitorService.Object, _nativeWrapper);
+
+    private const int InvalidHandleValue = 99999999;
+
+    /// <summary>
+    /// Creates a WindowService whose native wrapper reports every handle as invalid. With the
+    /// real wrapper, a window that happened to own the handle would be moved, minimized or focused.
+    /// </summary>
+    private (WindowService Sut, Mock<INativeWindowWrapper> Native) CreateSutWithNoValidWindows()
+    {
+        var native = new Mock<INativeWindowWrapper>();
+        native.Setup(n => n.IsWindow(It.IsAny<nint>())).Returns(false);
+        return (new WindowService(_mockMonitorService.Object, native.Object), native);
+    }
+
+    private static void VerifyNoWindowWasChanged(Mock<INativeWindowWrapper> native)
+    {
+        native.Verify(n => n.SetWindowPos(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        native.Verify(n => n.ShowWindow(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+        native.Verify(n => n.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
+        native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
+        native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(),
+            It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
 
     #region T2.1: GetAllWindows Tests
 
@@ -421,71 +446,76 @@ public class WindowServiceTests
 
     #endregion
 
-    #region T2.5-T2.8: Window Manipulation Tests (Safe Operations)
+    #region T2.5-T2.8: Window Manipulation Tests (Mocked Native Wrapper)
 
     [Fact]
     public void MoveWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.MoveWindow(new nint(99999999), 100, 100);
+        var result = sut.MoveWindow(new nint(InvalidHandleValue), 100, 100);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void ResizeWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.ResizeWindow(new nint(99999999), 800, 600);
+        var result = sut.ResizeWindow(new nint(InvalidHandleValue), 800, 600);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void SetWindowBounds_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SetWindowBounds(new nint(99999999), 100, 100, 800, 600);
+        var result = sut.SetWindowBounds(new nint(InvalidHandleValue), 100, 100, 800, 600);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void SetWindowState_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SetWindowState(new nint(99999999), WindowState.Minimized);
+        var result = sut.SetWindowState(new nint(InvalidHandleValue), WindowState.Minimized);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
     public void FocusWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.FocusWindow(new nint(99999999));
+        var result = sut.FocusWindow(new nint(InvalidHandleValue));
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion
@@ -496,13 +526,14 @@ public class WindowServiceTests
     public void SnapWindow_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SnapWindow(new nint(99999999), SnapPosition.LeftHalf);
+        var result = sut.SnapWindow(new nint(InvalidHandleValue), SnapPosition.LeftHalf);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion
@@ -513,13 +544,14 @@ public class WindowServiceTests
     public void MoveWindowToMonitor_WithInvalidHandle_ReturnsFalse()
     {
         // Arrange
-        var sut = CreateSut();
+        var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.MoveWindowToMonitor(new nint(99999999), 0);
+        var result = sut.MoveWindowToMonitor(new nint(InvalidHandleValue), 0);
 
         // Assert
         result.Should().BeFalse();
+        VerifyNoWindowWasChanged(native);
     }
 
     #endregion
