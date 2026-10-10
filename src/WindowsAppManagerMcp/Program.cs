@@ -68,7 +68,7 @@ builder.Services.AddMcpServer(options =>
     options.ServerInfo = new()
     {
         Name = "windows-app-manager",
-        Version = "1.0.0"
+        Version = WindowsAppManagerMcp.ServerVersion.Current
     };
 })
 .WithStdioServerTransport()
