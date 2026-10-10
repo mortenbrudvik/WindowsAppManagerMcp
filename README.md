@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Window Discovery** - Find and list app windows by title, process name, class name, or handle, without hidden cloaked, tool or shell windows; UWP apps are reported under their own process
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows
 - **Multi-Monitor Support** - Move windows between monitors, get display information
-- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays
+- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays; captures come back as images the model sees, sized for vision, with an image-to-screen transform for clicking
 - **UI Automation** - Retrieve UI element trees with bounding boxes, and check which element has keyboard focus or sits at a screen point
 - **Input Simulation** - Click, right-click, double-click, move the mouse cursor, type text and send key combinations
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
