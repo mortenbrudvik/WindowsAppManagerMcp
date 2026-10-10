@@ -101,6 +101,41 @@ public class DestructiveChordTests
         InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("% c")] // a literal space with Alt held: Windows opens the window menu on it as on {SPACE}
+    [InlineData("+% c")]
+    [InlineData("%\tx")] // a literal tab with Alt held
+    public void FindKeysAfterFocusChange_AnotherSpellingOfAFocusChord_FindsItToo(string keys)
+    {
+        InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Chords_ACharacterThatHasItsOwnKey_CountsAsThatKey()
+    {
+        // The parser sends a space as a Unicode character; a window acts on Alt and that character as on Alt+Space
+        SendKeysParser.Chords(SendKeysParser.Parse("% ")).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, 0x20));
+        SendKeysParser.KeyPresses(SendKeysParser.Parse("%\t")).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, VkTab));
+        SendKeysParser.KeyPresses([InputEvent.Unicode('w', 0)]).Should().Equal(
+            new KeyChord(KeyModifiers.None, InputEventKind.VirtualKey, VkW));
+    }
+
+    [Fact]
+    public void Chords_OtherCharacters_StayCharacters()
+    {
+        SendKeysParser.Chords(SendKeysParser.Parse("%-")).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.Unicode, '-'));
+    }
+
+    [Fact]
+    public void FindDestructiveChord_ACharacterSpellingOfAConfiguredChord_IsFound()
+    {
+        // Ctrl+Space configured as destructive: a literal space with Ctrl held is the same key press
+        Find("^ ", Options("^{SPACE}")).Should().NotBeNull();
+    }
+
     [Fact]
     public void FindKeysAfterFocusChange_ConfiguredDestructiveChords_CountToo()
     {
