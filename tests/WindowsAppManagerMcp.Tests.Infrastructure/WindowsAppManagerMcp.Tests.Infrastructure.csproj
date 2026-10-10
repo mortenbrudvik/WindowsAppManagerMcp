@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Test infrastructure shared by the test projects: the deny-by-default desktop test gate
+    ([DesktopFact], [DesktopTheory], [DesktopNoInputFact], [DesktopNoInputTheory]).
+    WindowsAppManagerMcp.Tests and WindowsAppManagerMcp.E2ETests both reference it, so there is one
+    gate and one set of opt-in variables. It is a plain library, not a test project.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The same xunit version as the test projects (xunit 2.8.1) -->
+    <PackageReference Include="xunit.extensibility.core" Version="2.8.1" />
+  </ItemGroup>
+
+</Project>

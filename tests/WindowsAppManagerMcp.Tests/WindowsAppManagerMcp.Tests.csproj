@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\WindowsAppManagerMcp\WindowsAppManagerMcp.csproj" />
+    <!-- The desktop test gate, shared with WindowsAppManagerMcp.E2ETests -->
+    <ProjectReference Include="..\WindowsAppManagerMcp.Tests.Infrastructure\WindowsAppManagerMcp.Tests.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
