@@ -90,8 +90,8 @@ public sealed class InputControlToolContractTests : IDisposable
                             callEnded?.TrySetResult();
                         }
                     })
-                    .AddInputGateSerialization()
                     .AddToolErrorReporting()
+                    .AddInputGateSerialization()
                     .WithTools(new InputSimulationTools(service));
 
                 // The input control tools are registered as the server registers them: the SDK builds a new
