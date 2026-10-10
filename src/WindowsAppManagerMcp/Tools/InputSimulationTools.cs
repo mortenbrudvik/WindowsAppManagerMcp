@@ -34,7 +34,8 @@ public class InputSimulationTools
 
     internal const string ReleaseHeldModifiersDescription =
         "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with " +
-        "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Default: false";
+        "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a " +
+        "modifier of the user's pause hotkey is down. Default: false";
 
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +

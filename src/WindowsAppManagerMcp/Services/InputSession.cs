@@ -235,7 +235,8 @@ public sealed class InputSession : IInputSession, IDisposable
         var held = modifiersDown
             .Where(k => k.Kind == InputEventKind.VirtualKey)
             .Aggregate(KeyModifiers.None, (all, key) => all | ModifierOf(key.Code));
-        return (held & chord.Modifiers) == chord.Modifiers;
+        // Any of them, not all: the user presses a chord's modifiers one after another
+        return (held & chord.Modifiers) != KeyModifiers.None;
     }
 
     /// <inheritdoc />

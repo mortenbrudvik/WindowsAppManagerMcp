@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class InputSimulationServiceSessionTests
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
-    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4;
+    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkRShift = 0xA1, VkLShift = 0xA0, VkLMenu = 0xA4, VkLWin = 0x5B;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeInputWrapper _input = new();
@@ -268,11 +268,12 @@ public class InputSimulationServiceSessionTests
     [MemberData(nameof(InputPaths))]
     public async Task ReleaseHeldModifiers_ReleasesThemFirst_AndReportsIt(string path)
     {
-        // Arrange - Ctrl is stuck down
+        // Arrange - Ctrl is stuck down, and the pause hotkey does not use Ctrl
         _input.Press(VkLControl);
+        var session = new InputSession(_input, PauseHotkeyOptions.FromEnvironment(_ => "Alt+Shift+F12"));
 
         // Act
-        var result = await Call(CreateSut(), path, releaseHeldModifiers: true);
+        var result = await Call(CreateSut(session: session), path, releaseHeldModifiers: true);
 
         // Assert - the first batch releases it, then the input is sent
         result.Success.Should().BeTrue(result.Error);
@@ -361,6 +362,41 @@ public class InputSimulationServiceSessionTests
         result.Released.Should().BeNull();
         VerifyNothingSentOrChecked();
         new[] { VkLControl, VkLMenu, VkLShift }.Should().OnlyContain(key => _input.IsKeyDown(key));
+    }
+
+    [Theory]
+    [MemberData(nameof(InputPaths))]
+    public async Task SomeOfThePauseChordsModifiers_AreNotReleasedEither(string path)
+    {
+        // Arrange - the user has pressed Ctrl and Alt and is reaching for Shift: releasing them would make the
+        // chord miss when the rest goes down
+        _input.Press(VkLControl);
+        _input.Press(VkLMenu);
+
+        // Act
+        var result = await Call(CreateSut(), path, releaseHeldModifiers: true);
+
+        // Assert
+        result.Code.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Error.Should().Contain("pause hotkey").And.Contain("not released");
+        result.Released.Should().BeNull();
+        VerifyNothingSentOrChecked();
+        new[] { VkLControl, VkLMenu }.Should().OnlyContain(key => _input.IsKeyDown(key));
+    }
+
+    [Fact]
+    public async Task AStuckModifierOutsideThePauseChord_IsStillReleasedWhenAsked()
+    {
+        // Arrange - the default chord is Ctrl+Alt+Shift+Pause; a stuck Windows key is not part of it
+        _input.Press(VkLWin);
+
+        // Act
+        var result = await CreateSut().SendKeysAsync("a", releaseHeldModifiers: true);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.ReleasedModifiers.Should().Equal("LeftWin");
+        _input.IsKeyDown(VkLWin).Should().BeFalse();
     }
 
     #endregion

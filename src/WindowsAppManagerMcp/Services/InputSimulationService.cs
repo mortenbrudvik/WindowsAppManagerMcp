@@ -673,7 +673,8 @@ public class InputSimulationService : IInputSimulationService
         var pauseChord = _session.IsPauseChordHeld(down);
         if (!releaseHeldModifiers || pauseChord)
         {
-            // The modifiers of the pause hotkey are never released for the agent: the user may be about to press it
+            // While any modifier of the pause hotkey is down, nothing is released for the agent: the user may be
+            // pressing it, one modifier after another
             return HeldCheck.Refuse(InputErrorCode.ModifiersHeld, ModifiersDownMessage(names, action, pauseChord), names);
         }
 
@@ -695,8 +696,9 @@ public class InputSimulationService : IInputSimulationService
         var them = names.Count == 1 ? "it" : "them";
         var held = $"{string.Join(", ", names)} {(names.Count == 1 ? "is" : "are")} held down";
         return pauseChord
-            ? $"{held}: the modifiers of the user's pause hotkey ({_session.PauseChord}), so nothing (more) was {action}. The user may be " +
-              "about to pause input, so they are not released, not even with releaseHeldModifiers. Wait, and ask the user if they stay down."
+            ? $"{held}, and the user's pause hotkey ({_session.PauseChord}) uses {(names.Count == 1 ? "it" : "some of them")}, so nothing " +
+              $"(more) was {action}. The user may be about to pause input, so {them} {(names.Count == 1 ? "is" : "are")} not released, " +
+              "not even with releaseHeldModifiers. Wait, and ask the user if they stay down."
             : $"{held}, by the user or stuck, so nothing (more) was {action}: with a modifier down, keys become shortcuts and clicks " +
               $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, pass " +
               $"releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release {them}.";

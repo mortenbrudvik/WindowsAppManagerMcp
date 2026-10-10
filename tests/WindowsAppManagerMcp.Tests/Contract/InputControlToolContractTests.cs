@@ -20,7 +20,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 public sealed class InputControlToolContractTests : IDisposable
 {
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
-    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkLMenu = 0xA4, VkLShift = 0xA0;
+    private const ushort VkControl = 0x11, VkLControl = 0xA2, VkLMenu = 0xA4, VkLShift = 0xA0, VkLWin = 0x5B;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeInputWrapper _input = new();
@@ -382,16 +382,32 @@ public sealed class InputControlToolContractTests : IDisposable
     [Fact]
     public async Task ReleaseAllInput_WithReleaseHeldModifiers_ReleasesStuckModifiers()
     {
-        _input.Press(VkLControl);
+        // A stuck Windows key: not one of the pause hotkey's modifiers (Ctrl+Alt+Shift+Pause)
+        _input.Press(VkLWin);
         await using var server = await StartAsync();
 
         var result = Payload(await server.CallToolAsync("release_all_input",
             new Dictionary<string, object?> { ["releaseHeldModifiers"] = true }));
 
         result.GetProperty("success").GetBoolean().Should().BeTrue();
-        result.GetProperty("released").EnumerateArray().Select(e => e.GetString()).Should().Equal("LeftCtrl");
+        result.GetProperty("released").EnumerateArray().Select(e => e.GetString()).Should().Equal("LeftWin");
         result.GetProperty("modifiersDown").GetArrayLength().Should().Be(0);
-        _input.IsKeyDown(VkLControl).Should().BeFalse();
+        _input.IsKeyDown(VkLWin).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReleaseAllInput_OneOfThePauseChordsModifiers_IsLeftDown()
+    {
+        // The user has pressed Ctrl, the first key of Ctrl+Alt+Shift+Pause; releasing it would make the chord miss
+        _input.Press(VkLControl);
+        await using var server = await StartAsync();
+
+        var result = Payload(await server.CallToolAsync("release_all_input",
+            new Dictionary<string, object?> { ["releaseHeldModifiers"] = true }));
+
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ModifiersHeld));
+        _input.Batches.Should().BeEmpty();
+        _input.IsKeyDown(VkLControl).Should().BeTrue();
     }
 
     [Fact]
@@ -418,14 +434,14 @@ public sealed class InputControlToolContractTests : IDisposable
         _session.Send([InputEvent.Key(0x41, KeyDown)]);
         _session.Pause(InputControlSources.Hotkey); // releases the server's A itself
         _session.Send([InputEvent.Key(0x42, KeyDown)]); // refused: paused
-        _input.Press(VkLControl);
+        _input.Press(VkLWin);
         await using var server = await StartAsync();
 
         var result = Payload(await server.CallToolAsync("release_all_input",
             new Dictionary<string, object?> { ["releaseHeldModifiers"] = true }));
 
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.PausedByUser));
-        _input.IsKeyDown(VkLControl).Should().BeTrue();
+        _input.IsKeyDown(VkLWin).Should().BeTrue();
         _input.IsKeyDown(0x41).Should().BeFalse();
     }
 
