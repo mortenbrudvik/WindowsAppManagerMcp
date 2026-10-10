@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
@@ -7,15 +6,17 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
-/// Service for simulating mouse input using Windows SendInput API.
+/// Service for simulating mouse and keyboard input using Windows SendInput API.
 /// </summary>
 public class InputSimulationService : IInputSimulationService
 {
     private readonly IMonitorService _monitorService;
+    private readonly INativeInputWrapper _inputWrapper;
 
-    public InputSimulationService(IMonitorService monitorService)
+    public InputSimulationService(IMonitorService monitorService, INativeInputWrapper inputWrapper)
     {
         _monitorService = monitorService;
+        _inputWrapper = inputWrapper;
     }
 
     public ClickResult Click(int x, int y)
@@ -94,7 +95,7 @@ public class InputSimulationService : IInputSimulationService
         }
 
         // Move cursor to position first
-        if (!NativeMethods.Input.SetCursorPos(x, y))
+        if (!_inputWrapper.SetCursorPos(x, y))
         {
             return new ClickResult(
                 Success: false,
@@ -154,7 +155,7 @@ public class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.CoordinatesOutOfBounds);
         }
 
-        if (!NativeMethods.Input.SetCursorPos(x, y))
+        if (!_inputWrapper.SetCursorPos(x, y))
         {
             return new MouseMoveResult(
                 Success: false,
@@ -172,11 +173,7 @@ public class InputSimulationService : IInputSimulationService
 
     public (int X, int Y)? GetCursorPosition()
     {
-        if (NativeMethods.Input.GetCursorPos(out var point))
-        {
-            return (point.X, point.Y);
-        }
-        return null;
+        return _inputWrapper.GetCursorPos();
     }
 
     public bool IsValidScreenCoordinate(int x, int y)
@@ -190,7 +187,7 @@ public class InputSimulationService : IInputSimulationService
     private bool SetCursorAndClick(int x, int y, bool leftButton)
     {
         // Move cursor to position
-        if (!NativeMethods.Input.SetCursorPos(x, y))
+        if (!_inputWrapper.SetCursorPos(x, y))
         {
             return false;
         }
@@ -201,18 +198,18 @@ public class InputSimulationService : IInputSimulationService
         return SendClickInputs(leftButton);
     }
 
-    private static bool SendClickInputs(bool leftButton)
+    private bool SendClickInputs(bool leftButton)
     {
         var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
         var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
 
-        var inputs = new INPUT[]
+        var inputs = new[]
         {
-            INPUT.MouseInput(0, 0, downFlag),
-            INPUT.MouseInput(0, 0, upFlag)
+            InputEvent.Mouse(downFlag),
+            InputEvent.Mouse(upFlag)
         };
 
-        var result = NativeMethods.Input.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        var result = _inputWrapper.SendInput(inputs);
         return result == inputs.Length;
     }
 
@@ -233,13 +230,13 @@ public class InputSimulationService : IInputSimulationService
 
         foreach (var character in text)
         {
-            var inputs = new INPUT[]
+            var inputs = new[]
             {
-                INPUT.UnicodeInput(character, NativeEnums.KEYEVENTF_KEYDOWN),
-                INPUT.UnicodeInput(character, NativeEnums.KEYEVENTF_KEYUP)
+                InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN),
+                InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP)
             };
 
-            var result = NativeMethods.Input.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            var result = _inputWrapper.SendInput(inputs);
             if (result != inputs.Length)
             {
                 return new TypeTextResult(
@@ -287,10 +284,9 @@ public class InputSimulationService : IInputSimulationService
                     ErrorCode: InputErrorCode.InvalidKeySpecification);
             }
 
-            var inputArray = inputs.ToArray();
-            var result = NativeMethods.Input.SendInput((uint)inputArray.Length, inputArray, Marshal.SizeOf<INPUT>());
+            var result = _inputWrapper.SendInput(inputs);
 
-            if (result != inputArray.Length)
+            if (result != inputs.Count)
             {
                 return new SendKeysResult(
                     Success: false,
@@ -313,9 +309,9 @@ public class InputSimulationService : IInputSimulationService
         }
     }
 
-    private static List<INPUT> ParseSendKeysString(string keys)
+    private static List<InputEvent> ParseSendKeysString(string keys)
     {
-        var inputs = new List<INPUT>();
+        var inputs = new List<InputEvent>();
         var modifiers = new List<ushort>();
         var i = 0;
 
@@ -337,7 +333,7 @@ public class InputSimulationService : IInputSimulationService
                 if (modifierVk != 0 && !modifiers.Contains(modifierVk))
                 {
                     modifiers.Add(modifierVk);
-                    inputs.Add(INPUT.KeyboardInput(modifierVk, NativeEnums.KEYEVENTF_KEYDOWN));
+                    inputs.Add(InputEvent.Key(modifierVk, NativeEnums.KEYEVENTF_KEYDOWN));
                 }
                 i++;
                 continue;
@@ -356,8 +352,8 @@ public class InputSimulationService : IInputSimulationService
                 var vk = GetVirtualKeyCode(keyName);
                 var flags = IsExtendedKey(vk) ? NativeEnums.KEYEVENTF_EXTENDEDKEY : NativeEnums.KEYEVENTF_KEYDOWN;
 
-                inputs.Add(INPUT.KeyboardInput(vk, flags));
-                inputs.Add(INPUT.KeyboardInput(vk, flags | NativeEnums.KEYEVENTF_KEYUP));
+                inputs.Add(InputEvent.Key(vk, flags));
+                inputs.Add(InputEvent.Key(vk, flags | NativeEnums.KEYEVENTF_KEYUP));
 
                 // Release modifiers after the key
                 ReleaseModifiers(inputs, modifiers);
@@ -371,14 +367,14 @@ public class InputSimulationService : IInputSimulationService
             var charVk = GetVirtualKeyForChar(c);
             if (charVk != 0)
             {
-                inputs.Add(INPUT.KeyboardInput(charVk, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(INPUT.KeyboardInput(charVk, NativeEnums.KEYEVENTF_KEYUP));
+                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYDOWN));
+                inputs.Add(InputEvent.Key(charVk, NativeEnums.KEYEVENTF_KEYUP));
             }
             else
             {
                 // Send as Unicode
-                inputs.Add(INPUT.UnicodeInput(c, NativeEnums.KEYEVENTF_KEYDOWN));
-                inputs.Add(INPUT.UnicodeInput(c, NativeEnums.KEYEVENTF_KEYUP));
+                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYDOWN));
+                inputs.Add(InputEvent.Unicode(c, NativeEnums.KEYEVENTF_KEYUP));
             }
 
             // Release modifiers after the key
@@ -394,12 +390,12 @@ public class InputSimulationService : IInputSimulationService
         return inputs;
     }
 
-    private static void ReleaseModifiers(List<INPUT> inputs, List<ushort> modifiers)
+    private static void ReleaseModifiers(List<InputEvent> inputs, List<ushort> modifiers)
     {
         // Release in reverse order
         for (var i = modifiers.Count - 1; i >= 0; i--)
         {
-            inputs.Add(INPUT.KeyboardInput(modifiers[i], NativeEnums.KEYEVENTF_KEYUP));
+            inputs.Add(InputEvent.Key(modifiers[i], NativeEnums.KEYEVENTF_KEYUP));
         }
     }
 

@@ -29,6 +29,7 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 
 // Register services
 builder.Services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
+builder.Services.AddSingleton<INativeInputWrapper, NativeInputWrapper>();
 builder.Services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
 builder.Services.AddSingleton<ICdpService, CdpService>();
 builder.Services.AddSingleton<IMonitorService, MonitorService>();
