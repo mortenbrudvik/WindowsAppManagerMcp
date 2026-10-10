@@ -20,7 +20,7 @@ public class UIElementTools
     private const int DefaultAncestors = 3;
 
     // Shared with capture_with_elements (ScreenshotTools), whose parameter descriptions start with
-    // "Only include enabled elements. Default: false. " and "Only include elements that are not
+    // "Only include interactable elements. Default: false. " and "Only include elements that are not
     // offscreen. Default: true. ". The filters are applied per element (UIElementService): an element
     // that fails one is left out and the elements inside it that pass take its place; only visibleOnly
     // drops whole subtrees.

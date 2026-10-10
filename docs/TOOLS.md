@@ -1232,7 +1232,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | includeFrame | bool | No | true | Include window frame/decoration |
 | format | string | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | int | No | 80 | JPEG quality (1-100) |
-| maxDepth | int | No | 5 | Max depth to traverse UI tree (1-10) |
+| maxDepth | int | No | 5 | How many levels below the window to read (1-10). 1 reads only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit"); matches inside other containers are kept. Unknown names fail |
 | interactableOnly | bool | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | visibleOnly | bool | No | true | Only include visible elements |
@@ -1447,7 +1447,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
 - `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
-- `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. Errors reading the window itself still fail the call.
+- `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
 **Error Codes:**
 | Code | Description |
@@ -1457,7 +1457,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 | `AutomationUnavailable` | UI Automation not available |
 | `ElementAccessFailed` | The window's elements disappeared while they were read |
 | `InvalidControlType` | A `controlTypes` name is not a known control type; `error` lists the valid names |
-| `OperationTimedOut` | The timeout passed before any element was read, or UI Automation stopped answering (the application may be hung) |
+| `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
 
 ---

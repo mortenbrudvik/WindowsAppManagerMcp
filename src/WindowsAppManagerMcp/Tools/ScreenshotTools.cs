@@ -178,11 +178,11 @@ public class ScreenshotTools
         string format = "auto",
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
-        [Description("Max depth to traverse UI tree (1-10). Default: 5")]
+        [Description("How many levels below the window to read (1-10). 1 reads only the window's direct children. Default: 5")]
         int maxDepth = 5,
         [Description(UIElementTools.ControlTypesDescription)]
         string? controlTypes = null,
-        [Description("Only include enabled elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
+        [Description("Only include interactable elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
         bool interactableOnly = false,
         [Description("Only include elements that are not offscreen. Default: true. " + UIElementTools.VisibleOnlyCaution)]
         bool visibleOnly = true,

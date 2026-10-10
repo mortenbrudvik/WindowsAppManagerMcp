@@ -160,6 +160,7 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.GetChildren)] = WrapperMember.Read,
                 [nameof(IUiaTree.Read)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadInteraction)] = WrapperMember.Read,
+                [nameof(IUiaTree.IsInteractable)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadValue)] = WrapperMember.Read
             },

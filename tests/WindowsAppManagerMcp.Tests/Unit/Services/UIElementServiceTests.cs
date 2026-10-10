@@ -396,8 +396,9 @@ public class UIElementServiceTests
         // Act
         CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: ["Button"], InteractableOnly: true));
 
-        // Assert - each extra read is a cross-process call per element
-        _tree.Reads.Where(r => r.StartsWith("Interaction:")).Should().Equal("Interaction:Go");
+        // Assert - each extra read is a cross-process call per element; focus itself is never read
+        _tree.Reads.Where(r => r.StartsWith("Interactable:")).Should().Equal("Interactable:Go");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Interaction:"));
     }
 
     [Fact]
@@ -528,11 +529,31 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenInteractionPropertiesCannotBeRead_SkipsTheElement()
+    public void GetUIElements_WhenInteractionPropertiesCannotBeRead_LeavesOutOnlyThatElement()
     {
-        // Arrange
+        // Arrange - a container whose provider fails a pattern query
         Window(
-            new FakeUiaNode("Button", "Bad") { InteractionException = FakeUiaTree.Vanished() },
+            new FakeUiaNode("Pane", "Bad") { InteractionException = new System.Runtime.InteropServices.COMException("pattern query failed") }.With(
+                new FakeUiaNode("Button", "Inside") { ActionPatterns = ["Invoke"] }),
+            new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
+
+        // Act
+        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(InteractableOnly: true));
+
+        // Assert - the filters decide about the element itself, so its interactable children stay
+        Shape(result.Elements).Should().Be("Inside,Good");
+        result.SkippedElementCount.Should().Be(1);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(UIElementTruncationReason.ElementsSkipped);
+    }
+
+    [Fact]
+    public void GetUIElements_WhenAnElementVanishesWhileItsInteractionIsRead_SkipsItsSubtree()
+    {
+        // Arrange - the element is gone, and the elements inside it with it
+        Window(
+            new FakeUiaNode("Pane", "Gone") { InteractionException = FakeUiaTree.Vanished() }.With(
+                new FakeUiaNode("Button", "Inside") { ActionPatterns = ["Invoke"] }),
             new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
 
         // Act
@@ -541,6 +562,7 @@ public class UIElementServiceTests
         // Assert
         Shape(result.Elements).Should().Be("Good");
         result.SkippedElementCount.Should().Be(1);
+        _tree.ReadNodes.Should().NotContain("Inside");
     }
 
     [Fact]
@@ -644,7 +666,28 @@ public class UIElementServiceTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("before any element was read");
         result.Elements.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetUIElements_WhenTheTimeoutPassesBeforeAnElementMatches_SaysHowManyWereRead()
+    {
+        // Arrange - two elements are read, neither is a Button, then the timeout passes
+        using var cts = new CancellationTokenSource();
+        Window(
+            Node("Text", "A"),
+            new FakeUiaNode("Pane", "B") { OnRead = cts.Cancel }.With(Node("Button", "B1")),
+            Node("Button", "C"));
+
+        // Act
+        var result = CreateSut().GetUIElements(
+            Handle, filter: new UIElementFilter(ControlTypes: ["Button"]), cancellationToken: cts.Token);
+
+        // Assert - elements were read, so "before any element was read" would be wrong
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("before any element matching the filters was found (2 elements were read)");
     }
 
     [Fact]

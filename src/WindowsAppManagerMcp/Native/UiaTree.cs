@@ -158,6 +158,17 @@ public sealed class UiaTree : IUiaTree
     }
 
     /// <inheritdoc />
+    public bool IsInteractable(IUiaNode node)
+    {
+        var element = Unwrap(node);
+
+        // Focusable first: edits, buttons and most list items answer with the first read
+        return Translate(() =>
+            element.Current.IsKeyboardFocusable ||
+            ActionPatternProperties.Any(p => element.GetCurrentPropertyValue(p.Property) is true));
+    }
+
+    /// <inheritdoc />
     public UiaNodeIdentity ReadIdentity(IUiaNode node)
     {
         var element = Unwrap(node);
