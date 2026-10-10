@@ -1,0 +1,232 @@
+using System.ComponentModel;
+using System.Diagnostics;
+
+namespace WindowsAppManagerMcp.E2ETests.Harness;
+
+/// <summary>How a test wants the fixture started.</summary>
+public sealed record FixtureLaunchOptions
+{
+    /// <summary>
+    /// Show the main window activated. Off by default: a test that needs the fixture in front activates
+    /// it through the server, and a <see cref="DesktopTier.NoInput"/> test may not activate it at all.
+    /// </summary>
+    public bool Activate { get; init; }
+
+    /// <summary>Open the modal dialog right after the main window is ready.</summary>
+    public bool OpenModal { get; init; }
+
+    /// <summary>Open the document window (with unsaved changes) right after the main window is ready.</summary>
+    public bool OpenDocument { get; init; }
+
+    /// <summary>The fixture's process DPI awareness.</summary>
+    public FixtureDpiAwareness DpiAwareness { get; init; } = FixtureDpiAwareness.PerMonitorV2;
+
+    /// <summary>How long to wait for the fixture's ready event.</summary>
+    public TimeSpan ReadyTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The fixture ends itself after this long, even if the harness never kills it.</summary>
+    public TimeSpan MaxLifetime { get; init; } = TimeSpan.FromMinutes(5);
+}
+
+/// <summary>
+/// One running fixture app, started by the harness and killed in <see cref="Dispose"/>. The fixture also
+/// ends itself when the test host exits or after <see cref="FixtureLaunchOptions.MaxLifetime"/>.
+/// </summary>
+public sealed class FixtureAppSession : IDisposable
+{
+    private readonly Process _process;
+    private readonly string _workDirectory;
+    private readonly ITestOutputHelper? _output;
+    private FixtureReady? _ready;
+    private bool _disposed;
+
+    private FixtureAppSession(Process process, FixtureOptions options, string workDirectory, ITestOutputHelper? output)
+    {
+        _process = process;
+        Options = options;
+        _workDirectory = workDirectory;
+        _output = output;
+        Events = new FixtureEventLogReader(options.EventLogPath!);
+    }
+
+    /// <summary>The fixture's command line.</summary>
+    public FixtureOptions Options { get; }
+
+    /// <summary>The token in every window title of this fixture.</summary>
+    public string Instance => Options.Instance;
+
+    public int ProcessId => _process.Id;
+
+    /// <summary>The fixture's event log.</summary>
+    public FixtureEventLogReader Events { get; }
+
+    /// <summary>What the fixture reported when its main window first rendered.</summary>
+    public FixtureReady Ready => _ready ?? throw new InvalidOperationException("The fixture has not reported ready.");
+
+    public nint MainWindowHandle => Ready.MainWindowHandle;
+
+    public bool HasExited => _process.HasExited;
+
+    /// <summary>
+    /// Starts the fixture and waits for its ready event. Refuses unless <paramref name="tier"/> is opted in,
+    /// before it locates or starts anything.
+    /// </summary>
+    public static FixtureAppSession Launch(DesktopTier tier, FixtureLaunchOptions? launch = null, ITestOutputHelper? output = null) =>
+        Launch(tier, launch ?? new FixtureLaunchOptions(), output, FixtureAppLocator.Locate, Environment.GetEnvironmentVariable);
+
+    internal static FixtureAppSession Launch(
+        DesktopTier tier,
+        FixtureLaunchOptions launch,
+        ITestOutputHelper? output,
+        Func<string> locateFixture,
+        Func<string, string?> readVariable)
+    {
+        // The gate comes first: a test that is not opted in gets nothing located, created or started.
+        DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
+        var exePath = locateFixture();
+
+        var instance = Guid.NewGuid().ToString("N")[..12];
+        var workDirectory = Path.Combine(Path.GetTempPath(), "WamE2E", instance);
+        Directory.CreateDirectory(workDirectory);
+        var options = BuildOptions(tier, launch, instance, Path.Combine(workDirectory, "events.jsonl"), Environment.ProcessId);
+
+        var startInfo = new ProcessStartInfo(exePath)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = workDirectory
+        };
+        foreach (var argument in options.ToArguments())
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Could not start the fixture app '{exePath}'.");
+        var session = new FixtureAppSession(process, options, workDirectory, output);
+        try
+        {
+            var ready = session.Events.WaitFor(
+                e => e.Name == FixtureContract.Events.Ready,
+                launch.ReadyTimeout,
+                "its ready event",
+                session.ExitReason);
+            session._ready = FixtureReady.From(ready);
+            if (session._ready.ProcessId != process.Id)
+            {
+                throw new InvalidOperationException(
+                    $"The ready event names process {session._ready.ProcessId}, but the harness started {process.Id}.");
+            }
+
+            output?.WriteLine(
+                $"Fixture {instance} started: {exePath}, pid {process.Id}, main window 0x{session._ready.MainWindowHandle:X}, " +
+                $"window {session._ready.WindowRect}, client {session._ready.ClientRect}, " +
+                $"DPI {session._ready.Dpi} ({session._ready.DpiAwareness}).");
+            return session;
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The fixture's command line for a test of <paramref name="tier"/>. Pure, so the rules can be tested:
+    /// the fixture always watches the test host and has a maximum lifetime, and a no-input test never
+    /// activates it.
+    /// </summary>
+    public static FixtureOptions BuildOptions(
+        DesktopTier tier,
+        FixtureLaunchOptions launch,
+        string instance,
+        string eventLogPath,
+        int parentProcessId)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        if (tier == DesktopTier.NoInput && launch.Activate)
+        {
+            throw new ArgumentException(
+                "A DesktopNoInput test cannot activate the fixture: activation takes the foreground from the user.",
+                nameof(launch));
+        }
+
+        return new FixtureOptions(
+            Instance: instance,
+            EventLogPath: eventLogPath,
+            ParentProcessId: parentProcessId,
+            MaxLifetime: launch.MaxLifetime,
+            NoActivate: !launch.Activate,
+            OpenModal: launch.OpenModal,
+            OpenDocument: launch.OpenDocument,
+            DpiAwareness: launch.DpiAwareness);
+    }
+
+    /// <summary>Waits for the first event named <paramref name="name"/> that matches <paramref name="match"/>.</summary>
+    public FixtureEvent WaitForEvent(string name, Func<FixtureEvent, bool>? match = null, TimeSpan? timeout = null) =>
+        Events.WaitFor(
+            e => e.Name == name && (match == null || match(e)),
+            timeout ?? TimeSpan.FromSeconds(10),
+            $"a '{name}' event",
+            ExitReason);
+
+    private string? ExitReason() =>
+        _process.HasExited ? $"the fixture exited with code {_process.ExitCode}" : null;
+
+    /// <summary>Kills the fixture (and anything it started) and deletes its working folder.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
+        try
+        {
+            if (!_process.HasExited)
+            {
+                _process.Kill(entireProcessTree: true);
+                _process.WaitForExit(10_000);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // It exited between the check and the kill.
+        }
+        catch (Win32Exception ex)
+        {
+            _output?.WriteLine($"Could not kill fixture {Instance} (pid {_process.Id}): {ex.Message}");
+        }
+        finally
+        {
+            try
+            {
+                _output?.WriteLine($"Fixture {Instance} event log:{Environment.NewLine}{Events.Describe()}");
+            }
+            catch (IOException)
+            {
+                // Diagnostics only.
+            }
+
+            _process.Dispose();
+            TryDeleteDirectory(_workDirectory);
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+}

@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    End-to-end tests: the real server services against the suite's own fixture app (tests/FixtureApp).
+    Every test that starts the fixture is gated ([DesktopNoInputFact] or [DesktopFact]) and skipped unless
+    its opt-in variable is set; the harness checks the gate again before it starts anything.
+    HarnessTests/ holds ordinary tests of the harness itself, which never start the fixture.
+    See TESTING.md, "End-to-end tests against the fixture app".
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
+    <PackageReference Include="xunit" Version="2.8.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WindowsAppManagerMcp\WindowsAppManagerMcp.csproj" />
+    <ProjectReference Include="..\WindowsAppManagerMcp.Tests.Infrastructure\WindowsAppManagerMcp.Tests.Infrastructure.csproj" />
+    <!--
+      Built before this project but not referenced: the harness starts WamFixtureApp.exe from the fixture's
+      own output folder (see WamFixtureAppPath below), so the fixture is never loaded into the test host
+      and never instrumented for coverage.
+    -->
+    <ProjectReference Include="..\FixtureApp\FixtureApp.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One contract for both sides: titles, AutomationIds, event names and the command line -->
+    <Compile Include="..\FixtureApp\FixtureContract.cs" Link="FixtureContract\FixtureContract.cs" />
+    <Compile Include="..\FixtureApp\FixtureOptions.cs" Link="FixtureContract\FixtureOptions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- UI Automation reads (System.Windows.Automation), as the server uses -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
+  <!--
+    Records where the fixture exe is, relative to this project's output folder, as
+    [assembly: AssemblyMetadata("WamFixtureAppPath", "...")]. FixtureAppLocator reads it, so the tests
+    start exactly the fixture built with the same configuration.
+  -->
+  <Target Name="AddWamFixtureAppPathMetadata" BeforeTargets="GetAssemblyAttributes">
+    <MSBuild Projects="..\FixtureApp\FixtureApp.csproj" Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="_WamFixtureAppTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <_WamFixtureAppExe>@(_WamFixtureAppTargetPath->'%(RootDir)%(Directory)%(Filename).exe')</_WamFixtureAppExe>
+      <_WamFixtureAppRelativeExe>$([MSBuild]::MakeRelative('$(TargetDir)', '$(_WamFixtureAppExe)'))</_WamFixtureAppRelativeExe>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>WamFixtureAppPath</_Parameter1>
+        <_Parameter2>$(_WamFixtureAppRelativeExe)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+</Project>
