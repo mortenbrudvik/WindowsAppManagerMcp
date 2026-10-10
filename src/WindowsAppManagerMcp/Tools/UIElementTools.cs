@@ -46,7 +46,7 @@ public class UIElementTools
     }
 
     [McpServerTool(Name = "get_ui_elements")]
-    [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true.")]
+    [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true (OperationTimedOut when no element matching the filters was found yet).")]
     public UIElementResult GetUIElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
         long handle,

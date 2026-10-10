@@ -97,7 +97,7 @@ public class LayoutPresetTools
     }
 
     [McpServerTool(Name = "apply_layout")]
-    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged; otherwise errorCode and errors say which placements were not found, launched or arranged.")]
+    [Description("Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged (and focused, for a placement with focus); otherwise errorCode and errors say which placements were not found, launched, arranged or focused. A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).")]
     public async Task<ApplyLayoutResultDto> ApplyLayout(
         [Description("Name of the layout preset to apply")]
         string name,

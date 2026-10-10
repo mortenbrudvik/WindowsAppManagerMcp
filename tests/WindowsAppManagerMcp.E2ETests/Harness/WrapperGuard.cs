@@ -289,7 +289,8 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server
 /// may attach its own calling thread's input to another thread (never two other threads to each other),
 /// because the window calls it makes while attached are checked as window actions.
-/// This is the harness's stand-in for the server's own target guard (M1.1, M1.5), which does not exist yet.
+/// It is a second, independent layer under the server's own input guard (M1.1, M1.5, InputTargetGuard), so a bug in
+/// that guard cannot send input to a window outside the fixture.
 /// </summary>
 public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
 {

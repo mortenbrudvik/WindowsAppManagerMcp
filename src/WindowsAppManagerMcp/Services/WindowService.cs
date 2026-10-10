@@ -32,8 +32,8 @@ public class WindowService : IWindowService
     /// <param name="hostGuard">Recognizes the agent's host windows (close guard, WindowInfo.IsAgentHost).</param>
     /// <param name="targetPolicy">
     /// The server's target policy (roadmap M1.12). Closing a window and every window change (move, resize,
-    /// bounds, state, snap, move to a monitor, and their batches) refuse a window it denies, so a denied
-    /// window is never restored, raised or moved onto the screen. The server always passes it; without it no
+    /// bounds, state, snap, move to a monitor, and their batches) refuse a window it denies, so these tools never
+    /// restore, raise or move it (input and the app itself still can). The server always passes it; without it no
     /// window is refused by policy.
     /// </param>
     /// <param name="windowCalls">

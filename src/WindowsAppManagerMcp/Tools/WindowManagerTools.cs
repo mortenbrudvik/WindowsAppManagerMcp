@@ -11,6 +11,17 @@ namespace WindowsAppManagerMcp.Tools;
 [McpServerToolType]
 public class WindowManagerTools
 {
+    /// <summary>The errors of the single-window change tools (move, resize, bounds, state, snap, move to a monitor).</summary>
+    private const string WindowChangeErrors =
+        " errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); " +
+        "NotResponding (the window's app is hung, did not answer within 5 s, or an earlier call to it is still blocked; a call " +
+        "that timed out can still take effect once the app answers, so check the window before acting on it).";
+
+    /// <summary>The per-window errors of the window batches.</summary>
+    private const string BatchErrors =
+        " Each window is handled on its own: a window the user's policy denies fails with errorCode TargetDeniedByPolicy and is not " +
+        "changed; an invalid handle or a window whose app does not answer within 5 s fails with an error message.";
+
     private readonly IWindowService _windowService;
     private readonly IForegroundService _foregroundService;
 
@@ -21,7 +32,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window")]
-    [Description("Move a window to a specific position. Returns success and the window's newBounds.")]
+    [Description("Move a window to a specific position. Returns success and the window's newBounds." + WindowChangeErrors)]
     public WindowOperationResult MoveWindow(
         [Description("Window handle (as integer) from find_windows")]
         long handle,
@@ -56,7 +67,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "resize_window")]
-    [Description("Resize a window to specific dimensions. Returns success and the window's newBounds.")]
+    [Description("Resize a window to specific dimensions. Returns success and the window's newBounds." + WindowChangeErrors)]
     public WindowOperationResult ResizeWindow(
         [Description("Window handle (as integer)")]
         long handle,
@@ -89,7 +100,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_window_bounds")]
-    [Description("Move and resize a window in a single operation. Returns success and the window's newBounds.")]
+    [Description("Move and resize a window in a single operation. Returns success and the window's newBounds." + WindowChangeErrors)]
     public WindowOperationResult SetWindowBounds(
         [Description("Window handle (as integer)")]
         long handle,
@@ -128,11 +139,11 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_window_state")]
-    [Description("Set the window state (minimize, maximize, restore). Returns success and the window's newState.")]
+    [Description("Set the window state (minimize, maximize, restore). Returns success and the window's newState." + WindowChangeErrors)]
     public WindowOperationResult SetWindowState(
         [Description("Window handle (as integer)")]
         long handle,
-        [Description("Desired state: 'minimize', 'maximize', or 'restore'")]
+        [Description("Desired state: 'minimize', 'maximize', or 'restore' ('minimized', 'maximized' and 'normal' also work; any other value restores the window)")]
         string state)
     {
         var hwnd = (nint)handle;
@@ -192,6 +203,7 @@ public class WindowManagerTools
     [McpServerTool(Name = "close_window")]
     [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows. " +
                  "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, " +
+                 "refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), " +
                  "and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator).")]
     public WindowOperationResult CloseWindow(
         [Description("Window handle (as integer)")]
@@ -215,7 +227,8 @@ public class WindowManagerTools
     [McpServerTool(Name = "close_windows_batch")]
     [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. " +
                  "More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) " +
-                 "are refused per window with errorCode ProtectedWindow unless force is true; the other windows are still closed.")]
+                 "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
+                 "the other windows are still closed.")]
     public BatchWindowResult CloseWindowsBatch(
         [Description("Array of window handles to close")]
         WindowCloseRequest[] windows,
@@ -254,7 +267,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "snap_window")]
-    [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen.")]
+    [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds." + WindowChangeErrors)]
     public WindowOperationResult SnapWindow(
         [Description("Window handle (as integer)")]
         long handle,
@@ -295,7 +308,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window_to_monitor")]
-    [Description("Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds.")]
+    [Description("Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds." + WindowChangeErrors)]
     public WindowOperationResult MoveWindowToMonitor(
         [Description("Window handle (as integer)")]
         long handle,
@@ -330,7 +343,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch")]
-    [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls.")]
+    [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls." + BatchErrors)]
     public BatchWindowResult SetWindowsBoundsBatch(
         [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowBoundsPlacement[] placements,
@@ -363,7 +376,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "snap_windows_batch")]
-    [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls.")]
+    [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls." + BatchErrors)]
     public BatchWindowResult SnapWindowsBatch(
         [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
         WindowSnapPlacement[] placements,
@@ -400,7 +413,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_windows_state_batch")]
-    [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation.")]
+    [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation." + BatchErrors)]
     public BatchWindowResult SetWindowsStateBatch(
         [Description("Array of state changes with handle and state")]
         WindowStateChange[] changes,
@@ -460,7 +473,7 @@ public class WindowManagerTools
 
     /// <summary>
     /// The refusal of a change to a window the user's target policy denies (TargetDeniedByPolicy), or null when
-    /// it allows the window. A denied window is never restored, raised or moved, so a screenshot cannot show it.
+    /// it allows the window. These tools never restore, raise or move a denied window.
     /// </summary>
     private WindowOperationResult? PolicyRefusal(nint handle) =>
         _windowService.EvaluateTargetPolicy(handle) is { Allowed: false } verdict

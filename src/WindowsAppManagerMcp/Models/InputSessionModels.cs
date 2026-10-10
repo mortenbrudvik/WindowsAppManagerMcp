@@ -350,7 +350,7 @@ public sealed record ResumeInputResult(
 /// <param name="Error">What went wrong.</param>
 /// <param name="ErrorCode">
 /// SendInputFailed; PausedByUser when the user's modifiers were not released because input is paused; ModifiersHeld when
-/// they were not released because they make up the pause hotkey's chord.
+/// none was released because one of the keys down is a modifier of the pause hotkey's chord.
 /// </param>
 public sealed record ReleaseInputResult(
     bool Success,
