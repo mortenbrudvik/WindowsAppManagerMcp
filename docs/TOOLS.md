@@ -306,7 +306,9 @@ Here the window in front is the editor the agent runs in, so it carries `isAgent
 
 Tools for manipulating window position, size, and state.
 
-`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window). Restoring a minimized window (set_window_bounds, snap_window, move_window_to_monitor) can still activate it.
+`bringToFront` raises the window above the other windows but does not activate it: keyboard focus stays where it was, so `type_text` and `send_keys` still go to the window that was in front. To type into the window, bring it to the front with [focus_window](#focus_window) and confirm it with [get_foreground_window](#get_foreground_window).
+
+Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
 
 ### move_window
 
@@ -688,7 +690,7 @@ Move a window to a specific monitor.
 - `topright` - Top-right corner
 - `bottomleft` - Bottom-left corner
 - `bottomright` - Bottom-right corner
-- `maximize` - Maximize on target monitor
+- `maximize` - Maximize on target monitor. This can activate the window, and `bringToFront` is ignored (see [Window Control](#window-control))
 - `restore` - Keep current size, move to monitor
 
 **Example:**
@@ -737,7 +739,7 @@ Each placement object contains:
 | y | int | Yes | - | Y coordinate |
 | width | int | Yes | - | Width in pixels |
 | height | int | Yes | - | Height in pixels |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Position Notepad and Calculator side by side"
@@ -785,7 +787,7 @@ Each placement object contains:
 | handle | long | Yes | - | Window handle |
 | position | string | Yes | - | Snap position (see snap_window) |
 | monitorIndex | int | No | current | Target monitor |
-| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it |
+| bringToFront | bool | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 
 **Example:**
 > "Snap VS Code to left half and Terminal to right half"
