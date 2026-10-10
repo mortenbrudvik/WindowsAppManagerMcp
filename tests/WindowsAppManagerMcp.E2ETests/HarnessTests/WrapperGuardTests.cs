@@ -520,6 +520,26 @@ public class WrapperGuardTests
         inner.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NeitherTier_RegistersAGlobalHotkey(bool inputTier)
+    {
+        // A registered hotkey takes its chord from every other application; the pause hotkey's own tests use fakes
+        var inner = new Mock<INativeHotkeyWrapper>(MockBehavior.Strict);
+        IWrapperCallPolicy policy = inputTier
+            ? FixtureOnly(new FakeDesktop { Foreground = FixtureWindow })
+            : new ReadOnlyCallPolicy();
+        var guarded = WrapperGuard.Create(inner.Object, policy);
+
+        var register = () => guarded.RegisterHotKey(1, 0x4007, 0x13);
+        var wait = () => guarded.WaitForMessage();
+
+        register.Should().Throw<E2EGuardException>().WithMessage("*RegisterHotKey*");
+        wait.Should().Throw<E2EGuardException>().WithMessage("*WaitForMessage*");
+        inner.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public void FixtureOnlyPolicy_RefusesAThreadInputAttachMemberItHasNoRuleFor()
     {

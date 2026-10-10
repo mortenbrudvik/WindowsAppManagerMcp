@@ -26,7 +26,14 @@ public enum WrapperCallKind
     /// two threads share keyboard state, focus and the active window. The window calls made while
     /// attached are window actions, checked on their own.
     /// </summary>
-    ThreadInputAttach
+    ThreadInputAttach,
+
+    /// <summary>
+    /// Registers or frees a system-wide hotkey for the calling thread, or runs or stops that thread's message
+    /// loop (the user's pause hotkey). It sends no input and changes no window, but while it is registered
+    /// the chord no longer reaches any other application, so no E2E tier allows it.
+    /// </summary>
+    GlobalHotkey
 }
 
 /// <summary>
@@ -49,6 +56,8 @@ public sealed record WrapperMember(
     public static WrapperMember ProcessStart { get; } = new(WrapperCallKind.ProcessStart, [], []);
 
     public static WrapperMember ThreadInputAttach { get; } = new(WrapperCallKind.ThreadInputAttach, [], []);
+
+    public static WrapperMember GlobalHotkey { get; } = new(WrapperCallKind.GlobalHotkey, [], []);
 
     public static WrapperMember WindowAction(params string[] windowParameters) =>
         new(WrapperCallKind.WindowAction, windowParameters, []);
@@ -100,8 +109,20 @@ public static class WrapperCatalog
             [typeof(INativeInputWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeInputWrapper.GetCursorPos)] = WrapperMember.Read,
+                // GetAsyncKeyState: whether a key or button is down (held modifiers, stuck-input recovery)
+                [nameof(INativeInputWrapper.IsKeyDown)] = WrapperMember.Read,
                 [nameof(INativeInputWrapper.SetCursorPos)] = WrapperMember.Input,
                 [nameof(INativeInputWrapper.SendInput)] = WrapperMember.Input
+            },
+            [typeof(INativeHotkeyWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeHotkeyWrapper.GetCurrentThreadId)] = WrapperMember.Read,
+                // The rest exists only for the pause hotkey's own thread; refused in every tier
+                [nameof(INativeHotkeyWrapper.CreateMessageQueue)] = WrapperMember.GlobalHotkey,
+                [nameof(INativeHotkeyWrapper.RegisterHotKey)] = WrapperMember.GlobalHotkey,
+                [nameof(INativeHotkeyWrapper.UnregisterHotKey)] = WrapperMember.GlobalHotkey,
+                [nameof(INativeHotkeyWrapper.WaitForMessage)] = WrapperMember.GlobalHotkey,
+                [nameof(INativeHotkeyWrapper.PostStopMessage)] = WrapperMember.GlobalHotkey
             },
             [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
             {

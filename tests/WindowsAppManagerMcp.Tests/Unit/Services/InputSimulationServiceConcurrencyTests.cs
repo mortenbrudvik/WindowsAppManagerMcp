@@ -195,6 +195,8 @@ public class InputSimulationServiceConcurrencyTests
             return (uint)events.Count;
         }
 
+        public bool IsKeyDown(ushort virtualKey) => false;
+
         private static string Describe(IReadOnlyList<InputEvent> events)
         {
             if (events.All(e => e.Kind == InputEventKind.Unicode))

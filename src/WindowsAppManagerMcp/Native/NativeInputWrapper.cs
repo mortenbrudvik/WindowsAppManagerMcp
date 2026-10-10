@@ -33,6 +33,8 @@ public class NativeInputWrapper : INativeInputWrapper
         return NativeMethods.Input.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
+    public bool IsKeyDown(ushort virtualKey) => (NativeMethods.Input.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
     private static INPUT ToNativeInput(InputEvent inputEvent) => inputEvent.Kind switch
     {
         InputEventKind.Mouse => INPUT.MouseInput(inputEvent.Dx, inputEvent.Dy, inputEvent.Flags),
