@@ -267,38 +267,29 @@ public void BadTest_MixedActAssert()
 WindowsAppManagerMcp/
 ├── src/
 │   └── WindowsAppManagerMcp/
+│       ├── Infrastructure/        # MCP pipeline extensions (ToolErrorReporting)
+│       ├── Models/                # DTOs, result records, error codes
+│       ├── Native/                # P/Invoke declarations and the native wrappers tests mock
 │       ├── Services/
-│       │   ├── Interfaces/
-│       │   │   ├── IWindowService.cs
-│       │   │   ├── IMonitorService.cs
-│       │   │   ├── IProcessService.cs
-│       │   │   └── ILayoutService.cs
-│       │   ├── WindowService.cs
-│       │   ├── MonitorService.cs
-│       │   ├── ProcessService.cs
-│       │   └── LayoutService.cs
-│       └── Models/
+│       │   ├── Interfaces/        # IWindowService, IMonitorService, IProcessService, ...
+│       │   └── *.cs               # WindowService, MonitorService, ProcessService, LayoutService, ...
+│       └── Tools/                 # [McpServerTool] classes
 │
 └── tests/
     └── WindowsAppManagerMcp.Tests/
         ├── WindowsAppManagerMcp.Tests.csproj
         ├── GlobalUsings.cs
-        ├── Unit/
-        │   ├── Services/
-        │   │   ├── WindowServiceTests.cs
-        │   │   ├── MonitorServiceTests.cs
-        │   │   ├── ProcessServiceTests.cs
-        │   │   └── LayoutServiceTests.cs
-        │   └── Models/
-        │       └── WindowInfoTests.cs
-        ├── Integration/
-        │   ├── LayoutPersistenceTests.cs
-        │   └── ServiceInteractionTests.cs
-        ├── Fixtures/
-        │   ├── TestDataFactory.cs
-        │   └── MockNativeWrapper.cs
-        └── Helpers/
-            └── AssertExtensions.cs
+        ├── Contract/              # Tool contract: serialization, error reporting, descriptions, docs
+        ├── Fixtures/              # TestDataFactory, RepositoryFiles, InProcessMcpServer, FakeCdp, ...
+        ├── Infrastructure/        # [DesktopFact] / [DesktopTheory]
+        ├── Integration/           # DI, file persistence, layout service, screen capture (read-only)
+        └── Unit/
+            ├── Architecture/      # NativeCallGuardTests (IL scan for native calls)
+            ├── Infrastructure/    # DesktopTestGateTests
+            ├── Models/
+            ├── Native/
+            ├── Services/
+            └── Tools/
 ```
 
 ### Test Class Organization
@@ -1000,7 +991,7 @@ public void MoveWindow_CallsSetWindowPos_WithCorrectParameters()
 | Services | 80%+ | HIGH | Business logic |
 | Models | 70%+ | MEDIUM | Data structures |
 | Tools | 60%+ | LOW | Thin wrappers over services |
-| Native | 0% | N/A | Excluded - can't unit test P/Invoke |
+| Native | - | N/A | Mocked in unit tests; not excluded from the measured coverage |
 
 ### Configuring Coverlet
 
@@ -1811,10 +1802,11 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --resul
 
 ### Desktop Tests
 
-Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input,
-`INativeWindowWrapper` for window changes, `IScreenCaptureWrapper` and `IUIAutomationWrapper`
-for capture and UI Automation. Some tests read real system state (the monitor, window and
-process lists, a small screen region) but change nothing.
+Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input and
+`INativeWindowWrapper` for window changes. Some tests use the real stack read-only: they read
+real system state (the monitor, window and process lists, UI Automation trees in
+`UIAutomationWrapperTests` and `UIElementServiceTests`, a small screen region in
+`ScreenCaptureWrapperIntegrationTests`) but change nothing.
 
 Process launches and kills go through a mocked `INativeProcessWrapper`, so no default test starts
 or stops a real process. A test that really needs a side effect like that must be marked
@@ -1840,6 +1832,10 @@ Remove-Item Env:WAM_ALLOW_DESKTOP_TESTS
 # Git Bash
 WAM_ALLOW_DESKTOP_TESTS=1 dotnet test --filter "Category=Desktop"
 ```
+
+On Windows 11 the Notepad launch tests can leave a Notepad window open: `notepad.exe` hands off
+to the Notepad app and exits, and the tests clean up only the process they started. Close that
+window yourself afterwards.
 
 Rules for new tests:
 

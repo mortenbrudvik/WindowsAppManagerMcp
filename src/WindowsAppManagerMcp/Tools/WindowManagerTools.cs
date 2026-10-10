@@ -17,7 +17,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window")]
-    [Description("Move a window to a specific position. Returns true if successful.")]
+    [Description("Move a window to a specific position. Returns success and the window's newBounds.")]
     public WindowOperationResult MoveWindow(
         [Description("Window handle (as integer) from find_windows")]
         long handle,
@@ -44,7 +44,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "resize_window")]
-    [Description("Resize a window to specific dimensions. Returns true if successful.")]
+    [Description("Resize a window to specific dimensions. Returns success and the window's newBounds.")]
     public WindowOperationResult ResizeWindow(
         [Description("Window handle (as integer)")]
         long handle,
@@ -69,7 +69,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_window_bounds")]
-    [Description("Move and resize a window in a single operation. Returns true if successful.")]
+    [Description("Move and resize a window in a single operation. Returns success and the window's newBounds.")]
     public WindowOperationResult SetWindowBounds(
         [Description("Window handle (as integer)")]
         long handle,
@@ -100,7 +100,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "set_window_state")]
-    [Description("Set the window state (minimize, maximize, restore). Returns true if successful.")]
+    [Description("Set the window state (minimize, maximize, restore). Returns success and the window's newState.")]
     public WindowOperationResult SetWindowState(
         [Description("Window handle (as integer)")]
         long handle,
@@ -131,7 +131,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "focus_window")]
-    [Description("Bring a window to the foreground and give it focus. Returns true if successful.")]
+    [Description("Bring a window to the foreground and give it focus. Returns success. Windows can refuse to change the foreground window, so before sending keyboard or mouse input, confirm with get_foreground_window that this window is in front.")]
     public WindowOperationResult FocusWindow(
         [Description("Window handle (as integer)")]
         long handle)
@@ -147,7 +147,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "close_window")]
-    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. Returns true if the close message was sent successfully.")]
+    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows.")]
     public WindowOperationResult CloseWindow(
         [Description("Window handle (as integer)")]
         long handle)
@@ -222,7 +222,7 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window_to_monitor")]
-    [Description("Move a window to a specific monitor, optionally positioning it. Returns true if successful.")]
+    [Description("Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds.")]
     public WindowOperationResult MoveWindowToMonitor(
         [Description("Window handle (as integer)")]
         long handle,

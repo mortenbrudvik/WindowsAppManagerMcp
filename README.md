@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/build.yml)
 [![Test](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml)
-![Coverage](https://img.shields.io/badge/coverage-70%25-green)
+![Coverage](https://img.shields.io/badge/coverage-60%25-yellowgreen)
 
 An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts.
 
@@ -79,9 +79,14 @@ that folder holds the committed plugin exe (see [Building](#building)).
 ### Option 4: Download Release
 
 Download `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip` from the [Releases](https://github.com/mortenbrudvik/WindowsAppManagerMcp/releases)
-page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is the same
-framework-dependent build and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
+page, extract it, and point your MCP client at `WindowsAppManagerMcp.exe` (see Option 2). It is a
+framework-dependent single-file exe and needs the .NET 8 Desktop Runtime. Releases are created by CI when a `v*` tag
 is pushed; no release was published for the tags up to v1.11.0, so until the next tag use Option 3.
+
+The release zip is built by CI from the tagged sources. It is not a copy of the plugin's committed
+`bin/WindowsAppManagerMcp.exe`: both have the same version and sources, but they are separate builds,
+so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for the release,
+`X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 ## Available Tools (42)
 
@@ -208,7 +213,11 @@ dotnet publish src/WindowsAppManagerMcp -c Release -o ./publish
 - `./scripts/Test-PluginBinary.ps1` checks that the committed exe has the current version and was
   built from the current `src/`. The Build workflow runs it on pushes and pull requests as a warning and on `v*`
   tags as an error, so a release cannot ship a stale exe. The tag's GitHub release gets
-  `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`.
+  `WindowsAppManagerMcp-vX.Y.Z-win-x64.zip`, which CI rebuilds from the tagged sources (a separate
+  build from the committed exe, see [Option 4](#option-4-download-release)).
+- `bin/` is gitignored, but `bin/WindowsAppManagerMcp.exe` is tracked, so staging it needs
+  `git add -f -- bin/WindowsAppManagerMcp.exe`. The `/commit` command
+  (`.claude/commands/commit.md`) does this.
 
 ## Testing
 
@@ -225,7 +234,7 @@ dotnet test --filter "Category!=Desktop"
 dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
-- **830+ tests** covering unit and integration scenarios, about 60% line coverage
+- **1,300+ tests** covering unit and integration scenarios, about 60% line coverage
 - By default a test run sends no keyboard or mouse input, launches or kills no
   processes, and does not move, focus or close your windows (some tests only read
   system state, such as the window, monitor and process lists)
@@ -244,16 +253,20 @@ See [TESTING.md](TESTING.md#desktop-tests) for details.
 
 ```
 WindowsAppManagerMcp/
+├── .claude/commands/    # /commit (release) and /update-plugin (local install) commands
 ├── .claude-plugin/      # Claude Code plugin configuration
 │   ├── plugin.json      # Plugin metadata and MCP server config
 │   └── marketplace.json # Marketplace distribution manifest
 ├── skills/              # Claude Code skills
 │   └── using-windows-app-manager/
 │       └── SKILL.md     # Usage guidance and trigger patterns
-├── bin/                 # Pre-built executable (for plugin)
+├── bin/                 # Pre-built plugin executable (refreshed only by scripts/Publish-Plugin.ps1)
+├── scripts/             # Release scripts: Set-Version, Publish-Plugin, Test-PluginBinary
+├── Directory.Build.props # Product version (single source of truth)
 ├── src/WindowsAppManagerMcp/
+│   ├── Infrastructure/  # MCP pipeline extensions (tool error reporting)
 │   ├── Models/          # Data models and DTOs
-│   ├── Native/          # P/Invoke declarations
+│   ├── Native/          # P/Invoke declarations and native wrappers
 │   ├── Services/        # Business logic
 │   └── Tools/           # MCP tool definitions
 ├── tests/               # Unit and integration tests
@@ -263,7 +276,8 @@ WindowsAppManagerMcp/
 
 ## Security
 
-- **Input Validation** - Path traversal and shell injection prevention
+- **Launch Validation** - `launch_application` rejects path traversal, resolves bare program names in system folders, `PATH` and App Paths before the working directory can shadow them, and refuses arguments that `cmd.exe` would run as commands. It protects against data being turned into commands, not against an agent that runs `cmd` or PowerShell on purpose
+- **Untrusted Content** - Web page text, window titles and UI element names come from other apps and websites and can contain prompt-injection text. The skill and [docs/TOOLS.md](docs/TOOLS.md#untrusted-content) tell agents to treat them as data, never as instructions
 - **Protected Processes** - System-critical processes cannot be terminated
 - **Confirmation Required** - Process termination requires explicit confirmation
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
