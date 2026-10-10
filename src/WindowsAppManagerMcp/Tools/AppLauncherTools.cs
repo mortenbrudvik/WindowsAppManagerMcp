@@ -120,7 +120,8 @@ public class AppLauncherTools
             ProcessId: r.ProcessId,
             WindowHandle: r.WindowHandle?.ToInt64(),
             Error: r.ErrorMessage,
-            Warning: r.Warning
+            Warning: r.Warning,
+            ErrorCode: r.ErrorCode
         )).ToList();
 
         return new BatchLaunchResult(
