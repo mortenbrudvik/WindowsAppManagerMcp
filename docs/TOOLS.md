@@ -31,7 +31,7 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 - Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key of a `send_keys` call (`KeysAfterFocusChange`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
 - To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window. Closing more than 3 windows in one batch needs `confirm: true`.
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
-- The user can pause all of the server's input at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and [focus_window](#focus_window) return `PausedByUser` and send nothing, and a running call stops. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
+- The user can pause the input of every Windows App Manager server on the desktop at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and every tool that changes windows or starts or stops processes ([focus_window](#focus_window), [close_window](#close_window), [launch_application](#launch_application), ...) return `PausedByUser` and do nothing, and a running input call stops; tools that only read keep working. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
 - Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. No key or mouse button the server presses stays down after a call.
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
 
@@ -545,7 +545,7 @@ The window counts as in front when the foreground window is the window itself or
 | `FocusFailed` | Windows kept another window in front; `error` says which and why each step failed. Ask the user to click the window, or try again later. Also returned, with nothing tried, when another focus call was still running |
 | `NotResponding` | The window is not responding, or a call to it did not return in time; it was not activated |
 | `Cloaked` | The window is cloaked: on another virtual desktop, or hidden by its app; it was not activated |
-| `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done. Stop and ask the user |
+| `PausedByUser` | The user paused the server's input with the [pause hotkey](#pause-hotkey). Activating takes the keyboard focus from the user and can send input (the input unlock, the Esc that closes a menu), so nothing was done; a pause during the activation stops it at the next step. While paused, `focus_window` itself is refused before it runs (`isError`, see [Pause hotkey](#pause-hotkey)). Stop and ask the user |
 | `InvalidHandle` | The handle is not a window |
 
 ---
@@ -2044,7 +2044,7 @@ Every input call can be stopped. Cancelling the MCP request (`notifications/canc
 
 ### Input guard
 
-Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. `type_text` also stops with `ModifiersHeld` when a modifier goes down while it types: the user is taking the keyboard, or starting to press the pause hotkey.
+Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. The modifiers of the pause hotkey are never released that way: when all of them are down, the user may be pressing it, and the call returns `ModifiersHeld` even with `releaseHeldModifiers: true`. Every input call reads the modifiers again right before each batch it sends, so one that goes down meanwhile (the user taking the keyboard, or starting to press the pause hotkey) stops it with `ModifiersHeld` too, instead of turning keys into shortcuts or a click into a Shift-click.
 
 Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
@@ -2076,7 +2076,7 @@ Every input result reports:
 | Code | Meaning | What to do |
 |------|---------|------------|
 | `PausedByUser` | The user paused the server's input with the pause hotkey; nothing (more) was sent | Stop and tell the user. Do not retry, do not try to resume, never send the hotkey's keys. Continue only when the user says so; then they press the hotkey again or confirm [resume_input](#resume_input) |
-| `ModifiersHeld` | Shift, Ctrl, Alt or Windows is down (`heldModifiers`): the user is using the keyboard, or a key is stuck | Wait and retry. If nobody is pressing it, retry with `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) |
+| `ModifiersHeld` | Shift, Ctrl, Alt or Windows is down (`heldModifiers`): the user is using the keyboard, or a key is stuck | Wait and retry. If nobody is pressing it, retry with `releaseHeldModifiers: true` or call [release_all_input](#release_all_input); the pause hotkey's modifiers are never released that way, so if they stay down, ask the user |
 | `InputBusy` | Another input or window call held the input gate for 30 seconds | Retry when your other calls have finished |
 | `PauseChordNotAllowed` | `send_keys`: the keys contain the user's pause hotkey chord | Never send it; only the user may press it |
 | `TargetIsAgentHost` | The input would reach the agent's own terminal, editor or chat app | Pass `windowHandle` with the window you mean. For the host window itself, and only when the user asked: its handle as `windowHandle` with `allowHostTarget: true` |
@@ -2500,9 +2500,10 @@ The user's control over the server's input: the [pause hotkey](#pause-hotkey), a
 
 The user can stop the agent's input at any moment with a system-wide hotkey, by default **Ctrl+Alt+Shift+Pause**:
 
-- **Press it once to pause.** Every input tool and [focus_window](#focus_window) (with [apply_layout](#apply_layout)'s activation) return `PausedByUser` and send nothing. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
-- **Press it again to resume.** The hotkey always toggles. The agent can ask to resume with [resume_input](#resume_input), which resumes only when the user confirms.
-- The agent cannot resume itself: `resume_input` asks the user, and `send_keys` refuses the hotkey's keys (`PauseChordNotAllowed`), which would reach the hotkey like a real key press.
+- **Press it once to pause.** Every input tool returns `PausedByUser` and sends nothing. So does every tool that changes windows or starts or stops processes: the [Window Control](#window-control) tools ([focus_window](#focus_window) and [close_window](#close_window) among them), the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) return an error result (`isError: true`) with `errorCode` `PausedByUser` without running. Tools that only read (window lists, screenshots, UI Automation, browser reading, [get_control_status](#get_control_status)) keep working. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far; a window call that was already running finishes. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
+- **Press it again to resume.** The hotkey always toggles, but a press within 2 seconds of the pause is ignored, so pressing it twice to be sure does not resume. The agent can ask to resume with [resume_input](#resume_input), which resumes only when the user confirms.
+- **It pauses every server.** Each MCP client session starts its own server, and only one process can register the chord. The pause is shared by all of the user's Windows App Manager servers on the desktop: the chord pauses and resumes every one of them, whichever server registered it, and so does a confirmed [resume_input](#resume_input). A server that finds the chord held by another server reports `hotkey.state` `OtherServer`, and registers the chord itself within 2 seconds after that server stops. A server that starts while input is paused starts paused.
+- The agent cannot resume itself: `resume_input` asks the user, and `send_keys` refuses the hotkey's keys (`PauseChordNotAllowed`), which would reach the hotkey like a real key press. The modifiers of the chord are never released for the agent (`releaseHeldModifiers`), since the user may be pressing it.
 - Holding the chord down fires it once. On most keyboards Ctrl turns the Pause key into Break; the server registers both, so the chord also works in remote sessions that send Pause.
 
 The chord is set by the user in the server's environment, never by a tool argument:
@@ -2513,9 +2514,9 @@ The chord is set by the user in the server's environment, never by a tool argume
 
 For example, in the MCP server configuration: `"env": { "WAM_PAUSE_HOTKEY": "Ctrl+Alt+F12" }`.
 
-If another program already uses the chord, Windows refuses to register it: [get_control_status](#get_control_status) reports `hotkey.state` `Failed` with the reason, and the server logs a warning when it starts. Choose another chord and restart the server.
+If another program already uses the chord, Windows refuses to register it: [get_control_status](#get_control_status) reports `hotkey.state` `Failed` with the reason, and the server logs a warning when it starts. The server tries again every 2 seconds; to use another chord, set `WAM_PAUSE_HOTKEY` and restart the server. Servers configured with different chords each register their own, and every one of those chords pauses all of them. The shared pause is a named event in the user's logon session: a server running as administrator and one that is not may be unable to share it, and then each one keeps its own pause and only its own chord pauses it (`sharedPause: false`, and a warning in its log).
 
-When the server stops, including when the MCP client closes its standard input, it releases any key or button it still holds. A server process that is killed outright cannot release anything. The server does not watch for the user taking over the mouse or keyboard on their own; the hotkey is the way to stop it.
+When the server stops, including when the MCP client closes its standard input, it releases any key or button it still holds. A server process that is killed outright cannot release anything. The server does not watch for the user taking over the mouse or keyboard on their own; the hotkey is the way to stop it. A hotkey cannot tell an injected key press from the user's, and the shared pause is a named event any program of the user can open: a program the agent started before the pause could press the chord or resume the shared pause. While input is paused the agent cannot start programs (`launch_application` returns `PausedByUser`).
 
 ### get_control_status
 
@@ -2540,8 +2541,9 @@ Whether the user has paused the server's input (and how and since when), whether
   "pausedBy": "hotkey",
   "pausedAt": "2026-10-10T12:03:04+00:00",
   "hotkey": { "chord": "Ctrl+Alt+Shift+Pause", "state": "Registered", "source": "default" },
+  "sharedPause": true,
   "heldInput": { "serverHeld": [], "modifiersDown": [] },
-  "message": "Input is paused by the user (hotkey at 14:03:04). Every input tool returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: Ctrl+Alt+Shift+Pause again, or by confirming resume_input when you call it at the user's request."
+  "message": "Input is paused by the user (hotkey at 14:03:04). Every input tool and every tool that changes windows or starts or stops processes returns PausedByUser. Stop and ask the user how to continue. Only the user can resume: Ctrl+Alt+Shift+Pause again, or by confirming resume_input when you call it at the user's request."
 }
 ```
 
@@ -2549,8 +2551,9 @@ Whether the user has paused the server's input (and how and since when), whether
 |-------|---------|
 | `paused` | True while the user has paused input |
 | `pausedBy`, `pausedAt` | How (`hotkey`) and when it was paused; left out while running |
-| `resumedBy`, `resumedAt` | How (`hotkey`, or `resume_input` after the user confirmed) and when it was last resumed |
-| `hotkey` | `chord`, `state` (`Registered`, `Failed`, `Disabled` when `WAM_PAUSE_HOTKEY` is `none`, `NotStarted`), `source` (`default` or `WAM_PAUSE_HOTKEY`) and `error` (why it is not registered, or why the configured chord was not used) |
+| `resumedBy`, `resumedAt` | How (`hotkey`, `resume_input` after the user confirmed, or `another_server` when another server's hotkey or confirmed `resume_input` resumed the shared pause) and when it was last resumed |
+| `hotkey` | `chord`, `state` (`Registered`; `OtherServer` when another Windows App Manager server on the desktop has registered the chord, whose presses pause this server too; `Failed`; `Disabled` when `WAM_PAUSE_HOTKEY` is `none`; `NotStarted`), `source` (`default` or `WAM_PAUSE_HOTKEY`) and `error` (why it is not registered, or why the configured chord was not used) |
+| `sharedPause` | `true` when the pause is shared by every Windows App Manager server on the desktop: any server's chord pauses and resumes this one, and so does a confirmed `resume_input` in any of them |
 | `heldInput` | `serverHeld`: keys and buttons the server pressed and could not release (normally empty); `modifiersDown`: modifier keys that are down now, the user's or stuck; `lastRelease`: the last release that sent something (`at`, `reason`, `released`, `stillHeld`) |
 | `message` | What this means for the agent |
 
@@ -2585,15 +2588,15 @@ Ask the user to resume the server's input after they paused it. The server asks 
 | Code | Meaning | What to do |
 |------|---------|------------|
 | `ResumeNeedsUser` | The MCP client cannot ask the user (it does not support elicitation), so only the user can resume, with the hotkey | Tell the user and wait |
-| `ResumeDeclined` | The user said no, dismissed the question, left the checkbox off, or did not answer within 5 minutes | Input stays paused; ask the user what to do |
+| `ResumeDeclined` | The user said no, dismissed the question, left the checkbox off, or did not answer within 5 minutes; or the user paused again while the question was open (the answer was for the earlier pause); or another `resume_input` call is already waiting for the user's answer | Input stays paused; ask the user what to do. Do not ask again while a question is open |
 
-When input is not paused, `success` is true and `wasPaused` false, and nobody is asked. When the user presses the hotkey while the question is open, the result reports `resumedBy: "hotkey"`. The confirmation is only as reliable as the client: a client that answered elicitations by itself would defeat it.
+When input is not paused, `success` is true and `wasPaused` false, and nobody is asked. When the user presses the hotkey while the question is open, the result reports `resumedBy: "hotkey"`. Only one question is open at a time. With a shared pause (`sharedPause` in [get_control_status](#get_control_status)), resuming resumes every server on the desktop, and the question tells the user so. The confirmation is only as reliable as the client: a client that answered elicitations by itself would defeat it.
 
 ---
 
 ### release_all_input
 
-Release keys and mouse buttons that are stuck down. Sends the up event of every key and button the server pressed and could not release; normally there are none, because every input call releases its own, also after a failed or interrupted batch, and the server releases them when it stops. With `releaseHeldModifiers: true` it also releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it, for example after an input tool returned `ModifiersHeld` and nobody is pressing the key. Releasing Alt or Windows first sends an unassigned key, so no menu opens. Works while input is paused, except for `releaseHeldModifiers` (`PausedByUser`).
+Release keys and mouse buttons that are stuck down. Sends the up event of every key and button the server pressed and could not release; normally there are none, because every input call releases its own, also after a failed or interrupted batch, and the server releases them when it stops. With `releaseHeldModifiers: true` it also releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it, for example after an input tool returned `ModifiersHeld` and nobody is pressing the key. Releasing Alt or Windows first sends an unassigned key, so no menu opens. Works while input is paused, except for `releaseHeldModifiers` (`PausedByUser`). When the modifiers that are down make up the pause hotkey's chord, they are left alone (`ModifiersHeld`): the user may be pressing it.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
@@ -3446,7 +3449,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, or its window did not appear |
-| `ModifiersHeld` | [Input Simulation](#input-simulation) tools | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input) |
+| `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). The modifiers of the [pause hotkey](#pause-hotkey) are never released for the agent: when all of them are down, ask the user |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
@@ -3457,7 +3460,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
-| `PausedByUser` | [Input Simulation](#input-simulation) tools, [focus_window](#focus_window), [apply_layout](#apply_layout) (in `focus`), [release_all_input](#release_all_input) (`releaseHeldModifiers`) | The user paused the server's input with the [pause hotkey](#pause-hotkey); nothing (more) was sent or activated. Stop and ask the user; never try to resume input yourself |
+| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); `isError: true` from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)); [focus_window](#focus_window) and [apply_layout](#apply_layout) (in `focus`) when the pause comes during the activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (`isError: true`), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
@@ -3465,7 +3468,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window) | The window is part of the desktop shell or of the agent's own host, and `force` was not true; nothing was sent |
-| `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time; input stays paused |
+| `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |

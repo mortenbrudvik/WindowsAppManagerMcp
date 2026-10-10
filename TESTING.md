@@ -1914,12 +1914,17 @@ Rules for new tests:
   may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`, `SetValue`, `Toggle`, `Select`,
   `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
   until it goes through a mockable wrapper or is reviewed onto a list.
-- Never register a real global hotkey. The pause hotkey (roadmap M1.10) registers its chord only
-  through `INativeHotkeyWrapper`, and only when `InputSessionStartup.StartAsync` runs; tests use
-  `FakeHotkeyWrapper`, whose message loop reads an in-memory queue (`Press()` posts WM_HOTKEY), and
-  never start the hosted service with the real wrapper. `HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper`
-  pins the RegisterHotKey and GetMessage calls to that wrapper, and the E2E `WrapperCatalog` classifies
-  its members as `GlobalHotkey`, which no tier allows.
+- Never register a real global hotkey, and never open the real shared pause. The pause hotkey (roadmap
+  M1.10) registers its chord, and the input session opens the pause every server on the desktop shares
+  (a named event the user's own servers follow), only through `INativeHotkeyWrapper`, and only when
+  `InputSessionStartup.StartAsync` runs; tests use `FakeHotkeyWrapper`, whose message loop reads an
+  in-memory queue (`Press()` posts WM_HOTKEY) and whose shared pause and chord marks live in a
+  `FakeNamedObjects` two fakes can share (two servers on one desktop), and never start the hosted
+  service with the real wrapper. A session that is not shared keeps its pause to itself, so
+  `new InputSession(...)` touches nothing; `FakeDesktopPauseFlag` stands in for the shared pause.
+  `HotkeyMethods_AreOnlyCalledByNativeHotkeyWrapper` pins the RegisterHotKey and GetMessage calls to
+  that wrapper, and the E2E `WrapperCatalog` classifies its members, and the shared pause's Set and
+  Reset, as `GlobalHotkey`, which no tier allows.
 - For the input session (pause, held keys, stuck-input recovery), use `FakeInputWrapper`: it records
   every SendInput batch, keeps a key state the way Windows does (`Press()` and `Lift()` stand in for
   the user's fingers), and can insert fewer events than asked, throw or block, so short counts,
