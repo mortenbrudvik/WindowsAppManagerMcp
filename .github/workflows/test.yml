@@ -121,9 +121,11 @@ jobs:
         # run, merged over every test project's coverage file: a line counts as covered when any test
         # project covers it. One file per project would not do: the end-to-end project covers almost
         # nothing in this run (its scenarios are desktop tests), and the order of the files is arbitrary.
-        # The suite measured 60.38% line coverage (Release, October 2026). The threshold leaves about one
-        # point of headroom for runner-dependent paths (window and process enumeration); raise it as
-        # coverage grows.
+        # Lines are keyed by full source path: coverlet writes file names relative to a <source> root that
+        # depends on which assemblies a project instruments, so relative names need not match across files.
+        # Merged, the suite measured 75.66% line coverage locally (Release, October 2026). The threshold of
+        # 59 dates from a measurement of 60.38% and has not been re-baselined yet; raise it to about a point
+        # below what CI reports here, leaving room for runner-dependent paths (window and process enumeration).
         shell: pwsh
         run: |
           $threshold = 59
@@ -132,13 +134,27 @@ jobs:
           if ($files.Count -eq 0) {
             throw 'No coverage.cobertura.xml was written to TestResults.'
           }
+          function Resolve-SourcePath([string]$fileName, [string[]]$sources) {
+            if ($sources.Count -eq 0 -or [System.IO.Path]::IsPathFullyQualified($fileName)) {
+              return $fileName
+            }
+            foreach ($source in $sources) {
+              $candidate = Join-Path $source $fileName
+              if (Test-Path -LiteralPath $candidate) {
+                return [System.IO.Path]::GetFullPath($candidate)
+              }
+            }
+            return [System.IO.Path]::GetFullPath((Join-Path $sources[0] $fileName))
+          }
           $valid = @{}
           $covered = @{}
           foreach ($file in $files) {
             $xml = [xml](Get-Content -LiteralPath $file.FullName)
+            $sources = @($xml.SelectNodes('/coverage/sources/source') | ForEach-Object { $_.InnerText })
             foreach ($class in $xml.SelectNodes("/coverage/packages/package[@name='$package']/classes/class")) {
+              $path = Resolve-SourcePath $class.filename $sources
               foreach ($line in $class.SelectNodes('lines/line')) {
-                $key = "$($class.filename):$($line.number)"
+                $key = "${path}:$($line.number)"
                 $valid[$key] = $true
                 if ([long]$line.hits -gt 0) {
                   $covered[$key] = $true
