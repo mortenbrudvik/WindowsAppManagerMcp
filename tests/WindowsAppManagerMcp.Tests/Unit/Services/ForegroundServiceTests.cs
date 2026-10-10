@@ -12,6 +12,11 @@ public class ForegroundServiceTests
     private static readonly nint Terminal = 0x200;
     private static readonly nint Dialog = 0x300;
     private static readonly nint OtherDialog = 0x400;
+
+    // Owned the WPF and WinForms way: overlapped, owned through GWLP_HWNDPARENT, not WS_POPUP. GA_ROOTOWNER
+    // walks GetParent, which returns the owner only for WS_POPUP windows, so these are their own root owner.
+    private static readonly nint WpfDialog = 0x500;
+    private static readonly nint WpfNestedDialog = 0x600;
     private const uint ActivationThread = 11;
     private const uint TerminalThread = 22;
     private const uint TargetThread = 33;
@@ -47,15 +52,18 @@ public class ForegroundServiceTests
 
     public ForegroundServiceTests()
     {
-        var windows = new[] { Target, Terminal, Dialog, OtherDialog };
+        var windows = new[] { Target, Terminal, Dialog, OtherDialog, WpfDialog, WpfNestedDialog };
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns<nint>(h => windows.Contains(h));
         _windows.Setup(w => w.GetForegroundWindow()).Returns(() => _foreground);
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.Root)).Returns<nint, WindowAncestor>((h, _) => h);
-        // The dialogs are owned by the target: their root owner is the target
+        // The Win32 dialogs (WS_POPUP) are owned by the target: their root owner is the target. The WPF
+        // dialogs are owned too (GW_OWNER), but each is its own root owner.
         _windows.Setup(w => w.GetAncestor(It.IsAny<nint>(), WindowAncestor.RootOwner))
             .Returns<nint, WindowAncestor>((h, _) => h == Dialog || h == OtherDialog ? Target : h);
         _windows.Setup(w => w.GetWindow(Dialog, GW_OWNER)).Returns(Target);
         _windows.Setup(w => w.GetWindow(OtherDialog, GW_OWNER)).Returns(Target);
+        _windows.Setup(w => w.GetWindow(WpfDialog, GW_OWNER)).Returns(Target);
+        _windows.Setup(w => w.GetWindow(WpfNestedDialog, GW_OWNER)).Returns(WpfDialog);
         // GW_ENABLEDPOPUP returns the window itself when it has no enabled popup
         _windows.Setup(w => w.GetWindow(It.IsAny<nint>(), GW_ENABLEDPOPUP)).Returns<nint, uint>((h, _) => h);
         _windows.Setup(w => w.GetWindowThreadProcessId(Terminal)).Returns((uint)TerminalPid);
@@ -78,6 +86,8 @@ public class ForegroundServiceTests
         _threads.Setup(t => t.GetWindowThreadId(Target)).Returns(TargetThread);
         _threads.Setup(t => t.GetWindowThreadId(Dialog)).Returns(TargetThread);
         _threads.Setup(t => t.GetWindowThreadId(OtherDialog)).Returns(TargetThread);
+        _threads.Setup(t => t.GetWindowThreadId(WpfDialog)).Returns(TargetThread);
+        _threads.Setup(t => t.GetWindowThreadId(WpfNestedDialog)).Returns(TargetThread);
         _threads.Setup(t => t.AttachThreadInput(It.IsAny<uint>(), It.IsAny<uint>(), It.IsAny<bool>()))
             .Returns<uint, uint, bool>((from, to, attach) =>
             {
@@ -155,13 +165,50 @@ public class ForegroundServiceTests
         outcome.BlockingPopup.Should().Be(Dialog);
         outcome.BlockingPopupTitle.Should().Be("Dialog");
         _windows.Verify(w => w.GetAncestor(Dialog, WindowAncestor.RootOwner), Times.AtLeastOnce);
+        _windows.Verify(w => w.GetWindow(Dialog, GW_OWNER), Times.Never, "a root owner equal to the target is enough");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenAWpfOrWinFormsDialogOfTheTargetIsInFront_CountsAsInFrontByTheOwnerChain()
+    {
+        // Arrange - not WS_POPUP, so GA_ROOTOWNER is the dialog itself; only GW_OWNER leads to the target
+        _foreground = WpfDialog;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeTrue();
+        outcome.Method.Should().Be(FocusMethod.Already);
+        outcome.ErrorCode.Should().Be(WindowErrorCode.None);
+        outcome.ForegroundHandle.Should().Be(WpfDialog);
+        outcome.BlockingPopup.Should().Be(WpfDialog);
+        outcome.BlockingPopupTitle.Should().Be("WpfDialog");
+        _calls.Should().BeEmpty();
+        _sentInput.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenADialogOfADialogOfTheTargetIsInFront_FollowsTheWholeOwnerChain()
+    {
+        // Arrange - for example a message box over a WPF settings dialog
+        _foreground = WpfNestedDialog;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeTrue();
+        outcome.Method.Should().Be(FocusMethod.Already);
+        outcome.BlockingPopup.Should().Be(WpfNestedDialog);
         _calls.Should().BeEmpty();
     }
 
     [Fact]
     public void EnsureForeground_WhenAWindowWithAnotherRootOwnerIsInFront_DoesNotCountIt()
     {
-        // Arrange - the terminal is its own root owner
+        // Arrange - the terminal is its own root owner and has no owner
         _foreground = Terminal;
         _lock = ForegroundLock.Always;
 
@@ -174,21 +221,27 @@ public class ForegroundServiceTests
         _windows.Verify(w => w.GetAncestor(Terminal, WindowAncestor.RootOwner), Times.AtLeastOnce);
     }
 
-    [Fact]
-    public void EnsureForeground_WhenTheTargetIsADialog_NeitherItsOwnerNorASiblingDialogCountsAsInFront()
+    [Theory]
+    [InlineData("Dialog", "Target")]
+    [InlineData("Dialog", "OtherDialog")]
+    [InlineData("Dialog", "WpfDialog")]
+    [InlineData("WpfDialog", "Target")]
+    [InlineData("WpfDialog", "Dialog")]
+    [InlineData("WpfNestedDialog", "WpfDialog")]
+    [InlineData("WpfNestedDialog", "Target")]
+    public void EnsureForeground_WhenTheTargetIsADialog_NeitherItsOwnersNorASiblingDialogCountsAsInFront(string target, string inFront)
     {
-        // Arrange - same root owner, but keyboard input would go to the owner or the other dialog
+        // Arrange - keyboard input would go to the owner or the other dialog, not to the target dialog
+        _foreground = Window(inFront);
         var sut = CreateSut();
 
         // Act
-        _foreground = Target;
-        var ownerInFront = sut.EnsureForeground(Dialog, timeoutMs: 0);
-        _foreground = OtherDialog;
-        var siblingInFront = sut.EnsureForeground(Dialog, timeoutMs: 0);
+        var outcome = sut.EnsureForeground(Window(target), timeoutMs: 0);
 
         // Assert
-        ownerInFront.IsForeground.Should().BeFalse();
-        siblingInFront.IsForeground.Should().BeFalse();
+        outcome.IsForeground.Should().BeFalse();
+        outcome.Method.Should().BeNull();
+        sut.IsInFront(Window(target)).Should().BeFalse();
     }
 
     [Fact]
@@ -582,6 +635,28 @@ public class ForegroundServiceTests
     }
 
     [Fact]
+    public void EnsureForeground_WhenAWpfModalDialogDisablesTheTarget_AcceptsTheDialogAtTheFirstStep()
+    {
+        // Arrange - ShowDialog in WPF or WinForms: the owner is disabled and the dialog is not WS_POPUP,
+        // so its GA_ROOTOWNER is itself
+        _windows.Setup(w => w.GetWindowLongPtr(Target, GWL_STYLE)).Returns(new nint(WsDisabled));
+        _windows.Setup(w => w.GetWindow(Target, GW_ENABLEDPOPUP)).Returns(WpfDialog);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert - no attach to another thread and no unlock input after the dialog is already in front
+        outcome.IsForeground.Should().BeTrue();
+        outcome.Method.Should().Be(FocusMethod.SetForeground);
+        outcome.ForegroundHandle.Should().Be(WpfDialog);
+        outcome.BlockingPopup.Should().Be(WpfDialog);
+        outcome.BlockingPopupTitle.Should().Be("WpfDialog");
+        _calls.Should().Equal("SetForegroundWindow(WpfDialog) -> True");
+        _sentInput.Should().BeEmpty();
+    }
+
+    [Fact]
     public void EnsureForeground_WhenFocusFailsOnATargetAModalDialogDisables_ReportsTheDialog()
     {
         // Arrange
@@ -675,6 +750,9 @@ public class ForegroundServiceTests
         _foreground = Dialog;
         var dialogOfTargetInFront = sut.IsInFront(Target);
         var siblingDialogInFront = sut.IsInFront(OtherDialog);
+        _foreground = WpfNestedDialog;
+        var wpfDialogOfTargetInFront = sut.IsInFront(Target);
+        var wpfDialogOfWpfDialogInFront = sut.IsInFront(WpfDialog);
         _foreground = Terminal;
         var terminalInFront = sut.IsInFront(Target);
 
@@ -682,6 +760,8 @@ public class ForegroundServiceTests
         targetInFront.Should().BeTrue();
         dialogOfTargetInFront.Should().BeTrue();
         siblingDialogInFront.Should().BeFalse("a sibling dialog takes the keys, not the target dialog");
+        wpfDialogOfTargetInFront.Should().BeTrue("WPF and WinForms dialogs are owned windows too, found by GW_OWNER");
+        wpfDialogOfWpfDialogInFront.Should().BeTrue();
         terminalInFront.Should().BeFalse();
         _calls.Should().BeEmpty();
         _activationThread.Calls.Should().Be(0, "a read needs no hop to the activation thread");
@@ -745,9 +825,13 @@ public class ForegroundServiceTests
 
     private static string Name(nint window) =>
         window == Target ? "Target" : window == Terminal ? "Terminal" : window == Dialog ? "Dialog" :
-        window == OtherDialog ? "OtherDialog" : $"0x{window:X}";
+        window == OtherDialog ? "OtherDialog" : window == WpfDialog ? "WpfDialog" :
+        window == WpfNestedDialog ? "WpfNestedDialog" : $"0x{window:X}";
 
     private static string Title(nint window) => Name(window);
+
+    private static nint Window(string name) =>
+        new[] { Target, Terminal, Dialog, OtherDialog, WpfDialog, WpfNestedDialog }.Single(w => Name(w) == name);
 
     /// <summary>
     /// Runs the work inline with a token the test cancels, the way <see cref="ForegroundThread"/> cancels

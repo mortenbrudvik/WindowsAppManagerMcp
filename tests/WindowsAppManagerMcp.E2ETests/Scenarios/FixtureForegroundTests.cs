@@ -51,4 +51,42 @@ public class FixtureForegroundTests
         again.IsForeground.Should().BeTrue(again.Error);
         again.Method.Should().Be(FocusMethod.Already);
     }
+
+    [DesktopFact]
+    public void EnsureForeground_WithTheModalOpen_ActivatesTheWpfDialogAndReportsItAsTheBlockingPopup()
+    {
+        // Arrange - ShowDialog disables the main window. The WPF dialog is owned (GW_OWNER) but not
+        // WS_POPUP, so GA_ROOTOWNER of the dialog is the dialog itself: only the owner chain links it to
+        // the main window
+        using var e2e = E2ESession.Start(DesktopTier.Input, _output, new FixtureLaunchOptions { OpenModal = true });
+        var modal = e2e.Fixture.WaitForEvent(FixtureContract.Events.ModalOpened).GetHandle("hwnd");
+        var main = e2e.Fixture.MainWindowHandle;
+        _output.WriteLine(
+            $"In front before: {UiaReads.DescribeWindow(E2ENative.GetForegroundWindow())}; modal 0x{modal:X}, " +
+            $"GA_ROOTOWNER(modal) = 0x{E2ENative.GetAncestor(modal, E2ENative.GA_ROOTOWNER):X}, " +
+            $"GW_ENABLEDPOPUP(main) = 0x{E2ENative.GetWindow(main, E2ENative.GW_ENABLEDPOPUP):X}");
+
+        // Act
+        var outcome = e2e.Server.Foreground.EnsureForeground(main);
+        _output.WriteLine(
+            $"EnsureForeground: isForeground={outcome.IsForeground}, method={outcome.Method}, " +
+            $"foreground=0x{outcome.ForegroundHandle:X}, blockingPopup=0x{outcome.BlockingPopup ?? 0:X}, " +
+            $"errorCode={outcome.ErrorCode}, error={outcome.Error}");
+
+        // Assert - the dialog is what takes the keys, and the main window counts as in front through it
+        outcome.IsForeground.Should().BeTrue(outcome.Error);
+        outcome.ErrorCode.Should().Be(WindowErrorCode.None);
+        outcome.ForegroundHandle.Should().Be(modal);
+        outcome.BlockingPopup.Should().Be(modal);
+        outcome.BlockingPopupTitle.Should().Be(FixtureContract.ModalTitle(e2e.Fixture.Instance));
+        E2ENative.GetForegroundWindow().Should().Be(modal);
+        E2ENative.GetWindow(modal, E2ENative.GW_OWNER).Should().Be(main);
+        e2e.Server.Foreground.IsInFront(main).Should().BeTrue();
+
+        // A second call finds the main window in front through its dialog and changes nothing
+        var again = e2e.Server.Foreground.EnsureForeground(main);
+        again.IsForeground.Should().BeTrue(again.Error);
+        again.Method.Should().Be(FocusMethod.Already);
+        again.BlockingPopup.Should().Be(modal);
+    }
 }

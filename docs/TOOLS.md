@@ -443,7 +443,7 @@ Windows' foreground lock usually refuses a background process such as this serve
 
 If the window is in menu mode after it was activated (a menu bar or menu is active, so typed letters would pick menu items), Esc is sent to close the menu, but only while the window is verified to be in front, and `menuClosed` is true.
 
-The window counts as in front when the foreground window is the window itself or a window it owns, such as a dialog. A dialog in front is reported as `blockingPopup`, because keyboard input goes to the dialog. The foreground can change again before the next call, so confirm with [get_foreground_window](#get_foreground_window) immediately before keyboard or mouse input.
+The window counts as in front when the foreground window is the window itself or a window it owns, such as a dialog, also a dialog of that dialog. This includes WPF and WinForms dialogs, which Windows does not link to their owner through GA_ROOTOWNER, so the server follows the owner chain. A dialog in front is reported as `blockingPopup`, because keyboard input goes to the dialog. The foreground can change again before the next call, so confirm with [get_foreground_window](#get_foreground_window) immediately before keyboard or mouse input.
 
 **Example:**
 > "Bring Chrome to the front"

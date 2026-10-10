@@ -297,12 +297,17 @@ public sealed class ForegroundService : IForegroundService
     }
 
     /// <summary>
-    /// True when <paramref name="foreground"/> is <paramref name="root"/> or a window it owns. The cheap
-    /// check comes first: the foreground window's root owner (GA_ROOTOWNER) must be the target's. That
-    /// is enough for an unowned target. When the target is itself owned (a dialog), its owner and the
-    /// owner's other dialogs share that root owner, so the foreground window's owner chain must also
-    /// pass through the target.
+    /// True when <paramref name="foreground"/> is <paramref name="root"/> or a window it owns, directly
+    /// or through other owned windows: <paramref name="root"/> is in the foreground window's owner chain
+    /// (GW_OWNER). The walk goes up from the foreground window only, so a dialog target's owner and its
+    /// sibling dialogs never count as the dialog.
     /// </summary>
+    /// <remarks>
+    /// GA_ROOTOWNER is only a fast positive. It walks GetParent, which returns the owner only for WS_POPUP
+    /// windows: a Win32 dialog resolves to its owner, but a WPF or WinForms owned window (overlapped,
+    /// owned through GWLP_HWNDPARENT) resolves to itself. So a root owner equal to the target proves
+    /// ownership, and any other root owner proves nothing; the owner chain decides.
+    /// </remarks>
     private bool IsInFront(nint root, nint foreground)
     {
         if (foreground == nint.Zero)
@@ -310,18 +315,7 @@ public sealed class ForegroundService : IForegroundService
             return false;
         }
 
-        if (foreground == root)
-        {
-            return true;
-        }
-
-        var rootOwner = RootOwnerOf(root);
-        if (RootOwnerOf(foreground) != rootOwner)
-        {
-            return false;
-        }
-
-        if (rootOwner == root)
+        if (foreground == root || RootOwnerOf(foreground) == root)
         {
             return true;
         }

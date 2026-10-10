@@ -30,9 +30,11 @@ public static class FocusMethod
 /// </summary>
 /// <remarks>
 /// The target counts as in front when the foreground window is the target's top-level window or a
-/// window it owns, such as a dialog: GetAncestor(GA_ROOTOWNER) of the foreground window is the target's
-/// root owner and the target is in the foreground window's owner chain. A dialog in front is reported
-/// in <see cref="BlockingPopup"/>, because keyboard input goes to the dialog, not to the target.
+/// window it owns, such as a dialog, directly or through other owned windows: the target is in the
+/// foreground window's owner chain (GW_OWNER). GetAncestor(GA_ROOTOWNER) equal to the target is a fast
+/// check for Win32 dialogs (WS_POPUP), but it does not follow WPF or WinForms owned windows, which are
+/// not WS_POPUP, so the owner chain decides. A dialog in front is reported in
+/// <see cref="BlockingPopup"/>, because keyboard input goes to the dialog, not to the target.
 /// </remarks>
 public sealed record FocusOutcome
 {

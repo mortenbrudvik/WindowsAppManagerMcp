@@ -13,7 +13,8 @@ public interface IForegroundService
     /// Brings <paramref name="handle"/> (its top-level window) to the foreground and verifies it. The
     /// steps, each followed by a check of the foreground window:
     /// <list type="number">
-    /// <item>Already in front (the window or a dialog it owns): done, nothing is changed.</item>
+    /// <item>Already in front (the window or a dialog it owns, by the owner chain): done, nothing is
+    /// changed.</item>
     /// <item>A window that is not responding or is cloaked is refused (NotResponding, Cloaked).</item>
     /// <item>A minimized window is restored. A window that a modal dialog disables is activated through
     /// that dialog.</item>
@@ -39,7 +40,8 @@ public interface IForegroundService
 
     /// <summary>
     /// True when <paramref name="handle"/> (its top-level window) or a window it owns, such as a dialog,
-    /// is the foreground window right now: the rule <see cref="EnsureForeground"/> verifies with. Only
+    /// is the foreground window right now: the target is in the foreground window's owner chain, so WPF
+    /// and WinForms dialogs count too. The same rule <see cref="EnsureForeground"/> verifies with. Only
     /// reads, on the calling thread, so it is cheap enough to check again before every input batch.
     /// </summary>
     bool IsInFront(nint handle);
