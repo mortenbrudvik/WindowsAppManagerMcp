@@ -37,6 +37,9 @@ public static class ServiceRegistration
         services.AddSingleton<IUIAutomationWrapper, UIAutomationWrapper>();
         services.AddSingleton<ICdpService, CdpService>();
         services.AddSingleton<IMonitorService, MonitorService>();
+        // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
+        // so a window tool cannot hold the input gate until the application recovers
+        services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
         services.AddSingleton<IWindowService, WindowService>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();

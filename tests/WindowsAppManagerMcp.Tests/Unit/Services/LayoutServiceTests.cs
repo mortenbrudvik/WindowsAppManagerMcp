@@ -560,6 +560,37 @@ public class LayoutServiceTests : IDisposable
             Times.Never);
     }
 
+    [Fact]
+    public async Task ApplyPresetAsync_AWindowThatDoesNotRespond_FailsItsPlacement_AndTheOthersAreArranged()
+    {
+        // Arrange - the first window's application is hung: WindowService gives up on it at the deadline
+        var hung = TestDataFactory.CreateWindowInfo(handleValue: 1001, title: "Hung - App", processName: "hungapp", processId: 5001);
+        var fine = TestDataFactory.CreateWindowInfo(handleValue: 1002, title: "Fine - App", processName: "fineapp", processId: 5002);
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo> { hung, fine });
+        _mockWindowService.Setup(w => w.SetWindowBounds(hung.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Throws(new WindowNotRespondingException(hung.Handle, "Window 1001 did not answer within 5 s."));
+        _mockWindowService.Setup(w => w.SetWindowBounds(fine.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns(true);
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
+            "hung-test",
+            placements: new List<WindowPlacement>
+            {
+                new(new WindowMatcher(ProcessName: "hungapp"), 0, new RelativePosition(0, 0, 0.5, 1.0), null, Focus: true, Order: 0),
+                new(new WindowMatcher(ProcessName: "fineapp"), 0, new RelativePosition(0.5, 0, 0.5, 1.0), null, Focus: false, Order: 1)
+            }));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("hung-test", matchBy: "process_only");
+
+        // Assert - not focused either: the focus step needs the window placed first
+        result.Success.Should().BeFalse();
+        result.WindowsArranged.Should().Be(1);
+        result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("Hung - App").And.Contain("did not answer");
+        _mockForegroundService.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
     /// <summary>
     /// T5.6.4: Test ApplyPresetAsync with matchBy: process_only.
     /// Should match windows by process name only, ignoring title.

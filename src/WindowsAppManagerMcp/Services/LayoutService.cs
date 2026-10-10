@@ -448,7 +448,20 @@ public class LayoutService : ILayoutService
             var w = (int)(placement.Position.Width * workArea.Width);
             var h = (int)(placement.Position.Height * workArea.Height);
 
-            if (_windowService.SetWindowBounds(window.Handle, x, y, w, h))
+            bool placed;
+            string? notResponding = null;
+            try
+            {
+                placed = _windowService.SetWindowBounds(window.Handle, x, y, w, h);
+            }
+            catch (WindowNotRespondingException ex)
+            {
+                // The application is hung or busy: this placement fails, and the others still run
+                placed = false;
+                notResponding = ex.Message;
+            }
+
+            if (placed)
             {
                 arranged++;
 
@@ -466,7 +479,8 @@ public class LayoutService : ILayoutService
             }
             else
             {
-                AddError(LayoutErrorCode.ArrangeFailed, $"Failed to arrange window '{window.Title}' for {label}");
+                AddError(LayoutErrorCode.ArrangeFailed,
+                    $"Failed to arrange window '{window.Title}' for {label}{(notResponding == null ? string.Empty : $": {notResponding}")}");
             }
 
             // Small delay between window operations

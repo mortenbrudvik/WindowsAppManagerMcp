@@ -37,13 +37,16 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
-        var success = _windowService.MoveWindow(hwnd, x, y, bringToFront);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.MoveWindow(hwnd, x, y, bringToFront);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
+            );
+        });
     }
 
     [McpServerTool(Name = "resize_window")]
@@ -62,13 +65,16 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
-        var success = _windowService.ResizeWindow(hwnd, width, height);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.ResizeWindow(hwnd, width, height);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
+            );
+        });
     }
 
     [McpServerTool(Name = "set_window_bounds")]
@@ -93,13 +99,16 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
-        var success = _windowService.SetWindowBounds(hwnd, x, y, width, height, bringToFront);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.SetWindowBounds(hwnd, x, y, width, height, bringToFront);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
+            );
+        });
     }
 
     [McpServerTool(Name = "set_window_state")]
@@ -124,13 +133,16 @@ public class WindowManagerTools
             _ => WindowState.Normal
         };
 
-        var success = _windowService.SetWindowState(hwnd, windowState);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.SetWindowState(hwnd, windowState);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewState: newInfo?.State.ToString().ToLowerInvariant()
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewState: newInfo?.State.ToString().ToLowerInvariant()
+            );
+        });
     }
 
     [McpServerTool(Name = "focus_window")]
@@ -243,13 +255,16 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: $"Invalid snap position: {position}", ErrorCode: nameof(InvalidSnapPosition));
         }
 
-        var success = _windowService.SnapWindow(hwnd, snapPosition.Value, monitorIndex, bringToFront);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.SnapWindow(hwnd, snapPosition.Value, monitorIndex, bringToFront);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
+            );
+        });
     }
 
     [McpServerTool(Name = "move_window_to_monitor")]
@@ -270,13 +285,16 @@ public class WindowManagerTools
             return new WindowOperationResult(false, Error: "Invalid window handle", ErrorCode: nameof(InvalidHandle));
         }
 
-        var success = _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront);
-        var newInfo = _windowService.GetWindowInfo(hwnd);
+        return ReportingNotResponding(() =>
+        {
+            var success = _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront);
+            var newInfo = _windowService.GetWindowInfo(hwnd);
 
-        return new WindowOperationResult(
-            Success: success,
-            NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
-        );
+            return new WindowOperationResult(
+                Success: success,
+                NewBounds: newInfo != null ? new BoundsDto(newInfo.Bounds.X, newInfo.Bounds.Y, newInfo.Bounds.Width, newInfo.Bounds.Height) : null
+            );
+        });
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch")]
@@ -410,6 +428,23 @@ public class WindowManagerTools
             Failed: items.Count(i => !i.Success),
             Results: items
         );
+    }
+
+    /// <summary>
+    /// Runs a window change and reports a window that did not answer in time (<see cref="WindowNotRespondingException"/>,
+    /// from the service's <see cref="IWindowCallRunner"/>) as NotResponding: the application is hung or busy, and the
+    /// tool returns instead of holding the input gate until it answers.
+    /// </summary>
+    private static WindowOperationResult ReportingNotResponding(Func<WindowOperationResult> change)
+    {
+        try
+        {
+            return change();
+        }
+        catch (WindowNotRespondingException ex)
+        {
+            return new WindowOperationResult(false, Error: ex.Message, ErrorCode: nameof(NotResponding));
+        }
     }
 
     private static SnapPosition? ParseSnapPosition(string position)
