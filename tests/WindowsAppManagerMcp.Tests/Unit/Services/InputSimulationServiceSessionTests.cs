@@ -126,25 +126,27 @@ public class InputSimulationServiceSessionTests
     [Fact]
     public async Task Pause_DuringTheDelayBetweenKeystrokes_CancelsTheWait()
     {
-        // Arrange - the hotkey is pressed while the third character is being sent; the pause waits for that batch
+        // Arrange - the hotkey is pressed while the first character is being sent; the pause waits for that batch,
+        // so it comes during the delay before the second character
         var pausing = Task.CompletedTask;
         _input.BeforeSend = _ =>
         {
-            if (_input.Batches.Count == 2)
+            if (_input.Batches.Count == 0)
             {
                 pausing = Task.Run(() => _session.Pause(InputControlSources.Hotkey));
             }
         };
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
-        // Act - ten characters, 100 ms apart: a second of typing
-        var result = await CreateSut().TypeTextAsync("abcdefghij", 100);
+        // Act - ten characters, 10 s apart
+        var result = await CreateSut().TypeTextAsync("abcdefghij", 10_000);
         await pausing.WaitAsync(Timeout);
 
-        // Assert - the cancelled delay ended the call long before the text was done
+        // Assert - the cancelled delay ended the call: a delay that was waited out would have taken 10 s. The bound is
+        // far from both, so a slow machine, or another test holding the input gate for a moment, cannot fail it.
         result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
-        result.CharactersTyped.Should().Be(3);
-        watch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(900));
+        result.CharactersTyped.Should().Be(1);
+        watch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
         _input.Events.Count(e => (e.Flags & KeyUp) == 0).Should().Be(_input.Events.Count(e => (e.Flags & KeyUp) != 0),
             "every key that went down went up again");
         VerifyNothingIsDown();
