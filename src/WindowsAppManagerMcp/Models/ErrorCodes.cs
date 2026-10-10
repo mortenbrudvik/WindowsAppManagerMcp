@@ -29,8 +29,29 @@ public enum WindowErrorCode
     /// <summary>Failed to focus the window.</summary>
     FocusFailed = 7,
 
-    /// <summary>Failed to close the window.</summary>
-    CloseFailed = 8
+    /// <summary>
+    /// The close message could not be sent (a Win32 error other than access denied, or an unexpected
+    /// error in a batch); the error text has the reason.
+    /// </summary>
+    CloseFailed = 8,
+
+    // The close guard codes (roadmap M1.7) are numbered from 20, so that other window error codes can
+    // be added above without renumbering.
+
+    /// <summary>
+    /// The window is part of the desktop shell (the desktop or a taskbar) or of the agent's own host (the
+    /// terminal, editor or chat app the server was started from), and force was not true. Nothing was sent.
+    /// </summary>
+    ProtectedWindow = 20,
+
+    /// <summary>
+    /// Windows refused the message with ERROR_ACCESS_DENIED (5): User Interface Privilege Isolation blocks
+    /// messages to windows of more privileged processes, such as an app running as administrator.
+    /// </summary>
+    AccessDenied = 21,
+
+    /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
+    ConfirmationRequired = 22
 }
 
 /// <summary>

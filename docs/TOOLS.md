@@ -27,7 +27,7 @@ The input tools send real mouse and keyboard input to the user's desktop.
 
 - `type_text` and `send_keys` have no target window. They type into whatever window is in the foreground, and that is often the terminal or chat window running the agent. Call `get_foreground_window` immediately before every `type_text` or `send_keys` call and check that `handle` is the intended window. If it is not, call `focus_window` and check again. Windows can refuse focus changes, so do not trust `focus_window` alone.
 - Never send destructive key chords without that check. Examples: Alt+F4 (`%{F4}`), Ctrl+W, Ctrl+Q, Ctrl+A followed by Delete, or Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
-- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4.
+- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window. Closing more than 3 windows in one batch needs `confirm: true`.
 - `click`, `right_click` and `double_click` act on whatever is at the given point. Bring the target window to the front and confirm it with `get_foreground_window` immediately before every click.
 - After each action, check the result before the next step.
 
@@ -456,12 +456,13 @@ Bring a window to the foreground and give it focus.
 
 ### close_window
 
-Close a window gracefully (sends WM_CLOSE message).
+Close a window gracefully (sends WM_CLOSE message). Protected windows are refused unless `force` is true.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | long | Yes | - | Window handle |
+| force | bool | No | false | Close even a protected window (see below). Set it only when the user explicitly asked to close that window |
 
 **Example:**
 > "Close the Notepad window"
@@ -481,6 +482,28 @@ Close a window gracefully (sends WM_CLOSE message).
   "success": true
 }
 ```
+
+**Protected windows.** Without `force: true`, close_window sends nothing to these windows and returns `ProtectedWindow`:
+- The desktop shell: a window of class `Progman` (Program Manager, the desktop), `WorkerW`, `Shell_TrayWnd` (the taskbar) or `Shell_SecondaryTrayWnd` (the taskbar on another monitor), or the shell's desktop window whatever its class. Child windows and owned popups of these count too: a window that gets WM_CLOSE and does not handle it is destroyed, so closing part of the taskbar takes that part down. Closing Program Manager opens the Shut Down Windows dialog.
+- The agent's own host: the terminal, editor or chat app this server was started from (its ancestor processes, the window that shows its console, and the window that was in front when the server started), and every window owned by one of those. Closing it can end the agent's session.
+
+File Explorer folder windows are ordinary windows, even though explorer.exe also runs the desktop and the taskbar.
+
+```json
+{
+  "success": false,
+  "error": "Window 65890 is part of the desktop shell (Progman): the desktop or a taskbar. Closing it can open the Shut Down Windows dialog or take down part of the shell. Nothing was sent. Pass force=true only if the user explicitly asked to close this window.",
+  "errorCode": "ProtectedWindow"
+}
+```
+
+**Error codes:**
+| Code | Meaning |
+|------|---------|
+| `InvalidHandle` | The handle is not a window, or the window closed before the message was sent |
+| `ProtectedWindow` | The window is part of the desktop shell or of the agent's host, and `force` was not true. Nothing was sent |
+| `AccessDenied` | Windows blocked the message (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks messages to it from the server |
+| `CloseFailed` | Windows did not accept the message for another reason; `error` gives the Win32 error |
 
 > **Note:** The application may prompt to save unsaved work before closing. `success: true` means the close request (WM_CLOSE) was sent, not that the window has closed. Check with [find_windows](#find_windows) using the handle.
 
@@ -749,13 +772,15 @@ Each change object contains:
 
 ### close_windows_batch
 
-Close multiple windows gracefully in a single batch operation.
+Close multiple windows gracefully in a single batch operation. More than 3 windows require `confirm: true`.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | windows | array | Yes | - | Array of window handles to close |
 | delayBetweenMs | int | No | 50 | Delay between operations in milliseconds |
+| confirm | bool | No | false | Must be true to close more than 3 windows in one batch |
+| force | bool | No | false | Close protected windows too (see [close_window](#close_window)); applies to every window in the batch. Set it only when the user explicitly asked to close those windows |
 
 Each window object contains:
 | Field | Type | Required | Description |
@@ -790,7 +815,23 @@ Each window object contains:
 }
 ```
 
-> **Note:** Applications may prompt to save unsaved work before closing.
+Each window is handled like [close_window](#close_window): a protected window (the desktop shell, the agent's own host) is refused with `errorCode: "ProtectedWindow"` unless `force` is true, and the batch goes on with the next window. A failed item has `error` and `errorCode` (`InvalidHandle`, `ProtectedWindow`, `AccessDenied` or `CloseFailed`):
+
+```json
+{
+  "totalRequested": 2,
+  "succeeded": 1,
+  "failed": 1,
+  "results": [
+    { "handle": 12345, "success": true },
+    { "handle": 65890, "success": false, "error": "Window 65890 is part of the desktop shell (Progman): ...", "errorCode": "ProtectedWindow" }
+  ]
+}
+```
+
+A batch of more than 3 windows without `confirm: true` closes nothing and returns a tool error (`isError: true`) with `errorCode: "ConfirmationRequired"`. Check the handles with [find_windows](#find_windows) before you confirm.
+
+> **Note:** Applications may prompt to save unsaved work before closing. `success: true` means the close request was sent, not that the window has closed.
 
 ---
 
@@ -3016,7 +3057,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 
 | Code | Returned by | Meaning |
 |------|-------------|---------|
-| `AccessDenied` | [kill_process](#kill_process) | The process runs elevated, as another user or is protected; the server needs at least the same privileges |
+| `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window: Windows blocked the close message (Win32 error 5), because the window belongs to a more privileged app |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized or brought to the foreground |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools | UI Automation is not available |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
@@ -3032,7 +3073,8 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
-| `ConfirmationRequired` | [kill_process](#kill_process) | `confirm` was not true |
+| `CloseFailed` | [close_window](#close_window), close_windows_batch | Windows did not accept the close message; `error` gives the Win32 error |
+| `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch) (`isError: true`) | `confirm` was not true (close_windows_batch: more than 3 windows); nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
@@ -3051,7 +3093,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), capture_with_elements (in `error`) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools | `format` is not auto, png, jpeg or jpg |
-| `InvalidHandle` | [Window Control](#window-control) tools, [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window handle is zero or invalid, or the window no longer exists |
+| `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window handle is zero or invalid, or the window no longer exists |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative, `maxWidth` is not positive, or the limit would scale an edge of the image to zero pixels |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The key specification is malformed |
 | `InvalidMonitorIndex` | [take_screenshot](#take_screenshot) | `monitorIndex` is out of range; see [list_screens](#list_screens) |
@@ -3081,6 +3123,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |
 | `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
+| `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window) | The window is part of the desktop shell or of the agent's own host, and `force` was not true; nothing was sent |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools | Windows did not accept the input (SendInput or SetCursorPos failed) |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (`isError: true` from get_layout and list_layouts) | The layouts folder cannot be created or used |
