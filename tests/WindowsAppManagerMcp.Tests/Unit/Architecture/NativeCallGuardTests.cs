@@ -70,20 +70,48 @@ public class NativeCallGuardTests
     }
 
     [Fact]
-    public void ProcessStartAndKill_AreOnlyCalledByProcessService()
+    public void ProcessStartAndKill_AreOnlyCalledByNativeProcessWrapper()
     {
         // Act
         var callers = FindCallers(callee =>
             callee.DeclaringType == typeof(Process) &&
             callee.Name is nameof(Process.Start) or nameof(Process.Kill) or nameof(Process.CloseMainWindow));
 
-        // Assert - ProcessService has no launcher seam yet, so its own tests avoid
-        // Process.Start by other means (see ProcessServiceTests). No other type may start
-        // or stop processes; route new callers through IProcessService.
-        callers.Keys.Should().Contain(typeof(ProcessService),
-            "the scan must see ProcessService's own Process.Start call");
-        Unexpected(callers, typeof(ProcessService)).Should().BeEmpty(
-            "starting and stopping processes must go through IProcessService so tests can mock it");
+        // Assert - NativeProcessWrapper (with its nested ProcessHandle) is the process seam that
+        // ProcessService and its tests mock. Services and tools must not start, close or kill
+        // processes themselves; route new callers through INativeProcessWrapper or IProcessService.
+        callers.Keys.Should().Contain(typeof(NativeProcessWrapper),
+            "the scan must see the wrapper's own Process.Start, Kill and CloseMainWindow calls");
+        callers[typeof(NativeProcessWrapper)].Should().Contain(c => c.EndsWith($"Process.{nameof(Process.Start)}"))
+            .And.Contain(c => c.EndsWith($"Process.{nameof(Process.Kill)}"))
+            .And.Contain(c => c.EndsWith($"Process.{nameof(Process.CloseMainWindow)}"));
+        Unexpected(callers, typeof(NativeProcessWrapper)).Should().BeEmpty(
+            "starting and stopping processes must go through INativeProcessWrapper so tests can mock it");
+    }
+
+    [Fact]
+    public void NoPlatformInvoke_StartsOrTerminatesProcesses()
+    {
+        // Arrange - Win32 entry points that would bypass the Process class (and so the guard above)
+        string[] processControlPrefixes =
+        [
+            "CreateProcess", "ShellExecute", "WinExec", "TerminateProcess", "TerminateJobObject", "NtTerminateProcess"
+        ];
+
+        // Act
+        var imports = ServerAssembly.GetTypes()
+            .SelectMany(t => t.GetMethods(DeclaredMembers))
+            .Select(m => (Method: m, Import: m.GetCustomAttribute<System.Runtime.InteropServices.DllImportAttribute>()))
+            .Where(m => m.Import != null)
+            .Select(m => (Name: $"{m.Method.DeclaringType?.FullName}.{m.Method.Name}", EntryPoint: m.Import!.EntryPoint ?? m.Method.Name))
+            .ToList();
+
+        // Assert
+        imports.Should().NotBeEmpty("the scan must see the server's own P/Invoke declarations");
+        imports
+            .Where(i => processControlPrefixes.Any(prefix => i.EntryPoint.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            .Select(i => $"{i.Name} imports {i.EntryPoint}")
+            .Should().BeEmpty("processes must be started and stopped through NativeProcessWrapper, not by direct Win32 calls");
     }
 
     private static List<string> Unexpected(Dictionary<Type, List<string>> callers, params Type[] allowedOwners) =>
