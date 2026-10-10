@@ -84,7 +84,7 @@ public class ToolResultSerializationTests
 
     [Theory]
     [MemberData(nameof(ToolNames))]
-    public void ToolResult_JsonSchema_HasNoUnsupportedTypes(string toolName)
+    public async Task ToolResult_JsonSchema_HasNoUnsupportedTypes(string toolName)
     {
         // Arrange
         var resultType = GetResultType(ToolMethods[toolName]);
@@ -110,9 +110,10 @@ public class ToolResultSerializationTests
         // Arrange - the normal success path finds the browser window, so the handle is non-null.
         const string userDataDir = @"C:\Temp\browser-debug";
         var processService = new Mock<IProcessService>();
-        processService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        processService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 4321,
                 WindowHandle: new nint(5678),
@@ -142,7 +143,7 @@ public class ToolResultSerializationTests
     {
         // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
         var layoutService = new Mock<ILayoutService>();
-        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",

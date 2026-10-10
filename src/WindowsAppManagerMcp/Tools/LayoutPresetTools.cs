@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -106,9 +107,12 @@ public class LayoutPresetTools
         string matchBy = "process_and_title",
         [Description("Attempt to launch applications for missing windows (default: false)")]
         bool launchMissing = false,
+        IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var result = await _layoutService.ApplyPresetAsync(name, matchBy, launchMissing, cancellationToken);
+        // The client gets "i of n" with each placement's outcome; a cancelled call arranges no further placement
+        var result = await _layoutService.ApplyPresetAsync(
+            name, matchBy, launchMissing, ToolProgress.ForServices(progress), cancellationToken);
 
         return new ApplyLayoutResultDto(
             Success: result.Success,

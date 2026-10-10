@@ -123,17 +123,17 @@ public sealed class ContractServices : IDisposable
         Monitors.Setup(m => m.GetPrimaryMonitor()).Returns(TypicalDesktop.Monitors[0]);
         Monitors.Setup(m => m.GetMonitorIndex(It.IsAny<nint>())).Returns(0);
 
-        Processes.Setup(p => p.LaunchApplication(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
+        Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
         Processes.Setup(p => p.KillProcess(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()))
             .Returns((int id, bool _, bool _, int _, string? _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
-        Processes.Setup(p => p.LaunchApplicationsBatch(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _) =>
+        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 apps.Select((_, i) => new LaunchResult(true, ProcessId: 20_000 + i, WindowHandle: (nint)(0x500000 + i))).ToList());
-        Processes.Setup(p => p.LaunchBrowserWithDebug(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(true, 31_337, (nint)TypicalDesktop.BrowserHandle, 9222,
+        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(true, 31_337, (nint)TypicalDesktop.BrowserHandle, 9222,
                 @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-9222", null, null));
 
         var url = new BrowserUrlResult(true, "https://github.com/mortenbrudvik/WindowsAppManagerMcp", "chrome",
@@ -150,7 +150,7 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.GetPreset(It.IsAny<string>())).Returns(preset);
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(true, preset.Name, WindowsArranged: preset.Placements.Count, Focus: [TypicalDesktop.NotepadFocused]));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) => new LayoutDeleteResult(true, name));
@@ -236,17 +236,17 @@ public sealed class ContractServices : IDisposable
         Monitors.Setup(m => m.GetAllMonitors()).Returns([]);
         Monitors.Setup(m => m.GetPrimaryMonitor()).Throws(new InvalidOperationException("No monitors found"));
 
-        Processes.Setup(p => p.LaunchApplication(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
+        Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns([]);
         Processes.Setup(p => p.KillProcess(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()))
             .Returns((int id, bool _, bool _, int _, string? _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));
-        Processes.Setup(p => p.LaunchApplicationsBatch(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _) =>
+        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 apps.Select(_ => new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound")).ToList());
-        Processes.Setup(p => p.LaunchBrowserWithDebug(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(false, null, null, null, null, "Chrome is not installed", nameof(BrowserErrorCode.BrowserNotFound)));
+        Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(false, null, null, null, null, "Chrome is not installed", nameof(BrowserErrorCode.BrowserNotFound)));
 
         Browser.Setup(b => b.GetBrowserUrlAsync(It.IsAny<nint>(), It.IsAny<CdpOptions?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrowserUrlResult(false, null, null, null, "Not a browser window", BrowserErrorCode.NotABrowser));
@@ -258,8 +258,8 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.GetStorageError()).Returns("The layouts folder cannot be written");
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(false, null, ErrorMessage: "The layouts folder cannot be written", ErrorCode: nameof(LayoutErrorCode.SaveFailed)));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string name, string _, bool _, CancellationToken _) =>
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string name, string _, bool _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 new LayoutApplyResult(false, name, Errors: [$"Layout preset '{name}' was not found"], ErrorCode: nameof(LayoutErrorCode.PresetNotFound)));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) =>

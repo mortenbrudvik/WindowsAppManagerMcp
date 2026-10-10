@@ -62,14 +62,12 @@ public class UIElementToolContractTests
         var result = await server.Client.CallToolAsync(
             "get_ui_elements", new Dictionary<string, object?> { ["handle"] = (long)Handle }, progress);
 
-        // Assert - one notification per 100 elements read, sent in increasing order (MCP requires progress to increase).
-        // The SDK client delivers notifications concurrently, in any order, so the order is checked where the server
-        // wrote them; notifications are sent without waiting, so wait for them
+        // Assert - one notification per 100 elements read, sent in increasing order (MCP requires progress to increase)
+        // and before the result. They are checked where the server wrote them (see InProcessMcpServer.ProgressSent)
         Json(result).GetProperty("totalElementCount").GetInt32().Should().Be(250);
-        SpinWait.SpinUntil(() => progress.Reports.Count >= 2, Timeout).Should().BeTrue();
-        ProgressSent(server).Should().Equal(100, 200);
-        progress.Reports.Select(p => p.Progress).Should().BeEquivalentTo([100f, 200f]);
-        progress.Reports.Should().OnlyContain(p => p.Total == null && p.Message!.Contains("UI elements so far"));
+        var sent = server.WaitForProgressSent(2);
+        sent.Select(p => p.Progress).Should().Equal(100, 200);
+        sent.Should().OnlyContain(p => p.Total == null && p.Message!.Contains("UI elements so far"));
     }
 
     [Theory]
@@ -102,14 +100,6 @@ public class UIElementToolContractTests
         clientGivesUp.Cancel();
         await FluentActions.Awaiting(() => call).Should().ThrowAsync<Exception>("the cancelled call gets no result");
     }
-
-    /// <summary>The progress values of the notifications/progress messages the server wrote, in the order it wrote them.</summary>
-    internal static IReadOnlyList<double> ProgressSent(InProcessMcpServer server) =>
-        server.ServerMessages
-            .Select(message => JsonDocument.Parse(message).RootElement)
-            .Where(message => message.TryGetProperty("method", out var method) && method.GetString() == NotificationMethods.ProgressNotification)
-            .Select(message => message.GetProperty("params").GetProperty("progress").GetDouble())
-            .ToList();
 
     private static JsonElement Json(CallToolResult result)
     {

@@ -1,3 +1,5 @@
+using ModelContextProtocol;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
 using WindowsAppManagerMcp.Infrastructure;
@@ -126,7 +128,7 @@ public class LayoutPresetToolsTests
     }
 
     [Fact]
-    public void GetLayout_MapsPresetToDetailDto()
+    public async Task GetLayout_MapsPresetToDetailDto()
     {
         // Arrange
         var placement = TestDataFactory.CreateWindowPlacement(
@@ -303,6 +305,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<bool>(),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -318,6 +321,7 @@ public class LayoutPresetToolsTests
             "test-layout",
             "process_only",
             true,
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -336,6 +340,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<bool>(),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -348,6 +353,7 @@ public class LayoutPresetToolsTests
             "test",
             "process_and_title",
             false,
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -366,6 +372,7 @@ public class LayoutPresetToolsTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<bool>(),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(applyResult);
         var sut = CreateSut();
@@ -394,7 +401,9 @@ public class LayoutPresetToolsTests
             ForegroundProcess: "WindowsTerminal", Error: "SetForegroundWindow was refused (foreground lock)",
             ErrorCode: nameof(WindowErrorCode.FocusFailed));
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",
@@ -488,7 +497,7 @@ public class LayoutPresetToolsTests
     }
 
     [Fact]
-    public void GetLayout_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
+    public async Task GetLayout_WhenStorageUnavailable_ThrowsStorageUnavailableToolErrorWithReason()
     {
         _mockLayoutService.Setup(l => l.GetStorageError()).Returns("Folder X could not be created");
         var sut = CreateSut();
@@ -504,7 +513,8 @@ public class LayoutPresetToolsTests
     {
         var capturedPreset = TestDataFactory.CreateLayoutPreset("failing");
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(
                 Success: false,
                 Preset: capturedPreset,
@@ -524,7 +534,8 @@ public class LayoutPresetToolsTests
     public async Task SaveLayout_WhenNothingCaptured_ReturnsRequestedNameAndZeroWindows()
     {
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(
                 Success: false,
                 Preset: null,
@@ -543,7 +554,8 @@ public class LayoutPresetToolsTests
     public async Task SaveLayout_ReportsReplaced()
     {
         _mockLayoutService.Setup(l => l.CaptureCurrentLayoutAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, TestDataFactory.CreateLayoutPreset("again"), Replaced: true));
         var sut = CreateSut();
 
@@ -557,7 +569,9 @@ public class LayoutPresetToolsTests
     public async Task ApplyLayout_MapsErrorCode()
     {
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",
@@ -588,4 +602,31 @@ public class LayoutPresetToolsTests
     }
 
     #endregion
+
+    [Fact]
+    public async Task ApplyLayout_PassesTheCallsTokenAndForwardsProgressToTheClient()
+    {
+        // Arrange - the service reports one placement
+        using var call = new CancellationTokenSource();
+        CancellationToken serviceToken = default;
+        _mockLayoutService.Setup(l => l.ApplyPresetAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((string _, string _, bool _, IProgress<OperationProgress>? progress, CancellationToken token) =>
+            {
+                serviceToken = token;
+                progress!.Report(new OperationProgress(1, 2, "1 of 2: placement 1 (process 'code') was arranged"));
+            })
+            .ReturnsAsync(new LayoutApplyResult(true, "work", WindowsArranged: 2));
+        var client = new RecordingProgress<ProgressNotificationValue>();
+
+        // Act
+        await CreateSut().ApplyLayout("work", progress: client, cancellationToken: call.Token);
+
+        // Assert
+        serviceToken.Should().Be(call.Token);
+        var report = client.Reports.Should().ContainSingle().Subject;
+        (report.Progress, report.Total).Should().Be((1f, 2f));
+        report.Message.Should().Be("1 of 2: placement 1 (process 'code') was arranged");
+    }
 }

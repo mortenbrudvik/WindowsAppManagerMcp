@@ -133,7 +133,7 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
-    public void Server_CannotStartAProcess(DesktopTier tier)
+    public async Task Server_CannotStartAProcess(DesktopTier tier)
     {
         // Arrange - a fully qualified path needs no lookup, so the launch goes straight to the process wrapper.
         // It names a file that does not exist, in a folder that is never created.
@@ -146,7 +146,7 @@ public class ServerHarnessTests : IDisposable
         Wrapper<INativeProcessWrapper>().Invocations.Clear();
 
         // Act
-        var result = processService.LaunchApplication(executable);
+        var result = await processService.LaunchApplicationAsync(executable);
 
         // Assert
         result.Success.Should().BeFalse();

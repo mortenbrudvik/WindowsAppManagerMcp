@@ -341,6 +341,7 @@ public class LayoutService : ILayoutService
         string name,
         string matchBy = "process_and_title",
         bool launchMissing = false,
+        IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         string? storageError;
@@ -395,12 +396,34 @@ public class LayoutService : ILayoutService
         // Sort placements by order
         var orderedPlacements = preset.Placements.OrderBy(p => p.Order).ToList();
 
-        foreach (var placement in orderedPlacements)
+        for (var index = 0; index < orderedPlacements.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var placement = orderedPlacements[index];
             var label = DescribePlacement(placement);
+            var outcome = await ApplyPlacementAsync(placement, label).ConfigureAwait(false);
 
+            // The client sees each placement's outcome as it happens: a layout that launches applications can take
+            // several seconds per placement
+            progress?.Report(new OperationProgress(index + 1, orderedPlacements.Count,
+                $"{index + 1} of {orderedPlacements.Count}: {label} {outcome}"));
+        }
+
+        return new LayoutApplyResult(
+            Success: errors.Count == 0,
+            PresetName: name,
+            WindowsArranged: arranged,
+            WindowsNotFound: notFound,
+            WindowsLaunched: launched,
+            Errors: errors.Count > 0 ? errors : null,
+            ErrorCode: errorCode,
+            Focus: focusResults
+        );
+
+        // Arranges one placement and returns what happened to it, for the progress report
+        async Task<string> ApplyPlacementAsync(WindowPlacement placement, string label)
+        {
             // Find matching window
             var window = FindMatchingWindows(placement.Matcher, matchBy).FirstOrDefault();
 
@@ -413,21 +436,22 @@ public class LayoutService : ILayoutService
                         ? string.Empty
                         : $"; set launchMissing=true to launch '{placement.LaunchCommand}'";
                     AddError(LayoutErrorCode.WindowNotFound, $"No open window matched {label}{hint}");
-                    continue;
+                    return "was not found";
                 }
 
-                // Try to launch the application
-                var launchResult = _processService.LaunchApplication(
+                // Try to launch the application; a cancelled call stops waiting for its window
+                var launchResult = await _processService.LaunchApplicationAsync(
                     placement.LaunchCommand,
                     waitForWindow: true,
-                    waitTimeoutMs: 5000);
+                    waitTimeoutMs: 5000,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 if (!launchResult.Success)
                 {
                     notFound++;
                     AddError(LayoutErrorCode.LaunchFailed,
                         $"Failed to launch '{placement.LaunchCommand}' for {label}: {launchResult.ErrorMessage ?? "unknown error"}");
-                    continue;
+                    return "could not be launched";
                 }
 
                 launched++;
@@ -437,7 +461,7 @@ public class LayoutService : ILayoutService
                     notFound++;
                     AddError(LayoutErrorCode.LaunchFailed,
                         $"Launched '{placement.LaunchCommand}' for {label}, but its window could not be found");
-                    continue;
+                    return "was launched, but its window was not found";
                 }
             }
 
@@ -447,7 +471,7 @@ public class LayoutService : ILayoutService
             {
                 AddErrorWithCode(nameof(WindowErrorCode.TargetDeniedByPolicy),
                     $"Did not arrange window '{window.Title}' for {label}: {WindowService.WindowChangeRefusal(window.Handle, verdict)}");
-                continue;
+                return "was not arranged: the user's policy denies its window";
             }
 
             // Apply placement to the first matching window
@@ -472,16 +496,23 @@ public class LayoutService : ILayoutService
                 notResponding = ex.Message;
             }
 
+            string outcome;
             if (placed)
             {
                 arranged++;
+                outcome = "was arranged";
 
                 if (placement.Focus)
                 {
                     var focus = _foregroundService.EnsureForeground(window.Handle);
                     (focusResults ??= []).Add(FocusResult.From(focus));
-                    if (!focus.IsForeground)
+                    if (focus.IsForeground)
                     {
+                        outcome = "was arranged and brought to the front";
+                    }
+                    else
+                    {
+                        outcome = "was arranged, but could not be brought to the front";
                         AddError(LayoutErrorCode.ArrangeFailed,
                             $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground " +
                             $"({focus.ErrorCode}): {focus.Error}");
@@ -490,24 +521,15 @@ public class LayoutService : ILayoutService
             }
             else
             {
+                outcome = "could not be arranged";
                 AddError(LayoutErrorCode.ArrangeFailed,
                     $"Failed to arrange window '{window.Title}' for {label}{(notResponding == null ? string.Empty : $": {notResponding}")}");
             }
 
             // Small delay between window operations
-            await Task.Delay(50, cancellationToken);
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            return outcome;
         }
-
-        return new LayoutApplyResult(
-            Success: errors.Count == 0,
-            PresetName: name,
-            WindowsArranged: arranged,
-            WindowsNotFound: notFound,
-            WindowsLaunched: launched,
-            Errors: errors.Count > 0 ? errors : null,
-            ErrorCode: errorCode,
-            Focus: focusResults
-        );
     }
 
     private IReadOnlyList<WindowInfo> FindMatchingWindows(WindowMatcher matcher, string matchBy)

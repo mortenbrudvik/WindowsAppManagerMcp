@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -76,6 +77,47 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     /// to their handlers concurrently, so a test that checks the order of notifications reads it here.
     /// </summary>
     public IReadOnlyList<string> ServerMessages => _serverOutput.Messages;
+
+    /// <summary>
+    /// The notifications/progress messages the server wrote, in the order it wrote them. The SDK client hands
+    /// notifications to their handlers concurrently and drops a progress notification whose handler runs after the
+    /// call's result arrived, so tests check progress here, where the server wrote it.
+    /// </summary>
+    public IReadOnlyList<(double Progress, double? Total, string? Message)> ProgressSent() =>
+        ServerMessages
+            .Select(message => JsonDocument.Parse(message).RootElement)
+            .Where(IsProgressNotification)
+            .Select(message => message.GetProperty("params"))
+            .Select(p => (
+                p.GetProperty("progress").GetDouble(),
+                p.TryGetProperty("total", out var total) ? total.GetDouble() : (double?)null,
+                p.TryGetProperty("message", out var text) ? text.GetString() : null))
+            .ToList();
+
+    /// <summary>
+    /// Waits until the server has written <paramref name="count"/> progress notifications, and checks that every one
+    /// of them came before the result of the call it belongs to: a progress notification after the result is lost.
+    /// </summary>
+    public IReadOnlyList<(double Progress, double? Total, string? Message)> WaitForProgressSent(int count)
+    {
+        SpinWait.SpinUntil(() => ProgressSent().Count >= count, StepTimeout)
+            .Should().BeTrue($"the server sends {count} progress notifications");
+
+        var messages = ServerMessages.Select(message => JsonDocument.Parse(message).RootElement).ToList();
+        var lastProgress = messages.FindLastIndex(IsProgressNotification);
+        var callResult = messages.FindLastIndex(message => message.TryGetProperty("result", out var result) &&
+                                                           result.ValueKind == JsonValueKind.Object &&
+                                                           result.TryGetProperty("content", out _));
+        if (callResult >= 0)
+        {
+            lastProgress.Should().BeLessThan(callResult, "a progress notification must come before the call's result");
+        }
+
+        return ProgressSent();
+    }
+
+    private static bool IsProgressNotification(JsonElement message) =>
+        message.TryGetProperty("method", out var method) && method.GetString() == NotificationMethods.ProgressNotification;
 
     /// <summary>The server's services, for checking what it did.</summary>
     public IServiceProvider Services => _host.Services;

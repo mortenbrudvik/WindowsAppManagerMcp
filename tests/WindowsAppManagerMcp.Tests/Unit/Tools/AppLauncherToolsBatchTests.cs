@@ -1,3 +1,5 @@
+using ModelContextProtocol;
+
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
 
 using WindowsAppManagerMcp.Tools;
@@ -12,15 +14,17 @@ public class AppLauncherToolsBatchTests
     private AppLauncherTools CreateSut() => new(_mockProcessService.Object);
 
     [Fact]
-    public void LaunchApplicationsBatch_MapsErrorCodePerItem()
+    public async Task LaunchApplicationsBatch_MapsErrorCodePerItem()
     {
         // Arrange
         _mockProcessService
-            .Setup(p => p.LaunchApplicationsBatch(
+            .Setup(p => p.LaunchApplicationsBatchAsync(
                 It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(),
                 It.IsAny<bool>(),
-                It.IsAny<int>()))
-            .Returns(new List<LaunchResult>
+                It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LaunchResult>
             {
                 new(true, ProcessId: 100),
                 new(false, ErrorMessage: "cmd.exe would interpret '&'", ErrorCode: nameof(LaunchErrorCode.UnsafeBatchArguments))
@@ -28,7 +32,7 @@ public class AppLauncherToolsBatchTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplicationsBatch(
+        var result = await sut.LaunchApplicationsBatch(
         [
             new ApplicationLaunchRequest("notepad"),
             new ApplicationLaunchRequest("code", [@"C:\R&D\proj"])
@@ -41,5 +45,35 @@ public class AppLauncherToolsBatchTests
         result.Results[1].Executable.Should().Be("code");
         result.Results[1].ErrorCode.Should().Be("UnsafeBatchArguments");
         result.Results[1].Error.Should().Contain("cmd.exe");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_PassesTheCallsTokenAndForwardsProgressToTheClient()
+    {
+        // Arrange - the service reports one launch
+        using var call = new CancellationTokenSource();
+        CancellationToken serviceToken = default;
+        _mockProcessService
+            .Setup(p => p.LaunchApplicationsBatchAsync(
+                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(),
+                It.IsAny<bool>(),
+                It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<(string, string[]?, string?)> _, bool _, int _, IProgress<OperationProgress>? progress, CancellationToken token) =>
+            {
+                serviceToken = token;
+                progress!.Report(new OperationProgress(1, 1, "1 of 1: notepad started"));
+            })
+            .ReturnsAsync(new List<LaunchResult> { new(true, ProcessId: 100) });
+        var client = new RecordingProgress<ProgressNotificationValue>();
+
+        // Act
+        await CreateSut().LaunchApplicationsBatch([new ApplicationLaunchRequest("notepad")], progress: client, cancellationToken: call.Token);
+
+        // Assert
+        serviceToken.Should().Be(call.Token);
+        var report = client.Reports.Should().ContainSingle().Subject;
+        (report.Progress, report.Total, report.Message).Should().Be((1f, 1f, "1 of 1: notepad started"));
     }
 }
