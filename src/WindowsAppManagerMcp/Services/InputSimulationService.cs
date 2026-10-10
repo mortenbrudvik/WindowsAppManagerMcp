@@ -70,6 +70,12 @@ public class InputSimulationService : IInputSimulationService
             return Finish(new MouseMoveResult(false, x, y, "Failed to set cursor position", InputErrorCode.SendInputFailed), approved);
         }
 
+        if (!PointerIsAt(x, y, out var actual))
+        {
+            return Finish(new MouseMoveResult(false, x, y, PointerMovedAway(x, y, actual), InputErrorCode.CursorNotAtPoint),
+                approved);
+        }
+
         return Finish(new MouseMoveResult(Success: true, X: x, Y: y), approved);
     }
 
@@ -207,7 +213,10 @@ public class InputSimulationService : IInputSimulationService
 
     /// <summary>
     /// A click or double click at a point: the guard checks the window at the point before the cursor
-    /// moves, and again before every button press, since moving the cursor can open a popup there.
+    /// moves, and again before every button press, since moving the cursor can open a popup there. Each
+    /// press is sent in one SendInput call together with a move to the checked point, so a user moving the
+    /// mouse in between cannot make it land elsewhere (SendInput does not interleave other input with the
+    /// events of one call).
     /// </summary>
     private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, bool leftButton, int clicks, int delayMs)
     {
@@ -236,9 +245,10 @@ public class InputSimulationService : IInputSimulationService
                 clicks == 1 ? "SendInput failed" : "Failed to set cursor position", InputErrorCode.SendInputFailed), approved);
         }
 
-        // Small delay to ensure cursor position is updated
+        // Small delay so that a popup the pointer opens there (a hover menu or tooltip) shows up in the re-check
         Thread.Sleep(10);
 
+        var absolute = ToVirtualDesktopAbsolute(x, y, _monitorService.GetAllMonitors());
         for (var click = 1; click <= clicks; click++)
         {
             if (click > 1)
@@ -247,15 +257,21 @@ public class InputSimulationService : IInputSimulationService
                 Thread.Sleep(Math.Clamp(delayMs, 10, 500));
             }
 
+            var sentSoFar = click == 1 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
             var recheck = _guard.RecheckMouse(x, y, approved);
             if (!recheck.Allowed)
             {
-                var sentSoFar = click == 1 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
                 return Finish(new ClickResult(false, x, y, clickType, sentSoFar + recheck.Error, recheck.ErrorCode), recheck);
             }
 
             approved = recheck;
-            if (!SendClickInputs(leftButton))
+            if (!PointerIsAt(x, y, out var actual))
+            {
+                return Finish(new ClickResult(false, x, y, clickType, sentSoFar + PointerMovedAway(x, y, actual),
+                    InputErrorCode.CursorNotAtPoint), approved);
+            }
+
+            if (!SendClickInputs(leftButton, absolute))
             {
                 var error = clicks == 1 ? "SendInput failed"
                     : click == 1 ? "First click in double-click failed"
@@ -267,19 +283,70 @@ public class InputSimulationService : IInputSimulationService
         return Finish(new ClickResult(Success: true, X: x, Y: y, ClickType: clickType), approved);
     }
 
-    private bool SendClickInputs(bool leftButton)
+    /// <summary>A move to the checked point, the button down and up, in one SendInput call.</summary>
+    private bool SendClickInputs(bool leftButton, (int X, int Y) absolute)
     {
         var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
         var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
 
         var inputs = new[]
         {
+            InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y),
             InputEvent.Mouse(downFlag),
             InputEvent.Mouse(upFlag)
         };
 
         var result = _inputWrapper.SendInput(inputs);
         return result == inputs.Length;
+    }
+
+    /// <summary>
+    /// True when the pointer is at (x, y), or its position cannot be read. Otherwise it places the pointer
+    /// there once more and looks again at once: a pointer the user moved is then back, but one confined to
+    /// a window (ClipCursor, as games and remote sessions do) is not, and a click would land where the guard
+    /// did not look.
+    /// </summary>
+    private bool PointerIsAt(int x, int y, out (int X, int Y)? actual)
+    {
+        actual = _inputWrapper.GetCursorPos();
+        if (actual is not { } first || first == (x, y))
+        {
+            return true;
+        }
+
+        _inputWrapper.SetCursorPos(x, y);
+        actual = _inputWrapper.GetCursorPos();
+        return actual is not { } second || second == (x, y);
+    }
+
+    private static string PointerMovedAway(int x, int y, (int X, int Y)? actual) =>
+        $"The mouse pointer does not stay at ({x}, {y}){(actual is { } at ? $"; it is at ({at.X}, {at.Y})" : string.Empty)}. " +
+        "It may be confined to a window (a game or a remote session that captures the mouse, or a drag in progress), or the " +
+        "user is moving the mouse, so the input would land where the guard did not check. Try again, or ask the user.";
+
+    /// <summary>
+    /// The normalized absolute coordinates (0..65535 across the virtual desktop, the bounding rectangle of all
+    /// monitors) of the pixel (x, y), for MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK. Windows maps a
+    /// normalized coordinate n to the pixel left + n * width / 65536, rounded down. This returns the middle of
+    /// the pixel's range of n, so the pixel comes back exactly with that mapping, and also with one that
+    /// rounds n * (width - 1) / 65535 to the nearest pixel.
+    /// </summary>
+    public static (int X, int Y) ToVirtualDesktopAbsolute(int x, int y, IReadOnlyCollection<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        if (monitors.Count == 0)
+        {
+            throw new ArgumentException("At least one monitor is needed.", nameof(monitors));
+        }
+
+        var left = monitors.Min(m => m.Bounds.X);
+        var top = monitors.Min(m => m.Bounds.Y);
+        var right = monitors.Max(m => m.Bounds.X + m.Bounds.Width);
+        var bottom = monitors.Max(m => m.Bounds.Y + m.Bounds.Height);
+        return (Normalize(x - left, right - left), Normalize(y - top, bottom - top));
+
+        static int Normalize(int offset, int size) =>
+            (int)Math.Clamp((2L * offset + 1) * 65536 / (2L * Math.Max(size, 1)), 0, 65535);
     }
 
     /// <summary>Adds where the input went, what is in front now and where the cursor is.</summary>

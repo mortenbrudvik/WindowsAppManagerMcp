@@ -48,6 +48,21 @@ public class InputSimulationServiceTests
             .Returns(new List<MonitorInfo> { monitor });
     }
 
+    /// <summary>
+    /// The absolute move to (x, y) on the single 1920x1080 monitor, checked against the mapping Windows
+    /// applies (pixel = n * size / 65536, rounded down), not against the server's own arithmetic.
+    /// </summary>
+    private static InputEvent MoveTo(int x, int y)
+    {
+        var dx = Enumerable.Range(0, 65536).First(n => (long)n * 1920 / 65536 == x);
+        var dy = Enumerable.Range(0, 65536).First(n => (long)n * 1080 / 65536 == y);
+        var expected = InputSimulationService.ToVirtualDesktopAbsolute(x, y, [TestDataFactory.CreateMonitorInfo(
+            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080)]);
+        ((long)expected.X * 1920 / 65536).Should().Be(x, $"normalized x {expected.X} (first is {dx}) must map back to {x}");
+        ((long)expected.Y * 1080 / 65536).Should().Be(y, $"normalized y {expected.Y} (first is {dy}) must map back to {y}");
+        return InputEvent.MouseMoveAbsolute(expected.X, expected.Y);
+    }
+
     private void SetupSendInputFailure()
     {
         _mockInputWrapper.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(0u);
@@ -239,7 +254,7 @@ public class InputSimulationServiceTests
         result.Y.Should().Be(300);
         result.ClickType.Should().Be("left");
         _mockInputWrapper.Verify(w => w.SetCursorPos(500, 300), Times.Once);
-        _sentEvents.Should().Equal(InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+        _sentEvents.Should().Equal(MoveTo(500, 300), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
     }
 
     [Fact]
@@ -312,7 +327,7 @@ public class InputSimulationServiceTests
         result.Y.Should().Be(400);
         result.ClickType.Should().Be("right");
         _mockInputWrapper.Verify(w => w.SetCursorPos(750, 400), Times.Once);
-        _sentEvents.Should().Equal(InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp));
+        _sentEvents.Should().Equal(MoveTo(750, 400), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp));
     }
 
     #endregion
@@ -353,8 +368,8 @@ public class InputSimulationServiceTests
         result.ClickType.Should().Be("double");
         _mockInputWrapper.Verify(w => w.SetCursorPos(600, 350), Times.Once);
         _sentEvents.Should().Equal(
-            InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp),
-            InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+            MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp),
+            MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
     }
 
     [Fact]
@@ -428,6 +443,118 @@ public class InputSimulationServiceTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+    }
+
+    [Fact]
+    public void MoveMouse_PointerConfinedElsewhere_IsCursorNotAtPoint()
+    {
+        // Arrange - SetCursorPos is clamped (ClipCursor): the pointer never gets to the point
+        SetupSingleMonitor();
+        _mockInputWrapper.Setup(w => w.GetCursorPos()).Returns((100, 100));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.MoveMouse(800, 600);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
+        result.Error.Should().Contain("(800, 600)").And.Contain("(100, 100)");
+        (result.ActualX, result.ActualY).Should().Be((100, 100));
+    }
+
+    #endregion
+
+    #region The click lands where the guard looked
+
+    [Fact]
+    public void Click_UserMovedTheMouseAfterTheCursorMove_PutsItBackAndClicksAtThePoint()
+    {
+        // Arrange - the first read finds the pointer moved away, the second (right after placing it again) does not
+        SetupSingleMonitor();
+        _mockInputWrapper.SetupSequence(w => w.GetCursorPos())
+            .Returns((40, 40))
+            .Returns((500, 300))
+            .Returns((500, 300));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Click(500, 300);
+
+        // Assert - the press carries its own move to the point, so later movement cannot redirect it either
+        result.Success.Should().BeTrue(result.Error);
+        _mockInputWrapper.Verify(w => w.SetCursorPos(500, 300), Times.Exactly(2));
+        _sentEvents.Should().Equal(MoveTo(500, 300), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+    }
+
+    [Fact]
+    public void Click_PointerConfinedElsewhere_ClicksNothing()
+    {
+        // Arrange - a game or remote session confines the pointer: the button would go down where it is held
+        SetupSingleMonitor();
+        _mockInputWrapper.Setup(w => w.GetCursorPos()).Returns((10, 10));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Click(500, 300);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
+        result.Error.Should().StartWith("Nothing was clicked").And.Contain("(10, 10)");
+        _sentEvents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DoubleClick_PointerConfinedBeforeTheSecondClick_SendsOnlyTheFirst()
+    {
+        // Arrange
+        SetupSingleMonitor();
+        _mockInputWrapper.SetupSequence(w => w.GetCursorPos())
+            .Returns((600, 350))
+            .Returns((20, 20))
+            .Returns((20, 20));
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.DoubleClick(600, 350);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
+        result.Error.Should().StartWith("The first click was sent, the second was not");
+        _sentEvents.Should().Equal(MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1920, 1080)]
+    [InlineData(0, 0, 3840, 2160)]
+    [InlineData(-1920, -300, 6400, 1740)] // a monitor left of and above the primary one
+    [InlineData(0, 0, 7, 3)]
+    public void ToVirtualDesktopAbsolute_EveryPixelMapsBackToItself(int left, int top, int width, int height)
+    {
+        // Arrange - the virtual desktop is the bounding rectangle of the monitors
+        var monitors = new List<MonitorInfo>
+        {
+            TestDataFactory.CreateMonitorInfo(boundsX: left, boundsY: top, boundsWidth: width / 2, boundsHeight: height),
+            TestDataFactory.CreateMonitorInfo(boundsX: left + width / 2, boundsY: top, boundsWidth: width - width / 2, boundsHeight: height / 2)
+        };
+
+        // Act & Assert - with the mapping Windows applies (left + n * width / 65536, rounded down) and with
+        // the alternative that rounds n * (width - 1) / 65535
+        for (var x = left; x < left + width; x++)
+        {
+            var (nx, _) = InputSimulationService.ToVirtualDesktopAbsolute(x, top, monitors);
+            nx.Should().BeInRange(0, 65535);
+            (left + (int)((long)nx * width / 65536)).Should().Be(x);
+            (left + (int)Math.Round((double)nx * (width - 1) / 65535, MidpointRounding.AwayFromZero)).Should().Be(x);
+        }
+
+        for (var y = top; y < top + height; y++)
+        {
+            var (_, ny) = InputSimulationService.ToVirtualDesktopAbsolute(left, y, monitors);
+            (top + (int)((long)ny * height / 65536)).Should().Be(y);
+            (top + (int)Math.Round((double)ny * (height - 1) / 65535, MidpointRounding.AwayFromZero)).Should().Be(y);
+        }
     }
 
     #endregion

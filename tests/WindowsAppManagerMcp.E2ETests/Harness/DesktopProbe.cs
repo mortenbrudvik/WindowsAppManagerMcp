@@ -18,6 +18,9 @@ public interface IDesktopProbe
 
     string GetWindowTitle(nint hwnd);
 
+    /// <summary>The virtual desktop: the bounding rectangle of all monitors, in physical pixels.</summary>
+    (int Left, int Top, int Width, int Height) GetVirtualScreen();
+
     /// <summary>The OS ID of the calling thread: the thread about to make the guarded call.</summary>
     uint GetCurrentThreadId();
 }
@@ -35,6 +38,8 @@ public sealed class Win32DesktopProbe : IDesktopProbe
     public int GetWindowProcessId(nint hwnd) => E2ENative.GetProcessId(hwnd);
 
     public string GetWindowTitle(nint hwnd) => hwnd == 0 ? "" : E2ENative.GetWindowText(hwnd);
+
+    public (int Left, int Top, int Width, int Height) GetVirtualScreen() => E2ENative.GetVirtualScreen();
 
     public uint GetCurrentThreadId() => E2ENative.GetCurrentThreadId();
 }

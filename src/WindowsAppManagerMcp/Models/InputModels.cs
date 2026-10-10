@@ -150,9 +150,22 @@ public enum InputEventKind
 /// <param name="Kind">The kind of event.</param>
 /// <param name="Code">The virtual-key code for VirtualKey events, the character for Unicode events, unused for Mouse events.</param>
 /// <param name="Flags">The raw MOUSEEVENTF_* or KEYEVENTF_* flags.</param>
-public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags)
+/// <param name="Dx">Mouse events: MOUSEINPUT.dx (with MOUSEEVENTF_ABSOLUTE, 0..65535 across the screen); otherwise 0.</param>
+/// <param name="Dy">Mouse events: MOUSEINPUT.dy; otherwise 0.</param>
+public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0)
 {
     public static InputEvent Mouse(uint flags) => new(InputEventKind.Mouse, 0, flags);
+
+    /// <summary>
+    /// Moves the pointer to normalized absolute coordinates (0..65535) across the whole virtual desktop
+    /// (MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK).
+    /// </summary>
+    public static InputEvent MouseMoveAbsolute(int normalizedX, int normalizedY) =>
+        new(InputEventKind.Mouse, 0, MouseMoveAbsoluteFlags, normalizedX, normalizedY);
+
+    /// <summary>MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_ABSOLUTE.</summary>
+    public const uint MouseMoveAbsoluteFlags =
+        Native.NativeEnums.MOUSEEVENTF_MOVE | Native.NativeEnums.MOUSEEVENTF_VIRTUALDESK | Native.NativeEnums.MOUSEEVENTF_ABSOLUTE;
 
     public static InputEvent Key(ushort virtualKey, uint flags) => new(InputEventKind.VirtualKey, virtualKey, flags);
 
@@ -224,5 +237,12 @@ public enum InputErrorCode
     InvalidHandle = 30,
 
     /// <summary>type_text: a menu is active in the receiving window, so typed letters would select menu items.</summary>
-    TargetInMenuMode = 31
+    TargetInMenuMode = 31,
+
+    /// <summary>
+    /// Mouse input: the pointer did not stay at the point, so the click would land somewhere the guard did
+    /// not check (it is confined to a window, for example by a game or a remote session, or the user is
+    /// moving the mouse).
+    /// </summary>
+    CursorNotAtPoint = 32
 }

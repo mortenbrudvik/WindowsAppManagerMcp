@@ -129,6 +129,7 @@ public class InputSimulationServiceConcurrencyTests
         private readonly List<string> _operations = new();
         private readonly ManualResetEventSlim _otherThreadSentInput = new();
         private int _firstThreadId = -1;
+        private (int X, int Y) _cursor;
 
         public ManualResetEventSlim FirstOperationStarted { get; } = new();
 
@@ -145,11 +146,22 @@ public class InputSimulationServiceConcurrencyTests
 
         public bool SetCursorPos(int x, int y)
         {
+            lock (_lock)
+            {
+                _cursor = (x, y);
+            }
+
             Record($"move {x},{y}");
             return true;
         }
 
-        public (int X, int Y)? GetCursorPos() => (0, 0);
+        public (int X, int Y)? GetCursorPos()
+        {
+            lock (_lock)
+            {
+                return _cursor;
+            }
+        }
 
         public uint SendInput(IReadOnlyList<InputEvent> events)
         {

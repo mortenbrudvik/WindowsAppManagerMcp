@@ -3241,6 +3241,7 @@ Every `errorCode` the server returns, in alphabetical order. Most arrive in a no
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch) (`isError: true`) | `confirm` was not true (close_windows_batch: more than 3 windows); nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
 | `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen |
+| `CursorNotAtPoint` | [click](#click), right_click, double_click, mouse_move | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing (more) was clicked |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
 | `DesktopUnavailable` | [Input Simulation](#input-simulation) tools | The input desktop cannot be reached: a UAC prompt or the Ctrl+Alt+Del screen is shown, or the session is disconnected; nothing was sent |

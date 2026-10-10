@@ -23,10 +23,15 @@ public class InputSimulationServiceGuardTests
     private readonly Mock<IInputTargetGuard> _guard = TestDataFactory.CreateAllowingInputGuard(Notepad);
     private readonly List<IReadOnlyList<InputEvent>> _batches = [];
 
+    // Where the fake pointer is: it starts off the point and follows SetCursorPos
+    private (int X, int Y)? _cursor = (501, 302);
+
     public InputSimulationServiceGuardTests()
     {
-        _input.Setup(w => w.SetCursorPos(It.IsAny<int>(), It.IsAny<int>())).Returns(true);
-        _input.Setup(w => w.GetCursorPos()).Returns((501, 302));
+        _input.Setup(w => w.SetCursorPos(It.IsAny<int>(), It.IsAny<int>()))
+            .Callback((int x, int y) => _cursor = (x, y))
+            .Returns(true);
+        _input.Setup(w => w.GetCursorPos()).Returns(() => _cursor);
         _input.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
             .Callback((IReadOnlyList<InputEvent> events) => _batches.Add(events.ToList()))
             .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
@@ -60,8 +65,8 @@ public class InputSimulationServiceGuardTests
         _guard.Verify(g => g.CheckMouse(500, 300, target), Times.Once);
         result.ReceivingWindow.Should().Be(Notepad);
         result.ForegroundAfter.Should().Be(Terminal);
-        result.ActualX.Should().Be(501);
-        result.ActualY.Should().Be(302);
+        result.ActualX.Should().Be(500);
+        result.ActualY.Should().Be(300);
         result.BlockingWindow.Should().BeNull();
     }
 
@@ -113,7 +118,7 @@ public class InputSimulationServiceGuardTests
         _guard.Setup(g => g.RecheckMouse(500, 300, It.IsAny<InputGuardResult>()))
             .Callback(() => order.Add("recheck"))
             .Returns((int _, int _, InputGuardResult approved) => approved);
-        _input.Setup(w => w.SetCursorPos(500, 300)).Callback(() => order.Add("move")).Returns(true);
+        _input.Setup(w => w.SetCursorPos(500, 300)).Callback(() => { order.Add("move"); _cursor = (500, 300); }).Returns(true);
         _input.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
             .Callback(() => order.Add("click"))
             .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
@@ -158,7 +163,7 @@ public class InputSimulationServiceGuardTests
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
         result.Error.Should().StartWith("The first click was sent, the second was not");
-        _batches.Should().ContainSingle().Which.Should().Equal(InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+        _batches.Should().ContainSingle().Which.Select(e => e.Flags).Should().Equal(InputEvent.MouseMoveAbsoluteFlags, LeftDown, LeftUp);
     }
 
     [Fact]
@@ -181,7 +186,7 @@ public class InputSimulationServiceGuardTests
         result.Success.Should().BeTrue();
         result.ReceivingWindow.Should().Be(Notepad);
         result.ForegroundAfter.Should().Be(Terminal);
-        (result.ActualX, result.ActualY).Should().Be((501, 302));
+        (result.ActualX, result.ActualY).Should().Be((500, 300));
     }
 
     [Fact]

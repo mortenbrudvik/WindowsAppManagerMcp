@@ -572,12 +572,58 @@ public class WrapperGuardTests
     }
 
     [Fact]
-    public void InputEvent_CarriesNoDistance_SoAMoveWithoutAbsoluteIsZeroDistance()
+    public void InputEvent_CarriesOnlyADistance_WhichTheMoveRulesRead()
     {
-        // The zero-distance rule relies on this: the server's NativeInputWrapper sends every mouse event
-        // with dx = dy = 0. An InputEvent that gains a distance must revisit FixtureOnlyCallPolicy.
-        typeof(InputEvent).GetProperties().Select(p => p.Name)
-            .Should().BeEquivalentTo(nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags));
+        // The zero-distance and destination rules read Dx and Dy; an InputEvent that gains other data
+        // must revisit FixtureOnlyCallPolicy.
+        typeof(InputEvent).GetProperties().Select(p => p.Name).Should().BeEquivalentTo(
+            nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags), nameof(InputEvent.Dx), nameof(InputEvent.Dy));
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesARelativeMoveWithADistance_EvenOverTheFixture()
+    {
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Foreground = FixtureWindow, Cursor = (10, 10), WindowAtCursor = FixtureWindow };
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        var act = () => guarded.SendInput([new InputEvent(InputEventKind.Mouse, 0, FixtureOnlyCallPolicy.MouseMoveFlag, 50, 0)]);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*cannot work out*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_AllowsAClickWhoseAbsoluteMoveEndsOverTheFixture()
+    {
+        // Arrange - the server's click: a move to the point, button down, button up (1920x1080 desktop)
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(3u);
+        var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = FixtureWindow };
+        desktop.WindowsAtPoints[(500, 300)] = FixtureWindow;
+        var (dx, dy) = InputSimulationService.ToVirtualDesktopAbsolute(500, 300,
+            [new MonitorInfo(0, "\\\\.\\DISPLAY1", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0)]);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        // Act & Assert
+        guarded.SendInput([InputEvent.MouseMoveAbsolute(dx, dy), InputEvent.Mouse(0x0002), InputEvent.Mouse(0x0004)]).Should().Be(3u);
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesAClickWhoseAbsoluteMoveEndsOverAnotherWindow()
+    {
+        // Arrange - the cursor is over the fixture, but the click's own move takes it to another window
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Cursor = (10, 10), WindowAtCursor = FixtureWindow };
+        desktop.WindowsAtPoints[(960, 540)] = OtherWindow;
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        // Act
+        var act = () => guarded.SendInput([InputEvent.MouseMoveAbsolute(32768, 32768), InputEvent.Mouse(0x0002)]);
+
+        // Assert
+        act.Should().Throw<E2EGuardException>().WithMessage("*after the move to (960, 540)*");
+        inner.VerifyNoOtherCalls();
     }
 
     #endregion
