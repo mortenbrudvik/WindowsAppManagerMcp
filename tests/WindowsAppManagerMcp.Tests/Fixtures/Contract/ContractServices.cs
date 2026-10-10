@@ -303,7 +303,8 @@ public sealed class ContractServices : IDisposable
 /// Calls tools through an in-process MCP server with the production tool and filter registrations
 /// (<see cref="ServiceRegistration.AddWindowsAppManagerTools"/>) and the <see cref="ContractServices"/> of a mode.
 /// Each call gets its own server and services; a call's result is kept for the rest of the test run, so the
-/// contract and budget tests share one call per tool and mode.
+/// contract and budget tests share one call per tool and mode. The cache is keyed by mode and tool only: every
+/// caller passes the tool's one set of arguments (EveryToolContractTests.Arguments) and the same arrangement.
 /// </summary>
 public static class ContractRun
 {

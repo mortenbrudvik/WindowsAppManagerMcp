@@ -2045,6 +2045,104 @@ checks that the runner has an interactive desktop and otherwise ends with a noti
 running anything; use a self-hosted runner in a logged-on desktop session then. It fails when no
 test ran, so an opt-in that did not reach the tests cannot pass as green.
 
+### Tool surface snapshot
+
+`Contract/ToolSurfaceSnapshotTests` tests the server the way an agent sees it. It lists the tools of an
+in-process server with the production registrations (`ServiceRegistration.AddWindowsAppManagerTools`, the
+call Program.cs makes) and compares every tool object, as the server sends it (name, title, description,
+annotations, inputSchema, outputSchema), with the checked-in
+`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`, sorted by tool name. A failure names the
+added, removed and changed tools and the JSON paths that changed.
+
+When a change to the tool surface is intended (a new tool or parameter, a new default, a description, an
+annotation, an SDK upgrade that changes the schemas), regenerate the snapshot and the generated docs in one
+run, and review the diff before committing it:
+
+```powershell
+# PowerShell
+$env:UPDATE_SNAPSHOTS = "1"
+dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotTests|FullyQualifiedName~GeneratedToolDocsTests"
+Remove-Item Env:UPDATE_SNAPSHOTS
+git diff
+```
+
+```bash
+# Git Bash
+UPDATE_SNAPSHOTS=1 dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotTests|FullyQualifiedName~GeneratedToolDocsTests"
+```
+
+`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the snapshot, and the
+generated regions of README.md, docs/TOOLS.md and SKILL.md. It changes nothing else about a run (desktop
+tests stay skipped). Without it, CI fails on a stale snapshot or table.
+
+**The CI guard on the built exes.** A version or commit check cannot tell whether an exe serves the tools
+its sources define. `.github/workflows/build.yml` therefore runs `scripts/Test-ToolsSnapshot.ps1`, which
+starts an exe (with `WAM_PAUSE_HOTKEY=none`), sends `initialize` and `tools/list` over stdio, closes it, and
+compares every tool object with the snapshot. It checks the exe the workflow has just published from the
+checkout, always, and the committed `bin/WindowsAppManagerMcp.exe` with `-OnlyIfCurrent`: only when that exe
+is a build of the current build inputs (the checks of `scripts/Test-PluginBinary.ps1`); a stale committed exe
+is expected until the next release and is skipped with a notice. The script runs the server, so it is not
+part of `dotnet test`; `ToolSurfaceSnapshotTests` checks that the workflow still calls it on both exes.
+
+### Generated tool tables
+
+The tool tables of the docs are generated into marked regions, between `<!-- tools:begin ID -->` and
+`<!-- tools:end ID -->`, from the server's tools/list and `Fixtures/Docs/ToolDocCatalog.cs`
+(`Contract/GeneratedToolDocsTests`, `Fixtures/Docs/ToolDocGenerator.cs`):
+
+| File | Region | Contents |
+|------|--------|----------|
+| README.md | `tool-table` | "Available Tools (N)" and the category table |
+| docs/TOOLS.md | `summary` | The introduction with the tool count, and the quick reference |
+| docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
+| SKILL.md | `count` | The sentence with the tool count |
+| SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
+
+Tool names, counts, categories and the parameter tables' names, order, types, required flags and defaults
+are generated. ToolDocCatalog holds what tools/list does not have: each tool's category, its one-line summary
+and the key parameters SKILL.md names (the test checks they are real parameters). The Description cells of the
+parameter tables, and a Default cell that explains a null default in words ("primary", "temp file"), are
+written by hand in docs/TOOLS.md and kept when a table is regenerated; a new parameter starts with the
+description from its schema. Everything outside the regions (the prose, examples and responses) is written by
+hand.
+
+To add a tool to the docs:
+
+1. Add its entry to `ToolDocCatalog` (category, summary, key parameters).
+2. Add its `### tool_name` section to docs/TOOLS.md, under its category's `##` heading, in catalog order,
+   with an empty region pair: `<!-- tools:begin params:tool_name -->` and `<!-- tools:end params:tool_name -->`.
+3. Run the tests with `UPDATE_SNAPSHOTS=1` (above), then edit the generated parameter descriptions in
+   docs/TOOLS.md if they need it.
+
+### Every tool over MCP and payload budgets
+
+`Contract/EveryToolContractTests` calls every served tool through an in-process server with the production
+tool and filter registrations and mocked services (`Fixtures/Contract/ContractServices.cs`; nothing native
+runs). The typical call of each tool must return JSON content with `success` true and no `isError`, and a
+capture its image block first. The failing call (the services report invalid handles, errors and empty lists)
+must return `isError` equal to `!success`. Roadmap M2.1 makes every tool do that; until then the tools that
+still return `isError: false` on failure, or a null result, are listed in `IsErrorPendingM21` and
+`NullResultPendingM21`. These lists can only shrink: a listed tool that reports `isError` fails until its
+entry is removed. A new tool needs typical arguments in `EveryToolContractTests.Arguments`.
+
+`Contract/ToolPayloadBudgetTests` measures the typical result of every tool on `TypicalDesktop` (two
+monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
+presets) and holds it to a per-tool token budget. Text is estimated at 4 UTF-8 bytes per token; a capture's
+image at width × height / 750 tokens, at most 3,300 (the default 1568-pixel long edge). Each budget is about
+one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it.
+The largest typical results, measured in October 2026:
+
+| Tool | Typical result | Tokens | Budget |
+|------|----------------|-------:|-------:|
+| `capture_with_elements` | Metadata of 120 elements (the image is budgeted separately) | 6,026 | 9,500 |
+| `get_ui_elements` | 120 elements at the default depth | 5,397 | 8,500 |
+| `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
+| `list_processes` | 40 processes | 1,328 | 2,000 |
+| `find_windows`, `get_all_windows` | 15 windows | 989 | 1,500 |
+
+Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
+budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
+
 ### Visual Studio
 
 | Action | Shortcut |
@@ -2083,6 +2181,10 @@ the runner. The fixture app scenarios themselves run only in `.github/workflows/
     name: test-results
     path: TestResults/**/*.trx
 ```
+
+`.github/workflows/build.yml` also starts the exe it publishes, and the committed plugin exe when it is a
+build of the current sources, and compares their tools/list with the snapshot (see
+[Tool surface snapshot](#tool-surface-snapshot)).
 
 ---
 

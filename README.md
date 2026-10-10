@@ -267,6 +267,12 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
 - **About 3,000 tests** covering unit, contract and integration scenarios (and end-to-end harness tests), about 75% line coverage
+- **Contract tests** call every tool over MCP through an in-process server, hold each typical result to a
+  token budget, and compare the tools/list the server sends with a checked-in snapshot
+  (`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
+  docs/TOOLS.md and the plugin skill are generated from it. After a deliberate change to the tools, run the
+  tests once with `UPDATE_SNAPSHOTS=1` to regenerate both, and review the diff
+  (see [TESTING.md](TESTING.md#tool-surface-snapshot))
 - By default a test run sends no keyboard or mouse input, launches or kills no
   processes, and does not move, focus or close your windows (some tests only read
   system state, such as the window, monitor and process lists)
