@@ -522,8 +522,9 @@ public class ProcessService : IProcessService
                         ProcessId: processId,
                         ProcessName: processName,
                         ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
-                                      "could not be read, so they could not be checked against the target policy and the agent's host. " +
-                                      "Nothing was terminated. Try again, or close it without forceKill (only its main window is asked to close).",
+                                      "could not be read, or did not list the process (it may just have exited), so they could not be " +
+                                      "checked against the target policy and the agent's host. Nothing was terminated. Try again, or close " +
+                                      "it without forceKill (only its main window is asked to close).",
                         ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
                 }
 

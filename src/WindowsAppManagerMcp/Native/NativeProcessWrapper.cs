@@ -13,6 +13,18 @@ public class NativeProcessWrapper : INativeProcessWrapper
 {
     private const int WhereExeTimeoutMs = 5000;
 
+    private readonly Func<IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?> _snapshot;
+
+    /// <param name="snapshot">
+    /// Reads the process list that the ancestor and descendant walks of this instance use: every running process
+    /// with its parent's ID and image name, or null when the list cannot be read. By default a Toolhelp32 snapshot
+    /// (read with <see cref="ReadProcessList"/>); tests pass their own.
+    /// </param>
+    public NativeProcessWrapper(Func<IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?>? snapshot = null)
+    {
+        _snapshot = snapshot ?? SnapshotProcesses;
+    }
+
     public IProcessHandle? StartProcess(ProcessStartInfo startInfo)
     {
         var process = Process.Start(startInfo);
@@ -129,7 +141,9 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
     public bool IsAncestorOfCurrentProcess(int processId)
     {
-        return GetAncestorProcessIds().Contains(processId);
+        var parentByProcessId = ReadParentProcessIds();
+        return parentByProcessId != null &&
+               FindAncestors(Environment.ProcessId, parentByProcessId, TryGetStartTime).Contains(processId);
     }
 
     /// <summary>
@@ -146,7 +160,7 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
     public IReadOnlyList<(int ProcessId, DateTime? StartTime)> GetAncestorProcesses()
     {
-        var parentByProcessId = SnapshotParentProcessIds();
+        var parentByProcessId = ReadParentProcessIds();
         if (parentByProcessId == null)
         {
             return [];
@@ -172,7 +186,7 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
     public IReadOnlyList<int> GetAncestorsOf(int processId)
     {
-        var parentByProcessId = SnapshotParentProcessIds();
+        var parentByProcessId = ReadParentProcessIds();
         return parentByProcessId == null || processId <= 0 || !parentByProcessId.ContainsKey(processId)
             ? []
             : FindAncestors(processId, parentByProcessId, TryGetStartTime);
@@ -223,16 +237,13 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
     public IReadOnlyList<(int ProcessId, string ImageName)>? GetDescendantsOf(int processId)
     {
-        var processes = SnapshotProcesses();
-        if (processes == null)
+        // The children are unknown, not absent, when the process list cannot be read or does not list the process
+        // (it exited, or the snapshot missed it): the runtime's tree kill finds the children on its own, so a caller
+        // that checks them must be able to fail closed
+        var processes = _snapshot();
+        if (processes == null || processId <= 0 || !processes.ContainsKey(processId))
         {
-            // The children are unknown, not absent
             return null;
-        }
-
-        if (processId <= 0 || !processes.ContainsKey(processId))
-        {
-            return [];
         }
 
         var parentByProcessId = processes.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
@@ -293,11 +304,38 @@ public class NativeProcessWrapper : INativeProcessWrapper
     private static Dictionary<int, int>? SnapshotParentProcessIds() =>
         SnapshotProcesses()?.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
 
+    /// <summary>This instance's process list (see the constructor) as each process's parent ID; null when unreadable.</summary>
+    private Dictionary<int, int>? ReadParentProcessIds() =>
+        _snapshot()?.ToDictionary(p => p.Key, p => p.Value.ParentProcessId);
+
+    /// <summary>
+    /// The process list of a snapshot: every process with its parent's ID and its image name, read with
+    /// <paramref name="read"/> (true for the first entry, as Process32FirstW reads it, then false, as Process32NextW
+    /// does) until it returns null. Null when not even the first entry can be read: a snapshot always lists at least
+    /// the idle process and the caller, so the process list is then unknown, and an empty list would read as "no
+    /// processes", and to a forced kill as "no children".
+    /// </summary>
+    public static Dictionary<int, (int ParentProcessId, string ImageName)>? ReadProcessList(Func<bool, ProcessSnapshotEntry?> read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+
+        var processes = new Dictionary<int, (int ParentProcessId, string ImageName)>();
+        for (var entry = read(true); entry is { } current; entry = read(false))
+        {
+            processes[current.ProcessId] = (current.ParentProcessId, current.ImageName);
+        }
+
+        return processes.Count == 0 ? null : processes;
+    }
+
     /// <summary>The length of PROCESSENTRY32W.szExeFile.</summary>
     private const int MaxPath = 260;
 
-    /// <summary>Every running process with its parent's ID and its image name, from one Toolhelp snapshot.</summary>
-    private static unsafe Dictionary<int, (int ParentProcessId, string ImageName)>? SnapshotProcesses()
+    /// <summary>
+    /// Every running process with its parent's ID and its image name, from one Toolhelp snapshot; null when the
+    /// snapshot cannot be taken or read.
+    /// </summary>
+    private static Dictionary<int, (int ParentProcessId, string ImageName)>? SnapshotProcesses()
     {
         var snapshot = NativeMethods.Kernel32.CreateToolhelp32Snapshot(NativeMethods.Kernel32.TH32CS_SNAPPROCESS, 0);
         if (snapshot == NativeMethods.Kernel32.INVALID_HANDLE_VALUE || snapshot == nint.Zero)
@@ -307,32 +345,39 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         try
         {
-            var processes = new Dictionary<int, (int ParentProcessId, string ImageName)>();
             var entry = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
-
-            if (!NativeMethods.Kernel32.Process32FirstW(snapshot, ref entry))
-            {
-                return processes;
-            }
-
-            do
-            {
-                var name = (char*)entry.szExeFile;
-                var length = 0;
-                while (length < MaxPath && name[length] != '\0')
-                {
-                    length++;
-                }
-
-                processes[(int)entry.th32ProcessID] = ((int)entry.th32ParentProcessID, new string(name, 0, length));
-            }
-            while (NativeMethods.Kernel32.Process32NextW(snapshot, ref entry));
-
-            return processes;
+            return ReadProcessList(first => ReadSnapshotEntry(snapshot, ref entry, first));
         }
         finally
         {
             NativeMethods.Kernel32.CloseHandle(snapshot);
+        }
+    }
+
+    /// <summary>
+    /// Reads the first (Process32FirstW) or the next (Process32NextW) entry of a Toolhelp snapshot into
+    /// <paramref name="entry"/>; null when there is none or it cannot be read.
+    /// </summary>
+    private static unsafe ProcessSnapshotEntry? ReadSnapshotEntry(nint snapshot, ref PROCESSENTRY32W entry, bool first)
+    {
+        var read = first
+            ? NativeMethods.Kernel32.Process32FirstW(snapshot, ref entry)
+            : NativeMethods.Kernel32.Process32NextW(snapshot, ref entry);
+        if (!read)
+        {
+            return null;
+        }
+
+        fixed (ushort* exeFile = entry.szExeFile)
+        {
+            var name = (char*)exeFile;
+            var length = 0;
+            while (length < MaxPath && name[length] != '\0')
+            {
+                length++;
+            }
+
+            return new ProcessSnapshotEntry((int)entry.th32ProcessID, (int)entry.th32ParentProcessID, new string(name, 0, length));
         }
     }
 
@@ -373,3 +418,6 @@ public class NativeProcessWrapper : INativeProcessWrapper
         public void Dispose() => process.Dispose();
     }
 }
+
+/// <summary>One process in a process snapshot: its ID, its parent's ID and its image name (such as "KeePass.exe").</summary>
+public readonly record struct ProcessSnapshotEntry(int ProcessId, int ParentProcessId, string ImageName);

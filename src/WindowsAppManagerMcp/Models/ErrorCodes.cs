@@ -211,8 +211,9 @@ public enum ProcessErrorCode
     TargetDeniedByPolicy = 14,
 
     /// <summary>
-    /// forceKill: the process list could not be read, so the child processes the forced kill would also end
-    /// could not be checked against the target policy and the host guard. Nothing was terminated.
+    /// forceKill: the process list could not be read, or did not list the process (it may just have exited), so
+    /// the child processes the forced kill would also end could not be checked against the target policy and the
+    /// host guard. Nothing was terminated.
     /// </summary>
     ProcessTreeUnreadable = 15
 }

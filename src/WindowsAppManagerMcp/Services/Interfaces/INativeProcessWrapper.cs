@@ -51,9 +51,11 @@ public interface INativeProcessWrapper
     /// <summary>
     /// Returns the descendants of a running process (children, grandchildren, ...), breadth-first, with
     /// their image names (such as "KeePass.exe"): the processes that Kill(entireProcessTree: true) also
-    /// ends. A child that started before its parent is skipped, because its PID was reused. Returns an
-    /// empty list when the process is not running, and null when the process list cannot be read: the
-    /// children are then unknown, not absent, so a caller that checks them must fail closed. Only reads.
+    /// ends. A child that started before its parent is skipped, because its PID was reused. Returns null
+    /// when the process list cannot be read (the snapshot cannot be taken, or not even its first entry read)
+    /// or does not list the process (it is not running, or exited meanwhile): the children are then unknown,
+    /// not absent, so a caller that checks them must fail closed. An empty list means the process is in the
+    /// list and has no children. Only reads.
     /// </summary>
     IReadOnlyList<(int ProcessId, string ImageName)>? GetDescendantsOf(int processId);
 
