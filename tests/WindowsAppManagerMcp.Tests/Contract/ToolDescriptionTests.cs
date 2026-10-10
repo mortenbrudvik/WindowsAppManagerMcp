@@ -164,6 +164,17 @@ public class ToolDescriptionTests
             .And.Contain("focus_window", "an agent that wants to type into the window must activate it first");
     }
 
+    [Theory]
+    [InlineData("close_windows_batch")]
+    [InlineData("close_windows_batch.confirm")]
+    public void CloseWindowsBatchDescriptions_NameTheConfirmThresholdTheToolEnforces(string source)
+    {
+        // The threshold is written out in the [Description] strings, which cannot interpolate the int constant
+        var text = ServerToolCatalog.AllDescriptions().Single(d => d.Source == source).Text;
+
+        text.Should().ContainEquivalentOf($"more than {WindowsAppManagerMcp.Tools.WindowManagerTools.MaxCloseBatchWithoutConfirm} windows");
+    }
+
     private static string ParameterDescription(string toolName, string parameterName) =>
         ServerToolCatalog.AllDescriptions()
             .Single(d => d.Source == $"{toolName}.{parameterName}")
