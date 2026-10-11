@@ -18,6 +18,7 @@ public class WindowManagerToolsCloseTests
     private readonly Mock<IWindowService> _windowService = new();
     private readonly Mock<IWindowCloseVerifier> _verifier = new();
     private readonly List<bool> _gateFreeDuringTheWait = [];
+    private object _flow = new();
 
     public WindowManagerToolsCloseTests()
     {
@@ -31,8 +32,12 @@ public class WindowManagerToolsCloseTests
             .ReturnsAsync([]);
     }
 
-    private WindowManagerTools CreateSut() =>
-        new(_windowService.Object, Mock.Of<IForegroundService>(), closeVerifier: _verifier.Object, gateWaitTimeout: TimeSpan.FromSeconds(5));
+    /// <summary>The tools, with the calling test's flow tagged so the gate checks see its own calls only.</summary>
+    private WindowManagerTools CreateSut()
+    {
+        _flow = InputGate.TagFlow();
+        return new(_windowService.Object, Mock.Of<IForegroundService>(), closeVerifier: _verifier.Object, gateWaitTimeout: TimeSpan.FromSeconds(5));
+    }
 
     private static WindowCloseRequest[] Requests(params long[] handles) => handles.Select(h => new WindowCloseRequest(h)).ToArray();
 
@@ -41,11 +46,8 @@ public class WindowManagerToolsCloseTests
         _verifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
             {
-                // The tool must have released the gate: taking it here would time out otherwise
-                using (var gate = InputGate.TryEnter(TimeSpan.FromSeconds(5), CancellationToken.None))
-                {
-                    _gateFreeDuringTheWait.Add(gate != null);
-                }
+                // The tool must have released the gate (another test may hold it in parallel)
+                _gateFreeDuringTheWait.Add(!InputGate.IsHeldBy(_flow));
 
                 return handles.Select(h => status(h) == CloseStatus.PromptShown
                     ? new CloseObservation(h, CloseStatus.PromptShown, SavePrompt)

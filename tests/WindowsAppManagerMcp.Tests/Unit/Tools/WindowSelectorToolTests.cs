@@ -113,21 +113,19 @@ public class WindowSelectorToolTests
     [Fact]
     public async Task TheSelector_IsResolvedBeforeTheInputGate_AndTheWindowChangesInsideIt()
     {
-        // Arrange - record whether the gate was free while the selector was resolved, and held while the window moved
+        // Arrange - record whether this test's call held the gate while the selector was resolved, and while the window
+        // moved (other tests take the gate in parallel)
+        var flow = InputGate.TagFlow();
         bool? gateFreeWhileResolving = null;
         bool? gateHeldWhileMoving = null;
         _windows.Setup(w => w.ResolveWindow(NotepadSelector)).Returns(() =>
         {
-            using (var gate = InputGate.TryEnter(TimeSpan.FromSeconds(5), CancellationToken.None))
-            {
-                gateFreeWhileResolving = gate != null;
-            }
-
+            gateFreeWhileResolving = !InputGate.IsHeldBy(flow);
             return WindowResolution.Found(NotepadWindow);
         });
         _windows.Setup(w => w.MoveWindow((nint)Notepad, 10, 20, true)).Returns(() =>
         {
-            gateHeldWhileMoving = InputGate.IsHeld;
+            gateHeldWhileMoving = InputGate.IsHeldBy(flow);
             return WindowChangeResult.Done((nint)Notepad);
         });
 
@@ -160,11 +158,12 @@ public class WindowSelectorToolTests
     [Fact]
     public async Task TheSelectorIsCheckedAgain_InsideTheGate()
     {
-        // Arrange - record whether the window was read again while the gate was held
+        // Arrange - record whether the window was read again while this test's call held the gate
+        var flow = InputGate.TagFlow();
         var readInsideTheGate = false;
         _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(() =>
         {
-            readInsideTheGate |= InputGate.IsHeld;
+            readInsideTheGate |= InputGate.IsHeldBy(flow);
             return NotepadWindow;
         });
 

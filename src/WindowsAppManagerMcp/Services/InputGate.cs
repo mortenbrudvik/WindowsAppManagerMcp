@@ -50,17 +50,52 @@ public static class InputGate
     public static async Task<IDisposable?> TryEnterAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
         await Gate.WaitAsync(timeout, cancellationToken).ConfigureAwait(false) ? new Scope() : null;
 
-    /// <summary>True while a call holds the gate (for tests).</summary>
+    /// <summary>
+    /// True while a call holds the gate, any call in the process. Tests that run in parallel take the gate too, so a test
+    /// that asks whether the code it calls holds the gate uses <see cref="IsHeldBy"/>.
+    /// </summary>
     public static bool IsHeld => Gate.CurrentCount == 0;
+
+    /// <summary>
+    /// Tags the current flow and everything it starts from now on (its awaits, its tasks, an in-process server started
+    /// after it), and returns the tag, for <see cref="IsHeldBy"/> (tests). The server never tags a flow.
+    /// </summary>
+    public static object TagFlow()
+    {
+        var tag = new object();
+        FlowTag.Value = tag;
+        return tag;
+    }
+
+    /// <summary>
+    /// True while the gate is held by code that runs under <paramref name="tag"/> (<see cref="TagFlow"/>): the call a test
+    /// made, not a call another test made in parallel.
+    /// </summary>
+    public static bool IsHeldBy(object tag)
+    {
+        ArgumentNullException.ThrowIfNull(tag);
+        return IsHeld && ReferenceEquals(Volatile.Read(ref _holderTag), tag);
+    }
+
+    // The tag of the flow that holds the gate (tests); null when it is free or its holder's flow is not tagged
+    private static readonly AsyncLocal<object?> FlowTag = new();
+    private static object? _holderTag;
 
     private sealed class Scope : IDisposable
     {
         private int _released;
 
+        /// <summary>Created once the gate is taken, on the taker's flow.</summary>
+        public Scope()
+        {
+            Volatile.Write(ref _holderTag, FlowTag.Value);
+        }
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _released, 1) == 0)
             {
+                Volatile.Write(ref _holderTag, null);
                 Gate.Release();
             }
         }

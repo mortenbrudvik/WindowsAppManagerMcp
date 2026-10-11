@@ -128,10 +128,11 @@ public class InputGateToolFilterTests
     public async Task WindowChangingTool_HoldsTheGateUntilItReturns()
     {
         // Arrange
+        var flow = InputGate.TagFlow();
         var heldDuringTheCall = false;
         var handler = InputGateToolFilter.Filter((_, _) =>
         {
-            heldDuringTheCall = InputGate.IsHeld;
+            heldDuringTheCall = InputGate.IsHeldBy(flow);
             return ValueTask.FromResult(new CallToolResult());
         });
 

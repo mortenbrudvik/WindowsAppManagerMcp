@@ -282,25 +282,67 @@ public sealed class InputControlToolContractTests : IDisposable
         _questions.Should().Be(1);
     }
 
+    public static TheoryData<string?> InitializeRevisions => new() { InProcessMcpServer.InitializeRevision, InProcessMcpServer.NewestInitializeRevision };
+
     [Theory]
-    [MemberData(nameof(Revisions))]
-    public async Task ResumeInput_TheUserDoesNotAnswer_StaysPaused(string? revision)
+    [MemberData(nameof(InitializeRevisions))]
+    public async Task ResumeInput_TheUserDoesNotAnswer_StaysPaused_AndTheCallEndsAtTheAnswerTimeout(string revision)
     {
+        // Arrange - the user never answers within the test: the question stays open until the client gives up
         _session.Pause(InputControlSources.Hotkey);
+        var userAnswered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = await StartAsync(
             answer: async (_, token) =>
             {
-                await Task.Delay(Timeout, token);
+                try
+                {
+                    await Task.Delay(Timeout, token);
+                }
+                finally
+                {
+                    userAnswered.TrySetResult();
+                }
+
                 return new ElicitResult { Action = "accept" };
             },
             answerTimeout: TimeSpan.FromMilliseconds(100),
             revision: revision);
 
+        // Act
         var result = Payload(await server.CallToolAsync("resume_input"));
 
+        // Assert - the call ended while the question was still open: the answer timeout, not the user, ended it
+        userAnswered.Task.IsCompleted.Should().BeFalse("the server's answer timeout ends the call on the initialize handshake");
         result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeDeclined));
         result.GetProperty("error").GetString().Should().Contain("did not answer");
         _session.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResumeInput_OnTheMultiRoundTripRevision_ALateAnswer_StillLeavesInputPaused()
+    {
+        // Arrange - on the SDK's default revision the question is a request the server cannot take back: the call stays
+        // open until the client's handler returns (pinned here, so a change in either direction is seen), and an answer
+        // that comes after the server's answer timeout is not taken as a yes
+        _session.Pause(InputControlSources.Hotkey);
+        var userAnswered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = await StartAsync(
+            answer: async (_, token) =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300), token);
+                userAnswered.TrySetResult();
+                return await Answer("accept", resume: true);
+            },
+            answerTimeout: TimeSpan.FromMilliseconds(100));
+
+        // Act
+        var result = Payload(await server.CallToolAsync("resume_input"));
+
+        // Assert
+        userAnswered.Task.IsCompleted.Should().BeTrue("the call waits for the client's handler on the multi-round-trip revision");
+        result.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.ResumeDeclined));
+        result.GetProperty("error").GetString().Should().Contain("did not answer");
+        _session.IsPaused.Should().BeTrue("a yes that came after the answer timeout does not resume input");
     }
 
     [Theory]
