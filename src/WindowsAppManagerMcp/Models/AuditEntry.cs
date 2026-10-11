@@ -4,9 +4,9 @@ namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
 /// One line of the audit log (roadmap M2.17): a call of an audited tool, what it was aimed at, where its input went,
-/// and how it ended. It never holds typed text, keys, clipboard text, URLs, command-line arguments or result text: a
-/// string argument is recorded as its length unless it names a process, a preset or a fixed value
-/// (<see cref="Infrastructure.AuditRecord"/>).
+/// and how it ended. It never holds typed text, keys, clipboard text, URL paths or queries, command-line arguments or
+/// result text: a string argument is recorded as its length unless it names a process, a preset, a fixed value or a
+/// program to launch (<see cref="Infrastructure.AuditRecord"/>).
 /// </summary>
 /// <param name="Ts">When the call started, in local time with its UTC offset.</param>
 /// <param name="Tool">The tool name.</param>
@@ -22,7 +22,10 @@ namespace WindowsAppManagerMcp.Models;
 /// </param>
 /// <param name="ReceivingWindow">The window the input went to, or would have gone to when it was refused.</param>
 /// <param name="Items">The items of a batch, in request order, with the windows' titles read before the call.</param>
-/// <param name="Args">The arguments, with numbers and booleans as they were and other strings as their length.</param>
+/// <param name="Args">
+/// The arguments the tool declares: numbers and booleans where it declares them, named strings, and every other value as
+/// its length or count; undeclared arguments only as unknownArgumentsCount.
+/// </param>
 /// <param name="Result">The numbers and booleans of the result, such as charactersTyped or windowsArranged.</param>
 /// <param name="ServerPid">The server's process ID: several servers can write the same day's file.</param>
 /// <param name="RequestId">The JSON-RPC request ID, as the server's stderr call log names it.</param>
@@ -45,7 +48,7 @@ public sealed record AuditEntry(
 /// <param name="Title">The window title, cut to <see cref="Infrastructure.AuditRecord.MaxTitleLength"/> characters.</param>
 /// <param name="Process">The process name.</param>
 /// <param name="ProcessId">The process ID.</param>
-/// <param name="Executable">The program a launch was asked for; a URL keeps only its scheme, host and path.</param>
+/// <param name="Executable">The program a launch was asked for: a program name or file path, or only a URL's scheme and host.</param>
 public sealed record AuditTarget(
     long? Handle = null,
     string? Title = null,

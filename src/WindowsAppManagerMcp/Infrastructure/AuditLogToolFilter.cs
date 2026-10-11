@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -15,7 +16,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// </summary>
 /// <remarks>
 /// The filter does nothing when no <see cref="IAuditLog"/> is registered (tests that register their own services), and
-/// it never changes a call's result or fails it: the audit log swallows its own failures.
+/// it never changes a call's result or fails it: the audit log swallows its own failures, and the filter swallows any
+/// failure of a log that does not. The line is written before the result goes back (one small append; it waits only
+/// while another server is appending to the same day's file, at most about half a second).
 /// </remarks>
 public static class AuditLogToolFilter
 {
@@ -67,35 +70,69 @@ public static class AuditLogToolFilter
         {
             var tool = request.Params?.Name;
             var audit = tool != null && AuditedTools.Contains(tool) ? AuditLogOf(request.Services) : null;
-            if (audit == null)
+            var call = audit == null ? null : Begin(audit, tool!, request);
+            if (call == null)
             {
                 return await next(request, cancellationToken).ConfigureAwait(false);
             }
 
-            var call = audit.Begin(tool!, request.Params?.Arguments, request.JsonRpcRequest?.Id.ToString());
+            CallToolResult result;
             try
             {
-                var result = await next(request, cancellationToken).ConfigureAwait(false);
-                audit.End(call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok);
-                return result;
+                result = await next(request, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                audit.End(call, null, AuditOutcome.Cancelled);
+                End(audit!, call, null, AuditOutcome.Cancelled);
                 throw;
             }
             catch (McpProtocolException)
             {
-                audit.End(call, null, AuditOutcome.ProtocolError);
+                End(audit!, call, null, AuditOutcome.ProtocolError);
                 throw;
             }
             catch (Exception)
             {
                 // The error filter inside turns every other exception into an error result; recorded all the same
-                audit.End(call, null, AuditOutcome.Error);
+                End(audit!, call, null, AuditOutcome.Error);
                 throw;
             }
+
+            End(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok);
+            return result;
         };
+
+    /// <summary>Starts the record, with the tool's declared input schema; null (the call goes unaudited) if the log fails.</summary>
+    private static AuditCall? Begin(IAuditLog audit, string tool, RequestContext<CallToolRequestParams> request)
+    {
+        try
+        {
+            return audit.Begin(tool, request.Params?.Arguments, request.JsonRpcRequest?.Id.ToString(), InputSchemaOf(request, tool));
+        }
+        catch (Exception)
+        {
+            // An audit log that breaks its own contract never breaks the call
+            return null;
+        }
+    }
+
+    private static void End(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
+    {
+        try
+        {
+            audit.End(call, result, outcome);
+        }
+        catch (Exception)
+        {
+            // As in Begin: the result goes back as it is
+        }
+    }
+
+    /// <summary>The input schema the server declares for <paramref name="tool"/>, or null when the filter cannot see it.</summary>
+    private static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
+        request.Server?.ServerOptions?.ToolCollection is { } tools && tools.TryGetPrimitive(tool, out var served)
+            ? served.ProtocolTool.InputSchema
+            : null;
 
     private static IAuditLog? AuditLogOf(IServiceProvider? services)
     {

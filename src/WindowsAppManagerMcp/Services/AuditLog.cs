@@ -64,7 +64,7 @@ public sealed partial class AuditLog : IAuditLog
 
     public string? LastError => _lastError;
 
-    public AuditCall Begin(string tool, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, string? requestId)
+    public AuditCall Begin(string tool, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, string? requestId, JsonElement? inputSchema = null)
     {
         ArgumentNullException.ThrowIfNull(tool);
 
@@ -73,8 +73,10 @@ public sealed partial class AuditLog : IAuditLog
         var copy = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         var windows = new Dictionary<long, AuditTarget>();
         var processes = new Dictionary<int, string?>();
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes = null;
         try
         {
+            declaredTypes = AuditRecord.DeclaredTypes(inputSchema);
             foreach (var (name, value) in arguments ?? [])
             {
                 copy[name] = value.Clone();
@@ -96,7 +98,7 @@ public sealed partial class AuditLog : IAuditLog
             _logger.LogDebug(ex, "The audit log could not read the targets of a '{Tool}' call", tool);
         }
 
-        return new AuditCall(tool, copy, requestId, started, timestamp, windows, processes);
+        return new AuditCall(tool, copy, requestId, started, timestamp, windows, processes, declaredTypes);
     }
 
     public void End(AuditCall call, CallToolResult? result, string outcome)

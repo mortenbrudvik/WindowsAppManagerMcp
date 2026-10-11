@@ -93,14 +93,24 @@ something went wrong. The agent does not need to do anything for it, and cannot 
   close_application once they exist. A call is logged whatever its outcome: refused by the input guard or a pause,
   failed, cancelled (some input may have been sent) or done. The read-only tools are never logged, and neither are the
   captures.
-- **Never logged:** typed text, keys, clipboard text, URLs, working directories, command-line arguments or any result
-  text. A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its
-  count (`argumentsCount`); only the strings that name a process, a layout preset or a fixed value (`processName`,
-  `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`) and `executable` are kept, and a URL in
-  `executable` keeps only its scheme, host and path. Window titles are logged (cut to 200 characters), as the agent
-  sees them.
+- **Never logged:** typed text, keys, clipboard text, URL paths, queries and credentials, working directories,
+  command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
+  - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
+    (`argumentsCount`). Only the strings that name a process, a layout preset or a fixed value (`processName`,
+    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`) are kept.
+  - `executable` is kept as a program name or file path. A URL keeps only its scheme, host and port
+    (`https://hooks.example.com`, `mailto:example.com`, `data:`), and a URL without a scheme only its host
+    (`www.example.com`); `executableLength` then gives the full length.
+  - A number or true/false value is kept only where the tool declares a number or true/false parameter. A number sent
+    for a text (`"text": 482913`) is recorded as its length, like a string.
+  - An argument the tool does not declare is only counted (`unknownArgumentsCount`); its name is not logged.
+
+  Window titles are logged (cut to 200 characters), as the agent sees them.
 - **When it cannot be written** (a read-only folder, a full disk), the call still runs and returns its normal result.
   The server writes one warning to stderr, and get_server_info adds a warning, until a line is written again.
+- **Cost:** the line is appended before the result goes back. That is one small write, unless another server is
+  appending to the same day's file at that moment; the server then waits for it, at most about half a second, and
+  drops the line after that.
 
 Each line is one JSON object:
 

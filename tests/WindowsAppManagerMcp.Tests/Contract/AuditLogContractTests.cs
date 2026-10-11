@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Infrastructure;
 
@@ -147,6 +148,50 @@ public class AuditLogContractTests
     }
 
     [Fact]
+    public async Task ANumberSentForTheText_IsRecordedAsItsLength_FromTheToolsSchema()
+    {
+        // A PIN sent as a JSON number fails binding (InvalidArguments) and is still audited: never its digits
+        var (_, lines) = await CallAsync("type_text", new Dictionary<string, object?>
+        {
+            ["text"] = 482913, ["windowHandle"] = TypicalDesktop.NotepadHandle, ["delayMs"] = 5
+        });
+
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("482913");
+        var args = line.GetProperty("args");
+        args.GetProperty("textLength").GetInt32().Should().Be(6);
+        args.TryGetProperty("text", out _).Should().BeFalse();
+        args.GetProperty("windowHandle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle, "the tool declares it an integer");
+        args.GetProperty("delayMs").GetInt32().Should().Be(5);
+    }
+
+    [Fact]
+    public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted()
+    {
+        var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click")) { ["password=hunter2"] = 1 };
+
+        var (_, lines) = await CallAsync("click", arguments);
+
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2").And.NotContain("password");
+        line.GetProperty("args").GetProperty("unknownArgumentsCount").GetInt32().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ALaunchedUrl_KeepsOnlyItsSchemeAndHost()
+    {
+        const string webhook = "https://hooks.example.com/services/T0/B0/SECRETxyz";
+
+        var (_, lines) = await CallAsync("launch_application", new Dictionary<string, object?> { ["executable"] = webhook });
+
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("SECRET").And.NotContain("services");
+        line.GetProperty("args").GetProperty("executable").GetString().Should().Be("https://hooks.example.com");
+        line.GetProperty("args").GetProperty("executableLength").GetInt32().Should().Be(webhook.Length);
+        line.GetProperty("target").GetProperty("executable").GetString().Should().Be("https://hooks.example.com");
+    }
+
+    [Fact]
     public async Task ACallRefusedWhileInputIsPaused_IsAuditedAsAnError()
     {
         var (result, lines) = await CallAsync("close_window", new Dictionary<string, object?> { ["handle"] = TypicalDesktop.NotepadHandle },
@@ -187,6 +232,43 @@ public class AuditLogContractTests
         // Assert
         result.IsError.Should().NotBe(true);
         lines.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnAuditLogThatThrows_NeverBreaksTheCall_AndIsEndedAtMostOnce(bool beginThrows)
+    {
+        // Arrange - an IAuditLog that breaks its contract (AuditLog itself never throws)
+        using var services = new ContractServices(ContractMode.Typical);
+        var audit = new Mock<IAuditLog>();
+        var begin = audit.Setup(a => a.Begin(It.IsAny<string>(), It.IsAny<IEnumerable<KeyValuePair<string, JsonElement>>?>(),
+            It.IsAny<string?>(), It.IsAny<JsonElement?>()));
+        if (beginThrows)
+        {
+            begin.Throws(new IOException("begin"));
+        }
+        else
+        {
+            begin.Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
+                new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
+            audit.Setup(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
+        }
+
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(),
+            configureServices: s =>
+            {
+                services.Register(s);
+                s.AddSingleton(audit.Object);
+            });
+
+        // Act
+        var result = await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        audit.Verify(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()),
+            beginThrows ? Times.Never() : Times.Once());
     }
 
     [Fact]

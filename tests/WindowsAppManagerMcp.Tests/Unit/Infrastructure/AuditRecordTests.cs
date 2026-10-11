@@ -13,13 +13,41 @@ public class AuditRecordTests
 {
     private static readonly DateTimeOffset Started = new(2026, 10, 10, 14, 3, 22, TimeSpan.FromHours(2));
 
+    /// <summary>A call whose tool declares each argument with the JSON type it has, unless <paramref name="schema"/> says otherwise.</summary>
     private static AuditCall Call(
         string tool,
         object arguments,
         IReadOnlyDictionary<long, AuditTarget>? windows = null,
-        IReadOnlyDictionary<int, string?>? processes = null) =>
-        new(tool, Arguments(arguments), "7", Started, 0, windows ?? new Dictionary<long, AuditTarget>(),
-            processes ?? new Dictionary<int, string?>());
+        IReadOnlyDictionary<int, string?>? processes = null,
+        object? schema = null)
+    {
+        var values = Arguments(arguments);
+        return new(tool, values, "7", Started, 0, windows ?? new Dictionary<long, AuditTarget>(),
+            processes ?? new Dictionary<int, string?>(), AuditRecord.DeclaredTypes(Schema(schema ?? SchemaOf(values))));
+    }
+
+    private static JsonElement Schema(object schema) => JsonSerializer.SerializeToElement(schema);
+
+    /// <summary>An input schema that declares each argument as the JSON type of its value, nullable as the SDK makes them.</summary>
+    private static object SchemaOf(IReadOnlyDictionary<string, JsonElement> arguments) => new
+    {
+        type = "object",
+        properties = arguments.ToDictionary(a => a.Key, a => (object)new
+        {
+            type = new[]
+            {
+                a.Value.ValueKind switch
+                {
+                    JsonValueKind.Number => "integer",
+                    JsonValueKind.True or JsonValueKind.False => "boolean",
+                    JsonValueKind.Array => "array",
+                    JsonValueKind.Object => "object",
+                    _ => "string"
+                },
+                "null"
+            }
+        })
+    };
 
     private static Dictionary<string, JsonElement> Arguments(object arguments) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(arguments))!;
@@ -107,17 +135,100 @@ public class AuditRecordTests
 
     [Theory]
     [InlineData("notepad", "notepad")]
+    [InlineData("Visual Studio Code", "Visual Studio Code")]
+    [InlineData(@"tools\app.exe", @"tools\app.exe")]
     [InlineData(@"C:\Program Files\App\app.exe", @"C:\Program Files\App\app.exe")]
-    [InlineData("ms-settings:display", "ms-settings:display")]
-    [InlineData("https://user:pw@example.com:8443/reset/page?token=abc#frag", "https://example.com:8443/reset/page")]
-    [InlineData("mailto:someone@example.com?subject=secret", "mailto:example.com")] // the address is user info
-    public void AnExecutable_KeepsItsPath_AndAUrlLosesItsCredentialsQueryAndFragment(string executable, string recorded)
+    [InlineData(@"C:\a#b\app.exe", @"C:\a#b\app.exe")]
+    [InlineData(@"\\server\share\app.exe", @"\\server\share\app.exe")]
+    [InlineData("file:///C:/x/app.exe?token=secret#frag", @"C:\x\app.exe")]
+    public void AProgramPath_IsKept(string executable, string recorded)
     {
         AuditRecord.RedactExecutable(executable).Should().Be(recorded);
 
         var entry = Build(Call("launch_application", new { executable }), null);
         entry.Args!["executable"]!.GetValue<string>().Should().Be(recorded);
         entry.Target!.Executable.Should().Be(recorded);
+        entry.Args.ContainsKey("executableLength").Should().Be(recorded != executable, "the length is recorded when something was cut");
+    }
+
+    [Theory]
+    [InlineData("https://hooks.slack.com/services/T0/B0/SECRETxyz", "https://hooks.slack.com")] // a webhook URL is its own secret
+    [InlineData("https://user:pw@example.com:8443/reset/SECRET?token=abc#frag", "https://example.com:8443")]
+    [InlineData("https://www.dropbox.com/s/SECRETkey/report.pdf", "https://www.dropbox.com")]
+    [InlineData("data:text/plain,hunter2SECRET", "data:")]
+    [InlineData("javascript:alert('SECRET')", "javascript:")]
+    [InlineData("ms-settings:SECRET", "ms-settings:")]
+    [InlineData("mailto:SECRET@example.com?subject=SECRET", "mailto:example.com")] // the address is user info
+    [InlineData("www.example.com/reset/SECRET?t=1", "www.example.com")] // no scheme, but ShellExecute opens it
+    [InlineData("example.com/SECRET", "example.com")]
+    [InlineData("SECRET@example.com", "example.com")]
+    [InlineData("SECRET@example.com/reset?t=SECRET", "example.com")]
+    public void AUrl_KeepsOnlyItsSchemeAndHost(string executable, string recorded)
+    {
+        AuditRecord.RedactExecutable(executable).Should().Be(recorded);
+
+        var entry = Build(Call("launch_application", new { executable }), null);
+        AuditRecord.ToJsonLine(entry).Should().NotContain("SECRET");
+        entry.Args!["executableLength"]!.GetValue<int>().Should().Be(executable.Length);
+    }
+
+    [Fact]
+    public void ANumberOrBooleanForAStringParameter_IsRecordedAsItsLength()
+    {
+        // A PIN sent as a JSON number: binding fails with InvalidArguments, and the call is still audited
+        var schema = new { type = "object", properties = new { text = new { type = "string" }, delayMs = new { type = "integer" } } };
+
+        var number = Build(Call("type_text", new { text = 482913, delayMs = 5 }, schema: schema), null);
+        var boolean = Build(Call("type_text", new { text = true }, schema: schema), null);
+
+        AuditRecord.ToJsonLine(number).Should().NotContain("482913");
+        number.Args!["textLength"]!.GetValue<int>().Should().Be(6);
+        number.Args.ContainsKey("text").Should().BeFalse();
+        number.Args["delayMs"]!.GetValue<int>().Should().Be(5, "the tool declares it a number");
+        boolean.Args!["textLength"]!.GetValue<int>().Should().Be(4);
+    }
+
+    [Fact]
+    public void AnArgumentTheToolDoesNotDeclare_IsOnlyCounted()
+    {
+        var schema = new { type = "object", properties = new { x = new { type = "integer" } } };
+        var arguments = new Dictionary<string, object> { ["x"] = 1, ["password=hunter2"] = 1, ["extraNote"] = "abc" };
+
+        var entry = Build(Call("click", arguments, schema: schema), null);
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("hunter2").And.NotContain("extraNote");
+        entry.Args!["x"]!.GetValue<int>().Should().Be(1);
+        entry.Args["unknownArgumentsCount"]!.GetValue<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public void WithoutTheToolsSchema_NoNumberIsKept_AndOnlyIdentifierNamesAre()
+    {
+        var arguments = Arguments(new Dictionary<string, object> { ["x"] = 10, ["force"] = true, ["processName"] = "notepad", ["password=hunter2"] = 1 });
+
+        var summary = AuditRecord.SummarizeArguments(arguments, declaredTypes: null)!;
+
+        summary.ToJsonString().Should().NotContain("hunter2");
+        summary["xLength"]!.GetValue<int>().Should().Be(2);
+        summary["forceLength"]!.GetValue<int>().Should().Be(4);
+        summary["processName"]!.GetValue<string>().Should().Be("notepad");
+        summary["unknownArgumentsCount"]!.GetValue<int>().Should().Be(1);
+    }
+
+    [Fact]
+    public void TheDeclaredTypes_ComeFromTheInputSchema()
+    {
+        var declared = AuditRecord.DeclaredTypes(Schema(new
+        {
+            type = "object",
+            properties = new { x = new { type = "integer" }, windowHandle = new { type = new[] { "integer", "null" } }, note = new { description = "untyped" } }
+        }))!;
+
+        declared["x"].Should().BeEquivalentTo("integer");
+        declared["windowHandle"].Should().BeEquivalentTo("integer", "null");
+        declared["note"].Should().BeEmpty();
+        AuditRecord.DeclaredTypes(null).Should().BeNull();
+        AuditRecord.DeclaredTypes(Schema(new { type = "object" }))!.Should().BeEmpty();
     }
 
     [Fact]
@@ -239,7 +350,7 @@ public class AuditRecordTests
 
         var entry = Build(call, result);
 
-        entry.Items.Should().Equal(new AuditItem(6, null, null, 5, "https://example.com/", true, null));
+        entry.Items.Should().Equal(new AuditItem(6, null, null, 5, "https://example.com", true, null));
         AuditRecord.ToJsonLine(entry).Should().NotContain("secret");
     }
 

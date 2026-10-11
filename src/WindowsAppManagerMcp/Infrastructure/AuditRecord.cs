@@ -14,12 +14,15 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// ran, and its result. Pure: it reads no window and writes no file.
 /// </summary>
 /// <remarks>
-/// The arguments are summarized by default-deny, so a new tool or parameter cannot leak what it carries: numbers and
-/// booleans are kept; a string is kept only when its name is in <see cref="NamedStringArguments"/> (process and preset
-/// names, fixed values), and is otherwise recorded as <c>&lt;name&gt;Length</c>; an array is recorded as
-/// <c>&lt;name&gt;Count</c>; an object is left out. So typed text, keys, clipboard text, URLs, working directories and
-/// command-line arguments never reach the file. Of the result, only the numbers and booleans at its top level, its
-/// errorCode, the receiving window and a batch's items are kept; never its text.
+/// The arguments are summarized by default-deny against the tool's declared input schema, so a new tool or parameter,
+/// or a value of the wrong type, cannot leak what it carries (<see cref="SummarizeArguments"/>): an argument the tool
+/// does not declare is only counted; a number or boolean is kept only where the tool declares one; a string is kept
+/// only when its name is in <see cref="NamedStringArguments"/> (process and preset names, fixed values), a program to
+/// launch is kept as a path or as a URL's scheme and host (<see cref="RedactExecutable"/>), and any other value is
+/// recorded as its length (<c>&lt;name&gt;Length</c>) or count (<c>&lt;name&gt;Count</c>). So typed text, keys,
+/// clipboard text, URL paths and queries, working directories and command-line arguments never reach the file. Of the
+/// result, only the numbers and booleans at its top level, its errorCode, the receiving window and a batch's items are
+/// kept; never its text.
 /// </remarks>
 public static class AuditRecord
 {
@@ -31,14 +34,20 @@ public static class AuditRecord
 
     /// <summary>
     /// The string arguments that are kept as they are: they name a process, a layout preset or a fixed value, never
-    /// content. <c>executable</c> is kept too, with a URL reduced to its scheme, host and path (<see cref="RedactExecutable"/>).
+    /// content. <c>executable</c> is kept too, as a path or as a URL's scheme and host only (<see cref="RedactExecutable"/>).
     /// </summary>
     public static IReadOnlySet<string> NamedStringArguments { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position"
     };
 
+    /// <summary>The key under which the arguments a tool does not declare are counted.</summary>
+    public const string UnknownArgumentsCount = "unknownArgumentsCount";
+
     private const string ExecutableArgument = "executable";
+
+    /// <summary>Where a program name with no scheme is cut: the rest can be a URL's path, query or fragment.</summary>
+    private static readonly char[] UrlDelimiters = ['/', '?', '#'];
 
     // One line per entry: no indentation, nulls left out, camelCase, and non-ASCII titles readable. The relaxed encoder
     // still escapes control characters and U+2028/U+2029, so a title cannot break the line.
@@ -70,7 +79,7 @@ public static class AuditRecord
                 ? Window(window)
                 : null,
             items,
-            SummarizeArguments(call.Arguments),
+            SummarizeArguments(call.Arguments, call.DeclaredTypes),
             body == null ? null : Scalars(body),
             serverPid,
             call.RequestId);
@@ -80,27 +89,58 @@ public static class AuditRecord
     public static string ToJsonLine(AuditEntry entry) => JsonSerializer.Serialize(entry, LineOptions);
 
     /// <summary>
-    /// The argument summary: numbers and booleans as they are, the <see cref="NamedStringArguments"/> as they are, other
-    /// strings as <c>&lt;name&gt;Length</c>, arrays as <c>&lt;name&gt;Count</c>; objects and nulls left out. Null when
-    /// nothing is left.
+    /// The argument summary, default-deny:
+    /// <list type="bullet">
+    /// <item>An argument the tool does not declare (or, with no schema, whose name is no identifier) is only counted,
+    /// under <see cref="UnknownArgumentsCount"/>: its name can be anything the client sent.</item>
+    /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
+    /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
+    /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c> redacted, with
+    /// <c>executableLength</c> when something was cut); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
+    /// <item>An array is recorded as <c>&lt;name&gt;Count</c>; objects and nulls are left out.</item>
+    /// </list>
+    /// Null when nothing is left.
     /// </summary>
-    public static JsonObject? SummarizeArguments(IReadOnlyDictionary<string, JsonElement> arguments)
+    /// <param name="arguments">The call's arguments.</param>
+    /// <param name="declaredTypes">The JSON types the tool declares per parameter (<see cref="DeclaredTypes"/>); null when unknown.</param>
+    public static JsonObject? SummarizeArguments(
+        IReadOnlyDictionary<string, JsonElement> arguments,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
         var summary = new JsonObject();
+        var unknown = 0;
         foreach (var (name, value) in arguments)
         {
+            IReadOnlySet<string>? types = null;
+            if (declaredTypes == null ? !IsIdentifier(name) : !declaredTypes.TryGetValue(name, out types))
+            {
+                unknown++;
+                continue;
+            }
+
             switch (value.ValueKind)
             {
-                case JsonValueKind.Number:
-                case JsonValueKind.True:
-                case JsonValueKind.False:
+                case JsonValueKind.Number when types != null && (types.Contains("integer") || types.Contains("number")):
+                case JsonValueKind.True or JsonValueKind.False when types != null && types.Contains("boolean"):
                     summary[name] = JsonValue.Create(value.Clone());
                     break;
+                case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False:
+                    summary[name + "Length"] = value.GetRawText().Length;
+                    break;
+                case JsonValueKind.String when name == ExecutableArgument:
+                    var executable = value.GetString()!;
+                    var redacted = RedactExecutable(executable);
+                    summary[name] = redacted;
+                    if (redacted != executable)
+                    {
+                        summary[name + "Length"] = executable.Length;
+                    }
+
+                    break;
                 case JsonValueKind.String when NamedStringArguments.Contains(name):
-                    var text = value.GetString()!;
-                    summary[name] = name == ExecutableArgument ? RedactExecutable(text) : Cut(text, MaxTitleLength);
+                    summary[name] = Cut(value.GetString()!, MaxTitleLength);
                     break;
                 case JsonValueKind.String:
                     summary[name + "Length"] = value.GetString()!.Length;
@@ -111,7 +151,51 @@ public static class AuditRecord
             }
         }
 
+        if (unknown > 0)
+        {
+            summary[UnknownArgumentsCount] = unknown;
+        }
+
         return summary.Count == 0 ? null : summary;
+    }
+
+    /// <summary>
+    /// The JSON types an input schema declares for each of its <c>properties</c>: <c>"type": "integer"</c> gives
+    /// {integer}, <c>"type": ["integer", "null"]</c> gives {integer, null}, a property without a type gives an empty set.
+    /// Null when there is no schema; empty when it has no properties.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlySet<string>>? DeclaredTypes(JsonElement? inputSchema)
+    {
+        if (inputSchema is not { ValueKind: JsonValueKind.Object } schema)
+        {
+            return null;
+        }
+
+        var declared = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        if (!schema.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object)
+        {
+            return declared;
+        }
+
+        foreach (var property in properties.EnumerateObject())
+        {
+            var types = new HashSet<string>(StringComparer.Ordinal);
+            if (property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty("type", out var type))
+            {
+                if (type.ValueKind == JsonValueKind.String)
+                {
+                    types.Add(type.GetString()!);
+                }
+                else if (type.ValueKind == JsonValueKind.Array)
+                {
+                    types.UnionWith(type.EnumerateArray().Where(t => t.ValueKind == JsonValueKind.String).Select(t => t.GetString()!));
+                }
+            }
+
+            declared[property.Name] = types;
+        }
+
+        return declared;
     }
 
     /// <summary>
@@ -157,19 +241,37 @@ public static class AuditRecord
     }
 
     /// <summary>
-    /// What a launch was asked for, without what can hold a secret: a URL (any absolute URI but a file path) keeps only
-    /// its scheme, host, port and path, so user info, query and fragment are dropped. A path or a program name is kept.
+    /// What a launch was asked for, without what can hold a secret:
+    /// <list type="bullet">
+    /// <item>A URI that is no file path keeps only its scheme, host and port (<c>https://hooks.example.com</c>,
+    /// <c>mailto:example.com</c>, <c>data:</c>): a path can be a bearer secret (webhook, password-reset, magic-login and
+    /// share links), and an opaque URI's body (<c>data:</c>, <c>javascript:</c>) is content.</item>
+    /// <item>A file path is kept; a <c>file:</c> URI as its local path, without query or fragment.</item>
+    /// <item>Anything else (a program name such as <c>notepad</c>, a relative path, or a URL without a scheme such as
+    /// <c>www.example.com/reset?t=...</c>, which the shell opens too) is kept up to its first <c>/ ? #</c>, without what
+    /// comes before an <c>@</c> (user info).</item>
+    /// </list>
     /// </summary>
     public static string RedactExecutable(string executable)
     {
         ArgumentNullException.ThrowIfNull(executable);
 
-        if (Uri.TryCreate(executable, UriKind.Absolute, out var uri) && !uri.IsFile && !uri.IsUnc)
+        if (Uri.TryCreate(executable, UriKind.Absolute, out var uri))
         {
-            return Cut(uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped), MaxTitleLength);
+            if (uri.IsFile || uri.IsUnc)
+            {
+                var path = executable.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ? uri.LocalPath : executable;
+                return Cut(path, MaxTitleLength);
+            }
+
+            return Cut(uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped), MaxTitleLength);
         }
 
-        return Cut(executable, MaxTitleLength);
+        // A URL without a scheme: its host, without user info (before an @) and without path, query or fragment
+        var end = executable.IndexOfAny(UrlDelimiters);
+        var host = end < 0 ? executable : executable[..end];
+        var at = host.LastIndexOf('@');
+        return Cut(at < 0 ? host : host[(at + 1)..], MaxTitleLength);
     }
 
     private static AuditTarget? Target(AuditCall call, JsonObject? body)
@@ -322,6 +424,10 @@ public static class AuditRecord
     private static int? Int(JsonObject node, string name) => Long(node, name) is { } value and >= int.MinValue and <= int.MaxValue ? (int)value : null;
 
     private static string Cut(string text, int length) => text.Length <= length ? text : text[..length];
+
+    /// <summary>An argument name the log can hold: ASCII letters, digits and underscores, at most 64 characters.</summary>
+    private static bool IsIdentifier(string name) =>
+        name.Length is > 0 and <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
 
     /// <summary>Writes the time as 2026-10-11T14:03:22.123+02:00: milliseconds and the UTC offset, for every reader.</summary>
     private sealed class TimestampConverter : JsonConverter<DateTimeOffset>

@@ -21,7 +21,14 @@ public interface IAuditLog
     /// Starts the record of a call: the time, and the windows and processes the arguments name, read now because a
     /// close or kill makes them unreadable.
     /// </summary>
-    AuditCall Begin(string tool, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, string? requestId);
+    /// <param name="tool">The tool name.</param>
+    /// <param name="arguments">The call's arguments, as the client sent them.</param>
+    /// <param name="requestId">The JSON-RPC request ID.</param>
+    /// <param name="inputSchema">
+    /// The tool's declared input schema: only the arguments it declares are summarized, and a number or boolean is kept
+    /// only where it declares one (<see cref="Infrastructure.AuditRecord.SummarizeArguments"/>). Null when unknown.
+    /// </param>
+    AuditCall Begin(string tool, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, string? requestId, JsonElement? inputSchema = null);
 
     /// <summary>Finishes the record with the call's result (null when it threw) and outcome, and appends its line.</summary>
     void End(AuditCall call, CallToolResult? result, string outcome);
@@ -35,6 +42,10 @@ public interface IAuditLog
 /// <param name="StartTimestamp">The clock's timestamp at the start, for the duration.</param>
 /// <param name="Windows">The windows the arguments name, by handle, as they were before the call.</param>
 /// <param name="Processes">The names of the processes the arguments name, by ID, before the call (null when unknown).</param>
+/// <param name="DeclaredTypes">
+/// The JSON types the tool's input schema declares for each parameter (<see cref="Infrastructure.AuditRecord.DeclaredTypes"/>),
+/// or null when the schema is unknown.
+/// </param>
 public sealed record AuditCall(
     string Tool,
     IReadOnlyDictionary<string, JsonElement> Arguments,
@@ -42,4 +53,5 @@ public sealed record AuditCall(
     DateTimeOffset Started,
     long StartTimestamp,
     IReadOnlyDictionary<long, Models.AuditTarget> Windows,
-    IReadOnlyDictionary<int, string?> Processes);
+    IReadOnlyDictionary<int, string?> Processes,
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? DeclaredTypes = null);
