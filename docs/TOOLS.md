@@ -33,7 +33,8 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 - **Pass `windowHandle`** with the window you mean to every `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text` and `send_keys` call. For keys the server brings that window to the front first and sends them only while it (or a dialog it owns) is in front; for the mouse it sends the input only if the point is on that window or a popup of it. Without `windowHandle`, keys go to whatever window is in the foreground and clicks to whatever window is at the point.
 - Input never reaches the agent's own host (the terminal, editor or chat app the server was started from) unless the call names that window as `windowHandle` and passes `allowHostTarget: true`. Do that only when the user explicitly asked for it.
 - Key chords that close, quit or open Task Manager (Alt+F4 `%{F4}`, Ctrl+W, Ctrl+Q, Ctrl+F4, Ctrl+Shift+Esc) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key of a `send_keys` call (`KeysAfterFocusChange`). Also be careful with Ctrl+A followed by Delete, and Enter on a confirmation dialog. In a terminal, typed text followed by `{ENTER}` runs as a shell command.
-- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window (when the client can ask, the user is asked before `force` closes a protected window). Closing more than 3 windows in one batch needs `confirm: true`.
+- To close a window, use [close_window](#close_window) or [close_windows_batch](#close_windows_batch) with the window's handle. Do not use Alt+F4. They refuse the desktop shell and the agent's own terminal or editor (`ProtectedWindow`); pass `force: true` only when the user explicitly asked to close such a window (when the client can ask, the user is asked before `force` closes a protected window). Closing more than 3 windows at once ([close_windows_batch](#close_windows_batch), [close_application](#close_application)) needs a confirmation: the user is asked when the client supports it (elicitation), otherwise pass `confirm: true` after checking the list.
+- Input that pastes (Ctrl+V, Shift+Insert, a right click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what the user let it read (`PasteNotAllowed` otherwise); see [Clipboard](#clipboard).
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - The user can pause the input of every Windows App Manager server on the desktop at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and every tool that changes windows or starts or stops processes ([focus_window](#focus_window), [close_window](#close_window), [launch_application](#launch_application), ...) return `PausedByUser` and do nothing, and a running input call stops; tools that only read keep working. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
 - Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. Clicks and mouse moves are also refused while a mouse button is held down or another window has captured the mouse (`MouseInUse`): the user is dragging, selecting or has a menu open. No key or mouse button the server presses stays down after a call.
@@ -54,7 +55,7 @@ The server logs the deny list, the allow list and the chords in force to stderr 
 The policy applies to:
 
 - every [input tool](#input-guard): the window the input would reach, and the `windowHandle` target;
-- [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`;
+- [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`, and [close_application](#close_application) (the whole application, refused before anything is sent);
 - [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): these tools do not move, resize, restore, maximize, minimize, raise or activate a denied window, and focus_window neither activates a denied app's modal dialog for its owner nor restores a minimized window that owns a denied app's window (the restore would show it again);
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
@@ -79,9 +80,11 @@ The captures are not read-only, because they can write image files (`output: "fi
 
 ### Audit log
 
-The server writes one line to an append-only audit log for every call of a tool that sends input, closes, stops,
-starts or arranges something, replaces the clipboard, or reads the clipboard, so that the user can reconstruct what was sent where after
-something went wrong. The agent does not need to do anything for it, and cannot turn it off.
+The server writes one line to an append-only audit log for every call of a tool that sends input, closes windows,
+ends or starts processes, applies, saves or deletes a layout, or reads or replaces the clipboard (the list is below),
+so that the user can reconstruct what was sent where after something went wrong. Moving, resizing, snapping, minimizing,
+maximizing or focusing a single window, and the bounds, snap and state batches, are not logged. The agent does not need
+to do anything for it, and cannot turn it off.
 
 - **Where:** one file per local day, `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<yyyy-MM-dd>.jsonl`, or in the folder
   that `WAM_AUDIT_PATH` names. [get_server_info](#get_server_info) reports the folder as `paths.auditLog`. Several servers
@@ -110,9 +113,11 @@ something went wrong. The agent does not need to do anything for it, and cannot 
   Window titles are logged (cut to 200 characters), as the agent sees them.
 - **When it cannot be written** (a read-only folder, a full disk), the call still runs and returns its normal result.
   The server writes one warning to stderr, and get_server_info adds a warning, until a line is written again.
-- **Cost:** the line is appended before the result goes back. That is one small write, unless another server is
-  appending to the same day's file at that moment; the server then waits for it, at most about half a second, and
-  drops the line after that.
+- **Cost:** one background writer per server appends the lines in order, and a call waits for its own line at most
+  2 seconds before its result goes back, so a slow or unreachable folder delays a call by at most that and never
+  blocks it; a line still waiting then is written when the writer gets to it. When another server is appending to the
+  same day's file, the writer waits for it, at most about half a second, and drops the line after that. While 1000
+  lines are waiting, a new line is dropped. A dropped line counts as a failed write (see above).
 
 Each line is one JSON object:
 
@@ -127,9 +132,9 @@ Each line is one JSON object:
 | `outcome` | `ok`; `error` (the result went out with `isError`; `errorCode` says why); `cancelled` (the client cancelled the call); `protocolError` (nothing ran, for example a tool that is turned off) |
 | `errorCode` | The result's `errorCode`, such as `TargetOccluded`, `PausedByUser` or `InvalidArguments` |
 | `durationMs` | How long the call took, including the wait for other input and window calls and for the user's answer to a confirmation |
-| `target` | What the arguments named: the window (`handle`, with its `title`, `process` and `processId` read before the call, so a closed window is still named), the process of a kill, or the `executable` of a launch with the `processId` and window `handle` it started |
+| `target` | What the arguments named: the window (`handle`, with its `title`, `process` and `processId` read before the call, so a closed window is still named; for a [window selector](#window-selectors), the window it resolved to, as the tool noted it before acting), the process of a kill, or the `executable` of a launch with the `processId` and window `handle` it started |
 | `receivingWindow` | For input: the window the input went to, or would have gone to when it was refused |
-| `items` | For a batch: each window or application, in request order, with its `success` and `errorCode` |
+| `items` | For a batch: each window or application, in request order, with its `success`, `errorCode` and, for closes, its `status` (`closed`, `promptShown`, `notSent`, ...). For close_application: each window it was asked to close, with its `title`, `process`, `status` and `errorCode`. For apply_layout: each placement's window, `status` (`applied`, `notFound`, ...), `launched` and the program its launch command ran (as `executable`, cut like a launch's) |
 | `args` | The arguments, summarized as above |
 | `result` | The numbers and true/false values of the result, such as `charactersTyped`, `windowsArranged`, `forced` or `failed` |
 | `serverPid`, `requestId` | The server process and the JSON-RPC request, as the server's stderr log names them |
@@ -184,7 +189,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 | [type_text](#type_text), [send_keys](#send_keys) | The keys not sent yet (see [Input guard](#input-guard)) | - |
 | [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content), [get_active_browser_url](#get_active_browser_url) | The CDP requests | - |
 
-The launch, layout, window batch and kill tools run inside the input gate (see [Window Control](#window-control)), so cancelling one also lets the input and window calls waiting for it go ahead at once.
+The launch, layout and window batch tools run inside the input gate (see [Window Control](#window-control)), so cancelling one also lets the input and window calls waiting for it go ahead at once. kill_process and the close tools hold the gate only while they send, so their wait for the process or window never holds it.
 
 A client that sends a progress token with the call (`_meta.progressToken`) gets `notifications/progress` messages before the result: `progress` counts what is done and only grows, `total` is the number of items when it is known (not for a UI Automation walk), and `message` says what was just done. A client may use them to show progress or to keep a long call from timing out.
 
@@ -262,7 +267,7 @@ Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows))
 
 Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. The results are in z-order, front to back, unless `sort` says `title` or `process`; `limit` keeps the first ones. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the reads of the window after a window action (`bounds`, `state`) never apply it.
 
-Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply. `isAgentHost: true` marks a window of the agent's own host (the terminal, editor or chat app this server was started from, or a window it owns, as recorded when the server started); it is left out for every other window. The [Input guard](#input-guard) refuses input to such a window unless it is named as `windowHandle` with `allowHostTarget: true`, and [close_window](#close_window) refuses it without `force`.
+Every window reports two rectangles: `bounds`, the window rect (GetWindowRect), which on Windows 10 and 11 includes invisible resize borders of about 7 px left, right and bottom (a maximized window's rect overhangs its monitor by them), and `visibleBounds`, the visible frame (DWMWA_EXTENDED_FRAME_BOUNDS), which is what the [Window Control](#window-control) placements take as `x`, `y`, `width` and `height` and report as `bounds`. `visibleBounds` is left out when DWM cannot report the frame. Every window also reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply. `isAgentHost: true` marks a window of the agent's own host (the terminal, editor or chat app this server was started from, or a window it owns, as recorded when the server started); it is left out for every other window. The [Input guard](#input-guard) refuses input to such a window unless it is named as `windowHandle` with `allowHostTarget: true`, and [close_window](#close_window) refuses it without `force`.
 
 ### Window selectors
 
@@ -360,7 +365,8 @@ Find windows matching specific criteria.
     "isVisible": true,
     "monitorIndex": 0,
     "className": "Chrome_WidgetWin_1",
-    "isCloaked": false
+    "isCloaked": false,
+    "visibleBounds": { "x": 7, "y": 0, "width": 1906, "height": 1033 }
   },
   {
     "handle": 1445556,
@@ -372,7 +378,8 @@ Find windows matching specific criteria.
     "isVisible": true,
     "monitorIndex": 1,
     "className": "Chrome_WidgetWin_1",
-    "isCloaked": false
+    "isCloaked": false,
+    "visibleBounds": { "x": 107, "y": 100, "width": 1186, "height": 793 }
   }
 ]
 ```
@@ -404,7 +411,8 @@ The taskbar is an untitled shell window, so listings leave it out. A `className`
     "isVisible": true,
     "monitorIndex": 0,
     "className": "Shell_TrayWnd",
-    "isCloaked": false
+    "isCloaked": false,
+    "visibleBounds": { "x": 0, "y": 1032, "width": 1920, "height": 48 }
   }
 ]
 ```
@@ -440,12 +448,13 @@ List the visible user-facing app windows on the system (see [Window Discovery](#
     "title": "Visual Studio Code",
     "processName": "Code",
     "processId": 8432,
-    "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+    "bounds": { "x": -8, "y": -8, "width": 1936, "height": 1056 },
     "state": "maximized",
     "isVisible": true,
     "monitorIndex": 0,
     "className": "Chrome_WidgetWin_1",
-    "isCloaked": false
+    "isCloaked": false,
+    "visibleBounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 }
   },
   {
     "handle": 2884384,
@@ -459,7 +468,8 @@ List the visible user-facing app windows on the system (see [Window Discovery](#
     "className": "ApplicationFrameWindow",
     "isCloaked": false,
     "hostProcessName": "ApplicationFrameHost",
-    "hostProcessId": 9120
+    "hostProcessId": 9120,
+    "visibleBounds": { "x": 967, "y": 0, "width": 466, "height": 753 }
   },
   {
     "handle": 1771890,
@@ -472,7 +482,8 @@ List the visible user-facing app windows on the system (see [Window Discovery](#
     "monitorIndex": 0,
     "className": "#32770",
     "isCloaked": false,
-    "ownerHandle": 330390
+    "ownerHandle": 330390,
+    "visibleBounds": { "x": 527, "y": 240, "width": 866, "height": 553 }
   }
 ]
 ```
@@ -504,13 +515,14 @@ Get information about the currently focused window. Any window is reported, with
   "title": "TOOLS.md - Visual Studio Code",
   "processName": "Code",
   "processId": 8432,
-  "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+  "bounds": { "x": -8, "y": -8, "width": 1936, "height": 1056 },
   "state": "maximized",
   "isVisible": true,
   "monitorIndex": 0,
   "className": "Chrome_WidgetWin_1",
   "isCloaked": false,
-  "isAgentHost": true
+  "isAgentHost": true,
+  "visibleBounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 }
 }
 ```
 
@@ -587,8 +599,8 @@ Read one window, named by `handle` or by a [window selector](#window-selectors),
 | detail | Fields |
 |--------|--------|
 | `compact` | `handle`, `title`, `processName`, `processId`, `state` |
-| `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
-| `full` | Standard, plus `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Control](#window-control)), `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung) and `dpi` (96 is 100%) |
+| `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Discovery](#window-discovery)), and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
+| `full` | Standard, plus `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung) and `dpi` (96 is 100%) |
 
 A window named by its handle is read whatever the listing filter would say: untitled, cloaked, tool and child windows too. No value waits for the window's application, so a hung window is read too.
 
@@ -639,22 +651,22 @@ Tools for manipulating window position, size, and state.
 
 A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): these tools do not restore, raise or move it. That does not keep it off the screen by itself; see [Target policy](#target-policy).
 
-**The visible frame.** On Windows 10 and 11 a window's rect (GetWindowRect) includes invisible resize borders, about 7 px on the left, right and bottom at 100% scale (more at higher scales), and a maximized window's rect overhangs its monitor by them. The placements (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and the bounds and snap batches) take `x`, `y`, `width` and `height` as the **visible frame** (DWMWA_EXTENDED_FRAME_BOUNDS) and add the borders themselves, so snapped windows meet the work area's edges and each other without a gap. Their results, and those of set_window_state and the batches, report the window as it is afterwards, also when the change failed:
+**The visible frame.** On Windows 10 and 11 a window's rect (GetWindowRect) includes invisible resize borders, about 7 px on the left, right and bottom at 100% scale (more at higher scales), and a maximized window's rect overhangs its monitor by them. The placements (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and the bounds and snap batches) take `x`, `y`, `width` and `height` as the **visible frame** (DWMWA_EXTENDED_FRAME_BOUNDS, which [find_windows](#find_windows) reports as `visibleBounds`) and add the borders themselves, so snapped windows meet the work area's edges and each other without a gap. Their results, and those of set_window_state and the batches, report the window as it is afterwards, also when the change failed:
 
 | Field | Meaning |
 |-------|---------|
 | `bounds` | The visible frame. The window rect when DWM cannot report the frame |
-| `outerBounds` | The window rect with the invisible borders: the rect [find_windows](#find_windows) reports as `bounds` (find_windows is unchanged) |
+| `outerBounds` | The window rect with the invisible borders: the rect [find_windows](#find_windows) reports as `bounds` (find_windows reports the visible frame as `visibleBounds`) |
 | `state` | `normal`, `minimized` or `maximized`. A minimized window has no `bounds` or `outerBounds`: its rect is an off-screen icon |
 | `monitorIndex` | The monitor the window is on |
 
 An application can keep a minimum or maximum size or move itself: compare `bounds` with what you asked for. `settleMs` (0-5000, default 0) waits until two reads of the frame 20 ms apart agree before the window is read, for an application that animates or re-applies its own size. (These fields replace `newBounds` and `newState`; `newBounds` was the window rect.)
 
-**State before placing.** A minimized or maximized window is restored to normal before it is measured or placed, with `SW_SHOWNOACTIVATE` (at most twice, for a window minimized from maximized), which does not activate it. A maximized window used to be placed while still maximized, and a minimized one measured as its 160x28 icon. When the window stays minimized or maximized, the placement fails with `MoveFailed` or `ResizeFailed` and places nothing. move_window keeps the window's size and resize_window its top-left corner, and resize_window never raises it.
+**State before placing.** A minimized or maximized window is restored to normal before it is measured or placed, with `SW_SHOWNOACTIVATE` (at most twice, for a window minimized from maximized), which does not activate it. A maximized window used to be placed while still maximized, and a minimized one measured as its 160x28 icon. When the window stays minimized or maximized, the placement fails with `MoveFailed` or `ResizeFailed` and places nothing. A minimized or maximized window that is hidden (no WS_VISIBLE: an app such as a tray app hid it, for example in the notification area) is not restored, because restoring it would show it behind its app's back: the placement fails with `MoveFailed` or `ResizeFailed`, nothing is sent, and the window stays hidden. move_window keeps the window's size and resize_window its top-left corner, and resize_window never raises it.
 
 **Monitors with different scaling.** A placement that takes a window to a monitor with another scale lets the application rescale itself for the new DPI, waits for the window to settle (up to 500 ms) and places the same target again, measured anew, as PowerToys FancyZones does; move_window keeps the size the application chose. move_window_to_monitor moves the window onto the target monitor first without changing its size, then sizes it from the size the application chose there. The size is never scaled by the ratio of the scales in advance: a per-monitor-aware application would scale it a second time.
 
-Only move_window_to_monitor with `positioning: "maximize"` can still activate the window, whatever `bringToFront` says: it maximizes the window with `SW_MAXIMIZE`, and Windows has no maximize that does not activate. Check [get_foreground_window](#get_foreground_window) before typing.
+Only move_window_to_monitor with `positioning: "maximize"` can still activate the window, whatever `bringToFront` says: it maximizes the window with `SW_MAXIMIZE`, and Windows has no maximize that does not activate. It sends `SW_MAXIMIZE` only once the window is on the target monitor: a window that stayed on its old monitor (an app that keeps or restores its own position) is not maximized, and the call fails with `MoveFailed`. Check [get_foreground_window](#get_foreground_window) before typing.
 
 **Errors.** move_window, resize_window, set_window_bounds, set_window_state, snap_window and move_window_to_monitor return `success: false` with `error` and `errorCode`, and `isError: true`:
 
@@ -666,13 +678,13 @@ Only move_window_to_monitor with `positioning: "maximize"` can still activate th
 | `InvalidMonitorIndex` | snap_window, move_window_to_monitor: `monitorIndex` is not a monitor; `error` gives the valid range. Nothing was changed (it is never put on another monitor instead) |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was changed. Ask the user |
 | `AccessDenied` | Windows refused the move or resize (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks this server. Ask the user |
-| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, so nothing was placed. move_window_to_monitor also returns `MoveFailed` when the window is not on the target monitor afterwards (with `positioning: "maximize"`: not maximized there) |
+| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden (it is not shown), so nothing was placed. move_window_to_monitor also returns `MoveFailed` when the window is not on the target monitor afterwards (with `positioning: "maximize"`: not maximized there; a window left on its old monitor is not maximized at all) |
 | `StateChangeFailed` | set_window_state: the window was not seen in the requested state within 300 ms (the application refused or delayed it, or it runs as administrator); `state` and `error` say which state it is in |
 | `NotResponding` | The window's application did not answer: Windows reports the window as hung (refused at once, nothing was tried), it did not answer within 5 seconds, an earlier call to the same application is still blocked (refused at once), or 8 earlier window calls to applications that do not answer are still blocked, whichever applications they are (refused at once). A call refused at once before its first window call changed nothing. Otherwise the window may have changed: the placements restore a minimized or maximized window before they place it, so it can already be restored when the placement is given up on, and a call that timed out can still take effect once the application answers. So check the window (the result's `state` and `bounds`, or [find_windows](#find_windows) with its `handle`) before you act on it. Try again later, or ask the user |
 
 An unknown `state` (set_window_state), `position` (snap_window) or `positioning` (move_window_to_monitor) is refused before the tool runs, as a tool error with `InvalidState`, `InvalidSnapPosition` or `InvalidPositioning` that lists the allowed values; the input schema lists them too. Such a value used to fall back to another action (restore, center) that was reported as success. [focus_window](#focus_window) and [close_window](#close_window) have their own error tables below.
 
-These tools, focus_window, close_window, the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) can change which window is in front, so each waits until a running input call (or another such call) has finished. A call that waits more than 30 seconds gives up with a tool error (`isError: true`, `errorCode: "InputBusy"`) and does nothing; while the user has paused input (see [Pause hotkey](#pause-hotkey)) it returns `PausedByUser` the same way, also when the pause comes while it waits. The wait for a window is bounded too: a hung application holds such a call, and every input call queued behind it, for at most about 5 seconds per application. A `window` selector is resolved before the wait, outside the gate.
+These tools, focus_window, close_window, the [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug) and [set_clipboard](#set_clipboard) can change which window is in front (set_clipboard: what a paste inserts), so each waits until a running input call (or another such call) has finished. The close tools and kill_process hold the gate only while they send the close message or the termination, and wait for the window or process outside it. A call that waits more than 30 seconds gives up with a tool error (`isError: true`, `errorCode: "InputBusy"`) and does nothing; while the user has paused input (see [Pause hotkey](#pause-hotkey)) it returns `PausedByUser` the same way, also when the pause comes while it waits. The wait for a window is bounded too: a hung application holds such a call, and every input call queued behind it, for at most about 5 seconds per application. A `window` selector is resolved before the wait, outside the gate.
 
 ### move_window
 
@@ -978,9 +990,12 @@ Close a window gracefully (sends WM_CLOSE), then wait up to `waitMs` and report 
 ```json
 {
   "success": true,
-  "status": "closed"
+  "status": "closed",
+  "handle": 12345
 }
 ```
+
+`handle` is the window the call acted on (the one a `window` selector resolved to).
 
 **Verified close.** The close message is sent inside the input gate; the server then releases the gate and polls the window (IsWindow) for up to `waitMs` (default 2000, at most 30000), so a slow app or a prompt does not hold up other input and window calls. `status` is:
 
@@ -1037,13 +1052,15 @@ File Explorer folder windows are ordinary windows, even though explorer.exe also
 | Code | Meaning |
 |------|---------|
 | `InvalidHandle` | The handle is not a window, or the window closed before the message was sent |
-| `InvalidArguments` | `waitMs` is outside 0-30000. Nothing was sent |
+| `InvalidArguments` | `waitMs` is outside 0-30000. Nothing was sent. As a tool error: both `handle` and `window`, or neither; a selector that cannot be used; or `{"foreground": true}` alone, which names no window you chose |
+| `WindowNotFound`, `AmbiguousWindow` | The `window` selector named no window, or several (with `candidates`); a tool error, nothing was sent. See [Window selectors](#window-selectors) |
 | `PromptShown` | The window waits behind a prompt (`status: "promptShown"`, see `prompt`) |
 | `StillOpen` | The window was still open after `waitMs`, without a prompt |
-| `PausedByUser` | Input is paused; nothing was sent (a tool error) |
+| `PausedByUser` | Input is paused; nothing was sent, and a selector is not even resolved (a tool error) |
+| `InputBusy` | Another input or window call held the input gate for 30 seconds; nothing was sent (a tool error) |
 | `ProtectedWindow` | The window is part of the desktop shell or of the agent's host, and `force` was not true. Nothing was sent |
 | `ConfirmationDeclined` | `force` was true on a protected window, the client asked the user (elicitation), and the user did not confirm. Nothing was sent |
-| `HandleMismatch` | `force` was true on a protected window, and the handle belonged to another process after the user confirmed. Nothing was sent |
+| `HandleMismatch` | `force` was true on a protected window, and the handle belonged to another process after the user confirmed. Or (a tool error) the `window` selector's handle was reused, or the window no longer matched the selector once the call held the input gate. Nothing was sent |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) refuses the window's app. `force` does not override it; nothing was sent |
 | `AccessDenied` | Windows blocked the message (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks messages to it from the server |
 | `NotResponding` | Windows did not accept the message because the window's message queue is full (Win32 error 1816): the app is hung. Nothing was sent |
@@ -1150,7 +1167,7 @@ Move a window to a specific monitor. The window keeps its normal size, made smal
 - `topright` - Top-right corner of the work area
 - `bottomleft` - Bottom-left corner of the work area
 - `bottomright` - Bottom-right corner of the work area
-- `maximize` - Maximize on the target monitor: a maximized or minimized window is restored without activation, moved into the target monitor's work area and then maximized, and `success` is true only when it is maximized there. Maximizing activates the window, and `bringToFront` is ignored (see [Window Control](#window-control))
+- `maximize` - Maximize on the target monitor: a maximized or minimized window is restored without activation, moved into the target monitor's work area and then maximized, and `success` is true only when it is maximized there. A window that the move left on its old monitor is not maximized (`MoveFailed`). Maximizing activates the window, and `bringToFront` is ignored (see [Window Control](#window-control))
 - `restore` - The work area's top-left corner, at the window's normal size
 
 `top_left`, `top-right` and other spellings with separators, in any case, are accepted too. Any other value fails with `InvalidPositioning`, and a `monitorIndex` that is not a monitor with `InvalidMonitorIndex` and the valid range.
@@ -1399,9 +1416,9 @@ Each item of `windows` contains:
 }
 ```
 
-The close messages are sent one after another inside the input gate; then the gate is released and every window that was sent one is waited for at the same time, for up to `waitMs` after the last message (default 2000, at most 30000; outside that range the call is a tool error with `InvalidArguments` and nothing is sent). Each such item has a `status` (`closed`, `hidden`, `stillOpen`, `promptShown` with its `prompt`, or `requested` with `waitMs: 0`), and its `success` and `errorCode` follow close_window's table.
+The close messages are sent one after another inside the input gate; then the gate is released and every window that was sent one is waited for at the same time, for up to `waitMs` after the last message (default 2000, at most 30000; outside that range the call is a tool error with `InvalidArguments` and nothing is sent). Each such item has a `status` (`closed`, `hidden`, `stillOpen`, `promptShown` with its `prompt`, or `requested` with `waitMs: 0`), and its `success` and `errorCode` follow close_window's table. An item whose window got no close message has `status: "notSent"`, as in [close_application](#close_application), with the reason in `error` and `errorCode`.
 
-Each window is handled like [close_window](#close_window): a protected window (the desktop shell, the agent's own host) is refused with `errorCode: "ProtectedWindow"` unless `force` is true, and the batch goes on with the next window. A failed item has `error` and `errorCode` (`InvalidHandle`, `TargetDeniedByPolicy`, `ProtectedWindow`, `AccessDenied` or `CloseFailed`):
+Each window is handled like [close_window](#close_window): a protected window (the desktop shell, the agent's own host) is refused with `errorCode: "ProtectedWindow"` unless `force` is true, and the batch goes on with the next window. A `notSent` item's `errorCode` is `InvalidHandle`, `TargetDeniedByPolicy`, `ProtectedWindow`, `AccessDenied`, `NotResponding` or `CloseFailed` (the send), `InvalidArguments` (a null item, or one with both `handle` and `window`), `WindowNotFound`, `AmbiguousWindow` (with `candidates`) or `HandleMismatch` (its selector, or a window that changed hands after the user confirmed):
 
 ```json
 {
@@ -1410,17 +1427,17 @@ Each window is handled like [close_window](#close_window): a protected window (t
   "failed": 1,
   "results": [
     { "handle": 12345, "success": true, "status": "closed" },
-    { "handle": 65890, "success": false, "error": "Window 65890 is part of the desktop shell (Progman): ...", "errorCode": "ProtectedWindow" }
+    { "handle": 65890, "success": false, "error": "Window 65890 is part of the desktop shell (Progman): ...", "errorCode": "ProtectedWindow", "status": "notSent" }
   ]
 }
 ```
 
 #### Confirmation
 
-A batch of more than 3 windows, or a batch with `force: true` in which a window is protected, is closed only after a confirmation (when the client can ask, `force` overrides a protection only after the user's yes):
+A batch of more than 3 windows is closed only after a confirmation, and when the client can ask the user, so is a batch with `force: true` in which a window is protected (`force` then overrides a protection only after the user's yes):
 
-- **When the MCP client can ask the user** (it supports elicitation), the server asks the user directly: the question lists each window's title, process name and PID, marks the agent's own window, and says when `force` is set. Only the user's ticked "confirm" closes the windows; a decline, a dismissal, an unticked answer or no answer within 2 minutes closes nothing and returns a tool error with `errorCode: "ConfirmationDeclined"`. The `confirm` argument is not needed then, and does not replace the user's answer. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it. A window the user did not see is not closed: its item fails with `HandleMismatch` when its handle belongs to another process by the time the user confirmed (it closed and its handle was reused), or when the handle was no window when the user was asked (the question says "no longer exists") and a new window has it now. A handle that is still no window goes to the close, which reports `InvalidHandle`. Window titles in the question are shown on one line and cut to 80 characters, so an app's title cannot rewrite the question.
-- **When the client cannot ask the user**, `confirm: true` is required, as before: without it the batch closes nothing and returns a tool error with `errorCode: "ConfirmationRequired"`. Check the handles with [find_windows](#find_windows) before you confirm.
+- **When the MCP client can ask the user** (it supports elicitation), the server asks the user directly: the question lists each window's title, process name and PID, marks the agent's own window, and says when `force` is set. Only the user's ticked "confirm" closes the windows; a decline, a dismissal, an unticked answer or no answer within 2 minutes closes nothing and returns a tool error with `errorCode: "ConfirmationDeclined"`. The `confirm` argument is not needed then, and does not replace the user's answer. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it. A window the user did not see is not closed: its item fails with `HandleMismatch` when its handle belongs to another process by the time the user confirmed (it closed and its handle was reused), or when the handle was no window when the user was asked (the question says "no longer exists") and a new window has it now. A handle that is still no window goes to the close, which reports `InvalidHandle`. Window titles in the question are shown on one line, without invisible format (bidi) characters and with quote look-alikes shown as double quotes, and cut to 80 characters, so an app's title cannot rewrite the question. The question lists the first 20 windows and counts the rest ("... and 3 more").
+- **When the client cannot ask the user**, a batch of more than 3 windows needs `confirm: true`, as before: without it the batch closes nothing and returns a tool error with `errorCode: "ConfirmationRequired"`. `force: true` then closes protected windows without a question. Check the handles with [find_windows](#find_windows) before you confirm.
 
 While the user has paused input, the batch returns `PausedByUser` without asking anything.
 
@@ -1438,7 +1455,7 @@ Launch multiple applications in a single batch operation.
 |-----------|------|----------|---------|-------------|
 | applications | object[] | Yes | - | Array of applications to launch |
 | waitForWindows | boolean | No | false | Wait for windows to appear |
-| waitTimeoutMs | integer | No | 5000 | How long to wait for each window, in ms (clamped to 0-30000) |
+| waitTimeoutMs | integer | No | 5000 | How long to wait for all the windows together, in ms (clamped to 0-30000) |
 
 Each item of `applications` contains:
 | Field | Type | Required | Default | Description |
@@ -1472,13 +1489,21 @@ Each item of `applications` contains:
   "succeeded": 2,
   "failed": 0,
   "results": [
-    { "executable": "notepad", "success": true, "processId": 15432, "windowHandle": 12345 },
-    { "executable": "calc", "success": true, "processId": 15433, "windowHandle": 67890 }
+    {
+      "executable": "notepad", "success": true, "processId": 15432, "windowHandle": 12345, "launchStatus": "windowObserved",
+      "window": { "handle": 12345, "title": "Untitled - Notepad", "processName": "Notepad", "processId": 15432, "bounds": { "x": 200, "y": 150, "width": 1100, "height": 760 }, "state": "normal", "isVisible": true, "monitorIndex": 0, "className": "Notepad", "isCloaked": false, "visibleBounds": { "x": 207, "y": 150, "width": 1086, "height": 753 } },
+      "launcherExited": false
+    },
+    {
+      "executable": "calc", "success": true, "processId": 15433, "windowHandle": 67890, "launchStatus": "windowObserved",
+      "window": { "handle": 67890, "title": "Calculator", "processName": "CalculatorApp", "processId": 16020, "bounds": { "x": 120, "y": 80, "width": 336, "height": 545 }, "state": "normal", "isVisible": true, "monitorIndex": 0, "className": "ApplicationFrameWindow", "isCloaked": false, "hostProcessName": "ApplicationFrameHost", "hostProcessId": 9216, "visibleBounds": { "x": 127, "y": 80, "width": 322, "height": 538 } },
+      "launcherExited": true
+    }
   ]
 }
 ```
 
-Each item is validated, resolved and started with the same rules as [launch_application](#launch_application), and can have its own `expectWindow`. Each result has the item's `launchStatus`, and with `waitForWindows` its `window` and `launcherExited`. A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). An item that is null fails alone with `InvalidArguments` (its `executable` is `""`) and the others are still launched; a null `applications` array is a tool error with `InvalidArguments` and launches nothing. The applications are started one after another, in order; with `waitForWindows`, their windows are then waited for all at once, up to `waitTimeoutMs` after the last start, and a new window is reported for one application only (two Notepads get two windows). The batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
+Each item is validated, resolved and started with the same rules as [launch_application](#launch_application), and can have its own `expectWindow`. Each result has the item's `launchStatus`, and with `waitForWindows` its `window` and `launcherExited`. A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). An item that is null fails alone with `InvalidArguments` (its `executable` is `""`) and the others are still launched; a null `applications` array is a tool error with `InvalidArguments` and launches nothing. The applications are started one after another, in order; with `waitForWindows`, their windows are then waited for all at once, up to `waitTimeoutMs` after the last start, and a new window is reported for one application only (two Notepads get two windows). A window of a process that one item started goes to that item. A launcher that hands its request to an instance another item of the batch started (a second `code` or `wt`, whose launcher passes the request on and exits) gets a window of that instance once that other item has its own window and this item's process has exited (or none was started); the window still goes to one item only. The batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
 
 ---
 
@@ -2528,7 +2553,7 @@ Launch Chrome, Edge or Brave with a Chrome DevTools Protocol (CDP) debug port, s
 
 > **Security:** This opens a DevTools port on localhost with no authentication. Any program running on this computer can connect to it and take full control of that browser: read pages and cookies, run JavaScript and navigate. The port stays open until that browser has exited. Launch it only when you need CDP. When you are done, close every window of that browser (`find_windows` with the returned `processId` and `includeCloaked: true`, so a window the user moved to another virtual desktop is found too, then `close_window` for each handle) and check with `list_processes` and `includeWindowless: true` that the process has exited; closing one window is not enough if the page opened others.
 
-By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port.
+By default the browser starts as a separate instance with a new, empty profile in `%TEMP%\browser-debug-<guid>`. It has none of the logins, cookies, history or extensions of your normal profile, and the folder is not deleted afterwards. Do not set `userDataDir` to your real browser profile, because that would expose its signed-in sessions through the open port. A `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's profiles, is refused (`InvalidArguments`); a real profile kept elsewhere cannot be told apart.
 
 The browser is looked for in its default install folders under `C:\Program Files` and `C:\Program Files (x86)`. If it is not there, the server asks `where.exe`, which searches the server's current directory before `PATH`, so a `chrome.exe`, `msedge.exe` or `brave.exe` in that directory would be started instead.
 
@@ -2537,7 +2562,7 @@ The browser is looked for in its default install folders under `C:\Program Files
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | browser | string (one of: `"chrome"`, `"edge"`, `"brave"`) | No | "chrome" | Browser to launch: "chrome", "edge" or "brave". Any other value fails with `UnsupportedBrowser` before anything is started |
-| url | string | No | - | URL to open. A value that starts with `-` or `/` fails with `InvalidArguments`: the browser would read it as a command-line switch |
+| url | string | No | - | URL to open. A value that starts with `-` or `/`, or holds a control character, fails with `InvalidArguments` (a tool error): the browser would read it as a command-line switch |
 | port | integer | No | 9222 | CDP debug port, 1-65535 (other values fail with `InvalidArguments`). Pass the same value as `cdpPort` to the reading tools |
 | userDataDir | string | No | new temp folder | Profile folder for the browser instance. A folder inside a `User Data` folder (where Chrome, Edge and Brave keep the user's real profiles) fails with `InvalidArguments`: the open debug port would expose its signed-in sessions |
 <!-- tools:end params:launch_browser_with_debug -->
@@ -2582,7 +2607,7 @@ Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to fin
 
 > **Warning:** Pass `windowHandle` with the window you mean. Without it, keyboard input goes to whatever window is in the foreground and clicks to whatever window is at the point; the guard then only keeps the input off the agent's own host, elevated and denied windows. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
-Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, up to 5 seconds per launched application's start plus one `waitTimeoutMs` for the windows of a launch batch, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
+Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) and [set_clipboard](#set_clipboard) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, and the close tools and kill_process release the gate before they wait for the window or process, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, up to 5 seconds per launched application's start plus one `waitTimeoutMs` for the windows of a launch batch, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
 
 Every input call can be stopped. Cancelling the MCP request (`notifications/cancelled`) stops `type_text` between batches and ends the wait for another call; the request then gets no result. The user's [pause hotkey](#pause-hotkey) stops a running call between batches, and it returns `PausedByUser` with `charactersTyped`. Either way, no key or mouse button stays down: every batch sends its own key-ups and button-ups, and a batch that Windows inserts only partly (a desktop switch or input block in the middle of it) or that fails is followed at once by the up events of what went down.
 
@@ -2594,7 +2619,7 @@ Right before every batch of input it sends, each input tool checks where the inp
 
 1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
 2. **The desktop.** The session is locked (`SessionLocked`), or the input desktop cannot be reached because a UAC prompt or the Ctrl+Alt+Del screen is shown or the session is disconnected (`DesktopUnavailable`).
-3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
+3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. A target named by a `window` selector is resolved before the call waits for the input gate, and checked against the selector again once it holds the gate, before the first batch: a window that no longer matches (another document or tab, another title, a reused handle) is refused with `HandleMismatch` and nothing is sent. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
 4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`); a modal dialog of a window the target owns is `BlockedByModal`, so keys never answer a modal prompt. For the mouse, the top-level window at the point (no window there: `TargetOccluded`). With a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a program the target started itself (a direct child process, such as the WebView2 process that shows an app's dropdowns), otherwise `TargetOccluded`. Another main window of the same process counts as covering the target, and so do the desktop and the taskbar. The child-process rule does not apply to File Explorer windows and the desktop shell (explorer.exe), which start almost every program. Then the window checks below.
 5. **`type_text` only.** A menu is active in the receiving window, so letters would select menu items (`TargetInMenuMode`). Close it with `send_keys` `{ESC}`, or click into the field.
 6. **The mouse only.** Another window has captured the mouse, so the click or move would go to it instead of the window at the point (`MouseInUse`): the foreground app is in a selection, a drag or an open menu, or the window at the point's own thread captured it for another window. A capture by the window at the point, or by a window of its thread that the input may reach (an open menu captures the mouse for its owner), is fine. When the capture of either thread cannot be read (for example the window closed just then), it is not known where the input would go, so the guard fails closed with `MouseInUse` as well; try again. Right before the pointer is placed and before every press, the click, move and scroll tools also refuse while a mouse button is held down (`MouseInUse`): the user is dragging or selecting, and the press would go to the window under that button.
@@ -2641,6 +2666,8 @@ Every input result reports:
 | `DesktopUnavailable`, `SessionLocked` | Input cannot reach the desktop | Wait for the user, then retry |
 | `TargetInMenuMode` | `type_text`: a menu is active | Close the menu (`{ESC}`) or click into the field |
 | `InvalidHandle` | `windowHandle` is not a window | Get a current handle from [find_windows](#find_windows) |
+| `HandleMismatch` | The `window` selector's window no longer matched it once the call held the input gate (another document or tab, another title, a reused handle); nothing was sent. As a tool error: the selector's `handle` came with filters the window no longer matches | Locate the window again; do not retry the handle |
+| `WindowNotFound`, `AmbiguousWindow` | Tool errors: the `window` selector named no window, or several (`candidates`); nothing was sent | See [Window selectors](#window-selectors) |
 
 ### click
 
@@ -3122,7 +3149,7 @@ The user's control over the server's input: the [pause hotkey](#pause-hotkey), a
 
 The user can stop the agent's input at any moment with a system-wide hotkey, by default **Ctrl+Alt+Shift+Pause**:
 
-- **Press it once to pause.** Every input tool returns `PausedByUser` and sends nothing. So does every tool that changes windows or starts or stops processes: the [Window Control](#window-control) tools ([focus_window](#focus_window) and [close_window](#close_window) among them), the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) return an error result (`isError: true`) with `errorCode` `PausedByUser` without running, also when they were already waiting for another call to finish. Tools that only read (window lists, screenshots, UI Automation, browser reading, [get_control_status](#get_control_status)) keep working. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far. A window call that was already running finishes, except an activation ([focus_window](#focus_window), a `focus` placement of [apply_layout](#apply_layout), or the input guard bringing a `windowHandle` target to the front), which stops at its next step and reports `PausedByUser`. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
+- **Press it once to pause.** Every input tool returns `PausedByUser` and sends nothing. So does every tool that changes windows or starts or stops processes: the [Window Control](#window-control) tools ([focus_window](#focus_window) and [close_window](#close_window) among them), the [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug) and [set_clipboard](#set_clipboard) return an error result (`isError: true`) with `errorCode` `PausedByUser` without running, also when they were already waiting for another call to finish. Tools that only read (window lists, screenshots, UI Automation, browser reading, [get_control_status](#get_control_status)) keep working. A running `type_text` or double click stops between batches and returns `PausedByUser` with what it did so far. A window call that was already running finishes, except an activation ([focus_window](#focus_window), a `focus` placement of [apply_layout](#apply_layout), or the input guard bringing a `windowHandle` target to the front), which stops at its next step and reports `PausedByUser`. Keys and mouse buttons the server holds down are released at once; keys the user holds are left alone.
 - **Press it again to resume.** The hotkey always toggles, but a press within 2 seconds of the pause is ignored, so pressing it twice to be sure does not resume. The agent can ask to resume with [resume_input](#resume_input), which resumes only when the user confirms.
 - **It pauses every server.** Each MCP client session starts its own server, and only one process can register the chord. The pause is shared by all of the user's Windows App Manager servers on the desktop: the chord pauses and resumes every one of them, whichever server registered it, and so does a confirmed [resume_input](#resume_input). A server that finds the chord held by another server reports `hotkey.state` `OtherServer`, and registers the chord itself within 2 seconds after that server stops. A server that starts while input is paused starts paused.
 - The agent cannot resume itself: `resume_input` asks the user, and `send_keys` refuses the hotkey's keys (`PauseChordNotAllowed`), which would reach the hotkey like a real key press. While any modifier of the chord is down, no modifier is released for the agent (`releaseHeldModifiers`), not even one outside the chord, since the user may be pressing it.
@@ -3365,7 +3392,8 @@ A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `she
     "className": "ApplicationFrameWindow",
     "isCloaked": false,
     "hostProcessName": "ApplicationFrameHost",
-    "hostProcessId": 9216
+    "hostProcessId": 9216,
+    "visibleBounds": { "x": 127, "y": 80, "width": 322, "height": 538 }
   },
   "launcherExited": true
 }
@@ -3469,7 +3497,7 @@ By default only processes with at least one visible, titled top-level window are
 
 ### kill_process
 
-Close or terminate a process by ID (requires confirmation). When the MCP client can ask the user (it supports elicitation), the server asks the user directly before anything is done: the question names the process, its PID and its windows, says whether it is closed (the app may ask to save) or terminated (unsaved work is lost), and for `forceKill` lists the child processes that end with it. Only the user's ticked "confirm" goes ahead; a decline, a dismissal, an unticked answer or no answer within 2 minutes does nothing and returns `success: false` with `errorCode: "ConfirmationDeclined"`. The PID is then pinned to the name the user saw, so a PID reused meanwhile fails with `ProcessNameMismatch`. A kill that would be refused anyway (a protected, denied or host process, an invalid PID or timeout, or a graceful close of a process without a main window, `NoClosableWindow`) is refused without asking. Window titles in the question are shown on one line and cut to 80 characters, so an app's title cannot rewrite the question. When the client cannot ask the user, `confirm: true` is required (`ConfirmationRequired`), as before. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it; while input is paused, the call returns `PausedByUser` without asking.
+Close or terminate a process by ID (requires confirmation). When the MCP client can ask the user (it supports elicitation), the server asks the user directly before anything is done: the question names the process, its PID and its windows, says whether it is closed (the app may ask to save) or terminated (unsaved work is lost), and for `forceKill` lists the child processes that end with it. Only the user's ticked "confirm" goes ahead; a decline, a dismissal, an unticked answer or no answer within 2 minutes does nothing and returns `success: false` with `errorCode: "ConfirmationDeclined"`. The PID is then pinned to the process the user saw, by its name and its start time, so a PID reused meanwhile fails with `ProcessNameMismatch`, even when the new process has the same name; with `forceKill`, a process tree that gained a child process the user was not shown fails with `ProcessTreeChanged`. A kill that would be refused anyway (a protected, denied or host process, an invalid PID or timeout, or a graceful close of a process without a main window, `NoClosableWindow`) is refused without asking. Window titles in the question are shown on one line, without invisible format characters and with quote look-alikes shown as double quotes, and cut to 80 characters, so an app's title cannot rewrite the question. When the client cannot ask the user, `confirm: true` is required (`ConfirmationRequired`), as before. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it; while input is paused, the call returns `PausedByUser` without asking. The close request or the termination is sent inside the input gate, and the gate is released before the wait for the process to exit, as the close tools do, so a "Save changes?" prompt does not hold up other input and window calls.
 
 <!-- tools:begin params:kill_process -->
 **Parameters:**
@@ -3596,13 +3624,13 @@ Close an application gracefully, without ever forcing it: send WM_CLOSE to each 
 | confirm | boolean | No | false | Must be true to close more than 3 windows when the client cannot ask the user. Check the windows (find_windows) first. |
 <!-- tools:end params:close_application -->
 
-Name the application by exactly one of `handle` (any of its windows, a dialog too), `processId` or `processName` (with or without `.exe`, matched exactly and ignoring case; every process with that name that has such a window). Anything else is a tool error with `InvalidArguments`; a `handle` that is no window is `InvalidHandle`.
+Name the application by exactly one of `handle` (any of its windows, a dialog too), `window` (a [window selector](#window-selectors) for one of its windows), `processId` or `processName` (with or without `.exe`, matched exactly and ignoring case; every process with that name that has such a window). Anything else is a tool error with `InvalidArguments`; a `handle` that is no window is `InvalidHandle`.
 
-**Which windows.** Only the Alt+Tab set of the target processes: visible, not cloaked, top-level and unowned (or marked WS_EX_APPWINDOW), not tool windows, not WS_EX_NOACTIVATE windows (overlays) unless marked WS_EX_APPWINDOW, not the desktop shell. Hidden windows are never sent anything, so the text-input windows every GUI thread has (Default IME, MSCTFIME UI), the GDI+ hook window and the hidden main window of an app that lives in the notification area are left alone; those classes are also excluded by name. Of the shell's own process (normally explorer.exe, which also draws the desktop, the taskbars and their flyouts) only File Explorer windows (`CabinetWClass`) count; that process never exits, so it is reported in `runningProcessIds`. Windows on another virtual desktop are cloaked, so they are not closed (and not reported as remaining).
+**Which windows.** Only the Alt+Tab set of the target processes: visible, not cloaked, top-level and unowned (or marked WS_EX_APPWINDOW), not tool windows, not WS_EX_NOACTIVATE windows (overlays) unless marked WS_EX_APPWINDOW, not the desktop shell. Hidden windows are never sent anything, so the text-input windows every GUI thread has (Default IME, MSCTFIME UI), the GDI+ hook window and the hidden main window of an app that lives in the notification area are left alone; those classes are also excluded by name. Of the shell's own process (normally explorer.exe, which also draws the desktop, the taskbars and their flyouts) only File Explorer windows (`CabinetWClass`) count; that process never exits, so it is reported in `runningProcessIds`. Windows on another virtual desktop are cloaked, so they are not closed and not reported as remaining: they are listed in `otherDesktopWindows` (each with `handle`, `title`, `processId` and `processName`; left out when there are none), and their processes are not waited for and are reported in `runningProcessIds`. A window the shell cloaks is taken as one on another virtual desktop; the shell also cloaks some suspended or prelaunched Store app frames, which can then be listed there too.
 
 **Packaged (UWP) apps.** A packaged app's window is its ApplicationFrameWindow, which belongs to ApplicationFrameHost; it is matched by the app's own process (the `processId` and `processName` that [find_windows](#find_windows) reports), never by ApplicationFrameHost's, so closing one app cannot close every Store app. When the app behind a frame cannot be told (it is minimized or suspended and its title is not unique), find_windows reports the frame under ApplicationFrameHost; such a frame is closed only when its own `handle` names it, and then alone (`processIds` is empty and the process exit is not awaited). Naming ApplicationFrameHost by `processId` or `processName` closes nothing (`NoClosableWindow`). If Windows does not accept the close message for a frame (`CloseFailed`; a full message queue is `NotResponding` instead, since a hung app does not answer UI Automation either), the server asks through UI Automation (WindowPattern.Close, which is what the title bar's Close button does), under a deadline of about 2 seconds that is checked right before the close is requested. A request that did not return in time may still close the frame, so it counts as sent and the wait reports what became of it.
 
-**Refused before anything is sent.** The whole application is refused, and nothing is asked or closed, when it has no such window (`NoClosableWindow`), or when one of its windows would be refused by [close_window](#close_window)'s guards: the agent's own host or the desktop shell (`ProtectedWindow`; there is no `force`), or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`). More than 3 windows need a confirmation, as for [close_windows_batch](#confirmation): the user is asked when the client supports elicitation (`ConfirmationDeclined` when they do not confirm), otherwise `confirm: true` is required (`ConfirmationRequired`). A window whose handle belongs to another process by the time the user confirmed is not closed (`HandleMismatch` in its item). While input is paused, the call returns `PausedByUser` without asking.
+**Refused before anything is sent.** The whole application is refused, and nothing is asked or closed, when it has no such window (`NoClosableWindow`), or when one of its windows would be refused by [close_window](#close_window)'s guards: the agent's own host or the desktop shell (`ProtectedWindow`; there is no `force`), or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`). More than 3 windows need a confirmation, as for [close_windows_batch](#confirmation): the user is asked when the client supports elicitation (`ConfirmationDeclined` when they do not confirm), otherwise `confirm: true` is required (`ConfirmationRequired`). Once the call holds the input gate, each window is checked again: a window whose handle belongs to another process than when it was listed (it closed while the user was asked or the call waited, and its handle was reused) is not closed (`HandleMismatch` in its item), whether or not the user was asked. While input is paused, the call returns `PausedByUser` without asking.
 
 **Example:**
 > "Close Notepad"
@@ -3657,21 +3685,22 @@ Name the application by exactly one of `handle` (any of its windows, a dialog to
 }
 ```
 
-The close messages are sent inside the input gate, which is released before the wait, as in [close_window](#close_window), whose prompt rules apply too. `status` is `closed` (every window of the target processes in the Alt+Tab set is gone), `promptShown` (`promptDetected: true` and `prompt`, the first prompt found; nothing was answered, and the agent must not answer it on its own: show the user the prompt's text and buttons and ask which to choose, since No or Don't Save discards their unsaved work), `stillOpen` (windows remain without a prompt), or `requested` (`timeoutMs: 0`: the close messages were sent and nothing was checked; `success: true`). `windows` lists each window that was asked to close with its own `status` (`closed`, `hidden`, `stillOpen`, `promptShown`, `requested`, or `notSent` with the reason, such as `AccessDenied` for an app running as administrator; one window that fails does not stop the others), and `remainingWindows` the Alt+Tab windows of the target processes when the wait ended, new ones included. Once every window is gone, the server waits for the processes to exit, up to 2 seconds within `timeoutMs`: `exited: true` when all ended, otherwise `exited: false` and `runningProcessIds` (an app that keeps running in the notification area). `exited` is left out while windows remain.
+The close messages are sent inside the input gate, which is released before the wait, as in [close_window](#close_window), whose prompt rules apply too. `status` is `closed` (every window of the target processes in the Alt+Tab set of the current virtual desktop is gone; see `otherDesktopWindows` for the others), `promptShown` (`promptDetected: true` and `prompt`, the first prompt found; nothing was answered, and the agent must not answer it on its own: show the user the prompt's text and buttons and ask which to choose, since No or Don't Save discards their unsaved work), `stillOpen` (windows remain without a prompt), or `requested` (`timeoutMs: 0`: the close messages were sent and nothing was checked; `success: true`). `windows` lists each window that was asked to close with its own `status` (`closed`, `hidden`, `stillOpen`, `promptShown`, `requested`, or `notSent` with the reason, such as `AccessDenied` for an app running as administrator; one window that fails does not stop the others), and `remainingWindows` the Alt+Tab windows of the target processes when the wait ended, new ones included. Once every window is gone, the server waits for the processes to exit, up to 2 seconds within `timeoutMs`: `exited: true` when all ended, otherwise `exited: false` and `runningProcessIds` (an app that keeps running in the notification area, or one with windows on another virtual desktop, which is not waited for). `exited` is left out while windows remain.
 
 **Error codes:**
 | Code | Meaning |
 |------|---------|
 | `PromptShown` | A prompt waits for an answer; see `prompt`. Nothing was answered: ask the user which button to choose |
 | `StillOpen` | Windows remain after `timeoutMs` without a prompt; see `windows` and `remainingWindows` |
-| `NoClosableWindow` | The application has no window in the Alt+Tab set, or the process named is ApplicationFrameHost (pass the frame's `handle` instead); nothing was sent |
+| `NoClosableWindow` | The application has no window in the Alt+Tab set of the current virtual desktop (it may run without windows, only in the notification area, or only on another virtual desktop), or the process named is ApplicationFrameHost (pass the frame's `handle` instead); nothing was sent |
 | `ProtectedWindow` | One of its windows is the agent's host or the desktop shell; nothing was sent |
 | `TargetDeniedByPolicy` | The user's target policy refuses the application; nothing was sent |
 | `InvalidHandle` | `handle` is not a window (tool error) |
 | `InvalidArguments` | Not exactly one of `handle`, `window`, `processId` and `processName`, a `processId` below 1, an empty `processName`, or `timeoutMs` outside 0-30000 (tool error) |
 | `WindowNotFound` / `AmbiguousWindow` / `HandleMismatch` | `window` named no single window (tool error, with `candidates` when ambiguous); nothing was sent. See [Window selectors](#window-selectors) |
 | `ConfirmationRequired` / `ConfirmationDeclined` | More than 3 windows and no confirmation (tool error); nothing was sent |
-| `HandleMismatch` | In a window's item: the window changed hands while the user was asked; it was not closed |
+| `HandleMismatch` | In a window's item: the window changed hands while the user was asked or the call waited for the input gate; it was not closed |
+| `AccessDenied`, `NotResponding`, `CloseFailed` | In a window's item (`status: "notSent"`): Windows refused the close message (an app running as administrator, a full message queue, another Win32 error); the other windows were still sent theirs |
 | `PausedByUser` / `InputBusy` | Input is paused, or the input gate stayed busy (tool error); nothing was sent |
 
 ---
@@ -3699,7 +3728,7 @@ Content marked private is never returned, whoever copied it and whatever the use
 
 Only one question about the clipboard is open at a time: a get_clipboard call while another call waits for the user's answer returns `ConfirmationDeclined` without asking. A read of the user's clipboard is recorded in the [audit log](#audit-log) with its format, origin and length, never the content.
 
-Pasting follows the same rule, because a paste followed by a read (get_ui_elements, a capture, get_browser_content) would disclose what the user copied. Input that pastes is sent only when the clipboard holds what set_clipboard put there, the agent's own copy, or content the user let get_clipboard read (a yes for that content, or `WAM_ALLOW_USER_CLIPBOARD`), and never content marked private unless set_clipboard put it there; otherwise it is refused with `PasteNotAllowed` and nothing is sent. Input that pastes: Ctrl+V (with any other modifiers, so Ctrl+Shift+V counts) and Shift+Insert in [send_keys](#send_keys), the SYN character (U+0016, which an edit control takes as Ctrl+V) in [type_text](#type_text), and a [right_click](#right_click) in a terminal (the console, Windows Terminal, PuTTY, KiTTY, mintty, ConEmu). Win+V opens clipboard history, which holds what the user copied before, so it is sent only with `WAM_ALLOW_USER_CLIPBOARD`. A clipboard that cannot be checked refuses the paste. Copy keys and a paste in one call are refused too, because the copy has not happened when the paste is checked: send them in two calls. Not covered: a paste chosen from an application's own menu (Edit > Paste, or a context menu's Paste item, by a click or its access key), drag and drop, and paste shortcuts an application or the user defined; the check runs right before the input, so content the user copies in that instant can still be pasted.
+Pasting follows the same rule, because a paste followed by a read (get_ui_elements, a capture, get_browser_content) would disclose what the user copied. Input that pastes is sent only when the clipboard holds what set_clipboard put there, the agent's own copy, or content the user let get_clipboard read (a yes for that content, or `WAM_ALLOW_USER_CLIPBOARD`), and never content marked private unless set_clipboard put it there; otherwise it is refused with `PasteNotAllowed` and nothing is sent. Input that pastes: Ctrl+V (with any other modifiers, so Ctrl+Shift+V counts) and Shift+Insert in [send_keys](#send_keys), the SYN character (U+0016, which an edit control takes as Ctrl+V) in [type_text](#type_text), and a [right_click](#right_click) in a terminal (the console, Windows Terminal, PuTTY, KiTTY, mintty, ConEmu). Win+V opens clipboard history, which holds what the user copied before, so it is sent only with `WAM_ALLOW_USER_CLIPBOARD` (send_keys has no Windows-key modifier, so it cannot send Win+V today; the rule is a safety net). A clipboard that cannot be checked refuses the paste. The check reads the clipboard as it is before the call's input, so copy keys and a paste in one call (`^c^v`) are checked against what was there before the copy: when that is not content the agent may paste, the call is refused and the error says to send the copy in a call of its own first; when it is (set_clipboard's text, an earlier copy of the agent), the call is sent, and the copy it makes is pasted unchecked. Send copy keys and a paste in separate calls. Not covered: a paste chosen from an application's own menu (Edit > Paste, or a context menu's Paste item, by a click or its access key), drag and drop, paste shortcuts an application or the user defined, a right click in a terminal outside the list above (the VS Code terminal and other Electron terminals such as Hyper and Tabby paste on a right click by default, Alacritty and WezTerm depending on their settings), and clipboard history opened by clicks (the clipboard tab of the emoji panel or the touch keyboard); the check runs right before the input, so content the user copies in that instant can still be pasted.
 
 Every clipboard call opens the clipboard on a thread of its own, retries for about 300 ms while another application holds it (`ClipboardBusy`), and gives up after 5 seconds when the application that owns the clipboard does not answer.
 
@@ -4035,7 +4064,7 @@ A placement's process name matches part of the window's process name, case-insen
 
 **One window per placement.** apply_layout reads the open windows once, the windows [get_all_windows](#get_all_windows) lists, and gives each placement its own window: a window is never given to two placements, and a placement left without a window is `notFound` (a layout with three Chrome windows and one Chrome window open arranges that window once). Among the windows that pass the method's filter, the one most like what save_layout recorded wins: the same title (or most of its parts, split at ` - ` and ` | `, so a browser window whose tab changed still counts), the same window class, the same program, and then the window closest to the placement's place and the same position among its process's windows. The best pairs are taken first, so a placement that recognizes its window by title gets it even when an earlier placement would take any window of that process; a hand-written placement without these fields takes the matching window closest to its place. A window on another virtual desktop (cloaked) or a tool window is not listed, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again; if that brings up a window another placement was given (a single-instance app), the placement fails with `LaunchFailed`.
 
-**Monitors and state.** A placement whose `monitorIndex` is not a monitor now (after undocking, for example) fails with `InvalidMonitorIndex`; it is no longer put on monitor 0. A placement with `state: "maximized"` maximizes its window on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does; any other placement restores a maximized window first, then gives it the placement's rectangle, and `state: "minimized"` (hand-written only) minimizes it afterwards.
+**Monitors and state.** A placement whose `monitorIndex` is not a monitor now (after undocking, for example) fails with `InvalidMonitorIndex`; it is no longer put on monitor 0. A placement with `state: "maximized"` maximizes its window on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does; any other placement restores a minimized or maximized window first without activating it, then gives it the placement's rectangle (a hidden one, such as an app's window in the notification area, is not shown: the placement fails with `ArrangeFailed`), and `state: "minimized"` (hand-written only) minimizes it afterwards; a minimize that the application does not answer leaves the placement `applied`, with `ArrangeFailed` saying it could not be minimized.
 
 **Results.** `success` is true only when every placement was arranged (and focused, for a placement with focus). `status` is `applied` when it was, `partial` when some placements were arranged and others not, and `failed` when none was. `placements` has one result per placement, in placement order:
 
@@ -4044,7 +4073,8 @@ A placement's process name matches part of the window's process name, case-insen
 | `order` | The placement's `order` |
 | `status` | `applied`, `notFound`, `notApplicable` or `failed` |
 | `window` | The window it was given: `handle`, `title`, `processName`; left out when none was |
-| `launched` | `true` when the window was launched for it (`launchMissing`) |
+| `launched` | `true` when the window was launched for it (`launchMissing`), also when the placement failed after the launch |
+| `launchCommand` | The preset's `launchCommand` when it was run for this placement (`launchMissing`), whether or not the launch worked; left out when nothing was launched |
 | `focused` | For a placement with `focus: true` that was arranged: whether its window is in front |
 | `errorCode`, `error` | Why it was not (fully) applied: `WindowNotFound`, `NoMatchCriterion`, `InvalidMonitorIndex`, `LaunchFailed`, `TargetDeniedByPolicy` or `ArrangeFailed`. An `applied` placement with `ArrangeFailed` was arranged but not brought to the front (or not minimized) |
 
@@ -4091,7 +4121,7 @@ A placement with `focus: true` brings its window to the front with the same veri
   ],
   "placements": [
     { "order": 1, "status": "applied", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" }, "focused": true },
-    { "order": 2, "status": "applied", "window": { "handle": 1312934, "title": "Windows PowerShell", "processName": "WindowsTerminal" }, "launched": true },
+    { "order": 2, "status": "applied", "window": { "handle": 1312934, "title": "Windows PowerShell", "processName": "WindowsTerminal" }, "launched": true, "launchCommand": "wt" },
     { "order": 3, "status": "applied", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" } }
   ]
 }
@@ -4198,7 +4228,7 @@ Delete a layout preset. If no preset has that name, the call fails with `PresetN
 
 ### get_server_info
 
-Reports the server's build and the environment its tools work in, in one read-only call: which build is running, whether its coordinates are physical pixels, whether input can reach the desktop, which windows are the agent's own host, whether the user paused input, the user's safety settings, and which tools are served. `warnings` lists everything that will make tools fail or coordinates wrong, so read it first. Call it at the start of a task, and whenever tools behave unexpectedly; it changes nothing and is served in read-only mode.
+Reports the server's build and the environment its tools work in, in one read-only call: which build is running, whether its coordinates are physical pixels, whether input can reach the desktop, which windows are the agent's own host, whether the user paused input, the user's safety settings (the target policy, the destructive chords, the clipboard setting and the URI schemes launch_application opens), the folders it uses, and which tools are served. `warnings` lists everything that will make tools fail or coordinates wrong, so read it first. Call it at the start of a task, and whenever tools behave unexpectedly; it changes nothing and is served in read-only mode.
 
 <!-- tools:begin params:get_server_info -->
 **Parameters:** None
@@ -4243,19 +4273,21 @@ Reports the server's build and the environment its tools work in, in one read-on
     "deniedProcesses": ["1Password", "Bitwarden", "KeePass", "..."],
     "denyListSource": "default",
     "destructiveChords": ["%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l"],
-    "destructiveChordSource": "default"
+    "destructiveChordSource": "default",
+    "userClipboardAllowed": false,
+    "allowedProtocols": ["http", "https", "mailto", "tel", "ms-settings"]
   },
   "paths": {
     "layouts": "C:\\Users\\user\\AppData\\Local\\WindowsAppManagerMcp\\layouts",
     "auditLog": "C:\\Users\\user\\AppData\\Local\\WindowsAppManagerMcp\\audit"
   },
   "toolsets": {
-    "enabled": ["server", "windows", "monitors", "capture", "elements", "input", "launch", "process", "layouts", "browser"],
+    "enabled": ["server", "windows", "monitors", "capture", "elements", "input", "clipboard", "launch", "process", "layouts", "browser"],
     "disabled": [],
     "source": "default",
     "readOnly": false,
     "excludedTools": [],
-    "servedTools": 48
+    "servedTools": 54
   }
 }
 ```
@@ -4272,7 +4304,7 @@ Reports the server's build and the environment its tools work in, in one read-on
 | `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) the `destructiveChords` that need `windowHandle`, `userClipboardAllowed` (`WAM_ALLOW_USER_CLIPBOARD`: whether get_clipboard returns the user's clipboard without asking) and `allowedProtocols` (the URI schemes launch_application opens, the built-in ones first, then those `WAM_ALLOWED_PROTOCOLS` adds; an entry it ignored is named in `warnings`) |
 | `paths` | `layouts`, the [layout presets](#layout-presets) folder, and `auditLog`, the folder of the [audit log](#audit-log) |
 | `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, and how many tools are served (`servedTools`) |
-| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, and every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored. Left out when there is nothing to warn about |
+| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
 
 A value that cannot be read is `Unknown`, null or left out, and a warning says what that means. If a source the report reads throws instead (the monitor list or the layouts folder, say), the call fails with a tool error, as any tool does.
 
@@ -4408,10 +4440,41 @@ send_keys { "keys": "{ENTER}", "windowHandle": 12345 }
 
 ## Changes for existing clients
 
-These changes (roadmap M2.1, M2.2, M2.3, M2.4, M2.5, M2.6, M2.7, M2.8, M2.9 and M2.10: honest results, typed parameters, geometry, verified close, launch resolution, layout matching, capture health, annotations and confirmation by the user) change what some calls return. A client
-that followed the documented contract keeps working; the list says what a client that relied on the old behavior
-sees now.
+These changes (roadmap M2.1 to M2.17: honest results, typed parameters, geometry, window selectors, verified close,
+launch resolution and path hygiene, layout matching, capture health, annotations and confirmation by the user, server
+instructions and get_server_info, the SDK upgrade, toolsets, scroll, the clipboard and the audit log) change what some
+calls return. A client that followed the documented contract keeps working; the list says what a client that relied on
+the old behavior sees now. The plugin's committed exe gets them with the release after 1.13.0.
 
+- **SDK and protocol.** The server runs on the stable MCP C# SDK, `ModelContextProtocol` 2.2.0 (it was 0.5.0-preview.1).
+  It speaks the 2026-07-28 revision (`server/discover` instead of the `initialize` handshake, and elicitation as a
+  multi-round-trip request) as well as the earlier revisions with `initialize` (2025-11-25 and 2025-06-18). The
+  input schemas changed where the SDK's schema generation did: an optional parameter that can be null (a string, an
+  integer such as `handle`, an array, or an object such as `window` or `expectWindow`) is typed as a union with `"null"`
+  (`"type": ["string", "null"]`),
+  and launch_application's `arguments` items as `["string", "null"]` (null items are still refused with
+  `InvalidArgumentValue`). A client that reads `type` as a single string must accept an array there.
+- **Server instructions.** The `initialize` (and `server/discover`) result now carries `instructions`: 18 lines on
+  the locate, activate and verify, act, verify loop, the coordinate space, the target window for input and the
+  error codes that mean stop. When the user turned tools off, one more line says which.
+- **New tools.** [get_server_info](#get_server_info) (build, DPI awareness, desktop state, host windows, pause,
+  safety settings, toolsets, with warnings), [get_window_info](#get_window_info), [get_owned_windows](#get_owned_windows),
+  [close_application](#close_application), [scroll](#scroll), [get_clipboard](#get_clipboard) and
+  [set_clipboard](#set_clipboard): 54 tools, where 1.13.0 served 47. The new [toolsets](#toolsets) (`WAM_TOOLSETS`,
+  `WAM_EXCLUDE_TOOLS`, `WAM_READ_ONLY`) let the user serve fewer; without them every tool is served, as before. A
+  setting that names no toolset or tool fails closed: an unknown `-name`, or unknown plain names with no valid one, in
+  `WAM_TOOLSETS`, or an unknown name in `WAM_EXCLUDE_TOOLS` (which also takes toolset names), serves only the `server`
+  toolset, and get_server_info reports the `source` and a warning.
+- **Audit log.** The server now appends one JSON line per call of an input, close, kill, launch, layout-write (apply, save,
+  delete) or clipboard tool to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<yyyy-MM-dd>.jsonl` (or `WAM_AUDIT_PATH`), with the target
+  window's title, process name and PID, the window the input went to, a launch's program path, the outcome and the
+  error code, and keeps 7 days of files. Typed text, keys, clipboard content, URL paths and command-line arguments
+  are recorded only as lengths. It cannot be turned off; see [Audit log](#audit-log).
+- **Pastes can be refused.** send_keys with Ctrl+V or Shift+Insert, type_text with the SYN character, and a
+  right_click in a terminal now return `PasteNotAllowed` (nothing sent) when the clipboard holds content the agent did
+  not put there or copy and the user did not let it read; see [Clipboard](#clipboard).
+- **Input to a selector's window is checked again.** An input tool given a `window` selector checks it again once it
+  holds the input gate and returns `HandleMismatch` (nothing sent) when the window no longer matches it.
 - **Failures carry `isError: true`.** Every result with `success: false` now goes out with `isError: true`, with the
   same JSON body as before (`success`, `error`, `errorCode`, and the tool's other fields). Before, only the captures
   and tool errors did; a failed move, click, launch or kill went out with `isError` unset. A list, and a batch summary
@@ -4468,10 +4531,19 @@ sees now.
   auto-approves read-only tools, or asks before destructive ones, now has what it needs. Before, no tool had hints,
   so the protocol's defaults called every tool destructive and open-world; most tools are now marked
   non-destructive, and a client that asks before destructive tools asks less often.
-- **The user confirms kill_process and large close_windows_batch calls.** When the client supports elicitation, the
-  server asks the user (see [kill_process](#kill_process) and [close_windows_batch](#close_windows_batch)): a
-  call the user does not confirm fails with `ConfirmationDeclined`, and `confirm: true` from the model no longer
-  suffices on such a client. Clients without elicitation keep the `confirm` argument as before.
+- **The user confirms kill_process, large closes and forced closes.** When the client supports elicitation, the
+  server asks the user (see [kill_process](#kill_process), and above 3 windows [close_windows_batch](#close_windows_batch)
+  and [close_application](#close_application)): a call the user does not confirm fails with `ConfirmationDeclined`,
+  and `confirm: true` from the model no longer suffices on such a client. Clients without elicitation keep the
+  `confirm` argument as before. On such a client, `force: true` on close_window and close_windows_batch also closes a
+  protected window (the desktop shell, the agent's host) only after the user's yes; without elicitation it works as
+  before. A kill the user confirmed is refused when the PID now belongs to another process, even one with the same
+  name (`ProcessNameMismatch`), and a forced kill when the process tree gained a child the user was not shown
+  (`ProcessTreeChanged`). kill_process now releases the input gate before it waits for the process to exit.
+- **launch_browser_with_debug is destructive and checks its arguments.** Its `destructiveHint` is now `true` (its
+  open debug port lets any program control that browser, and the agent picks the profile and the URL), so a client
+  that asks before destructive tools asks for it. A `url` that starts with `-` or `/` (a browser switch) and a
+  `userDataDir` inside a `User Data` folder (a real browser profile) are refused with `InvalidArguments`.
 - **Closing is verified.** [close_window](#close_window) and [close_windows_batch](#close_windows_batch) now wait up to
   `waitMs` (default 2000 ms) after the close message and report `status`. `success: true` means the window closed
   (`closed`) or hid itself (`hidden`); a window behind a save prompt is `success: false` with
@@ -4479,7 +4551,8 @@ sees now.
   only meant the message was sent; `waitMs: 0` keeps that behaviour (`status: "requested"`). close_window can now
   return `PausedByUser` and `InputBusy` as tool errors (it takes the input gate itself, only while it sends, and waits
   outside it). A close message Windows refuses because the window's message queue is full is `NotResponding` instead
-  of `CloseFailed`. Two new tools: [get_owned_windows](#get_owned_windows) and [close_application](#close_application).
+  of `CloseFailed`. close_windows_batch reports an item whose window got no close message (refused, or the send
+  failed) with `status: "notSent"`. close_window refuses a pause before it resolves a selector.
 - **Captures report their health (M2.9).** A minimized window fails with `WindowMinimized` instead of `CaptureFailed`; a hidden window (`WindowHidden`), a cloaked one (`Cloaked`) and a region entirely off the screen (`RegionOffScreen`) used to succeed with an empty, black or tiny image and now fail. A region partly off the screen is cut to the screen, so `capturedRegion` can be smaller than the request, and capture_region leaves `monitorIndex` and `scaleFactor` out when the region's center is on no monitor (it used to name the nearest one). Frame captures are cut to the visible frame, so `capturedRegion` starts about 7 pixels right of the window rectangle's corner. capture_with_elements returns the image when the UI element walk fails, with `success: true` and `elementsError`/`elementsErrorCode`, where it used to fail with the walk's code and no image. `captureMethod` `BitBlt` is now `ScreenBitBlt` (screen copies) or `BitBltFallback` (the window refused PrintWindow). A failure to build or encode the image is `EncodeFailed` instead of `CaptureFailed`. New: `warnings`, `restoreIfMinimized`, `truncated`/`truncationReason` in capture_with_elements, and `windowState` in get_ui_elements.
 - **Input error codes.** A send_keys string with a syntax error (a `{` without its `}`) is `InvalidKeySpecification`
   instead of `UnknownKey` (still used for an unknown key name), and a mouse pointer that Windows does not move is
@@ -4506,6 +4579,20 @@ sees now.
   is `ElevationCancelled`. launch_applications_batch starts every application first and then waits for all the windows
   together, so `waitTimeoutMs` bounds the whole wait instead of each application's; a window of the process one item
   started goes to that item, never to another launch of the same program.
+- **Windows report their visible frame.** find_windows, get_all_windows, get_foreground_window, get_window_info
+  (`standard` and `full`) and a launch's `window` add `visibleBounds`, the visible frame the placements take, beside
+  `bounds`, which stays the window rect. A placement of a hidden window that is minimized or maximized (an app's
+  window in the notification area) now fails with `MoveFailed` or `ResizeFailed` instead of showing it, and
+  move_window_to_monitor `maximize` no longer maximizes a window that stayed on its old monitor.
+- **apply_layout reports each placement's launch.** A placement whose `launchCommand` ran (`launchMissing`) reports it
+  as `launchCommand`; a placement that failed after its launch keeps `launched: true`. A maximized window is restored
+  without being activated before it is placed, and a minimize that does not answer leaves the placement `applied`
+  with `ArrangeFailed`.
+- **Cancellation and progress.** Every long-running tool honours `notifications/cancelled` (see
+  [Cancellation and progress](#cancellation-and-progress)), and get_ui_elements, capture_with_elements,
+  launch_applications_batch and apply_layout send `notifications/progress` when the call carries a progress token.
+- **Coordinates come from the manifest.** The server declares PerMonitorV2 DPI awareness in its app manifest
+  instead of setting per-monitor v1 awareness through an API call; get_server_info reports the awareness in force.
 - **Window selectors (M2.4).** Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a
   [window selector](#window-selectors); `handle` is kept and works as before, but it is no longer marked required in
   the input schema (a call needs one of `handle` and `window`, and fails with `InvalidArguments` without either, as it
@@ -4605,7 +4692,7 @@ table, it gives more detail.
 
 | Code | Returned by | Meaning |
 |------|-------------|---------|
-| `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch, the window changes (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and their batches, per window) | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window and the window changes: Windows refused the message or the move (Win32 error 5), because the window belongs to a more privileged app, for example one running as administrator; ask the user |
+| `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window), the window changes (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and their batches, per window) | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window and the window changes: Windows refused the message or the move (Win32 error 5), because the window belongs to a more privileged app, for example one running as administrator; ask the user |
 | `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized (its placement is `applied` with this code); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
@@ -4628,7 +4715,7 @@ table, it gives more detail.
 | `ClipboardNotFromAgent` | [get_clipboard](#get_clipboard) | The clipboard holds content the agent did not put there (the user or another app copied it), or the clipboard changed while the user was asked; nothing was read. Copy it yourself with `send_keys` `^c`, or ask the user |
 | `ClipboardPrivate` | [get_clipboard](#get_clipboard) | The content is marked private (password managers mark passwords this way); it is never returned |
 | `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is cloaked (on another virtual desktop, a suspended Store app, or hidden by its app), so it was not activated, or not captured: Windows does not draw it |
-| `CloseFailed` | [close_window](#close_window), close_windows_batch | Windows did not accept the close message; `error` gives the Win32 error |
+| `CloseFailed` | [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window) | Windows did not accept the close message; `error` gives the Win32 error |
 | `ConfirmationDeclined` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window), [get_clipboard](#get_clipboard) | The MCP client asked the user to confirm (elicitation), and the user declined, dismissed or did not tick the question, or did not answer within 2 minutes; nothing was done (get_clipboard: nothing was read; also while another get_clipboard call's question is open). Ask the user how to continue |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error) | `confirm` was not true (close_windows_batch and close_application: more than 3 windows), and the MCP client cannot ask the user; nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
@@ -4652,10 +4739,10 @@ table, it gives more detail.
 | `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
 | `FormatNotAvailable` | [get_clipboard](#get_clipboard) | The clipboard holds nothing in the format asked for; `availableFormats` lists what it holds |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
-| `HandleMismatch` | [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches; in the result of the [Input Simulation](#input-simulation) tools) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused); nothing was done |
+| `HandleMismatch` | [close_window](#close_window) (`force` after the user's yes), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches; in the result of the [Input Simulation](#input-simulation) tools) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; close_application: to another process than when the window was listed, asked or not; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused), or the selector's window no longer matched it once the call held the input gate (the window and input tools check it again just before they act or send); nothing was done |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
-| `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)) and from [set_clipboard](#set_clipboard) | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
-| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms; and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
+| `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
+| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms; and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
@@ -4682,9 +4769,9 @@ table, it gives more detail.
 | `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
 | `MouseInUse` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
-| `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error), or move_window_to_monitor with `positioning: "maximize"` maximized it on another monitor than the one asked for |
+| `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error); a minimized or maximized window did not return to normal, or is hidden, so it was not placed; or move_window_to_monitor did not get the window onto the monitor asked for (with `positioning: "maximize"` it is then not maximized) |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
-| `NoClosableWindow` | [kill_process](#kill_process), [close_application](#close_application) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question). close_application: the application has no window in the Alt+Tab set; nothing was sent |
+| `NoClosableWindow` | [kill_process](#kill_process), [close_application](#close_application) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question). close_application: the application has no window in the Alt+Tab set of the current virtual desktop; nothing was sent |
 | `NoForegroundWindow` | [get_foreground_window](#get_foreground_window) (tool error) | No window is in the foreground right now (windows are switching, or a UAC prompt or the lock screen is shown); call again shortly |
 | `NoMatchCriterion` | [apply_layout](#apply_layout) (per placement) | The placement has no criterion the `matchBy` used can match on (`title_only` without `titleContains`, as in every layout save_layout made; `process_only` without a process name; or neither), so it was skipped and no window was moved for it. Apply with `process_and_title` |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools, [resume_input](#resume_input), [release_all_input](#release_all_input) | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
@@ -4697,7 +4784,7 @@ table, it gives more detail.
 | `PasteNotAllowed` | [send_keys](#send_keys), [type_text](#type_text) (the SYN character), [right_click](#right_click) (in a terminal) | The input pastes (Ctrl+V, Shift+Insert, Win+V, the SYN character, or a right click in a terminal), and the clipboard holds content [get_clipboard](#get_clipboard) would not return: the user's (not allowed by the user), content marked private, or clipboard history; or the clipboard could not be checked. Nothing (more) was sent. Put the text on the clipboard with set_clipboard, or type it; see [Clipboard](#clipboard) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
-| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)) and from [set_clipboard](#set_clipboard); [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
+| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`, or, after the user confirmed, to a process that started at another time (its PID was reused); nothing was done |
@@ -4708,7 +4795,7 @@ table, it gives more detail.
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The window is part of the desktop shell or of the agent's own host, and `force` was not true (close_application has no `force`, and refuses the whole application); nothing was sent |
 | `RegionOffScreen` | [capture_region](#capture_region) | No part of the region is on the virtual screen (the area of all monitors); nothing was captured. Coordinates are physical virtual-screen pixels: check them against [list_screens](#list_screens) |
-| `ResizeFailed` | [resize_window](#resize_window) | Windows did not resize the window; `error` gives the Win32 error |
+| `ResizeFailed` | [resize_window](#resize_window) | Windows did not resize the window (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, or is hidden, so it was not resized |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
@@ -4717,7 +4804,7 @@ table, it gives more detail.
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
@@ -4729,7 +4816,7 @@ table, it gives more detail.
 | `ToolError` | any tool (tool error) | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
 | `UnhandledException` | any tool (tool error) | The tool threw an unexpected exception, or its result could not be serialized (see [Tool errors](#tool-errors)) |
 | `UnknownKey` | [send_keys](#send_keys) | Unknown special key name in braces |
-| `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of http, https, file, mailto and tel |
+| `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of the built-in schemes (http, https, mailto, tel, ms-settings, `shell:AppsFolder\<AppUserModelID>`; file URIs are checked as paths) or the schemes the user allows in `WAM_ALLOWED_PROTOCOLS`; `get_server_info` lists them as `safety.allowedProtocols` |
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |

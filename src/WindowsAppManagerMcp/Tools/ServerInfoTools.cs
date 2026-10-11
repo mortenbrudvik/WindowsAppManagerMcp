@@ -27,7 +27,8 @@ public class ServerInfoTools
                  "can reach the desktop (locked " +
                  "session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and " +
                  "processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the " +
-                 "target policy and destructive chords, the layouts folder and the audit log folder, and the toolsets, excluded tools and read-only mode " +
+                 "target policy, destructive chords, clipboard setting and URI schemes launch_application opens, the layouts folder and the " +
+                 "audit log folder, and the toolsets, excluded tools and read-only mode " +
                  "in force (a tool you do not see may be turned off there). warnings lists what will make tools fail or " +
                  "coordinates wrong. Call it first, and whenever tools behave unexpectedly. Changes nothing.")]
     public ServerInfoResult GetServerInfo(McpServer server)
