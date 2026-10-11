@@ -11,6 +11,11 @@ public sealed class FakeUiaTree : IUiaTree
 {
     private readonly ConcurrentDictionary<nint, FakeUiaNode> _windows = new();
     private readonly ConcurrentQueue<string> _reads = new();
+    private readonly ConcurrentQueue<string> _cachedFetches = new();
+    private readonly ConcurrentQueue<string> _childListings = new();
+
+    /// <summary>The engine the fake claims to be.</summary>
+    public UiaEngine Engine { get; set; } = UiaEngine.Uia3;
 
     /// <summary>What <see cref="IsAvailable"/> returns.</summary>
     public bool Available { get; set; } = true;
@@ -74,6 +79,7 @@ public sealed class FakeUiaTree : IUiaTree
     public IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken)
     {
         var fake = Fake(node);
+        _childListings.Enqueue(fake.Name ?? fake.ControlType);
         fake.OnGetChildren?.Invoke();
         ThrowIfSet(fake.ChildrenException);
         return fake.Children.ToList();
@@ -127,6 +133,136 @@ public sealed class FakeUiaTree : IUiaTree
         return fake.IsModal;
     }
 
+    /// <summary>
+    /// The children with their properties in one "call", as a cache request reads them: each child's properties are
+    /// read ("Read:Name") and its <see cref="FakeUiaNode.OnRead"/> runs, in order (the node's
+    /// <see cref="FakeUiaNode.OnGetChildren"/> runs only for <see cref="GetChildren"/>, which the walk calls first, so it
+    /// runs once per level). The call is atomic like the real one
+    /// (it does not stop when the token is cancelled during it), and it fails as a whole when the node's
+    /// <see cref="FakeUiaNode.CachedChildrenException"/> or <see cref="FakeUiaNode.ChildrenException"/> is set, or when
+    /// any child's <see cref="FakeUiaNode.ReadException"/> or <see cref="FakeUiaNode.InteractionException"/> is: one
+    /// failing provider fails the fetch, and the walk then reads the children one at a time.
+    /// </summary>
+    public IReadOnlyList<UiaElement> GetChildElements(IUiaNode node, CancellationToken cancellationToken)
+    {
+        var fake = Fake(node);
+        cancellationToken.ThrowIfCancellationRequested();
+        _cachedFetches.Enqueue(fake.Name ?? fake.ControlType);
+        ThrowIfSet(fake.CachedChildrenException);
+        ThrowIfSet(fake.ChildrenException);
+        return fake.Children.Select(ReadCached).ToList();
+    }
+
+    public IReadOnlyList<UiaElement> FindAll(IUiaNode root, UiaScope scope, UiaCondition condition, CancellationToken cancellationToken)
+    {
+        var fake = Fake(root);
+        cancellationToken.ThrowIfCancellationRequested();
+        IEnumerable<FakeUiaNode> candidates = scope switch
+        {
+            UiaScope.Children => fake.Children,
+            UiaScope.Descendants => Descendants(fake),
+            UiaScope.Subtree => Descendants(fake).Prepend(fake),
+            _ => throw new ArgumentOutOfRangeException(nameof(scope))
+        };
+        return candidates.Where(n => Matches(n, condition)).Select(ReadCached).ToList();
+    }
+
+    public UiaElementTree ReadSubtree(IUiaNode root, int maxElements)
+    {
+        var fake = Fake(root);
+        var count = 1;
+        var rootChildren = new List<UiaElementTree>();
+        var tree = new UiaElementTree(ReadCached(fake), rootChildren);
+        var pending = new Queue<(FakeUiaNode Node, List<UiaElementTree> Children)>();
+        pending.Enqueue((fake, rootChildren));
+        while (pending.Count > 0 && count < maxElements)
+        {
+            var (parent, children) = pending.Dequeue();
+            foreach (var child in parent.Children.TakeWhile(_ => count < maxElements))
+            {
+                var grandchildren = new List<UiaElementTree>();
+                children.Add(new UiaElementTree(ReadCached(child), grandchildren));
+                count++;
+                pending.Enqueue((child, grandchildren));
+            }
+        }
+
+        return tree;
+    }
+
+    public IReadOnlyList<int>? GetRuntimeId(IUiaNode node)
+    {
+        var fake = Fake(node);
+        ThrowIfSet(fake.ReadException);
+        return fake.RuntimeId;
+    }
+
+    public bool AreSameElement(IUiaNode first, IUiaNode second) => ReferenceEquals(Fake(first), Fake(second));
+
+    public TPattern? GetPattern<TPattern>(IUiaNode node) where TPattern : class, IUiaPattern
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"Pattern:{typeof(TPattern).Name}:{fake.Name}");
+        return fake.PatternObjects.TryGetValue(typeof(TPattern), out var pattern) ? (TPattern)pattern : null;
+    }
+
+    /// <summary>The nodes whose children were fetched with <see cref="GetChildElements"/>, by name, in call order.</summary>
+    public IReadOnlyList<string> CachedFetches => _cachedFetches.ToList();
+
+    /// <summary>The nodes whose children were listed with <see cref="GetChildren"/>, by name, in call order.</summary>
+    public IReadOnlyList<string> ChildListings => _childListings.ToList();
+
+    private UiaElement ReadCached(FakeUiaNode node)
+    {
+        _reads.Enqueue($"Read:{node.Name}");
+        node.OnRead?.Invoke();
+        ThrowIfSet(node.ReadException);
+        ThrowIfSet(node.InteractionException);
+        return new UiaElement(
+            node,
+            new UiaNodeProperties(node.Name, node.ControlType, node.AutomationId, node.Bounds, node.IsEnabled, node.IsOffscreen),
+            node.ClassName,
+            node.IsKeyboardFocusable,
+            node.Patterns,
+            node.RuntimeId,
+            UiaControlTypes.GetId(node.ControlType));
+    }
+
+    private static IEnumerable<FakeUiaNode> Descendants(FakeUiaNode node) =>
+        node.Children.SelectMany(child => Descendants(child).Prepend(child));
+
+    /// <summary>Evaluates a condition as a provider would.</summary>
+    public static bool Matches(FakeUiaNode node, UiaCondition condition) => condition switch
+    {
+        UiaTrueCondition => true,
+        UiaAndCondition and => and.Conditions.All(c => Matches(node, c)),
+        UiaOrCondition or => or.Conditions.Any(c => Matches(node, c)),
+        UiaNotCondition not => !Matches(node, not.Condition),
+        UiaPropertyCondition property => PropertyMatches(node, property),
+        _ => throw new ArgumentException("Unknown condition", nameof(condition))
+    };
+
+    private static bool PropertyMatches(FakeUiaNode node, UiaPropertyCondition condition)
+    {
+        object? actual = condition.Property switch
+        {
+            UiaProperty.Name => node.Name,
+            UiaProperty.AutomationId => node.AutomationId,
+            UiaProperty.ClassName => node.ClassName,
+            UiaProperty.ControlType => node.ControlType,
+            UiaProperty.FrameworkId => node.FrameworkId,
+            UiaProperty.ProcessId => node.ProcessId,
+            UiaProperty.IsEnabled => node.IsEnabled,
+            UiaProperty.IsOffscreen => node.IsOffscreen,
+            UiaProperty.IsKeyboardFocusable => node.IsKeyboardFocusable,
+            _ => throw new ArgumentOutOfRangeException(nameof(condition))
+        };
+        return actual is string text && condition.Value is string expected
+            ? string.Equals(text, expected,
+                condition.IgnoreCase || condition.Property == UiaProperty.ControlType ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            : Equals(actual, condition.Value);
+    }
+
     private static void ThrowIfSet(Exception? exception)
     {
         if (exception != null)
@@ -146,7 +282,10 @@ public sealed class FakeUiaTree : IUiaTree
 /// <summary>A node of <see cref="FakeUiaTree"/>. Every property can be set with an object initializer.</summary>
 public sealed class FakeUiaNode : IUiaNode
 {
+    private static int _nextRuntimeId;
+
     private readonly List<FakeUiaNode> _children = [];
+    private readonly Dictionary<Type, object> _patterns = [];
 
     public FakeUiaNode(string controlType, string? name = null)
     {
@@ -180,6 +319,33 @@ public sealed class FakeUiaNode : IUiaNode
     public Exception? IdentityException { get; set; }
     public Exception? ChildrenException { get; set; }
     public Exception? ParentException { get; set; }
+
+    /// <summary>Fails only the cached fetch of this node's children (<see cref="FakeUiaTree.GetChildElements"/>).</summary>
+    public Exception? CachedChildrenException { get; set; }
+
+    /// <summary>A runtime id unique among the fake nodes of the test run.</summary>
+    public IReadOnlyList<int>? RuntimeId { get; init; } = [42, Interlocked.Increment(ref _nextRuntimeId)];
+
+    /// <summary>
+    /// The patterns the node reports as available: its <see cref="ActionPatterns"/> by name, plus
+    /// <see cref="OtherPatterns"/>.
+    /// </summary>
+    public UiaPatterns Patterns => ActionPatterns
+        .Select(name => Enum.Parse<UiaPatterns>(name))
+        .Aggregate(OtherPatterns, (all, pattern) => all | pattern);
+
+    /// <summary>Available patterns that are not action patterns (Scroll, Window, Text, ...).</summary>
+    public UiaPatterns OtherPatterns { get; init; }
+
+    /// <summary>The pattern objects <see cref="FakeUiaTree.GetPattern{TPattern}"/> returns, by pattern interface.</summary>
+    public IReadOnlyDictionary<Type, object> PatternObjects => _patterns;
+
+    /// <summary>Gives the node a pattern object and returns the node.</summary>
+    public FakeUiaNode WithPattern<TPattern>(TPattern pattern) where TPattern : class, IUiaPattern
+    {
+        _patterns[typeof(TPattern)] = pattern;
+        return this;
+    }
 
     /// <summary>Runs when the node's basic properties are read, before they are returned.</summary>
     public Action? OnRead { get; set; }

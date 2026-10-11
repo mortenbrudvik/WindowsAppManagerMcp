@@ -20,6 +20,8 @@ public class UIElementTools
     private const int MaxDepth = 10;
     private const int DefaultDepth = 5;
     private const int DefaultAncestors = 3;
+    private const int DefaultMaxElements = 300;
+    private const int MaxElementsLimit = 5000;
 
     // Shared with capture_with_elements (ScreenshotTools), whose parameter descriptions start with
     // "Only include interactable elements. Default: false. " and "Only include elements that are not
@@ -54,7 +56,7 @@ public class UIElementTools
     }
 
     [McpServerTool(Name = "get_ui_elements", Title = "Get UI Element Tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true (OperationTimedOut when no element matching the filters was found yet).")]
+    [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).")]
     public async Task<UIElementResult> GetUIElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
         long? handle = null,
@@ -74,6 +76,10 @@ public class UIElementTools
         int? minHeight = null,
         [Description("Timeout in milliseconds (default: 10000, max: 30000). When it passes, the elements read so far are returned with truncated=true.")]
         int timeoutMs = DefaultTimeoutMs,
+        [Description("Stop once this many elements are returned (default: 300, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes, interactableOnly or a smaller maxDepth rather than raising this.")]
+        int maxElements = DefaultMaxElements,
+        [Description("Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (@x,y wxh are the bounds in physical screen pixels; flags [disabled], [offscreen]).")]
+        UIElementFormat format = UIElementFormat.Tree,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -83,10 +89,20 @@ public class UIElementTools
             InteractableOnly: interactableOnly,
             VisibleOnly: visibleOnly,
             MinWidth: minWidth,
-            MinHeight: minHeight);
+            MinHeight: minHeight,
+            MaxElements: Math.Clamp(maxElements, 1, MaxElementsLimit));
 
-        return await ReadTreeAsync(_uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken)
+        var result = await ReadTreeAsync(_uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken)
             .ConfigureAwait(false);
+
+        return result.Elements is not { } elements
+            ? result
+            : format switch
+            {
+                UIElementFormat.Flat => result with { Elements = UIElementTextFormat.ToFlat(elements) },
+                UIElementFormat.Text => result with { Elements = null, Text = UIElementTextFormat.ToText(elements) },
+                _ => result
+            };
     }
 
     /// <summary>

@@ -30,7 +30,10 @@ public class WrapperCatalogTests
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),
-            typeof(IUiaTree)
+            typeof(IUiaTree),
+            // The pattern objects the engine adapters hand out (roadmap M3.2)
+            typeof(IUiaInvokePattern),
+            typeof(IUiaLegacyIAccessiblePattern)
         });
     }
 
@@ -188,6 +191,14 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.WriteText), WrapperCallKind.Clipboard)]
     [InlineData(typeof(INativeHitTestWrapper), nameof(INativeHitTestWrapper.GetClientAreaOnScreen), WrapperCallKind.Read)]
     [InlineData(typeof(INativeSystemInfoWrapper), nameof(INativeSystemInfoWrapper.GetMouseWheelRouting), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeWindowWrapper), nameof(INativeWindowWrapper.RespondsWithin), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.GetChildElements), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaTree), nameof(IUiaTree.GetPattern), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaInvokePattern), nameof(IUiaInvokePattern.Invoke), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaValuePattern), nameof(IUiaValuePattern.SetValue), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaWindowPattern), nameof(IUiaWindowPattern.Close), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaLegacyIAccessiblePattern), nameof(IUiaLegacyIAccessiblePattern.DoDefaultAction), WrapperCallKind.UiaAction)]
+    [InlineData(typeof(IUiaTextPattern), nameof(IUiaTextPattern.GetText), WrapperCallKind.Read)]
     public void Find_ClassifiesTheMembersTheScenariosAndLaterWavesDependOn(Type type, string name, WrapperCallKind expected)
     {
         var method = AllMethods(type).Single(m => m.Name == name);

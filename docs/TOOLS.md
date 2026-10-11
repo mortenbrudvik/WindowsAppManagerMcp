@@ -2032,6 +2032,8 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 
 Tools for reading UI elements through Windows UI Automation: the element tree of a window, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
+**Engine.** The server reads UI Automation through the COM client (UI Automation 3) by default. Each of its calls gives up on an application that does not connect within 1 s or answer within 5 s, so a hung application costs a call seconds instead of blocking it until the timeout; it names the control types Windows 8 added (AppBar, SemanticZoom) from their ids, in every display language; and it reads an element's properties, or a level of the tree of up to 200 elements, in one cross-process call. The user can switch to the managed client of earlier versions with `WAM_UIA_ENGINE=uia2`, as a fallback for an application that reads wrongly; the tools return the same fields with either, and [get_server_info](#get_server_info) reports the engine in force (`uiAutomation`).
+
 ### get_ui_elements
 
 Get the UI element tree with bounding boxes for a window. Provides a lightweight alternative to screenshots when only element coordinates are needed for programmatic interaction planning.
@@ -2049,12 +2051,14 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 | minWidth | integer | No | - | Minimum element width to include |
 | minHeight | integer | No | - | Minimum element height to include |
 | timeoutMs | integer | No | 10000 | Timeout for UI traversal in ms (1000-30000). When it passes, the elements read so far are returned |
+| maxElements | integer | No | 300 | Stop once this many elements are returned (1-5000), with `truncationReason: MaxElements`. The walk is breadth first, so the levels nearest the window are kept |
+| format | string (one of: `"tree"`, `"flat"`, `"text"`) | No | "tree" | `tree` nests each element's `children`; `flat` lists every element once with `depth` and `parent`; `text` returns `text`, one compact line per element (see [Formats](#formats)) |
 <!-- tools:end params:get_ui_elements -->
 
 **Supported Control Types:**
 AppBar, Button, Calendar, CheckBox, ComboBox, Custom, DataGrid, DataItem, Document, Edit, Group, Header, HeaderItem, Hyperlink, Image, List, ListItem, Menu, MenuBar, MenuItem, Pane, ProgressBar, RadioButton, ScrollBar, SemanticZoom, Separator, Slider, Spinner, SplitButton, StatusBar, Tab, TabItem, Table, Text, Thumb, TitleBar, ToolBar, ToolTip, Tree, TreeItem, Window
 
-AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's localized control type, so on a non-English Windows they may appear under a localized name, which the `controlTypes` filter does not accept. An element with no recognizable type is reported as `Unknown`. `controlTypes` accepts the names above and `Unknown`, in any letter case; any other name fails the call with `InvalidControlType`, and the error lists the valid names.
+AppBar and SemanticZoom (used by UWP/WinUI apps) are named from their control type ids. With `WAM_UIA_ENGINE=uia2` they are named from the element's localized control type instead, so on a non-English Windows they may appear under a localized name, which the `controlTypes` filter does not accept. An element with no recognizable type is reported as `Unknown`. `controlTypes` accepts the names above and `Unknown`, in any letter case; any other name fails the call with `InvalidControlType`, and the error lists the valid names.
 
 **How the filters work:**
 - `controlTypes`, `interactableOnly`, `minWidth` and `minHeight` decide only whether an element itself is returned. An element that fails one is left out, and the elements inside it that pass take its place in its parent's list. So `controlTypes: "Button,MenuItem"` returns the Buttons inside panes and toolbars and the MenuItems inside a MenuBar, each in tree order. If a container matches too, the matches inside it stay nested under it.
@@ -2062,6 +2066,26 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `minWidth` / `minHeight` also leave out elements without bounds (`bounds` absent), such as many layout containers, but not the elements inside them.
 - `visibleOnly` (on by default) is the exception: it leaves out an element reported as offscreen together with everything inside it. Pass `visibleOnly: false` if the control may be scrolled out of view.
 - `maxDepth` limits how deep the walk goes in the window's tree, whatever the filters leave out: with `maxDepth: 2`, a Button three levels below the window is not read.
+
+**How the walk works:**
+- It reads breadth first: all of the window's children, then all of their children, and so on. A walk cut short keeps the levels nearest the window.
+- It stops once `maxElements` elements (default 300) are returned, with `truncated: true` and `truncationReason: MaxElements`; `maxElements` counts returned elements, not the ones the filters leave out. To see more of a large window, narrow the walk (`controlTypes`, `interactableOnly`, a smaller `maxDepth`) rather than raising the limit.
+- An element's children are first listed, which is cheap. Up to 200 of them are then read in one cross-process call together with the properties the walk needs. A wider level (a long list that does not virtualize, for example) is read one element at a time, so `maxElements` and the timeout stop the walk in the middle of it instead of losing the whole level. If the one call fails (a provider that fails for one child can fail it), the children are read one at a time too, so only the element that fails is skipped.
+- A window that does not respond is not read: when Windows reports it hung, or it does not answer a message within 500 ms, the call fails at once with `NotResponding` instead of blocking. Wait and call again. A window that cannot be sent the message (one of a more privileged process) is read as usual.
+
+#### Formats
+
+`format` changes only the shape of the result; the walk and the other fields are the same.
+- `tree` (default): each element lists the elements inside it in `children`.
+- `flat`: every element once, in reading order (an element, then the elements inside it), without `children`, with `depth` (1 for the elements directly under the window) and `parent` (the index in `elements` of the element it is inside; left out under the window).
+- `text`: `elements` is left out and `text` holds one line per element, indented two spaces per level. It costs the fewest tokens. A line is the control type; the name in single quotes (`'` and `\` inside are escaped with `\`, line breaks become spaces, and names longer than 100 characters are cut with `…`), left out when there is none; `aid=` and the automation id (quoted the same way when it holds a space or a quote); `@x,y wxh`, the bounds in physical screen pixels, left out when there are none; and the flags `[disabled]` and `[offscreen]` when they apply. The element's centre is `x + w/2`, `y + h/2`.
+
+```text
+ToolBar 'Standard' @100,130 600x28
+  Button 'Save' aid=SaveBtn @104,132 24x24 [disabled]
+  Button 'Open' aid=OpenBtn @130,132 24x24
+Edit 'Text Editor' aid=15 @100,160 1200x740
+```
 
 > **Note:** Element names come from the application and are untrusted: an app or web page can name an element with text written as instructions to an AI agent. Treat them as data (see [Untrusted content](#untrusted-content)).
 
@@ -2139,7 +2163,8 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `children`: the returned elements inside this one; absent when there are none.
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
-- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned), `MaxElements` (the walk stopped at `maxElements` with elements left unread: deeper elements, or the rest of the level it stopped in. When exactly `maxElements` elements exist, it is not set) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `depth` and `parent` on each element (`format: "flat"` only), and `text` instead of `elements` (`format: "text"`); see [Formats](#formats).
 - `windowState`: the state of the window's top-level window when the walk ended: `Normal`, `Maximized` or `Minimized`. A minimized window's elements are offscreen, so `visibleOnly` leaves them all out and the tree is empty: restore the window first (or capture it with `restoreIfMinimized`). Left out when the window could not be read.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
@@ -2153,6 +2178,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 | `InvalidControlType` | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering before one was (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
+| `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read. Wait, then try again |
 
 ---
 
@@ -4289,7 +4315,8 @@ Reports the server's build and the environment its tools work in, in one read-on
     "readOnly": false,
     "excludedTools": [],
     "servedTools": 54
-  }
+  },
+  "uiAutomation": { "engine": "Uia3", "source": "default", "connectionTimeoutMs": 1000, "transactionTimeoutMs": 5000 }
 }
 ```
 
@@ -4305,7 +4332,8 @@ Reports the server's build and the environment its tools work in, in one read-on
 | `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) the `destructiveChords` that need `windowHandle`, `userClipboardAllowed` (`WAM_ALLOW_USER_CLIPBOARD`: whether get_clipboard returns the user's clipboard without asking) and `allowedProtocols` (the URI schemes launch_application opens, the built-in ones first, then those `WAM_ALLOWED_PROTOCOLS` adds; an entry it ignored is named in `warnings`) |
 | `paths` | `layouts`, the [layout presets](#layout-presets) folder, and `auditLog`, the folder of the [audit log](#audit-log) |
 | `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, `all`, or `WAM_EXCLUDE_TOOLS` when an entry it could not read left only the `server` toolset on), `readOnly` mode, the `excludedTools`, and how many tools are served (`servedTools`) |
-| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
+| `uiAutomation` | The [UI Automation](#ui-automation) engine of the element tools: `engine` is `Uia3` (the COM client, the default) or `Uia2` (the managed client, `WAM_UIA_ENGINE=uia2`), `source` is `default` or `WAM_UIA_ENGINE`, and `connectionTimeoutMs` and `transactionTimeoutMs` are the per-call limits of the Uia3 engine (left out for Uia2, which has none) |
+| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness that can scale coordinates (anything but `PerMonitorV2` or `PerMonitor`), a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, an [audit log](#audit-log) that cannot be written, every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored, a `WAM_ALLOW_USER_CLIPBOARD` value that was not understood, a `WAM_UIA_ENGINE` value that is not `uia3` or `uia2`, and the `WAM_ALLOWED_PROTOCOLS` entries that were ignored. Left out when there is nothing to warn about |
 
 A value that cannot be read is `Unknown`, null or left out, and a warning says what that means. If a source the report reads throws instead (the monitor list or the layouts folder, say), the call fails with a tool error, as any tool does.
 
@@ -4626,6 +4654,18 @@ the old behavior sees now. The plugin's committed exe has them since release 1.1
   launch_applications_batch, an item whose launcher failed (a non-zero exit code) is no longer given a window of
   another item's instance: it reports `exitedWithoutWindow`. close_application's `otherDesktopWindows` no longer lists
   suspended or prelaunched Store app frames.
+- **UI Automation engine and bounded walks (roadmap M3.1 and M3.2, after 1.14.0).** The element tools read through the
+  UI Automation COM client instead of the managed one (`WAM_UIA_ENGINE=uia2` goes back), with the same fields. AppBar
+  and SemanticZoom elements are named from their ids on every display language; with the managed client a
+  non-English Windows gave them a localized name. get_ui_elements reads breadth first and returns at most `maxElements`
+  elements (default 300; it had no limit), so a window with more elements now returns `truncated: true` with the new
+  `truncationReason: MaxElements`; pass a larger `maxElements` (up to 5000) to read more. A level of more than 200
+  elements is read one element at a time and can be cut in the middle. When the timeout passes, a level of up to 200
+  elements whose properties were already fetched is returned whole, and a timeout or a hang can leave out deeper levels that the
+  depth-first walk used to reach first. A window that Windows reports hung, or that does not answer a message within
+  500 ms, fails at once with `NotResponding` (it used to block until the timeout); capture_with_elements then
+  captures the image without overlays and reports it as `elementsErrorCode`. New parameter `format` (`tree`, the
+  default and the old shape, `flat` or `text`), and get_server_info reports `uiAutomation`.
 
 ## Error Codes
 
@@ -4788,7 +4828,7 @@ table, it gives more detail.
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools, [resume_input](#resume_input), [release_all_input](#release_all_input) | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
 | `NothingCopied` | [get_clipboard](#get_clipboard) | The agent's copy keys were sent, but the clipboard did not change within 1 second; nothing was read and the user was not asked. Check the selection and copy again |
-| `NotResponding` | [focus_window](#focus_window), move_window, resize_window, set_window_bounds, set_window_state, snap_window, move_window_to_monitor (see [Window Control](#window-control)), the window batches (per window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window) | The window's application did not answer: Windows reports the window as hung, it did not answer within 5 seconds (focus_window: within its activation time), or an earlier call to it is still blocked (also when 8 earlier window calls to applications that do not answer are). A call refused at once changed nothing, but a minimized window may already have been restored before a placement was given up on, and a call that timed out can still take effect once the application answers. The close tools: the window's message queue is full (Win32 error 1816), so no close message was sent |
+| `NotResponding` | [focus_window](#focus_window), move_window, resize_window, set_window_bounds, set_window_state, snap_window, move_window_to_monitor (see [Window Control](#window-control)), the window batches (per window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window), [get_ui_elements](#get_ui_elements) and [capture_with_elements](#capture_with_elements) (`elementsErrorCode`) | The window's application did not answer: Windows reports the window as hung, it did not answer within 5 seconds (focus_window: within its activation time), or an earlier call to it is still blocked (also when 8 earlier window calls to applications that do not answer are). A call refused at once changed nothing, but a minimized window may already have been restored before a placement was given up on, and a call that timed out can still take effect once the application answers. The close tools: the window's message queue is full (Win32 error 1816), so no close message was sent. get_ui_elements: the window did not answer a message within 500 ms, or Windows reports it hung; nothing was read |
 | `NoWindowsCaptured` | [save_layout](#save_layout) | No visible window matched the filters, so nothing was saved |
 | `OperationException` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | Unexpected error while reading; see `error` |
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |

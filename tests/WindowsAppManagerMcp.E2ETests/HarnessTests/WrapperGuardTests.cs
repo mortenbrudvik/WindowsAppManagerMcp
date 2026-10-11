@@ -190,6 +190,34 @@ public class WrapperGuardTests
         handle.Verify(h => h.CloseMainWindow(), Times.Never);
     }
 
+    [Fact]
+    public void Guards_ThePatternObjectsTheUiaTreeHandsOut_AndRefusesTheirActionsInEveryTier()
+    {
+        // Arrange - the widened IUiaTree (roadmap M3.2) hands out control patterns through a generic method
+        var node = new Mock<IUiaNode>().Object;
+        var value = new Mock<IUiaValuePattern>(MockBehavior.Strict);
+        value.SetupGet(v => v.IsReadOnly).Returns(false);
+        var tree = new Mock<IUiaTree>(MockBehavior.Strict);
+        tree.Setup(t => t.GetPattern<IUiaValuePattern>(node)).Returns(value.Object);
+        var noInput = WrapperGuard.Create(tree.Object, new ReadOnlyCallPolicy());
+        var fixtureOnly = WrapperGuard.Create(tree.Object, FixtureOnly(new FakeDesktop()));
+
+        foreach (var guarded in new[] { noInput, fixtureOnly })
+        {
+            // Act
+            var pattern = guarded.GetPattern<IUiaValuePattern>(node)!;
+            var readOnly = pattern.IsReadOnly;
+            var setValue = () => pattern.SetValue("typed");
+
+            // Assert - the read passes; the action is refused before it reaches the pattern
+            pattern.Should().BeAssignableTo<GuardProxy>();
+            readOnly.Should().BeFalse();
+            setValue.Should().Throw<E2EGuardException>().WithMessage("*IUiaValuePattern.SetValue*");
+        }
+
+        value.Verify(v => v.SetValue(It.IsAny<string>()), Times.Never);
+    }
+
     #endregion
 
     #region Fixture-only policy (Desktop input tier)

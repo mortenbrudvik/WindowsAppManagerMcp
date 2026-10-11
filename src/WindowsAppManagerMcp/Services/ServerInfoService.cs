@@ -24,7 +24,8 @@ public sealed class ServerInfoService(
     ToolsetSelection? toolsets = null,
     IAuditLog? auditLog = null,
     ClipboardOptions? clipboard = null,
-    ProtocolAllowlist? protocols = null) : IServerInfoService
+    ProtocolAllowlist? protocols = null,
+    UiaEngineOptions? uiaEngine = null) : IServerInfoService
 {
     public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools)
     {
@@ -41,6 +42,9 @@ public sealed class ServerInfoService(
         var protocolSetting = protocols ?? ProtocolAllowlist.BuiltIn;
         if (clipboardSetting.Warning is { } clipboardWarning)
             warnings.Add(clipboardWarning);
+        var engine = uiaEngine ?? UiaEngineOptions.Default;
+        if (engine.Warning is { } engineWarning)
+            warnings.Add(engineWarning);
         if (protocolSetting.IgnoredWarning is { } protocolWarning)
             warnings.Add(protocolWarning);
 
@@ -82,7 +86,12 @@ public sealed class ServerInfoService(
                 protocolSetting.AllowedSchemes.ToList()),
             new ServerPathsInfo(layouts.LayoutsPath, auditLog?.Folder),
             new ToolsetInfo(selection.Enabled, selection.Disabled, selection.Source, selection.ReadOnly, selection.ExcludedTools, servedTools),
-            warnings.Count == 0 ? null : warnings);
+            warnings.Count == 0 ? null : warnings,
+            new UiAutomationInfo(
+                engine.Engine,
+                engine.Source,
+                engine.Engine == UiaEngine.Uia3 ? (int)Native.Uia3Tree.ConnectionTimeoutMs : null,
+                engine.Engine == UiaEngine.Uia3 ? (int)Native.Uia3Tree.TransactionTimeoutMs : null));
     }
 
     private ServerProcessInfo ReadProcess(List<string> warnings)

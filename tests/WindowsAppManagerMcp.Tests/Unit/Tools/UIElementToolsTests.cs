@@ -582,6 +582,130 @@ public class UIElementToolsTests
 
     #endregion
 
+    #region maxElements and format (roadmap M3.1)
+
+    /// <summary>
+    /// Window
+    ///   ToolBar "Tools" > Button "Save" (aid SaveBtn, disabled), Button "It's \"open\"\n" (no bounds)
+    ///   Edit (no name, aid Name)
+    /// </summary>
+    private void ReturnTree()
+    {
+        var tree = new List<UIElementInfo>
+        {
+            new("Tools", "ToolBar", null, new BoundsDto(0, 0, 200, 30), true, false,
+            [
+                new("Save", "Button", "SaveBtn", new BoundsDto(812, 44, 80, 24), IsEnabled: false, IsOffscreen: false),
+                new("It's \"open\"\n", "Button", null, null, true, IsOffscreen: true)
+            ]),
+            new(null, "Edit", "Name", new BoundsDto(-1920, 10, 300, 20), true, false)
+        };
+        _mockService.Setup(s => s.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: tree) with { TotalElementCount = 4 });
+    }
+
+    [Theory]
+    [InlineData(null, 300)]
+    [InlineData(25, 25)]
+    [InlineData(0, 1)]
+    [InlineData(99999, 5000)]
+    public async Task GetUIElements_PassesTheClampedMaxElements(int? maxElements, int expected)
+    {
+        // Act
+        await (maxElements is { } max ? CreateSut().GetUIElements(handle: 12345, maxElements: max) : CreateSut().GetUIElements(handle: 12345));
+
+        // Assert
+        _mockService.Verify(s => s.GetUIElementsAsync(
+            It.IsAny<nint>(), It.IsAny<int>(), It.Is<UIElementFilter?>(f => f!.MaxElements == expected),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetUIElements_TreeFormat_IsTheDefault_AndNestsTheElements()
+    {
+        ReturnTree();
+
+        var result = await CreateSut().GetUIElements(handle: 12345);
+
+        result.Elements!.Select(e => e.Name).Should().Equal("Tools", null);
+        result.Elements![0].Children.Should().HaveCount(2);
+        result.Elements.Should().OnlyContain(e => e.Depth == null && e.Parent == null);
+        result.Text.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_FlatFormat_ListsEveryElementOnceWithItsDepthAndParent()
+    {
+        ReturnTree();
+
+        var result = await CreateSut().GetUIElements(handle: 12345, format: UIElementFormat.Flat);
+
+        // Reading order: each element, then the elements inside it
+        result.Elements!.Select(e => (e.Name, e.Depth, e.Parent)).Should().Equal(
+            ("Tools", 1, (int?)null), ("Save", 2, 0), ("It's \"open\"\n", 2, 0), (null, 1, null));
+        result.Elements.Should().OnlyContain(e => e.Children == null);
+        result.TotalElementCount.Should().Be(4);
+        result.Text.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_TextFormat_GivesOneCompactLinePerElement_IndentedByDepth()
+    {
+        ReturnTree();
+
+        var result = await CreateSut().GetUIElements(handle: 12345, format: UIElementFormat.Text);
+
+        // Names are quoted with ' (escaped inside), control characters become spaces, and only flags that are set appear
+        result.Elements.Should().BeNull();
+        result.Text.Should().Be(
+            "ToolBar 'Tools' @0,0 200x30\n" +
+            "  Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\n" +
+            "  Button 'It\\'s \"open\" ' [offscreen]\n" +
+            "Edit aid=Name @-1920,10 300x20");
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TextFormat_CutsLongNames_AndQuotesAutomationIdsWithSpaces()
+    {
+        var element = new UIElementInfo(new string('x', 150), "Text", "my id", null, true, false);
+
+        var line = UIElementTextFormat.Line(element);
+
+        line.Should().Be($"Text '{new string('x', UIElementTextFormat.MaxNameLength)}…' aid='my id'");
+    }
+
+    [Theory]
+    [InlineData("[disabled]", "aid='[disabled]'")]
+    [InlineData("@1,2", "aid='@1,2'")]
+    [InlineData("row]", "aid='row]'")]
+    [InlineData("Save_Btn-1", "aid=Save_Btn-1")]
+    public void TextFormat_QuotesAutomationIdsThatCouldReadAsBoundsOrFlags(string automationId, string expected)
+    {
+        var element = new UIElementInfo(null, "Button", automationId, null, true, false);
+
+        UIElementTextFormat.Line(element).Should().Be($"Button {expected}");
+    }
+
+    [Fact]
+    public async Task GetUIElements_TextFormat_OfAFailedWalk_KeepsTheError()
+    {
+        _mockService.Setup(s => s.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(success: false, error: "Window not found"));
+
+        var result = await CreateSut().GetUIElements(handle: 12345, format: UIElementFormat.Text);
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("Window not found");
+        result.Text.Should().BeNull();
+    }
+
+    #endregion
+
     #region get_focused_element and get_element_at_point
 
     [Theory]

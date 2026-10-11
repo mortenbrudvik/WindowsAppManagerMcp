@@ -59,20 +59,23 @@ public sealed class ServerHarness : IDisposable
     /// Builds the server for a test of <paramref name="tier"/> against the fixture process
     /// <paramref name="fixtureProcessId"/>. Refuses unless the tier is opted in.
     /// </summary>
-    public static ServerHarness Create(DesktopTier tier, int fixtureProcessId) =>
-        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable);
+    /// <param name="uiaEngine">The UI Automation engine the server reads with (roadmap M3.2); null for the server's own
+    /// choice (WAM_UIA_ENGINE, by default UIA3), so a scenario can run its reads against both engines.</param>
+    public static ServerHarness Create(DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null) =>
+        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine);
 
     internal static ServerHarness Create(
         DesktopTier tier,
         int fixtureProcessId,
         IDesktopProbe probe,
-        Func<string, string?> readVariable)
+        Func<string, string?> readVariable,
+        UiaEngine? uiaEngine = null)
     {
         DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
         E2EProcess.EnsureServerDpiAwareness();
 
         var layoutsPath = Path.Combine(Path.GetTempPath(), "WamE2E", "layouts-" + Guid.NewGuid().ToString("N"));
-        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, out var guarded);
+        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine);
         return new ServerHarness(services.BuildServiceProvider(), layoutsPath, guarded);
     }
 
@@ -106,13 +109,19 @@ public sealed class ServerHarness : IDisposable
         IDesktopProbe probe,
         string layoutsPath,
         Func<Type, object>? wrapperSubstitute,
-        out IReadOnlyList<Type> guardedWrappers)
+        out IReadOnlyList<Type> guardedWrappers,
+        UiaEngine? uiaEngine = null)
     {
         var services = new ServiceCollection();
         services.AddWindowsAppManagerServices(
             () => LayoutStorageOptions.ForPath(layoutsPath),
             () => AuditLogOptions.ForFolder(AuditFolderFor(layoutsPath)));
         AddWrappersTheServerCreatesItself(services);
+        if (uiaEngine is { } engine)
+        {
+            // The server builds its IUiaTree from these options, so the engine's tree sits behind the guard as usual
+            services.Replace(ServiceDescriptor.Singleton(new UiaEngineOptions(engine, "E2E")));
+        }
 
         if (wrapperSubstitute != null)
         {

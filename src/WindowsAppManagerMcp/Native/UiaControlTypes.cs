@@ -78,6 +78,41 @@ public static class UiaControlTypes
     public static string? Canonicalize(string name) =>
         CanonicalNames.TryGetValue(name.Trim(), out var canonical) ? canonical : null;
 
+    // UIA_ButtonControlTypeId (50000) to UIA_AppBarControlTypeId (50040), in id order (UIAutomationClient.h). The UIA3
+    // engine reads these ids directly, including the two the managed client cannot name.
+    private static readonly string[] NamesById =
+    [
+        "Button", "Calendar", "CheckBox", "ComboBox", "Edit", "Hyperlink", "Image", "ListItem", "List", "Menu",
+        "MenuBar", "MenuItem", "ProgressBar", "RadioButton", "ScrollBar", "Slider", "Spinner", "StatusBar", "Tab",
+        "TabItem", "Text", "ToolBar", "ToolTip", "Tree", "TreeItem", "Custom", "Group", "Thumb", "DataGrid", "DataItem",
+        "Document", "SplitButton", "Window", "Pane", "Header", "HeaderItem", "Table", "TitleBar", "Separator",
+        "SemanticZoom", "AppBar"
+    ];
+
+    /// <summary>The id of the first control type, UIA_ButtonControlTypeId.</summary>
+    public const int FirstControlTypeId = 50000;
+
+    private static readonly Dictionary<string, int> IdsByName = NamesById
+        .Select((name, index) => (name, id: FirstControlTypeId + index))
+        .ToDictionary(p => p.name, p => p.id, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The control type id of a name of <see cref="Names"/> (any letter case), or null for <see cref="Unknown"/> and
+    /// names that are not control types.
+    /// </summary>
+    public static int? GetId(string name) => IdsByName.TryGetValue(name.Trim(), out var id) ? id : null;
+
+    /// <summary>
+    /// The name of a raw control type id, as the UIA3 engine reads it: 50000-50040 by their names (50039 is
+    /// SemanticZoom and 50040 AppBar), and any id a later Windows adds from <paramref name="localizedControlType"/> as
+    /// <see cref="GetName(ControlType?, string?)"/> does, or <see cref="Unknown"/>.
+    /// </summary>
+    public static string GetName(int controlTypeId, string? localizedControlType = null)
+    {
+        var index = controlTypeId - FirstControlTypeId;
+        return index >= 0 && index < NamesById.Length ? NamesById[index] : GetName(null, localizedControlType);
+    }
+
     /// <summary>
     /// Gets a readable name for an element's control type.
     /// </summary>

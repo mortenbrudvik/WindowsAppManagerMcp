@@ -3,19 +3,27 @@ using WindowsAppManagerMcp.Models;
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
-/// Read-only access to the UI Automation tree: find elements and read their properties. The
-/// services walk the tree through this seam, so their traversal and filter logic can be unit tested
-/// with an in-memory tree. The production adapter (Native/UiaTree) wraps System.Windows.Automation.
+/// Access to the UI Automation tree: find elements, read their properties (one at a time, or many in one cached
+/// call) and reach their control patterns. The services use UI Automation only through this seam, so their
+/// traversal and filter logic can be unit tested with an in-memory tree. Two engines implement it (roadmap M3.2):
+/// Native/Uia3Tree over the COM client (IUIAutomation, the default) and Native/UiaTree over the managed client
+/// (System.Windows.Automation); WAM_UIA_ENGINE chooses (UiaEngineOptions).
 /// </summary>
 /// <remarks>
 /// <para>Every call can cross into another process and block until that process answers, so callers
-/// run them under a deadline (see <see cref="IUiaWorker"/>).</para>
+/// run them under a deadline (see <see cref="IUiaWorker"/>). The UIA3 engine also gives every call a
+/// connection and a transaction timeout of its own.</para>
 /// <para>Errors: a node that disappeared, or whose window is gone, throws
 /// <see cref="UiaElementUnavailableException"/>. A provider that does not answer in time can throw
 /// <see cref="TimeoutException"/>. Other failures surface as the provider's exception.</para>
+/// <para>The tree's own methods only read. Acting is done through the pattern objects of
+/// <see cref="GetPattern{TPattern}"/> (see <see cref="IUiaPattern"/>).</para>
 /// </remarks>
 public interface IUiaTree
 {
+    /// <summary>The engine behind this tree.</summary>
+    UiaEngine Engine { get; }
+
     /// <summary>True when UI Automation can be used on this system.</summary>
     bool IsAvailable();
 
@@ -39,7 +47,8 @@ public interface IUiaTree
 
     /// <summary>
     /// The children of a node in the control view, in tree order, read in one call so a child that
-    /// disappears during the read cannot end the list early.
+    /// disappears during the read cannot end the list early. Only references: no property is read, so the call is cheap
+    /// even for a wide level, and tells how wide it is before its properties are read.
     /// </summary>
     IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken);
 
@@ -71,6 +80,50 @@ public interface IUiaTree
     /// null when the node has no Window pattern. Only reads.
     /// </summary>
     bool? ReadIsModal(IUiaNode node);
+
+    /// <summary>
+    /// The children of a node in the control view, in tree order, each with the properties a walk needs
+    /// (<see cref="UiaElement"/>), all read in one cross-process call with a cache request. Faster than
+    /// <see cref="GetChildren"/> and a <see cref="Read"/> per child, but a provider that fails for one child can fail
+    /// the whole call: read the children one at a time then. Its cost grows with the number of children and cannot be
+    /// stopped once started, so call it only for a level known to be small (list it with <see cref="GetChildren"/>
+    /// first, as the tree walk does).
+    /// </summary>
+    IReadOnlyList<UiaElement> GetChildElements(IUiaNode node, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The elements in <paramref name="scope"/> of <paramref name="root"/> in the control view that match
+    /// <paramref name="condition"/>, in tree order, with their properties, searched in the provider's process in one
+    /// call. Nothing limits its cost: every element in the scope is tested and every match read with all the walk's
+    /// properties, in one call that cannot be stopped once started. Search a small root, or the children of one.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The engine cannot express the condition (the managed client has no
+    /// id for the AppBar and SemanticZoom control types).</exception>
+    IReadOnlyList<UiaElement> FindAll(IUiaNode root, UiaScope scope, UiaCondition condition, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A node and its subtree in the control view with their properties, fetched in one call (BuildUpdatedCache with a
+    /// subtree scope). Only for small subtrees such as a menu or a dialog: the call cannot be stopped once started, and
+    /// it reads the whole subtree. <paramref name="maxElements"/> limits only what is returned (breadth first), not what
+    /// is read, so it bounds the result's size, not the call's cost.
+    /// </summary>
+    UiaElementTree ReadSubtree(IUiaNode root, int maxElements);
+
+    /// <summary>
+    /// The node's runtime id, read now: unique among the elements on the desktop while the element exists (an element
+    /// that is gone throws <see cref="UiaElementUnavailableException"/>), or null when the provider reports none.
+    /// </summary>
+    IReadOnlyList<int>? GetRuntimeId(IUiaNode node);
+
+    /// <summary>True when two nodes are the same element (UI Automation compares their runtime ids).</summary>
+    bool AreSameElement(IUiaNode first, IUiaNode second);
+
+    /// <summary>
+    /// The node's control pattern of type <typeparamref name="TPattern"/> (for example
+    /// <see cref="IUiaInvokePattern"/>), or null when the element does not support it or the engine has no such
+    /// pattern (the managed client has no LegacyIAccessible).
+    /// </summary>
+    TPattern? GetPattern<TPattern>(IUiaNode node) where TPattern : class, IUiaPattern;
 }
 
 /// <summary>An element of the UI Automation tree. Only the <see cref="IUiaTree"/> that returned it can read it.</summary>
@@ -81,11 +134,11 @@ public interface IUiaNode
 /// <summary>
 /// The properties of a node that every tree walk reads.
 /// </summary>
-/// <param name="ControlType">The control type name, for example "Button". Types the managed UI Automation
-/// client cannot name (AppBar, SemanticZoom) come from the localized control type, and "Unknown" when even
-/// that is missing.</param>
+/// <param name="ControlType">The control type name, for example "Button". The UIA3 engine names it from the raw id
+/// (AppBar and SemanticZoom included); the managed client cannot name those two, so with it they come from the
+/// localized control type. "Unknown" when neither gives a name.</param>
 /// <param name="Bounds">The bounding rectangle in physical screen pixels, as UI Automation reports it. An
-/// element without geometry reports an empty rectangle (infinite position, negative infinite size).</param>
+/// element without geometry has <see cref="UiaRect.Empty"/> (infinite position, negative infinite size) in both engines.</param>
 public record UiaNodeProperties(
     string? Name,
     string ControlType,

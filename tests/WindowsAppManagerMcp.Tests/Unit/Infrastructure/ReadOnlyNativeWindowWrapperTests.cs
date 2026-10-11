@@ -62,6 +62,7 @@ public class ReadOnlyNativeWindowWrapperTests
         inner.Setup(w => w.GetExtendedFrameBounds(Handle)).Returns((5, 6, 7, 8));
         inner.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
         inner.Setup(w => w.GetDpiForWindow(Handle)).Returns(144u);
+        inner.Setup(w => w.RespondsWithin(Handle, 500u)).Returns(true);
         var sut = new ReadOnlyNativeWindowWrapper(inner.Object);
         var enumerated = new List<nint>();
         var children = new List<nint>();
@@ -80,6 +81,7 @@ public class ReadOnlyNativeWindowWrapperTests
         sut.GetExtendedFrameBounds(Handle).Should().Be((5, 6, 7, 8));
         sut.IsHungAppWindow(Handle).Should().BeTrue();
         sut.GetDpiForWindow(Handle).Should().Be(144u);
+        sut.RespondsWithin(Handle, 500u).Should().BeTrue();
         sut.IsWindowVisible(Handle).Should().BeTrue();
         sut.IsWindow(Handle).Should().BeTrue();
         sut.IsIconic(Handle).Should().BeTrue();
@@ -114,6 +116,7 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason),
             nameof(INativeWindowWrapper.GetExtendedFrameBounds),
             nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
+            nameof(INativeWindowWrapper.RespondsWithin),
         ];
         var changes = WindowChanges().Select(row => (string)row[0]);
 
