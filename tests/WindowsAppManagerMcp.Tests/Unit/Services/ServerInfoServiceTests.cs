@@ -161,6 +161,15 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_PerMonitorV1Awareness_IsNoWarning()
+    {
+        // The manifest's fallback before Windows 10 1703 gives physical pixels too: no false alarm for the user
+        _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.PerMonitor);
+
+        CreateSut().Read(Connection, 48).Warnings.Should().BeNull();
+    }
+
+    [Fact]
     public void Read_WarnsAboutWhatWillMakeToolsFail()
     {
         // Arrange - everything at once

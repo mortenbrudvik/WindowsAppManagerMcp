@@ -21,12 +21,16 @@ public class DpiAwarenessTests
 
     [Theory]
     [InlineData(DpiAwareness.PerMonitorV2, true)]
-    [InlineData(DpiAwareness.PerMonitor, false)]
+    [InlineData(DpiAwareness.PerMonitor, true)]
     [InlineData(DpiAwareness.System, false)]
+    [InlineData(DpiAwareness.Unaware, false)]
+    [InlineData(DpiAwareness.UnawareGdiScaled, false)]
     [InlineData(DpiAwareness.Unknown, false)]
-    public void IsExpected_OnlyForPerMonitorV2(DpiAwareness awareness, bool expected)
+    public void GivesPhysicalPixels_ForBothPerMonitorAwarenesses(DpiAwareness awareness, bool expected)
     {
-        // What the manifest declares; anything else means coordinates may be scaled, and the server says so
-        DpiAwarenessNames.IsExpected(awareness).Should().Be(expected);
+        // The manifest declares PerMonitorV2 with PerMonitor (v1) as the fallback before Windows 10 1703; v1 gives this
+        // windowless server physical pixels on every monitor too. Anything else means coordinates may be scaled, and
+        // the server says so
+        DpiAwarenessNames.GivesPhysicalPixels(awareness).Should().Be(expected);
     }
 }

@@ -123,4 +123,16 @@ public class ToolAnnotationContractTests
             .Should().BeEquivalentTo(
                 ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content"]);
     }
+
+    [Theory]
+    [InlineData("launch_application")]
+    [InlineData("launch_applications_batch")]
+    [InlineData("launch_browser_with_debug")]
+    [InlineData("apply_layout")]
+    public async Task TheToolsThatCanStartPrograms_AreNotIdempotent(string name)
+    {
+        // A second call can start a second instance: apply_layout with launchMissing launches again when the window it
+        // launched the first time is not matched yet (still opening, or titled differently than the preset)
+        Hint(await ToolAsync(name), "idempotentHint").Should().BeFalse();
+    }
 }

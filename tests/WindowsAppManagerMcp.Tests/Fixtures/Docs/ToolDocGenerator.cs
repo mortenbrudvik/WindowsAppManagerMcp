@@ -25,7 +25,8 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 /// <remarks>
 /// Region ids: README.md has <c>tool-table</c> (heading with the tool count, and the category table); docs/TOOLS.md
 /// has <c>summary</c> (introduction with the count, and the quick reference), <c>toolsets</c> (the toolsets of
-/// <see cref="Toolsets.Server"/>, roadmap M2.14) and <c>params:TOOL</c> in each tool's section; SKILL.md has
+/// <see cref="Toolsets.Server"/>, roadmap M2.14), <c>read-only</c> (the tools annotated readOnlyHint, which read-only
+/// mode serves) and <c>params:TOOL</c> in each tool's section; SKILL.md has
 /// <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole "Available Tools" section).
 /// <para>
 /// A <c>params:TOOL</c> region is the tool's parameter table, and a field table for each parameter that is an
@@ -69,7 +70,7 @@ public static partial class ToolDocGenerator
 
         if (doc == ToolsReference)
         {
-            return ["summary", "toolsets", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name))];
+            return ["summary", "toolsets", "read-only", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name))];
         }
 
         throw new ArgumentException($"Unknown generated doc {doc}.", nameof(doc));
@@ -89,6 +90,7 @@ public static partial class ToolDocGenerator
             ("README.md", "tool-table") => ReadmeToolTable(count),
             ("docs/TOOLS.md", "summary") => ToolsSummary(count),
             ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server),
+            ("docs/TOOLS.md", "read-only") => ReadOnlyTools(tools),
             ("docs/TOOLS.md", _) when id.StartsWith(ParamsPrefix, StringComparison.Ordinal) =>
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
             ("SKILL.md", "count") =>
@@ -140,6 +142,19 @@ public static partial class ToolDocGenerator
             $"| `{t.Name}` | {(t.Name == catalog.AlwaysOn ? "always on" : t.OnByDefault ? "on" : "off")} | {Cell(t.Description)} | " +
             $"{string.Join(", ", t.Tools.Select(tool => $"[{tool}](#{tool})"))} |"));
         return string.Join('\n', lines);
+    }
+
+    /// <summary>
+    /// The tools annotated readOnlyHint, which read-only mode serves, in catalog order: the Observer profile is exactly
+    /// this list, so it cannot drift from the annotations.
+    /// </summary>
+    private static string ReadOnlyTools(JsonArray tools)
+    {
+        var readOnly = ToolDocCatalog.AllTools
+            .Select(t => t.Name)
+            .Where(name => ToolSurface.Tool(tools, name)["annotations"]?["readOnlyHint"]?.GetValue<bool>() == true)
+            .ToList();
+        return $"Read-only mode serves these {readOnly.Count} tools: {string.Join(", ", readOnly.Select(name => $"[{name}](#{name})"))}.";
     }
 
     private static string SkillToolTables(int count)

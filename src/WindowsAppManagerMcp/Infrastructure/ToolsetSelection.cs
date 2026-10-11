@@ -5,15 +5,20 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <list type="bullet">
 /// <item><see cref="ToolsetsVariable"/>: the toolsets, separated by commas, semicolons or spaces. <c>default</c> stands
 /// for the toolsets that are on by default and <c>all</c> for every toolset. <c>+name</c> adds a toolset and <c>-name</c>
-/// removes one; with only such entries they change the default (<c>+ocr</c>, <c>-browser</c>). Not set: the default
+/// removes one; with only such entries they change the default (<c>-browser,-process</c>). Not set: the default
 /// toolsets. The always-on toolset is always served.</item>
-/// <item><see cref="ExcludeToolsVariable"/>: tools to leave out, whatever their toolset.</item>
+/// <item><see cref="ExcludeToolsVariable"/>: tools to leave out, whatever their toolset; the catalog's always-served
+/// tool (get_server_info) stays.</item>
 /// <item><see cref="ReadOnlyVariable"/>: <c>1</c> serves only the tools whose [McpServerTool] sets ReadOnly = true (their
 /// tools/list annotation readOnlyHint).</item>
 /// </list>
-/// A name that is not a toolset or tool is ignored with a warning (logged at start, reported by get_server_info); when
-/// <see cref="ToolsetsVariable"/> names no toolset at all, the default toolsets stay on, so a typo does not leave the
-/// agent with nothing.
+/// A name that is not a toolset or tool is ignored with a warning (logged at start, reported by get_server_info), as long
+/// as ignoring it serves fewer tools, not more. The variables exist to restrict the server, so a value that cannot be
+/// read fails closed: when a <c>-name</c> of <see cref="ToolsetsVariable"/> names no toolset (the user meant to remove
+/// one), or a plain name names none and no other plain name is valid (the user meant to replace the default), only the
+/// always-on toolset is served. An unknown <c>+name</c> is ignored: it only asked for more. The agent can still call get_server_info, whose
+/// warnings say what was wrong, and tell the user; a server that refused to start would only show the client a failed
+/// connection, with the reason on a stderr the user may never see.
 /// </summary>
 public sealed class ToolsetSelection
 {
@@ -75,6 +80,40 @@ public sealed class ToolsetSelection
     public IReadOnlyList<string> Warnings { get; }
 
     /// <summary>
+    /// One line for the end of the server instructions when the user turned off tools that the default serves (a
+    /// toolset that is on by default, read-only mode, excluded tools): the instructions name tools of the loop, such as
+    /// focus_window and click, and the agent must skip the steps whose tools are missing instead of looking for them or
+    /// working around them. Null when nothing the default serves is off (an opt-in toolset that is off is not mentioned).
+    /// </summary>
+    public string? InstructionsNote
+    {
+        get
+        {
+            var parts = new List<string>();
+            var off = Disabled.Where(name => Catalog.Find(name)!.OnByDefault).ToList();
+            if (off.Count > 0)
+            {
+                parts.Add($"the toolset{(off.Count == 1 ? "" : "s")} {string.Join(", ", off)}");
+            }
+
+            if (ReadOnly)
+            {
+                parts.Add("every tool that changes something (read-only mode)");
+            }
+
+            if (ExcludedTools.Count > 0)
+            {
+                parts.Add($"the tool{(ExcludedTools.Count == 1 ? "" : "s")} {string.Join(", ", ExcludedTools)}");
+            }
+
+            return parts.Count == 0
+                ? null
+                : $"The user turned off {string.Join("; ", parts)}. Skip the steps above whose tools are missing from your tool " +
+                  "list, never work around a missing tool (for example with key chords), and tell the user when the task needs one.";
+        }
+    }
+
+    /// <summary>
     /// Every toolset, nothing excluded, not read-only: the whole tool surface. The registration uses it when it is given
     /// no selection, so the tests, the tools/list snapshot and the CI guard (WAM_TOOLSETS=all) see every tool.
     /// </summary>
@@ -101,13 +140,18 @@ public sealed class ToolsetSelection
     }
 
     /// <summary>
-    /// True when the tool is served: it is not excluded, it is annotated read-only when the selection is read-only, and
-    /// its toolset is enabled. A tool that no toolset names is not the toolsets' to hide (the production catalog names
+    /// True when the tool is served: it is the catalog's always-served tool, or it is not excluded, it is annotated
+    /// read-only when the selection is read-only, and its toolset is enabled. A tool that no toolset names is not the toolsets' to hide (the production catalog names
     /// every tool).
     /// </summary>
     public bool Serves(string toolName, bool readOnlyHint)
     {
         ArgumentNullException.ThrowIfNull(toolName);
+        if (string.Equals(toolName, Catalog.AlwaysServedTool, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         if (_excluded.Contains(toolName) || (ReadOnly && !readOnlyHint))
         {
             return false;
@@ -128,6 +172,7 @@ public sealed class ToolsetSelection
         var named = new List<string>();
         var added = new List<string>();
         var removed = new List<string>();
+        var unknown = new List<string>();
         foreach (var entry in entries)
         {
             var name = entry.TrimStart('-', '+');
@@ -143,6 +188,7 @@ public sealed class ToolsetSelection
                 warnings.Add($"{ToolsetsVariable}: '{entry}' is not a toolset and is ignored. The toolsets are " +
                              $"{string.Join(", ", catalog.Toolsets.Select(t => t.Name).Order(StringComparer.Ordinal))}, " +
                              $"and '{DefaultKeyword}' and '{AllKeyword}'.");
+                unknown.Add(entry);
                 continue;
             }
 
@@ -153,6 +199,19 @@ public sealed class ToolsetSelection
         {
             warnings.Add($"{ToolsetsVariable}: the '{catalog.AlwaysOn}' toolset is always on and cannot be removed; " +
                          $"{ExcludeToolsVariable} can leave out its tools.");
+        }
+
+        // Fail closed: the variable is set to restrict the server, so ignoring an entry must never serve more than the
+        // user asked for. An unknown -name was meant to remove a toolset, and an unknown plain name, with no valid one
+        // beside it, was meant to replace the default, which the server would otherwise start from. An unknown +name
+        // only asked for more, so ignoring it is safe.
+        var unreadable = unknown.Where(e => e.StartsWith('-') || (!e.StartsWith('+') && named.Count == 0)).ToList();
+        if (unreadable.Count > 0)
+        {
+            warnings.Add($"{ToolsetsVariable}: ignoring {string.Join(", ", unreadable.Select(e => $"'{e}'"))} could serve tools " +
+                         $"the user meant to turn off, so only the '{catalog.AlwaysOn}' toolset is on, to be safe. Correct the " +
+                         "value to serve more tools.");
+            return ([catalog.AlwaysOn], ToolsetsVariable);
         }
 
         if (named.Count == 0 && added.Count == 0 && removed.Count == 0)
@@ -175,6 +234,10 @@ public sealed class ToolsetSelection
             if (tool == null)
             {
                 warnings.Add($"{ExcludeToolsVariable}: '{entry}' is not a tool of this server and is ignored.");
+            }
+            else if (string.Equals(tool, catalog.AlwaysServedTool, StringComparison.Ordinal))
+            {
+                warnings.Add($"{ExcludeToolsVariable}: '{tool}' is always served (it tells the agent which tools are off) and is not excluded.");
             }
             else if (!excluded.Contains(tool, StringComparer.Ordinal))
             {

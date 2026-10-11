@@ -84,7 +84,7 @@ public class ToolResultSerializationTests
 
     [Theory]
     [MemberData(nameof(ToolNames))]
-    public async Task ToolResult_JsonSchema_HasNoUnsupportedTypes(string toolName)
+    public void ToolResult_JsonSchema_HasNoUnsupportedTypes(string toolName)
     {
         // Arrange
         var resultType = GetResultType(ToolMethods[toolName]);

@@ -151,16 +151,125 @@ public class ToolsetContractTests
         tools.Select(t => t.Name).Order(StringComparer.Ordinal).Should().Equal(annotatedReadOnly);
     }
 
+    /// <summary>
+    /// The tools the input gate runs without the gate (InputGateToolFilter.ReadOnlyTools) that still change something:
+    /// they write or delete files. "Read-only" for the gate means "needs no foreground", not "changes nothing".
+    /// </summary>
+    private static readonly string[] GateFreeToolsThatWrite =
+    [
+        "save_layout", "delete_layout",                                                    // replace or delete a preset file
+        "take_screenshot", "capture_region", "capture_window", "capture_with_elements",    // write (and overwrite) image files
+    ];
+
     [Fact]
-    public async Task ToolsAnnotatedReadOnly_AreReadOnlyToolsOfTheInputGate()
+    public async Task ToolsAnnotatedReadOnly_AreReadOnlyToolsOfTheInputGate_ThatWriteNothing()
     {
-        // Read-only mode must never serve a tool that sends input, changes windows or starts or stops processes: every
-        // tool annotated read-only must be one the input gate runs as a read-only tool
+        // Read-only mode must never serve a tool that sends input, changes windows, starts or stops processes, or writes
+        // or deletes files: every tool annotated read-only must be one the input gate runs as a read-only tool, and not
+        // one of those that write
         var annotatedReadOnly = (await ToolSurface.ListToolsAsync()).OfType<JsonObject>()
             .Where(tool => (bool?)tool["annotations"]?["readOnlyHint"] == true)
-            .Select(tool => (string)tool["name"]!);
+            .Select(tool => (string)tool["name"]!)
+            .ToList();
 
         annotatedReadOnly.Should().BeSubsetOf(InputGateToolFilter.ReadOnlyTools);
+        annotatedReadOnly.Should().NotContain(GateFreeToolsThatWrite);
+    }
+
+    [Fact]
+    public void TheGateFreeToolsThatWrite_AreToolsOfTheGatesReadOnlyList()
+    {
+        // The list above must follow the gate's list: a writing tool that leaves it is checked by the subset rule anyway,
+        // and a renamed one must not silently drop out of the check
+        InputGateToolFilter.ReadOnlyTools.Should().Contain(GateFreeToolsThatWrite);
+    }
+
+    [Fact]
+    public async Task ReadOnlyMode_NeverServesAToolThatWrites_EvenIfItsToolsetIsNamed()
+    {
+        var readOnly = ToolsetSelection.FromEnvironment(
+            name => name switch
+            {
+                ToolsetSelection.ToolsetsVariable => "all",
+                ToolsetSelection.ReadOnlyVariable => "1",
+                _ => null
+            },
+            Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(readOnly));
+
+        var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
+
+        tools.Should().NotContain(GateFreeToolsThatWrite).And.NotContain(InputGateToolFilter.InputTools)
+            .And.NotContain(["launch_application", "launch_applications_batch", "launch_browser_with_debug", "kill_process",
+                "close_window", "close_windows_batch", "apply_layout", "focus_window", "resume_input", "release_all_input"]);
+        tools.Should().Contain(["get_server_info", "find_windows", "list_layouts"]);
+    }
+
+    [Fact]
+    public async Task GetServerInfo_IsServed_EvenWhenExcluded()
+    {
+        // It is how the agent finds out which tools are off and why, so WAM_EXCLUDE_TOOLS cannot drop it
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ExcludeToolsVariable ? "get_server_info,kill_process" : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(selection));
+
+        var tools = (await server.Client.ListToolsAsync()).Select(t => t.Name).ToList();
+
+        tools.Should().Contain("get_server_info").And.NotContain("kill_process");
+        selection.Warnings.Should().ContainSingle(w => w.Contains("'get_server_info'") && w.Contains("always served"));
+    }
+
+    [Fact]
+    public async Task AToolsetValueWithNoValidEntry_ServesOnlyTheServerToolset()
+    {
+        // Fail closed: a typo in a variable meant to restrict the server must not serve every tool
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? "windws,-proces" : null, Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(selection));
+
+        var tools = await server.Client.ListToolsAsync();
+
+        tools.Select(t => t.Name).Should().BeEquivalentTo(Toolsets.Server.Find(Toolsets.ServerToolset)!.Tools);
+    }
+
+    [Fact]
+    public async Task TheInstructions_TellTheAgentWhatTheUserTurnedOff()
+    {
+        // The fixed instructions name focus_window, click and the other tools of the loop; when the user turned some of
+        // them off, a last line says so, so the agent skips those steps instead of looking for the tools
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name switch
+            {
+                ToolsetSelection.ToolsetsVariable => "-input,-process",
+                ToolsetSelection.ExcludeToolsVariable => "close_window",
+                _ => null
+            },
+            Toolsets.Server);
+        await using var server = await InProcessMcpServer.StartAsync([], builder =>
+        {
+            builder.Services.Configure<McpServerOptions>(ServerIdentity.Configure);
+            builder.AddWindowsAppManagerTools(selection);
+        });
+
+        var instructions = server.Client.ServerInstructions;
+
+        instructions.Should().StartWith(ServerIdentity.Instructions);
+        var note = instructions![ServerIdentity.Instructions.Length..];
+        note.Should().StartWith("\n").And.Contain("input").And.Contain("process").And.Contain("close_window")
+            .And.Contain("missing from your tool list");
+        note[1..].Should().NotContain("\n", "the note is one line");
+    }
+
+    [Fact]
+    public async Task TheInstructions_AreUnchanged_WhenNothingIsTurnedOff()
+    {
+        await using var server = await InProcessMcpServer.StartAsync([], builder =>
+        {
+            builder.Services.Configure<McpServerOptions>(ServerIdentity.Configure);
+            builder.AddWindowsAppManagerTools(ToolsetSelection.FromEnvironment(_ => null, Toolsets.Server));
+        });
+
+        server.Client.ServerInstructions.Should().Be(ServerIdentity.Instructions);
     }
 
     [Fact]

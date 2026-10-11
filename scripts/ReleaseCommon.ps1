@@ -96,6 +96,14 @@ function Get-ExeBuildInfo([string]$ExePath) {
     }
 }
 
+# Whether an exe carries the app manifest's per-monitor v2 DPI awareness (src/WindowsAppManagerMcp/app.manifest):
+# the manifest is a UTF-8 Win32 resource of the apphost, which the single-file bundle is, so its bytes are searched.
+# Reads the file only; it never runs the exe.
+function Test-ExeDpiManifest([string]$ExePath) {
+    $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($ExePath))
+    $text.Contains('<dpiAwareness') -and $text.Contains('PerMonitorV2')
+}
+
 # Copies an exe over $Target even while $Target is running (for example the MCP server of the
 # Claude Code session that runs /update-plugin). Windows cannot overwrite a running exe but can
 # rename it, so the running copy is moved aside to "<name>.old-<timestamp>"; the running process
@@ -204,8 +212,8 @@ function Get-RepoRelativeLabel([string]$Root, [string]$Path) {
 }
 
 # Why $ExePath is not a current build of the plugin exe (empty when it is): the version manifests agree, the
-# exe's ProductVersion is <version>+<commit sha>, that commit is in this clone, and no build input (see
-# $BuildInputPaths) changed between it and HEAD. With $Tag, the tag must also be v<version>. Reads the exe's file
+# exe's ProductVersion is <version>+<commit sha>, it carries the PerMonitorV2 DPI manifest, that commit is in this
+# clone, and no build input (see $BuildInputPaths) changed between it and HEAD. With $Tag, the tag must also be v<version>. Reads the exe's file
 # metadata only; it never runs the exe. Test-PluginBinary.ps1 reports these problems, and Test-ToolsSnapshot.ps1
 # -OnlyIfCurrent uses them to decide whether the exe's tools/list is worth comparing.
 function Get-PluginBinaryProblems([string]$Root, [string]$ExePath, [string]$Tag) {
@@ -227,6 +235,10 @@ function Get-PluginBinaryProblems([string]$Root, [string]$ExePath, [string]$Tag)
 
     if ($build.Version -ne $version) {
         $problems.Add("$exeLabel reports version '$($build.ProductVersion)', but Directory.Build.props is $version. $republish")
+    }
+
+    if (-not (Test-ExeDpiManifest $ExePath)) {
+        $problems.Add("$exeLabel carries no PerMonitorV2 dpiAwareness manifest (src/WindowsAppManagerMcp/app.manifest), so Windows can scale its coordinates. $republish")
     }
 
     if (-not $build.CommitSha) {

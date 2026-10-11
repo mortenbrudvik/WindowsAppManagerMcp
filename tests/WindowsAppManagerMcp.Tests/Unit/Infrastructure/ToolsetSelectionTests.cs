@@ -17,7 +17,11 @@ public class ToolsetSelectionTests
             new Toolset("extra", OnByDefault: false, "An opt-in group", ["extra_tool"]),
         ]);
 
-    private static ToolsetSelection Select(string? toolsets = null, string? exclude = null, string? readOnly = null) =>
+    /// <summary>The same toolsets, with info_tool as the tool that is always served.</summary>
+    private static readonly ToolsetCatalog WithInfoTool = new("core", Catalog.Toolsets, alwaysServedTool: "info_tool");
+
+    private static ToolsetSelection Select(
+        string? toolsets = null, string? exclude = null, string? readOnly = null, ToolsetCatalog? catalog = null) =>
         ToolsetSelection.FromEnvironment(
             name => name switch
             {
@@ -26,7 +30,7 @@ public class ToolsetSelectionTests
                 ToolsetSelection.ReadOnlyVariable => readOnly,
                 _ => null
             },
-            Catalog);
+            catalog ?? Catalog);
 
     [Fact]
     public void NothingSet_ServesTheDefaultToolsets()
@@ -102,14 +106,47 @@ public class ToolsetSelectionTests
             .Contain(ToolsetSelection.ToolsetsVariable).And.Contain("'widnows'").And.Contain("basic, core, extra");
     }
 
-    [Fact]
-    public void OnlyUnknownNames_KeepTheDefaultToolsets()
+    [Theory]
+    [InlineData("widnows")]
+    [InlineData("widnows,+xtra")]
+    [InlineData("widnows,+extra")]
+    public void AnUnknownPlainName_WithNoValidOne_ServesOnlyTheAlwaysOnToolset(string value)
     {
-        // A typo must not leave the agent with nothing but the always-on toolset
-        var selection = Select("widnows");
+        // The user set the variable to restrict the server to the toolsets named: a typo must not give the agent the
+        // whole default (fail closed). The always-on toolset stays, so the agent can still read the warning in
+        // get_server_info.
+        var selection = Select(value);
 
-        selection.Enabled.Should().Equal("core", "basic");
-        selection.Warnings.Should().HaveCount(2).And.Contain(w => w.Contains("default toolsets"));
+        selection.Enabled.Should().Equal("core");
+        selection.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
+        Served(selection).Should().Equal("info_tool");
+        selection.Warnings.Should().Contain(w => w.Contains("'widnows'") && w.Contains("only the 'core' toolset"));
+    }
+
+    [Theory]
+    [InlineData("-bsic")]
+    [InlineData("default,-bsic")]
+    [InlineData("all,-extra,-bsic")]
+    [InlineData("basic,-bsic")]
+    public void AnUnknownRemoval_ServesOnlyTheAlwaysOnToolset(string value)
+    {
+        // Ignoring '-bsic' would serve the toolset the user may have meant to remove
+        var selection = Select(value);
+
+        selection.Enabled.Should().Equal("core");
+        selection.Warnings.Should().Contain(w => w.Contains("'-bsic'") && w.Contains("only the 'core' toolset"));
+    }
+
+    [Theory]
+    [InlineData("+xtra", new[] { "core", "basic" })]
+    [InlineData("basic,+xtra", new[] { "core", "basic" })]
+    [InlineData("-basic,+xtra", new[] { "core" })]
+    public void AnUnknownAddition_IsIgnored_BecauseIgnoringItServesLess(string value, string[] expected)
+    {
+        var selection = Select(value);
+
+        selection.Enabled.Should().Equal(expected);
+        selection.Warnings.Should().Contain(w => w.Contains("'+xtra'")).And.NotContain(w => w.Contains("to be safe"));
     }
 
     [Theory]
@@ -185,6 +222,48 @@ public class ToolsetSelectionTests
         // The production catalog names every tool (ToolsetCatalogTests); a tool outside it is not the toolsets' to hide
         Select().Serves("unlisted_tool", readOnlyHint: false).Should().BeTrue();
         Select(readOnly: "1").Serves("unlisted_tool", readOnlyHint: false).Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheAlwaysServedTool_CannotBeExcluded()
+    {
+        // It is the tool that tells the agent which tools are off, and why
+        var selection = Select(exclude: "info_tool,act_tool", catalog: WithInfoTool);
+
+        selection.ExcludedTools.Should().Equal("act_tool");
+        selection.Serves("info_tool", readOnlyHint: true).Should().BeTrue();
+        selection.Warnings.Should().ContainSingle().Which.Should()
+            .Contain(ToolsetSelection.ExcludeToolsVariable).And.Contain("'info_tool'").And.Contain("always served");
+    }
+
+    [Fact]
+    public void TheCatalog_NeedsItsAlwaysServedToolInTheAlwaysOnToolset()
+    {
+        var act = () => new ToolsetCatalog("core", Catalog.Toolsets, alwaysServedTool: "look_tool");
+
+        act.Should().Throw<ArgumentException>().WithMessage("*'look_tool'*");
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("all", null, null)]
+    [InlineData("default,-extra", null, null)]
+    public void TheInstructionsNote_IsNull_WhenNothingTheDefaultServesIsOff(string? toolsets, string? exclude, string? readOnly)
+    {
+        // An opt-in toolset that is off is not something the user turned off, and the instructions do not name its tools
+        Select(toolsets, exclude, readOnly).InstructionsNote.Should().BeNull();
+    }
+
+    [Fact]
+    public void TheInstructionsNote_SaysWhatTheUserTurnedOff()
+    {
+        var note = Select("-basic", "info_tool", "1").InstructionsNote;
+
+        note.Should().NotBeNull();
+        note.Should().Contain("basic").And.Contain("read-only").And.Contain("info_tool")
+            .And.Contain("missing from your tool list").And.Contain("tell the user");
+        note.Should().NotContain("extra", "the opt-in toolset was never on");
+        note.Should().NotContain("\n", "it is one line of the instructions");
     }
 
     [Fact]

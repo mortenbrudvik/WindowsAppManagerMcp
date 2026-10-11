@@ -23,7 +23,7 @@
             ]
           },
           "launchMissing": {
-            "description": "Attempt to launch applications for missing windows (default: false)",
+            "description": "Run the preset's launchCommand for each placement whose window is not found (default: false). This starts the programs the preset file names; a second call can start another instance when the launched window does not match yet.",
             "type": "boolean",
             "default": false
           }
@@ -35,7 +35,7 @@
       "annotations": {
         "title": "Apply Layout",
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false
       }
@@ -962,7 +962,7 @@
     {
       "name": "get_server_info",
       "title": "Server info",
-      "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2 means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy and destructive chords, the layouts folder, and the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there). warnings lists what will make tools fail or coordinates wrong. Call it first, and whenever tools behave unexpectedly. Changes nothing.",
+      "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy and destructive chords, the layouts folder, and the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there). warnings lists what will make tools fail or coordinates wrong. Call it first, and whenever tools behave unexpectedly. Changes nothing.",
       "inputSchema": {
         "type": "object",
         "properties": {}

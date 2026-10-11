@@ -23,7 +23,8 @@ public class ServerInfoTools
         OpenWorld = false)]
     [Description("The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, " +
                  "integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in " +
-                 "force (PerMonitorV2 means every coordinate is a physical pixel), whether input can reach the desktop (locked " +
+                 "force (PerMonitorV2, or PerMonitor on old Windows, means every coordinate is a physical pixel), whether input " +
+                 "can reach the desktop (locked " +
                  "session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and " +
                  "processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the " +
                  "target policy and destructive chords, the layouts folder, and the toolsets, excluded tools and read-only mode " +
