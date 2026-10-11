@@ -50,6 +50,10 @@ public static class LayoutApplyStatus
 /// <param name="Focused">For a placement with focus: whether its window is in front; null otherwise.</param>
 /// <param name="ErrorCode">Why the placement was not (fully) applied; null when it was.</param>
 /// <param name="Error">The reason, in words.</param>
+/// <param name="LaunchCommand">
+/// The placement's launchCommand when it was run for this placement (launchMissing), whether or not the launch worked;
+/// null when nothing was launched.
+/// </param>
 public sealed record LayoutPlacementResult(
     int Order,
     string Status,
@@ -57,7 +61,8 @@ public sealed record LayoutPlacementResult(
     bool? Launched = null,
     bool? Focused = null,
     string? ErrorCode = null,
-    string? Error = null);
+    string? Error = null,
+    string? LaunchCommand = null);
 
 /// <summary>The window a placement was given: its handle, title and process name.</summary>
 public sealed record LayoutWindowRef(long Handle, string Title, string ProcessName)

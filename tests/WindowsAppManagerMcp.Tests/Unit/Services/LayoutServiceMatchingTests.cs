@@ -421,7 +421,8 @@ public class LayoutServiceMatchingTests : IDisposable
             new LayoutPlacementResult(0, LayoutPlacementStatus.Applied, LayoutWindowRef.From(ChromeLeft), Focused: true),
             new LayoutPlacementResult(1, LayoutPlacementStatus.NotFound, ErrorCode: nameof(LayoutErrorCode.WindowNotFound),
                 Error: "No open window matched placement 1 (process 'slack')"),
-            new LayoutPlacementResult(2, LayoutPlacementStatus.Applied, new LayoutWindowRef(8888, string.Empty, "app"), Launched: true));
+            new LayoutPlacementResult(2, LayoutPlacementStatus.Applied, new LayoutWindowRef(8888, string.Empty, "app"), Launched: true,
+                LaunchCommand: "app.exe"));
         result.WindowsLaunched.Should().Be(1);
         result.Status.Should().Be(LayoutApplyStatus.Partial);
     }
@@ -546,25 +547,100 @@ public class LayoutServiceMatchingTests : IDisposable
     }
 
     [Fact]
-    public async Task Apply_ANormalPlacement_RestoresAMaximizedWindowBeforePlacingIt()
+    public async Task Apply_ANormalPlacement_PlacesAMaximizedWindow_WithoutAnActivatingRestore()
     {
-        // Arrange
+        // Arrange - SetWindowBounds restores a maximized window itself, without activating it (SW_SHOWNOACTIVATE); the
+        // set_window_state Restore (SW_RESTORE) would bring it to the front
         var sut = CreateSut();
         await SaveAsync(sut, "normal", Placement(new WindowMatcher(ProcessName: "chrome"), 0) with { State = WindowState.Normal });
         var maximized = ChromeLeft with { State = WindowState.Maximized };
         OpenWindows(maximized);
-        var calls = new List<string>();
-        _windows.Setup(w => w.SetWindowState(maximized.Handle, WindowStateRequest.Restore))
-            .Callback(() => calls.Add("restore")).Returns(WindowChangeResult.Done(maximized.Handle));
-        _windows.Setup(w => w.SetWindowBounds(maximized.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Callback(() => calls.Add("bounds")).Returns(WindowChangeResult.Done(maximized.Handle));
 
         // Act
         var result = await sut.ApplyPresetAsync("normal");
 
         // Assert
         result.Success.Should().BeTrue();
-        calls.Should().Equal("restore", "bounds");
+        VerifyPlaced(maximized, 0, 0, 960, 1040);
+        _windows.Verify(w => w.SetWindowState(It.IsAny<nint>(), It.IsAny<WindowStateRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Apply_AMinimizeThatDoesNotAnswer_LeavesThePlacementApplied_WithNotResponding()
+    {
+        // Arrange - the window was placed, then its app stopped answering
+        var sut = CreateSut();
+        await SaveAsync(sut, "min", Placement(new WindowMatcher(ProcessName: "chrome"), 0) with { State = WindowState.Minimized });
+        OpenWindows(ChromeLeft);
+        _windows.Setup(w => w.SetWindowState(ChromeLeft.Handle, WindowStateRequest.Minimize))
+            .Throws(new WindowNotRespondingException(ChromeLeft.Handle, "The window did not answer within 5 s."));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("min");
+
+        // Assert
+        var placement = result.Placements.Should().ContainSingle().Subject;
+        placement.Status.Should().Be(LayoutPlacementStatus.Applied);
+        placement.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        placement.Error.Should().Contain("could not minimize it (NotResponding)").And.Contain("did not answer");
+        result.WindowsArranged.Should().Be(1);
+        result.Status.Should().Be(LayoutApplyStatus.Partial);
+    }
+
+    [Fact]
+    public async Task Apply_ALaunchedPlacementThatThrows_StillReportsItsLaunch_AndWindow()
+    {
+        // Arrange - the launched window cannot be arranged: an unexpected error after the launch
+        var launched = Window(0x501, "Untitled - Notepad", "notepad", 900, 0, 0, 800, 600);
+        var sut = CreateSut();
+        await SaveAsync(sut, "launch", Placement(new WindowMatcher(ProcessName: "notepad"), 0, launchCommand: "notepad"));
+        OpenWindows();
+        _windows.Setup(w => w.GetWindowInfo(launched.Handle)).Returns(launched);
+        _processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(),
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LaunchResult(true, ProcessId: 900, WindowHandle: launched.Handle));
+        _windows.Setup(w => w.SetWindowBounds(launched.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Throws(new InvalidOperationException("The window's thread went away"));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("launch", launchMissing: true);
+
+        // Assert
+        var placement = result.Placements.Should().ContainSingle().Subject;
+        placement.Status.Should().Be(LayoutPlacementStatus.Failed);
+        placement.Launched.Should().BeTrue("the agent must not launch it again");
+        placement.LaunchCommand.Should().Be("notepad");
+        placement.Window!.Handle.Should().Be(0x501);
+        result.WindowsLaunched.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Apply_AnArrangeThatDoesNotAnswer_IsReportedAsNotResponding()
+    {
+        // Arrange
+        var sut = CreateSut();
+        await SaveAsync(sut, "hung", Placement(new WindowMatcher(ProcessName: "chrome"), 0) with { State = WindowState.Maximized });
+        OpenWindows(ChromeLeft);
+        _windows.Setup(w => w.MoveWindowToMonitor(ChromeLeft.Handle, It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
+            .Throws(new WindowNotRespondingException(ChromeLeft.Handle, "hung"));
+
+        // Act
+        var result = await sut.ApplyPresetAsync("hung");
+
+        // Assert
+        result.Placements!.Single().Error.Should().Contain("NotResponding: hung").And.NotContain(nameof(WindowNotRespondingException));
+    }
+
+    [Fact]
+    public async Task Apply_APlacementThatLaunchesNothing_HasNoLaunchCommand()
+    {
+        var sut = CreateSut();
+        await SaveAsync(sut, "open", Placement(new WindowMatcher(ProcessName: "chrome"), 0, launchCommand: "chrome"));
+        OpenWindows(ChromeLeft);
+
+        var result = await sut.ApplyPresetAsync("open", launchMissing: true);
+
+        result.Placements!.Single().LaunchCommand.Should().BeNull("the window was open, so nothing was launched");
     }
 
     [Fact]
