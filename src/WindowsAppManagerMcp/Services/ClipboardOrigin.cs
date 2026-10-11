@@ -89,10 +89,20 @@ public interface IClipboardOrigin
     ClipboardOriginKind Classify(uint sequenceNumber);
 
     /// <summary>
-    /// True when the agent's copy keys were sent moments ago and the clipboard still has <paramref name="sequenceNumber"/>,
-    /// the number it had before them: the application may still be copying. Read again shortly. Never true after a click.
+    /// True when the agent's last copy keys were sent less than <see cref="ClipboardOrigin.CopyKeysWindow"/> ago and the
+    /// application they went to has not changed the clipboard since: the clipboard still has the number it had before them
+    /// (<paramref name="sequenceNumber"/>), or only another application changed it. The keys may still wait in the
+    /// application's queue. Read again shortly. Not ended by later input (a click to the same application) or by the copy
+    /// window rules, which decide only whose the copy is. Never true for a click alone. The paste rule waits for this.
     /// </summary>
     bool IsCopyPending(uint sequenceNumber);
+
+    /// <summary>
+    /// True when <see cref="IsCopyPending"/> and the clipboard still has <paramref name="sequenceNumber"/>, the number it
+    /// had before the copy keys: nothing changed it since. get_clipboard waits for this, and reports that nothing was
+    /// copied when it lasts (another application's change is read, or refused, as any content is).
+    /// </summary>
+    bool IsUnchangedSinceCopyKeys(uint sequenceNumber);
 
     /// <summary>
     /// True when <paramref name="text"/> (at most the asked number of characters of a text <paramref name="textLength"/>
@@ -195,6 +205,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     private uint? _agentCopy;
     private uint? _userAllowed;
     private Pending? _pending;
+    private CopyKeysSend? _copyKeys;
     private ITimer? _timer;
 
     /// <param name="clipboard">The clipboard, for its sequence number and owner.</param>
@@ -357,6 +368,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         lock (_lock)
         {
             var now = _time.GetTimestamp();
+            if (mark.Trigger == ClipboardCopyTrigger.CopyKeys)
+            {
+                // Pending until the application copies, whether or not the keys open or join a copy window below
+                _copyKeys = new CopyKeysSend(now, mark.TargetProcessId, mark.SequenceBefore);
+            }
+
             if (_pending is { FirstCopyAt: null } run && run.Mark.TargetProcessId == mark.TargetProcessId &&
                 _time.GetElapsedTime(run.Start) <= run.Length)
             {
@@ -473,6 +490,13 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
 
             _agentCopy = sequenceNumber;
             candidateRun.FirstCopyAt ??= _time.GetTimestamp();
+            if (_copyKeys is { } keys && keys.TargetProcessId == candidateRun.Mark.TargetProcessId &&
+                keys.SequenceBefore != sequenceNumber)
+            {
+                // The copy the keys asked for
+                _copyKeys = null;
+            }
+
             _emptyRuns.Remove(candidateRun.Mark.TargetProcessId);
         }
     }
@@ -515,12 +539,71 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         }
 
         Poll();
+        CopyKeysSend keys;
         lock (_lock)
         {
-            return _pending is { Mark.Trigger: ClipboardCopyTrigger.CopyKeys, FirstCopyAt: null } pending &&
-                   pending.Mark.SequenceBefore == sequenceNumber &&
-                   _time.GetElapsedTime(pending.Start) <= pending.Length;
+            if (CurrentCopyKeys() is not { } current)
+            {
+                return false;
+            }
+
+            if (current.SequenceBefore == sequenceNumber)
+            {
+                return true;
+            }
+
+            keys = current;
         }
+
+        // The clipboard changed since the keys: they are done when the application they went to changed it (read without
+        // the lock, native calls; the owner counts only when the number did not change around its read). A change by
+        // another application, or by an unknown one, leaves them pending: the application may still copy.
+        var now = _clipboard.GetSequenceNumber();
+        var ownerProcessId = _clipboard.GetOwnerProcessId();
+        var copied = keys.TargetProcessId != 0 && ownerProcessId == keys.TargetProcessId && now != keys.SequenceBefore &&
+                     _clipboard.GetSequenceNumber() == now;
+
+        lock (_lock)
+        {
+            if (!ReferenceEquals(_copyKeys, keys))
+            {
+                // Copy keys sent meanwhile replaced the ones read, and are pending
+                return CurrentCopyKeys() != null;
+            }
+
+            if (copied)
+            {
+                _copyKeys = null;
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public bool IsUnchangedSinceCopyKeys(uint sequenceNumber)
+    {
+        if (sequenceNumber == 0)
+        {
+            return false;
+        }
+
+        Poll();
+        lock (_lock)
+        {
+            return CurrentCopyKeys()?.SequenceBefore == sequenceNumber;
+        }
+    }
+
+    /// <summary>The agent's last copy keys while within <see cref="CopyKeysWindow"/>; null otherwise. Under the lock.</summary>
+    private CopyKeysSend? CurrentCopyKeys()
+    {
+        if (_copyKeys != null && _time.GetElapsedTime(_copyKeys.SentAt) > CopyKeysWindow)
+        {
+            _copyKeys = null;
+        }
+
+        return _copyKeys;
     }
 
     public bool IsServerText(string? text, int textLength)
@@ -635,6 +718,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         _timer?.Dispose();
         _timer = null;
     }
+
+    /// <summary>The agent's last copy keys, pending (see <see cref="IsCopyPending"/>) until their application copies.</summary>
+    /// <param name="SentAt">When they were sent.</param>
+    /// <param name="TargetProcessId">The process they went to; 0 when not known.</param>
+    /// <param name="SequenceBefore">The clipboard's sequence number right before they were sent.</param>
+    private sealed record CopyKeysSend(long SentAt, int TargetProcessId, uint SequenceBefore);
 
     /// <summary>A copy window: the input of one run to one application, until it copies or the window passes.</summary>
     private sealed class Pending

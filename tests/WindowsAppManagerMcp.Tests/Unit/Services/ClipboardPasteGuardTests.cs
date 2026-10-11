@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class ClipboardPasteGuardTests
 {
-    private const uint RightDown = 0x0008, RightUp = 0x0010;
+    private const uint LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010;
     private const int AppProcessId = 2001;
     private static readonly nint Terminal = 0x4000, Editor = 0x5000;
 
@@ -28,7 +28,9 @@ public class ClipboardPasteGuardTests
 
     private static List<InputEvent> Keys(string keys) => SendKeysParser.Parse(keys);
 
-    private static InputEvent[] RightClick => [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp)];
+    private static InputEvent[] LeftClick => [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp)];
+
+    private static InputEvent[] RightClick =>[InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp)];
 
     [Theory]
     [InlineData("^v")]
@@ -65,9 +67,9 @@ public class ClipboardPasteGuardTests
     [InlineData("^x^v")]
     [InlineData("^{INSERT}+{INSERT}")]
     [InlineData("+{DELETE}^v")]
-    [InlineData("^c")]
-    [InlineData("")]
-    [InlineData("^v")]
+    [InlineData("^c\u0016")]
+    [InlineData("\u0003\u0016")]
+    [InlineData("\u0018^v")]
     public void CopyThenPasteInOneCall_IsRefused_EvenWhenTheClipboardHoldsSetClipboardsText(string keys)
     {
         // The paste would paste what the copy takes, which is never checked: a password manager's private copy included
@@ -76,7 +78,7 @@ public class ClipboardPasteGuardTests
         var reads = 0;
         _clipboard.OnSequenceRead = () => reads++;
 
-        var refusal = Guard().Check(Keys(System.Text.RegularExpressions.Regex.Unescape(keys)), Editor);
+        var refusal = Guard().Check(Keys(keys), Editor);
 
         refusal.Should().NotBeNull().And.Contain("copies and then pastes").And.Contain("separate calls").And.Contain("Nothing was sent");
         reads.Should().Be(0, "the order of the keys alone refuses it");
@@ -128,6 +130,50 @@ public class ClipboardPasteGuardTests
 
         _clock.Advance(ClipboardOrigin.CopyKeysWindow + TimeSpan.FromMilliseconds(1));
         Guard().Check(Keys("^v"), Editor).Should().BeNull("the copy window passed without a copy");
+    }
+
+    [Fact]
+    public void APasteAfterCopyKeysAndAClickToTheSameApp_IsRefused_UntilTheAppCopies()
+    {
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+        _origin.InputSent(_origin.BeforeInput(LeftClick, AppProcessId)!);
+
+        Guard().Check(Keys("^v"), Editor).Should().Contain("not copied yet");
+    }
+
+    [Fact]
+    public void APasteAfterCopyKeysAndSetClipboard_IsRefused_UntilTheAppCopies()
+    {
+        // Another change of the clipboard after the keys does not mean the app has acted on them
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+
+        Guard().Check(Keys("^v"), Editor).Should().Contain("not copied yet");
+
+        _clipboard.AppCopies(AppProcessId, "the selection");
+        Guard().Check(Keys("^v"), Editor).Should().BeNull("the app copied for the agent");
+    }
+
+    [Fact]
+    public void APasteAfterCopyKeysThatOpenNoCopyWindow_IsRefused_UntilTheAppCopies()
+    {
+        // Arrange - two empty copy windows: copy keys within the quiet time open none, but still wait in the app's queue
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        for (var i = 0; i < 3; i++)
+        {
+            _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+            _clock.Advance(TimeSpan.FromSeconds(5.1));
+        }
+
+        // Act
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+
+        // Assert
+        Guard().Check(Keys("^v"), Editor).Should().Contain("not copied yet");
     }
 
     [Fact]
