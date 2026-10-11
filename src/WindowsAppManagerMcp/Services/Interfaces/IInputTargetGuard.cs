@@ -60,7 +60,11 @@ public interface IInputTargetGuard
     /// </summary>
     InputGuardResult RecheckKeyboard(InputGuardResult approved);
 
-    /// <summary>Checks mouse input at a screen point before the cursor moves. Reads only.</summary>
+    /// <summary>
+    /// Checks mouse input at a screen point before the cursor moves. A point converted from image, window or client
+    /// coordinates is also checked against what it was measured on (<see cref="InputTarget.PointRecheck"/>, roadmap
+    /// M3.11): after the target's own checks, before the window at the point (StaleCapture). Reads only.
+    /// </summary>
     InputGuardResult CheckMouse(int x, int y, InputTarget target);
 
     /// <summary>

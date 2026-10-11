@@ -17,7 +17,9 @@ public interface ICaptureMetadata
 /// pixel. <see cref="OriginalWidth"/> and <see cref="OriginalHeight"/> are set only when the image was
 /// scaled down. <see cref="ScaleFactor"/> is the monitor's DPI scale, for information only: it plays no
 /// part in any coordinate conversion. <see cref="Warnings"/> say why a successful image may not show what the
-/// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say.
+/// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say. <see cref="CaptureId"/> names
+/// the capture for the mouse tools' image space (roadmap M3.11): they convert a point of this image to the screen
+/// themselves, and refuse when the captured window moved since; null when the capture failed or was not registered.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -37,7 +39,8 @@ public record ScreenshotResult(
     long? ByteSize = null,
     string? CaptureMethod = null,
     string? CoordinateSpace = null,
-    IReadOnlyList<string>? Warnings = null
+    IReadOnlyList<string>? Warnings = null,
+    string? CaptureId = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -113,6 +116,7 @@ public record VirtualScreenBounds(
 /// <see cref="ElementsError"/> and <see cref="ElementsErrorCode"/> (the get_ui_elements code, for example
 /// OperationTimedOut) and no elements. <see cref="Truncated"/> is true when the element list is incomplete
 /// (the walk failed, timed out or skipped elements), and <see cref="TruncationReason"/> says why.
+/// <see cref="CaptureId"/> is as for <see cref="ScreenshotResult.CaptureId"/>.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -141,7 +145,8 @@ public record AnnotatedScreenshotResult(
     string? ElementsError = null,
     string? ElementsErrorCode = null,
     bool? Truncated = null,
-    string? TruncationReason = null
+    string? TruncationReason = null,
+    string? CaptureId = null
 ) : ICaptureMetadata;
 
 /// <summary>

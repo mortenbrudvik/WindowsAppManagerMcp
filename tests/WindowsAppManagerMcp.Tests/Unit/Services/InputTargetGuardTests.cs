@@ -644,6 +644,57 @@ public class InputTargetGuardTests
         ((int)InputErrorCode.HandleMismatch).Should().Be(43);
         ((int)InputErrorCode.PasteNotAllowed).Should().Be(44);
         ((int)InputErrorCode.InvalidArguments).Should().Be(45);
+        ((int)InputErrorCode.StaleCapture).Should().Be(46);
+        ((int)InputErrorCode.CaptureNotFound).Should().Be(47);
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatFails_IsItsCode_WithATarget()
+    {
+        // Arrange - an image-space click: the captured window moved while the call waited for the gate (roadmap M3.11)
+        At(NotepadEdit, root: Notepad);
+        var target = To(Notepad) with { PointRecheck = () => new SelectorRefusal("StaleCapture", "Window 512 moved 40 px since capture c3-abcdef.") };
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, target);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+        result.Error.Should().Contain("moved 40 px");
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatFails_IsItsCode_WithoutATarget()
+    {
+        // A screen capture's point: the monitors changed since the capture
+        At(NotepadEdit, root: Notepad);
+        var target = InputTarget.None with { PointRecheck = () => new SelectorRefusal("StaleCapture", "The monitors changed.") };
+
+        CreateSut().CheckMouse(500, 300, target).ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatPasses_IsCheckedAsAnyPoint()
+    {
+        At(NotepadEdit, root: Notepad);
+        var rechecked = 0;
+        var target = To(Notepad) with { PointRecheck = () => { rechecked++; return null; } };
+
+        var result = CreateSut().CheckMouse(500, 300, target);
+
+        result.Allowed.Should().BeTrue(result.Error);
+        rechecked.Should().Be(1);
+    }
+
+    [Fact]
+    public void Mouse_AnInvalidTarget_IsInvalidHandle_BeforeThePointRecheck()
+    {
+        // The target's own checks come first: a closed window is InvalidHandle, as for any windowHandle
+        var rechecked = 0;
+        var target = To(0x7777) with { PointRecheck = () => { rechecked++; return new SelectorRefusal("StaleCapture", "closed"); } };
+
+        CreateSut().CheckMouse(500, 300, target).ErrorCode.Should().Be(InputErrorCode.InvalidHandle);
+        rechecked.Should().Be(0);
     }
 
     [Fact]

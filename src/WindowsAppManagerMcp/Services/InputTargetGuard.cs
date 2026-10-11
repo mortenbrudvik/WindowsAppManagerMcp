@@ -219,11 +219,30 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 return refused;
             }
 
+            if (PointRefusal(target) is { } stale)
+            {
+                return stale;
+            }
+
             return WithCaptureCheck(x, y, CheckHitForTarget(x, y, hit, target, targetRoot));
+        }
+
+        if (PointRefusal(target) is { } staleWithoutTarget)
+        {
+            return staleWithoutTarget;
         }
 
         return WithCaptureCheck(x, y, CheckHitWithoutTarget(x, y, hit, target));
     }
+
+    /// <summary>
+    /// The refusal of a converted point whose capture or window changed since it was converted
+    /// (<see cref="InputTarget.PointRecheck"/>, roadmap M3.11), or null.
+    /// </summary>
+    private static InputGuardResult? PointRefusal(InputTarget target) =>
+        target.PointRecheck?.Invoke() is { } changed
+            ? InputGuardResult.Refuse(RecheckErrorCode(changed.ErrorCode), changed.Error, target)
+            : null;
 
     public InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved)
     {

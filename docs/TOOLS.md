@@ -102,7 +102,9 @@ to do anything for it, and cannot turn it off.
   command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
     (`argumentsCount`). Only the strings that name a process, a layout preset or a fixed value (`processName`,
-    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`) are kept.
+    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`) are
+    kept; a mouse tool's `captureId` is recorded as its length, and its `x` and `y` and the result's converted `x` and `y`
+    as numbers.
   - `executable` is kept as a program name or file path. A URL keeps only its scheme, host and port
     (`https://hooks.example.com`, `mailto:example.com`, `data:`), and a URL without a scheme only its host
     (`www.example.com`); `executableLength` then gives the full length.
@@ -148,7 +150,7 @@ Text that the tools read from other programs is data, not instructions. This inc
 - All screen coordinates are physical pixels on the virtual desktop. This covers input `x`/`y`, window `bounds`, UI element `bounds` and `screenBounds`, monitor `bounds`/`workArea` and `capture_region` arguments. The server is per-monitor DPI aware (its app manifest declares PerMonitorV2, with PerMonitor as the fallback on Windows before 10 1703, which gives this windowless server physical pixels too; [get_server_info](#get_server_info) reports the awareness in force and warns when it is anything else), so do not multiply by `scaleFactor`.
 - The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates (see the [get_monitors](#get_monitors) example).
 - Monitor indices are 0-based, and index 0 is not necessarily the primary monitor. Use `primaryIndex` or `isPrimary`.
-- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured (a monitor, a region, a window or its client area) and is usually scaled down. Every capture's metadata has `imageToScreen` to convert image points; see [Image coordinates](#image-coordinates). For clicks, prefer `screenBounds` (from `capture_with_elements`) or `bounds` (from `get_ui_elements`).
+- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured (a monitor, a region, a window or its client area) and is usually scaled down. Every capture's metadata has `imageToScreen` to convert image points and a `captureId` the mouse tools convert them through; see [Image coordinates](#image-coordinates). For clicks, prefer `screenBounds` (from `capture_with_elements`) or `bounds` (from `get_ui_elements`).
 
 ### Image coordinates
 
@@ -171,7 +173,37 @@ Round the result to whole pixels. `offsetX`/`offsetY` are the screen position of
 
 Example: [take_screenshot](#take_screenshot) of a 3840 × 2160 monitor at (0, 0) returns a 1568 × 882 image with `scaleX` and `scaleY` 2.44898. Image point (100, 50) is screen point (0 + 100 × 2.44898, 0 + 50 × 2.44898) = (245, 122).
 
-A window can move after it was captured, so convert only from a fresh capture, and prefer element bounds for clicks.
+A window can move after it was captured, so convert only from a fresh capture, and prefer element bounds for clicks. Better still, let the server convert: pass the capture's `captureId` with the image point to a mouse tool (below), and it refuses the click when the captured window has moved since.
+
+### Coordinate spaces for the mouse tools
+
+[click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move) and [scroll](#scroll) take `space`, which says what `x` and `y` are measured in, and `captureId`:
+
+| `space` | `x`, `y` are | Needs |
+|---------|--------------|-------|
+| `screen` (default) | Physical virtual-screen pixels, as before | - |
+| `window` | Pixels from the top-left corner of the window rectangle (GetWindowRect: [find_windows](#find_windows)' `bounds`, which includes the invisible resize border) | `windowHandle` or a `window` selector |
+| `client` | Pixels from the top-left corner of the window's client area on screen; x counts to the right also in a mirrored right-to-left window, as in an image of it | `windowHandle` or a `window` selector |
+| `image` (default when `captureId` is given) | Pixels of the image a capture returned, as returned (scaled, not at full resolution) | `captureId` |
+
+Every capture result ([take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements)) has a `captureId` such as `c7-3fa91c`. The server keeps the last 32 captures used, each for 10 minutes; an id is never reused while the server runs, and an id from an earlier run finds nothing. An image point goes through that capture's `imageToScreen` (rounded as in [Image coordinates](#image-coordinates)) and must lie inside the image (`CoordinatesOutOfBounds` otherwise).
+
+The converted point then goes through the [input guard](#input-guard) exactly as a screen point does, so the target, host, policy, pause and gate checks all apply to it:
+
+- **The captured window is the target.** For a capture_window or capture_with_elements capture, the captured window is the input's `windowHandle` when the call names none, so the click is sent only if that window (or a popup of it) is at the point (`TargetOccluded` otherwise). A call that names another window fails with `InvalidArguments`: an image of one window never becomes a click on another. A target the capture supplied never lifts the host guard; `allowHostTarget` needs the window named by `windowHandle` (or `window.handle`), as always. A monitor or region capture names no window, so its point has the usual rules for a point without `windowHandle`.
+- **Stale captures are refused.** Nothing is sent, with `StaleCapture`, when an edge of the captured window's rectangle moved by more than 2 pixels since the capture (moved or resized), the window closed, was minimized, or its handle now belongs to another process, or for a client-area capture (`includeFrame: false`) when its client area moved (a toolbar appeared); for a monitor or region capture, when the monitors changed (the virtual screen's bounds differ). The check runs when the point is converted and again inside the input gate, right before the guard, so a window that moves while the call waits for the gate is caught too. For `window` and `client` points, a window that moved by more than 2 pixels while the call waited for the gate is `StaleCapture` too. Capture again and use the new `captureId`.
+- **Unknown ids.** A `captureId` that is mistyped, from an earlier run, older than 10 minutes or pushed out by 32 newer captures fails with `CaptureNotFound`.
+- **Echo.** With a `space` other than `screen`, the result's `x` and `y` are the converted screen point, and `requested` echoes the point as given: `{ "x": 392, "y": 196, "space": "image", "captureId": "c7-3fa91c" }`. When the point could not be converted, `x` and `y` are the given point.
+
+`space` other than `image` with a `captureId`, `image` without one, and `window` or `client` without a window are refused with `InvalidArguments`, as is scroll's `space` or `captureId` without `x` and `y`. A minimized window has no `window` or `client` point on screen (`CoordinatesOutOfBounds`).
+
+**Example:** capture_window of Notepad (handle 12345) returns a 1568 x 882 image with `"captureId": "c7-3fa91c"`. To click the button seen at image point (392, 196):
+
+```json
+{ "name": "click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
+```
+
+The server converts the point (here to screen (400, 300)), checks that Notepad has not moved and is at that point, and clicks.
 
 ### Cancellation and progress
 
@@ -1711,9 +1743,10 @@ The **Response** examples below show the metadata text, formatted.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)). An unknown `format` or `output` is refused before the tool runs, so its error is a [tool error](#tool-errors) (`success`, `error`, `errorCode`, `tool`) without the capture metadata.
 - **Capture health:** a capture that cannot show the window fails with its own code before any pixel is read: `WindowHidden` (no WS_VISIBLE, for example an app hidden in the notification area), `Cloaked` (on another virtual desktop, or a suspended Store app) and `WindowMinimized` (pass `restoreIfMinimized: true`, or restore the window first). They are checked in that order, so a window that is minimized and also hidden or cloaked fails with `WindowHidden` or `Cloaked`, and `restoreIfMinimized` never restores it. A region entirely off the screen fails with `RegionOffScreen`; one partly off it is cut to the screen. A successful capture can carry `warnings`, each a sentence that starts with a code: `ImageBlank` (about 1024 sampled pixels all have one color, named in the warning: right for an empty area, but a black image usually means GPU or protected content this capture cannot read, or a window that has not painted yet), `WindowNotResponding` (the window could not be asked to draw itself, because its application does not answer or too many calls to other applications are stuck; the warning gives the reason. The window was copied from the screen instead, so windows that cover it show), `DpiScaledWindow` (the window is not per-monitor DPI aware, so Windows scales it and the image can show it at its unscaled size), `RegionClipped`, `RegionPartlyOffMonitors` (part of the region lies between monitors and is black), and for `restoreIfMinimized` `WindowRestored`, `WindowStillPainting` and `ReminimizeFailed`. `warnings` is left out when there is nothing to say. `captureMethod` says how the pixels were read: `ScreenBitBlt` (copied from the screen: what is on screen there, covering windows included; take_screenshot, capture_region, and a window that does not answer), `PrintWindow` (the window drew itself, so covering windows do not show) or `BitBltFallback` (the window refused PrintWindow and its device context was copied, which can show covering windows).
-- **Pixel budget:** one capture holds at most 64 megapixels (for example 8192 x 8192) and 16384 pixels on an edge; a larger region fails with `InvalidRegion` and a larger window with `CaptureFailed`, both before any memory is allocated. The pixels are read into a bitmap of the server and copied out once.
+- **Pixel budget:** one capture holds at most 64 megapixels (for example 8192 x 8192) and 16384 pixels on an edge; a larger region fails with `InvalidRegion` and a larger window or virtual screen (`take_screenshot` with `monitorIndex: -1`) with `CaptureFailed`, both before any memory is allocated. The pixels are read into a bitmap of the server and copied out once.
 - **Target policy:** [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) refuse a window whose app the user's [target policy](#target-policy) denies, with `TargetDeniedByPolicy`, before any pixel or element is read. [take_screenshot](#take_screenshot) and [capture_region](#capture_region) capture whatever is on screen, including a denied window that happens to be visible there: they do not black it out.
 - Image pixels are not screen coordinates. `capturedRegion` is the captured screen rectangle with its real origin, and `imageToScreen` converts image points to screen points; see [Image coordinates](#image-coordinates).
+- **captureId:** every successful capture has a `captureId`; pass it with an image point to a mouse tool and the server converts the point and refuses it once the captured window has moved (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). It is left out of a failed capture, and of a window capture whose window rectangle could not be read.
 - If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image.
 
 ### list_screens
@@ -1781,13 +1814,13 @@ List all available screens/monitors for capture, including virtual screen bounds
 
 ### take_screenshot
 
-Capture a screenshot of a specific monitor.
+Capture a screenshot of a specific monitor, or with `monitorIndex: -1` the whole virtual screen: every monitor in one image, `capturedRegion` the virtual screen's bounds (its corner can be negative), no `monitorIndex` or `scaleFactor`, and a `RegionPartlyOffMonitors` warning when monitors of different sizes leave parts of the bounding rectangle black. A virtual screen over the [pixel budget](#screenshot) fails with `CaptureFailed`: capture one monitor at a time.
 
 <!-- tools:begin params:take_screenshot -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| monitorIndex | integer | No | primary | Monitor index (0-based). Defaults to primary monitor. |
+| monitorIndex | integer | No | primary | Monitor index (0-based), or -1 for the whole virtual screen (all monitors in one image) |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | integer | No | 80 | JPEG quality (1-100) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. Not applied when only `maxWidth` is given |
@@ -1824,7 +1857,8 @@ Capture a screenshot of a specific monitor.
   "originalHeight": 2160,
   "byteSize": 241337,
   "captureMethod": "ScreenBitBlt",
-  "coordinateSpace": "physical-virtual-screen"
+  "coordinateSpace": "physical-virtual-screen",
+  "captureId": "c1-3fa91c"
 }
 ```
 
@@ -2791,6 +2825,8 @@ Every input result reports:
 | `DesktopUnavailable`, `SessionLocked` | Input cannot reach the desktop | Wait for the user, then retry |
 | `TargetInMenuMode` | `type_text`: a menu is active | Close the menu (`{ESC}`) or click into the field |
 | `InvalidHandle` | `windowHandle` is not a window | Get a current handle from [find_windows](#find_windows) |
+| `StaleCapture` | Mouse with `captureId` (or `space` `window`/`client`): the captured window moved or resized by more than 2 pixels, closed, was minimized or was replaced, or the monitors changed, since the capture (or since the point was converted); nothing was sent | Capture again and use the new `captureId` |
+| `CaptureNotFound` | Mouse: the `captureId` is unknown, from an earlier run, older than 10 minutes or pushed out by 32 newer captures; nothing was sent | Capture again |
 | `HandleMismatch` | The `window` selector's window no longer matched it once the call held the input gate (another document or tab, another title, a reused handle); nothing was sent. As a tool error: the selector's `handle` came with filters the window no longer matches | Locate the window again; do not retry the handle |
 | `InvalidArguments` | The `window` selector's `titleRegex` ran longer than 100 ms on the window's title when it was checked again inside the input gate; nothing was sent. As a tool error: the arguments cannot be used (see [Error Codes](#error-codes)) | Use a simpler pattern, or `titleContains` |
 | `WindowNotFound`, `AmbiguousWindow` | Tool errors: the `window` selector named no window, or several (`candidates`); nothing was sent | See [Window selectors](#window-selectors) |
@@ -2809,6 +2845,8 @@ Perform a left mouse click at the specified screen coordinates. Pass `windowHand
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 <!-- tools:end params:click -->
 
 **Example:**
@@ -2856,6 +2894,29 @@ Perform a left mouse click at the specified screen coordinates. Pass `windowHand
 }
 ```
 
+**Example: a point seen on a capture.** Pass the capture's `captureId` and the point as measured on its image; the server converts it, uses the captured window as `windowHandle`, and echoes the point under `requested` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)):
+
+```json
+{ "name": "click", "arguments": { "x": 392, "y": 196, "captureId": "c7-3fa91c" } }
+```
+
+```json
+{
+  "success": true,
+  "x": 400,
+  "y": 300,
+  "clickType": "left",
+  "errorCode": "None",
+  "receivingWindow": { "handle": 12345, "title": "Untitled - Notepad", "processName": "Notepad", "processId": 4120 },
+  "foregroundAfter": { "handle": 12345, "title": "Untitled - Notepad", "processName": "Notepad", "processId": 4120 },
+  "actualX": 400,
+  "actualY": 300,
+  "requested": { "x": 392, "y": 196, "space": "image", "captureId": "c7-3fa91c" }
+}
+```
+
+If Notepad moved since the capture, nothing is clicked and `errorCode` is `StaleCapture`: capture again.
+
 Coordinates outside every monitor return `CoordinatesOutOfBounds` without `receivingWindow`. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (`CursorNotAtPoint`). The guard's codes are listed under [Input guard](#input-guard).
 
 ---
@@ -2874,6 +2935,8 @@ Perform a right mouse click at the specified screen coordinates.
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 <!-- tools:end params:right_click -->
 
 **Example:**
@@ -2909,6 +2972,8 @@ Perform a double left click at the specified screen coordinates. Useful for open
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 <!-- tools:end params:double_click -->
 
 **Example:**
@@ -2958,6 +3023,8 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 <!-- tools:end params:mouse_move -->
 
 **Example:**
@@ -3012,6 +3079,8 @@ The wheel over a combo box, slider or number box changes its value, so point at 
 | deltaX | integer | No | 0 | Horizontal wheel notches: positive scrolls right, negative scrolls left, at most 100 either way. Default: 0 |
 | allowHostTarget | boolean | No | false | Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false |
 | releaseHeldModifiers | boolean | No | false | Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false |
+| space | string (one of: `"screen"`, `"window"`, `"client"`, `"image"`) | No | screen (image with `captureId`) | What `x`/`y` are measured in: screen pixels, from the window rectangle's corner, from the client area's corner, or pixels of a capture's image (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
+| captureId | string | No | - | The `captureId` of a capture result; `x`/`y` are pixels of its image. `StaleCapture` when the captured window moved, `CaptureNotFound` when unknown or older than 10 minutes |
 <!-- tools:end params:scroll -->
 
 **Example:**
@@ -4843,6 +4912,14 @@ Since 1.14.0 (roadmap M3):
   `reuseExisting`; a client that switches over the statuses should treat an unknown one as a success with a window.
   The audit log line of a launch now keeps its `launchStatus` under `result`, a launch batch item's `launchStatus`
   as its `status`, and the placement under `target` or the item.
+- **captureId and coordinate spaces (roadmap M3.11, after 1.14.0).** Every successful capture result has a new field
+  `captureId`, and take_screenshot takes `monitorIndex: -1` for the whole virtual screen (it used to fail with
+  `InvalidMonitorIndex`). click, right_click, double_click, mouse_move and scroll take `space`
+  (`screen`, `window`, `client`, `image`) and `captureId` (see
+  [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)); a call without them is unchanged
+  and its result has no `requested`. With them, `x` and `y` in the result are the converted screen point and
+  `requested` echoes the point as given; two new input error codes, `StaleCapture` and `CaptureNotFound`, refuse a
+  point whose capture changed or is gone. The audit log keeps a mouse call's `space`.
 
 ## Error Codes
 
@@ -4929,7 +5006,8 @@ table, it gives more detail.
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
-| `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window is over the 64-megapixel budget, or it closed during the capture; `error` has the reason |
+| `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window (or the virtual screen, `monitorIndex: -1`) is over the 64-megapixel budget, or it closed during the capture; `error` has the reason |
+| `CaptureNotFound` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The `captureId` names no capture: mistyped, from an earlier run of the server, older than 10 minutes, or 32 newer captures pushed it out; nothing was sent. Capture again (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
 | `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
@@ -4947,7 +5025,7 @@ table, it gives more detail.
 | `ConfirmationDeclined` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error), [close_window](#close_window) (`force` on a protected window), [get_clipboard](#get_clipboard) | The MCP client asked the user to confirm (elicitation), and the user declined, dismissed or did not tick the question, or did not answer within 2 minutes; nothing was done (get_clipboard: nothing was read; also while another get_clipboard call's question is open). Ask the user how to continue |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error) | `confirm` was not true (close_windows_batch and close_application: more than 3 windows), and the MCP client cannot ask the user; nothing was done |
 | `ContentExtractionFailed` | [get_browser_content](#get_browser_content) | The page content could not be found or read |
-| `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen; scroll without a point: the window has no client area on screen (minimized) |
+| `CoordinatesOutOfBounds` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll), [get_element_at_point](#get_element_at_point) | The coordinates are outside the screen; scroll without a point: the window has no client area on screen (minimized). With `captureId`: the point is outside the capture's image; with `space` `window` or `client`: the window is minimized |
 | `CursorNotAtPoint` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The mouse pointer does not stay at the point (it is confined to a window, or the user is moving the mouse), so a click would land where the guard did not check; nothing (more) was clicked |
 | `CursorPositionFailed` | [click](#click), right_click, double_click, mouse_move | Windows did not move the mouse pointer to the point (SetCursorPos failed), for example because the input desktop cannot be reached; nothing was clicked |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
@@ -4970,7 +5048,7 @@ table, it gives more detail.
 | `HandleMismatch` | [close_window](#close_window) (`force` after the user's yes), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches; in the result of the [Input Simulation](#input-simulation) tools) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; close_application: to another process than when the window was listed, asked or not; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused), or the selector's window no longer matched it once the call held the input gate (the window and input tools check it again just before they act or send); nothing was done |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
-| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
+| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
@@ -5029,6 +5107,7 @@ table, it gives more detail.
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
+| `StaleCapture` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |

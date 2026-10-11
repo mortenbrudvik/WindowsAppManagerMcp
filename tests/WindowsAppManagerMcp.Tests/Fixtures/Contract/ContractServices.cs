@@ -64,6 +64,12 @@ public sealed class ContractServices : IDisposable
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
+    /// <summary>The capture registry the typical captures register in and the mouse tools' image points resolve through (roadmap M3.11).</summary>
+    public CaptureRegistry Captures { get; } = new();
+
+    /// <summary>The window the typical captures are of: 1600 x 900 at (0, 100), as the capture wrapper reports it.</summary>
+    private readonly Mock<INativeWindowWrapper> _capturedWindows = new();
+
     /// <summary>The audit log's folder (roadmap M2.17), in the temporary folder; created by the first line written.</summary>
     public string AuditFolder { get; } = Path.Combine(Path.GetTempPath(), "WamContractAudit", Guid.NewGuid().ToString("N"), "audit");
 
@@ -108,6 +114,10 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Hotkey.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
+        services.AddSingleton<ICaptureRegistry>(Captures);
+        services.AddSingleton<ICoordinateSpaceResolver>(new CoordinateSpaceResolver(
+            Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(),
+            TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object));
         services.AddSingleton<ITargetPolicy>(new TargetPolicy(TargetPolicySettings.Default));
         services.AddSingleton(Audit);
         // get_server_info: the real report over mocked sources, with the toolsets the server was registered with
@@ -356,10 +366,15 @@ public sealed class ContractServices : IDisposable
         // The real capture pipeline (scaling, encoding, metadata) over blank pixels: a 2560 x 1440 monitor, a 1600 x 900 window
         var monitors = new Mock<IMonitorService>();
         monitors.Setup(m => m.GetAllMonitors()).Returns(TypicalDesktop.Monitors);
+        _capturedWindows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns(true);
+        _capturedWindows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
+        _capturedWindows.Setup(w => w.GetWindowRect(It.IsAny<nint>())).Returns((0, 100, 1600, 1000));
+        _capturedWindows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>())).Returns(4242u);
         Screenshots = new ScreenshotService(
             TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object,
             monitors.Object,
-            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
+            _capturedWindows.Object,
+            captureRegistry: Captures);
     }
 
     /// <summary>A launch that started a process and, when it waited, found the window.</summary>

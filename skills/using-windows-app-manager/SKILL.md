@@ -61,7 +61,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 3. Act
 
-- **Input:** always with `windowHandle`, or `window` (a selector, resolved to one window and then guarded exactly like `windowHandle`). Click at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, convert it with the capture's `imageToScreen` (see [Coordinates](#coordinates)).
+- **Input:** always with `windowHandle`, or `window` (a selector, resolved to one window and then guarded exactly like `windowHandle`). Click at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, pass it with the capture's `captureId` (`{"x": 392, "y": 196, "captureId": "c7-3fa91c"}`): the server converts it, targets the captured window and refuses a stale capture (see [Coordinates](#coordinates)).
 - **Windows:** the window tools take `window` (a selector) or the exact `handle`, never both (`snap_window`, `set_window_bounds`, `set_window_state`, `move_window_to_monitor`, ...); their result's `handle` is the window they acted on. Close with `close_window`.
 - **Keys:** `type_text` for text, `send_keys` for keys and chords. A chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, the Windows key, Alt+Space) must be the last key of a call (`KeysAfterFocusChange`); better, pass the other window's handle instead of switching.
 
@@ -109,6 +109,7 @@ The condition must hold for `stableMs` (300 by default, which skips splash scree
 - `PausedByUser`: the user paused input with the pause hotkey. Stop and ask the user (see [Safety Rules](#safety-rules-read-first)).
 - `ModifiersHeld`: Shift, Ctrl, Alt or Windows is down (`heldModifiers`), so keys would become shortcuts and clicks Ctrl-clicks. The user may be typing: wait a moment and retry. Pass `releaseHeldModifiers: true` (or call `release_all_input` with it) only when nobody is pressing the key, because it releases the user's key too. While one of the keys is a modifier of the pause hotkey (Ctrl, Alt and Shift by default), the user may be pausing: nothing is released, so wait and ask. With the default hotkey that means only a stuck Windows key can be released for you; a stuck Ctrl, Alt or Shift stays until the user presses and releases it.
 - `PasteNotAllowed`: the keys or the right click (in a terminal, or anywhere in VS Code and the editors built on it) would paste, and the clipboard holds content you did not put there or copy, and that the user did not let you read; or the keys copy and then paste in one call (`^c^v`); or copy keys sent moments ago have not copied yet: retry shortly or call `get_clipboard` first. Put the text there with `set_clipboard` and paste again, or type it with `type_text`; send a copy and its paste in separate calls (see "The clipboard is refused" under Other failure modes).
+- `StaleCapture`: the point came with a `captureId` (or `space` `window`/`client`), and the captured window moved, resized, closed or was minimized since, or the monitors changed; nothing was sent. Capture again and use the new `captureId` with a point from the new image. `CaptureNotFound`: the `captureId` is unknown or older than 10 minutes: capture again.
 - `HandleMismatch`: the `window` selector's window no longer matched it once the call's turn came (another document or tab, a reused handle); nothing was sent. Locate the window again. `InvalidArguments` there means the selector's `titleRegex` took longer than 100 ms on the window's title: use a simpler pattern or `titleContains`.
 - `InputBusy`: another call held the input for 30 seconds. Retry when your other calls have finished. The window tools (`focus_window`, move, resize, state, snap, close, the batches, `close_application`, `apply_layout`, `launch_application`, `kill_process`) and `set_clipboard` return it too, as an error result, when they waited 30 seconds; they did nothing.
 
@@ -125,7 +126,7 @@ The condition must hold for `stableMs` (300 by default, which skips splash scree
 **Other failure modes:**
 
 - **A tool is missing:** the user's toolsets, excluded tools or read-only mode leave it out (see [Toolsets](#toolsets)); `get_server_info` says which. Tell the user instead of working around it.
-- **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`, or `PerMonitor` on Windows before 10 1703), and convert capture points with `imageToScreen`, never with `scaleFactor`.
+- **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`, or `PerMonitor` on Windows before 10 1703), and pass capture points with their `captureId` (or convert them with `imageToScreen`), never with `scaleFactor`.
 - **A capture shows nothing useful:** a minimized window fails with `WindowMinimized` (pass `restoreIfMinimized: true`, which restores it without activation and minimizes it again), a hidden one with `WindowHidden`, one on another virtual desktop with `Cloaked`. Read the capture's `warnings`: `ImageBlank` (one solid color: GPU or protected content, or not painted yet), `WindowNotResponding` (copied from the screen, so covering windows show) or `DpiScaledWindow`.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.
 - **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows shows a consent or security prompt (UAC, SmartScreen): only the user may answer it, so ask the user and never click or type into it. `InvalidUri`: percent-encode quotes and spaces in a URI (`%22`, `%20`). `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
@@ -272,10 +273,10 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `click` | Left click at coordinates, on the named window | x, y, windowHandle |
-| `right_click` | Right click at coordinates | x, y, windowHandle |
-| `double_click` | Double left click | x, y, delayMs, windowHandle |
-| `mouse_move` | Move cursor (no click) | x, y, windowHandle |
+| `click` | Left click at coordinates, on the named window | x, y, windowHandle, captureId (x, y on its image) |
+| `right_click` | Right click at coordinates | x, y, windowHandle, captureId |
+| `double_click` | Double left click | x, y, delayMs, windowHandle, captureId |
+| `mouse_move` | Move cursor (no click) | x, y, windowHandle, captureId |
 | `scroll` | Turn the mouse wheel over the named window | windowHandle, deltaY, deltaX, x, y |
 | `type_text` | Type text into the named window | text, windowHandle, delayMs |
 | `send_keys` | Send keys to the named window | keys (e.g., `^c`, `{ENTER}`), windowHandle |
@@ -328,7 +329,8 @@ All seven also take `allowHostTarget` (default false): only for input to your ow
 - Screen coordinates are physical pixels on the virtual desktop. This covers the `x`/`y` input parameters, window `bounds`, element `bounds` and `screenBounds`, and monitor `bounds`. The server is per-monitor DPI aware (its manifest declares PerMonitorV2; `get_server_info` reports the awareness in force), so do not multiply by `scaleFactor`.
 - The primary monitor's top-left corner is (0, 0). Monitors to the left of or above it have negative coordinates.
 - Monitor indices are 0-based, but index 0 is not always the primary monitor. Use `primaryIndex` from `get_monitors` or `list_screens`.
-- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured and is usually scaled down (to 1568 pixels on the long edge by default). To click a point you see at (ix, iy) in a capture, convert it with the capture's `imageToScreen`:
+- Image pixels are never screen pixels. A capture image starts at the top-left corner of what was captured and is usually scaled down (to 1568 pixels on the long edge by default). To click a point you see at (ix, iy) in a capture, pass it to `click`, `right_click`, `double_click`, `mouse_move` or `scroll` with the capture's `captureId`: `{"x": ix, "y": iy, "captureId": "c7-3fa91c"}`. The server converts it through the capture's `imageToScreen`, uses the captured window as `windowHandle` (do not pass another one), refuses with `StaleCapture` when that window moved since, and returns the screen point as `x`/`y` with your point under `requested`. A `captureId` lasts 10 minutes (the last 32 captures). `space: "window"` or `"client"` with `windowHandle` takes points relative to the window's or its client area's top-left corner.
+- To convert by hand instead, use the capture's `imageToScreen`:
   - `x = imageToScreen.offsetX + ix * imageToScreen.scaleX`
   - `y = imageToScreen.offsetY + iy * imageToScreen.scaleY`
   - Round to whole pixels. The offset is the screen position of the image's top-left pixel (`capturedRegion.x`, `capturedRegion.y`): the monitor's or region's corner, the window's corner, or the client area's corner with `includeFrame: false`. It can be negative.
@@ -338,7 +340,7 @@ All seven also take `allowHostTarget` (default false): only for input to your ow
 
 ## Screenshots
 
-The capture tools return the image as image content, so you see the picture directly, followed by JSON metadata: `width`/`height` of the image, `capturedRegion` (the captured screen rectangle), `imageToScreen` (see Coordinates) and `filePath` when a file was written.
+The capture tools return the image as image content, so you see the picture directly, followed by JSON metadata: `width`/`height` of the image, `capturedRegion` (the captured screen rectangle), `imageToScreen` and `captureId` (see Coordinates) and `filePath` when a file was written. `take_screenshot` with `monitorIndex: -1` captures every monitor in one image.
 
 - Defaults are sized for vision: the long edge is at most 1568 pixels (`maxDimension`; 0 keeps full resolution), and the format is JPEG, or PNG when the image is at most 512 pixels on its long edge. Pass `format: "png"` when exact pixels matter, or capture a small region to read small text.
 - `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` on a drive letter (network paths are refused) ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
@@ -427,7 +429,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 ### See What Is in a Window
 1. **Locate:** `find_windows` for the window
 2. **Act:** `capture_window` with its `handle` (the image comes back as image content), or `capture_with_elements` for element overlays (green for buttons, blue for inputs) with `screenBounds`
-3. For anything you will click, take coordinates from `get_ui_elements` or `screenBounds`, or convert an image point with `imageToScreen`
+3. For anything you will click, take coordinates from `get_ui_elements` or `screenBounds`, or pass an image point with the capture's `captureId`
 
 ### Reach Items Below the Visible Part
 1. **Locate:** `find_windows`, then `get_ui_elements` for the list or pane

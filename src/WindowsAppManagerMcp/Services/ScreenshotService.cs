@@ -69,6 +69,10 @@ public class ScreenshotService : IScreenshotService
     private readonly IWindowCallRunner _windowCalls;
     private readonly TimeSpan _restoreSettleTimeout;
     private readonly TimeSpan _restoreStateTimeout;
+    private readonly ICaptureRegistry? _captureRegistry;
+
+    /// <summary>take_screenshot's monitorIndex for the whole virtual screen: every monitor in one image (roadmap M3.11).</summary>
+    public const int VirtualScreenIndex = -1;
 
     /// <param name="captureWrapper">The pixel capture.</param>
     /// <param name="monitorService">Monitor lookups.</param>
@@ -84,14 +88,20 @@ public class ScreenshotService : IScreenshotService
     /// </param>
     /// <param name="restoreSettleTimeout">How long a restored window may paint; default <see cref="DefaultRestoreSettleTimeout"/>.</param>
     /// <param name="restoreStateTimeout">How long a restore or minimize may take; default <see cref="DefaultRestoreStateTimeout"/>.</param>
+    /// <param name="captureRegistry">
+    /// Where successful captures are registered under their captureId (roadmap M3.11), for the mouse tools' image space.
+    /// Without it captures have no captureId. The server always passes it.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
         INativeWindowWrapper windows,
         IWindowCallRunner? windowCalls = null,
         TimeSpan? restoreSettleTimeout = null,
-        TimeSpan? restoreStateTimeout = null)
+        TimeSpan? restoreStateTimeout = null,
+        ICaptureRegistry? captureRegistry = null)
     {
+        _captureRegistry = captureRegistry;
         _captureWrapper = captureWrapper;
         _monitorService = monitorService;
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
@@ -136,10 +146,16 @@ public class ScreenshotService : IScreenshotService
         Run("monitor", options, request =>
         {
             var monitors = _monitorService.GetAllMonitors();
+            if (monitorIndex == VirtualScreenIndex)
+            {
+                return CaptureVirtualScreen(request, monitors);
+            }
+
             if (monitorIndex < 0 || monitorIndex >= monitors.Count)
             {
                 throw new CaptureException(ScreenshotErrorCode.InvalidMonitorIndex,
-                    $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}");
+                    $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}, or " +
+                    $"{VirtualScreenIndex} for all of them in one image");
             }
 
             var monitor = monitors[monitorIndex];
@@ -147,6 +163,35 @@ public class ScreenshotService : IScreenshotService
             var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
             return Complete(capture, request, monitorIndex, monitor.ScaleFactor, []);
         });
+
+    /// <summary>
+    /// The whole virtual screen, every monitor in one image (roadmap M3.11), within the pixel budget: a larger desktop is
+    /// refused before anything is allocated (CaptureFailed). It has no monitor index or scale factor, and warns when
+    /// monitors of different sizes leave parts of the bounding rectangle on no screen (black in the image).
+    /// </summary>
+    private ScreenCapture<ScreenshotResult> CaptureVirtualScreen(CaptureRequest request, IReadOnlyList<MonitorInfo> monitors)
+    {
+        var screen = _captureWrapper.GetVirtualScreenBounds();
+        if ((long)screen.Width * screen.Height > ScreenCaptureWrapper.MaxCapturePixels ||
+            screen.Width > ScreenCaptureWrapper.MaxCaptureSize || screen.Height > ScreenCaptureWrapper.MaxCaptureSize)
+        {
+            throw new CaptureException(ScreenshotErrorCode.CaptureFailed,
+                $"The virtual screen is {screen.Width}x{screen.Height} pixels, more than one capture may hold " +
+                $"({ScreenCaptureWrapper.MaxCapturePixels / (1024 * 1024)} megapixels, {ScreenCaptureWrapper.MaxCaptureSize} " +
+                "pixels on an edge). Nothing was captured. Capture one monitor at a time with take_screenshot, or parts with capture_region.");
+        }
+
+        var warnings = new List<string>();
+        var region = new Rectangle(screen.X, screen.Y, screen.Width, screen.Height);
+        var capture = _captureWrapper.CaptureScreenRegion(screen.X, screen.Y, screen.Width, screen.Height);
+        if (monitors.Count > 0 && CoveredArea(region, monitors) < (long)region.Width * region.Height)
+        {
+            warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionPartlyOffMonitors,
+                "the monitors do not fill the virtual screen's bounding rectangle; the parts on no monitor are black in the image."));
+        }
+
+        return Complete(capture, request, monitorIndex: null, scaleFactor: null, warnings);
+    }
 
     public ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options) =>
         Run("region", options, request =>
@@ -210,11 +255,12 @@ public class ScreenshotService : IScreenshotService
         Run("window", options, request =>
         {
             ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
             var warnings = new List<string>();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings);
+            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
         });
 
     public ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
@@ -229,6 +275,7 @@ public class ScreenshotService : IScreenshotService
         {
             var request = CaptureRequest.Resolve(options);
             ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
 
             var warnings = new List<string>();
             var captureStopwatch = Stopwatch.StartNew();
@@ -279,6 +326,10 @@ public class ScreenshotService : IScreenshotService
                 CaptureMethod: capture.Method,
                 CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
                 Warnings: warnings.Count > 0 ? warnings : null);
+            metadata = metadata with
+            {
+                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window)
+            };
 
             return new ScreenCapture<AnnotatedScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
         }
@@ -608,12 +659,18 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    private static ScreenCapture<ScreenshotResult> Complete(
+    /// <summary>
+    /// The metadata and image of a successful capture, registered under its captureId. <paramref name="window"/> is the
+    /// captured window as it was before the capture (<see cref="ReadCapturedWindow"/>) when <paramref name="windowCapture"/>.
+    /// </summary>
+    private ScreenCapture<ScreenshotResult> Complete(
         CaptureResult capture,
         CaptureRequest request,
         int? monitorIndex,
         double? scaleFactor,
-        List<string> warnings)
+        List<string> warnings,
+        bool windowCapture = false,
+        CapturedWindow? window = null)
     {
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
@@ -636,8 +693,51 @@ public class ScreenshotService : IScreenshotService
             CaptureMethod: capture.Method,
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
             Warnings: warnings.Count > 0 ? warnings : null);
+        metadata = metadata with
+        {
+            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window)
+        };
 
         return new ScreenCapture<ScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
+    }
+
+    /// <summary>
+    /// The window a capture is of, read right before its pixels (roadmap M3.11), as the wrapper reads the capture's
+    /// origin then: its process and rectangle. Null when the rectangle cannot be read; the capture then gets no
+    /// captureId, because a click could not tell whether the window moved since.
+    /// </summary>
+    private CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
+    {
+        if (_captureRegistry == null || _windows.GetWindowRect(windowHandle) is not { } rect)
+        {
+            return null;
+        }
+
+        return new CapturedWindow((long)windowHandle, (int)_windows.GetWindowThreadProcessId(windowHandle),
+            WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom), includeFrame);
+    }
+
+    /// <summary>
+    /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with the virtual
+    /// screen as it is now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
+    /// capture whose window could not be read.
+    /// </summary>
+    private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
+        CapturedWindow? window)
+    {
+        if (_captureRegistry == null || (windowCapture && window == null))
+        {
+            return null;
+        }
+
+        VirtualScreenBounds? virtualScreen = null;
+        if (!windowCapture)
+        {
+            var screen = _captureWrapper.GetVirtualScreenBounds();
+            virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
+        }
+
+        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen)).CaptureId;
     }
 
     /// <summary>The encoded output image and where it was written.</summary>
