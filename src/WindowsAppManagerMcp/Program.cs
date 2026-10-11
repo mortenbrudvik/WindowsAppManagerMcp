@@ -22,6 +22,10 @@ builder.Logging.AddWindowsAppManagerLogLevels();
 // versioned plugin folder (LayoutStorageOptions.FromEnvironment).
 builder.Services.AddWindowsAppManagerServices();
 
+// The toolsets, excluded tools and read-only mode the user chose (WAM_TOOLSETS, WAM_EXCLUDE_TOOLS, WAM_READ_ONLY),
+// read before the tool registrations; ServerStartupLog logs them and what they leave out
+var toolsets = ToolsetSelection.FromEnvironment();
+
 // Configure MCP Server
 builder.Services.AddMcpServer(options =>
 {
@@ -32,8 +36,8 @@ builder.Services.AddMcpServer(options =>
     };
 })
 .WithStdioServerTransport()
-// The tool error filter (ToolErrorReporting) and every tool
-.AddWindowsAppManagerTools();
+// The tool error filter (ToolErrorReporting), the input gate and the tools the toolsets serve
+.AddWindowsAppManagerTools(toolsets);
 
 var app = builder.Build();
 

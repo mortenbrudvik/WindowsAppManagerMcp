@@ -117,6 +117,57 @@ A client that sends a progress token with the call (`_meta.progressToken`) gets 
 
 ---
 
+## Toolsets
+
+Every tool the server serves sits in the agent's context on every turn, and a long tool list makes the choice of tool less reliable. The user decides which tools the server serves with three environment variables, read when the server starts; no tool argument changes them. A tool that is not served is missing from tools/list, and a call to it fails as an unknown tool, so nothing runs. [get_server_info](#get_server_info) reports the toolsets in force, and the server logs them, and every entry it ignored, to stderr when it starts.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `WAM_TOOLSETS` | not set: the toolsets that are on by default | The toolsets to serve, separated by commas, semicolons or spaces, in any case. `default` stands for the toolsets that are on by default and `all` for every toolset. `+name` adds a toolset and `-name` removes one; with only such entries they change the default (`-browser`, `+ocr`). The `server` toolset is always served. A name that is not a toolset is ignored and logged; when no valid toolset is left, the default toolsets stay on |
+| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, whatever their toolset, for example `kill_process,close_windows_batch`. A name that is not a tool is ignored and logged |
+| `WAM_READ_ONLY` | not set (off) | `1` (or `true`, `yes`, `on`) serves only the tools annotated read-only: `readOnlyHint: true` in tools/list, from `ReadOnly = true` on the tool's `[McpServerTool]`, within the toolsets above. `0`, `false`, `no`, `off` or empty: off. Any other value turns it on, to be safe, and is logged |
+
+<!-- tools:begin toolsets (generated from Toolsets.Server: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
+| Toolset | Default | What it covers | Tools |
+|---------|---------|----------------|-------|
+| `server` | always on | The server's state and the user's control over it: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
+| `windows` | on | Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch) |
+| `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
+| `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
+| `elements` | on | UI Automation: element trees, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
+| `input` | on | Guarded mouse and keyboard input to a named window. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [type_text](#type_text), [send_keys](#send_keys) |
+| `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
+| `process` | on | List processes and close or end one. | [list_processes](#list_processes), [kill_process](#kill_process) |
+| `layouts` | on | Save, apply and manage window layout presets. | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) |
+| `browser` | on | Read the URL and text of browser pages; start a browser with a DevTools port. | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) |
+<!-- tools:end toolsets -->
+
+**The default.** Every toolset of today's tools is on by default, so a server without these variables serves every tool. The tools that later milestones add for OCR, visual change detection, browser actions, layouts v2 and workspaces come in toolsets that are off by default (`ocr`, `visual`, `browser-actions`, `layouts-v2`, `workspace`), so the default stays a core of finding, acting, waiting, windows, captures, guarded input, launching and the server's state; `WAM_TOOLSETS=all` serves everything.
+
+**Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts and the server's own state. The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes layouts. Which tool counts as read-only is the tool's own annotation, and a contract test checks that every tool annotated read-only is one the input gate also treats as read-only.
+
+**Profiles.** Set the variables in the `env` block of the server's entry in the MCP client's configuration: `claude_desktop_config.json` for Claude Desktop, `claude mcp add ... -e WAM_READ_ONLY=1` for a server you add to Claude Code yourself, or the `mcpServers` entry of a plugin's `.claude-plugin/plugin.json` (a plugin you install is replaced on update, so set them in your own copy or fork). For example:
+
+```json
+{
+  "mcpServers": {
+    "windows-app-manager": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/WindowsAppManagerMcp.exe",
+      "env": { "WAM_READ_ONLY": "1" }
+    }
+  }
+}
+```
+
+| Profile | `env` | What the agent can do |
+|---------|-------|------------------------|
+| Observer | `"WAM_READ_ONLY": "1"` | Look only: list and read windows, monitors, elements, pages, processes and layouts. No input, no window changes, no captures |
+| Arranger | `"WAM_TOOLSETS": "windows,monitors,layouts,launch"` | Find, arrange, launch and close windows and use layouts; no input, captures, processes or browser |
+| No process control | `"WAM_TOOLSETS": "-process"` | Everything except listing and ending processes |
+| Everything | not set, or `"WAM_TOOLSETS": "all"` | Every tool, including the opt-in toolsets of later milestones |
+
+---
+
 ## Window Discovery
 
 Tools for finding and listing windows on the system.

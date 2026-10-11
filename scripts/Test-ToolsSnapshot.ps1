@@ -115,6 +115,10 @@ $startInfo.RedirectStandardInput = $true
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
 $startInfo.Environment['WAM_PAUSE_HOTKEY'] = 'none' # no global hotkey for a server that only lists its tools
+# The snapshot is the whole tool surface: every toolset, nothing excluded, not read-only, whatever the caller's settings
+$startInfo.Environment['WAM_TOOLSETS'] = 'all'
+[void]$startInfo.Environment.Remove('WAM_EXCLUDE_TOOLS')
+[void]$startInfo.Environment.Remove('WAM_READ_ONLY')
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 $startInfo.StandardInputEncoding = $utf8
 $startInfo.StandardOutputEncoding = $utf8

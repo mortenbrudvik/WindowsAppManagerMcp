@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
@@ -23,9 +24,9 @@ public sealed record GeneratedDoc(string Name, string[] RelativePath)
 /// </summary>
 /// <remarks>
 /// Region ids: README.md has <c>tool-table</c> (heading with the tool count, and the category table); docs/TOOLS.md
-/// has <c>summary</c> (introduction with the count, and the quick reference) and <c>params:TOOL</c> in each tool's
-/// section; SKILL.md has <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole
-/// "Available Tools" section).
+/// has <c>summary</c> (introduction with the count, and the quick reference), <c>toolsets</c> (the toolsets of
+/// <see cref="Toolsets.Server"/>, roadmap M2.14) and <c>params:TOOL</c> in each tool's section; SKILL.md has
+/// <c>count</c> (the sentence with the tool count) and <c>tool-tables</c> (the whole "Available Tools" section).
 /// <para>
 /// A <c>params:TOOL</c> region is the tool's parameter table, and a field table for each parameter that is an
 /// array of objects. Names, order, types, required flags and defaults come from the tool's inputSchema. The
@@ -68,7 +69,7 @@ public static partial class ToolDocGenerator
 
         if (doc == ToolsReference)
         {
-            return ["summary", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name))];
+            return ["summary", "toolsets", .. ToolDocCatalog.AllTools.Select(t => ParamsRegionId(t.Name))];
         }
 
         throw new ArgumentException($"Unknown generated doc {doc}.", nameof(doc));
@@ -87,6 +88,7 @@ public static partial class ToolDocGenerator
         {
             ("README.md", "tool-table") => ReadmeToolTable(count),
             ("docs/TOOLS.md", "summary") => ToolsSummary(count),
+            ("docs/TOOLS.md", "toolsets") => ToolsetsTable(Toolsets.Server),
             ("docs/TOOLS.md", _) when id.StartsWith(ParamsPrefix, StringComparison.Ordinal) =>
                 ParameterTables(ToolSurface.Tool(tools, id[ParamsPrefix.Length..]), current),
             ("SKILL.md", "count") =>
@@ -123,6 +125,20 @@ public static partial class ToolDocGenerator
         };
         lines.AddRange(ToolDocCatalog.Categories.Select(c =>
             $"| [{c.Name}](#{c.Anchor}) | {string.Join(", ", c.Tools.Select(t => $"[{t.Name}](#{t.Name})"))} | {c.Tools.Count} |"));
+        return string.Join('\n', lines);
+    }
+
+    /// <summary>The toolsets of <paramref name="catalog"/>: whether each is on by default, what it covers and its tools.</summary>
+    public static string ToolsetsTable(ToolsetCatalog catalog)
+    {
+        var lines = new List<string>
+        {
+            "| Toolset | Default | What it covers | Tools |",
+            "|---------|---------|----------------|-------|"
+        };
+        lines.AddRange(catalog.Toolsets.Select(t =>
+            $"| `{t.Name}` | {(t.Name == catalog.AlwaysOn ? "always on" : t.OnByDefault ? "on" : "off")} | {Cell(t.Description)} | " +
+            $"{string.Join(", ", t.Tools.Select(tool => $"[{tool}](#{tool})"))} |"));
         return string.Join('\n', lines);
     }
 

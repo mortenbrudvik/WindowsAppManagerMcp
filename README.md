@@ -122,9 +122,13 @@ server configuration). No tool argument can change them.
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only apps the agent may act on; the deny list still wins |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
+| `WAM_TOOLSETS` | the default toolsets (today: all) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served |
+| `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process` |
+| `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, window changes, captures or process control) |
 
-The server logs the deny list, the allow list and the chords in force to stderr when it starts. The test
-opt-ins `WAM_ALLOW_DESKTOP_TESTS` and `WAM_ALLOW_DESKTOP_NOINPUT_TESTS` are described under [Testing](#testing).
+The server logs the deny list, the allow list, the chords and the toolsets in force to stderr when it starts,
+with a warning for every entry it ignored. The test opt-ins `WAM_ALLOW_DESKTOP_TESTS` and
+`WAM_ALLOW_DESKTOP_NOINPUT_TESTS` are described under [Testing](#testing).
 
 ## Usage Examples
 

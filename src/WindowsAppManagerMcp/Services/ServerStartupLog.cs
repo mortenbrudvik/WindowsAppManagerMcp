@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -7,11 +10,16 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// Logs once, when the server starts, what decides whether its answers mean what an agent expects: the server's and
-/// the MCP SDK's versions and the DPI awareness in force. The awareness comes from the app manifest (per-monitor v2);
-/// anything else means window, element and click coordinates can be scaled on monitors above 100%, so it is a warning.
-/// get_server_info reports the same, on request.
+/// the MCP SDK's versions, the DPI awareness in force, and which tools it serves. The awareness comes from the app
+/// manifest (per-monitor v2); anything else means window, element and click coordinates can be scaled on monitors above
+/// 100%, so it is a warning. So is every toolset entry that was ignored (a typo in WAM_TOOLSETS would otherwise only
+/// show as missing tools). get_server_info reports the same, on request.
 /// </summary>
-public sealed class ServerStartupLog(INativeSystemInfoWrapper system, ILogger<ServerStartupLog>? logger = null) : IHostedService
+public sealed class ServerStartupLog(
+    INativeSystemInfoWrapper system,
+    ToolsetSelection? toolsets = null,
+    IOptions<McpServerOptions>? serverOptions = null,
+    ILogger<ServerStartupLog>? logger = null) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -29,8 +37,38 @@ public sealed class ServerStartupLog(INativeSystemInfoWrapper system, ILogger<Se
                 awareness);
         }
 
+        if (toolsets != null)
+        {
+            LogToolsets(toolsets, serverOptions?.Value.ToolCollection?.Count ?? 0);
+        }
+
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private void LogToolsets(ToolsetSelection selection, int served)
+    {
+        logger?.LogInformation(
+            "Serving {Served} tools: toolsets {Enabled} (from {Source}); not served: {Disabled}; read-only mode {ReadOnly}; " +
+            "excluded tools: {Excluded}",
+            served,
+            string.Join(", ", selection.Enabled),
+            selection.Source,
+            selection.Disabled.Count == 0 ? "none" : string.Join(", ", selection.Disabled),
+            selection.ReadOnly ? $"on ({ToolsetSelection.ReadOnlyVariable}: only tools annotated read-only)" : "off",
+            selection.ExcludedTools.Count == 0 ? "none" : string.Join(", ", selection.ExcludedTools));
+
+        foreach (var warning in selection.Warnings)
+        {
+            logger?.LogWarning("{ToolsetWarning}", warning);
+        }
+
+        if (served == 0)
+        {
+            logger?.LogWarning(
+                "No tool is served: the toolsets ({Toolsets}), {ExcludeVariable} and {ReadOnlyVariable} leave out every tool",
+                ToolsetSelection.ToolsetsVariable, ToolsetSelection.ExcludeToolsVariable, ToolsetSelection.ReadOnlyVariable);
+        }
+    }
 }

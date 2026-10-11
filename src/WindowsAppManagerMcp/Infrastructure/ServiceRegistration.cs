@@ -137,9 +137,16 @@ public static class ServiceRegistration
     }
 
     /// <summary>
-    /// Registers the tool error filter and every tool of the server with the MCP server.
+    /// Registers the call filters and the server's tools with the MCP server, and serves the ones
+    /// <paramref name="toolsets"/> chooses (roadmap M2.14).
     /// </summary>
-    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder)
+    /// <param name="builder">The MCP server builder.</param>
+    /// <param name="toolsets">
+    /// The toolsets, excluded tools and read-only mode; Program.cs reads them from the environment
+    /// (<see cref="ToolsetSelection.FromEnvironment()"/>). Null serves every tool (<see cref="ToolsetSelection.All"/>),
+    /// the whole surface the tests and the tools/list snapshot check.
+    /// </param>
+    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder, ToolsetSelection? toolsets = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
@@ -163,6 +170,8 @@ public static class ServiceRegistration
             .WithTools<ScreenshotTools>()
             .WithTools<UIElementTools>()
             .WithTools<InputSimulationTools>()
-            .WithTools<InputControlTools>();
+            .WithTools<InputControlTools>()
+            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
+            .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
 }
