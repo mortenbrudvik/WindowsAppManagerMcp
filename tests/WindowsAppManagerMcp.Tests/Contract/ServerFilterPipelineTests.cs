@@ -9,8 +9,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
 /// Contract: the server's call-tool pipeline as <see cref="ServiceRegistration.AddWindowsAppManagerTools"/> builds it.
-/// The tool error filter is the outermost filter, so its call log covers what the input gate filter does: a call
-/// the gate filter refuses while input is paused, and the wait for the gate. Runs a real MCP client and server
+/// The tool error filter runs outside the input gate filter (only the audit log's filter is further out), so its
+/// call log covers what the input gate filter does: a call the gate filter refuses while input is paused, and the
+/// wait for the gate. Runs a real MCP client and server
 /// in-process; the window tools the server registers are never run (they are refused while paused), and the only
 /// tool that runs is a fake.
 /// </summary>

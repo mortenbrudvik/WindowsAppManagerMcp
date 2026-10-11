@@ -216,7 +216,8 @@ public class EveryToolContractTests
         }
     }
 
-    private static IReadOnlyDictionary<string, object?> ArgumentsFor(string tool) =>
+    /// <summary>The arguments of a tool's typical call, shared with the audit log tests.</summary>
+    public static IReadOnlyDictionary<string, object?> ArgumentsFor(string tool) =>
         Arguments.TryGetValue(tool, out var arguments)
             ? arguments
             : throw new KeyNotFoundException($"No contract-run arguments for '{tool}'. Add typical arguments to {nameof(EveryToolContractTests)}.{nameof(Arguments)}.");

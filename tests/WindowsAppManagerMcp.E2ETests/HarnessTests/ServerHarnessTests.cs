@@ -206,6 +206,24 @@ public class ServerHarnessTests : IDisposable
     [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
+    public void TheAuditLog_WritesInsideTheHarnesssTemporaryFolder_NeverTheUsersOwn(DesktopTier tier)
+    {
+        // Arrange
+        using var provider = CreateServicesWithMockedWrappers(tier).BuildServiceProvider();
+
+        // Act - creating the log touches no file
+        var audit = provider.GetRequiredService<IAuditLog>();
+
+        // Assert - Dispose deletes the layouts folder, and the audit folder with it
+        audit.Folder.Should().Be(ServerHarness.AuditFolderFor(_layoutsPath));
+        audit.Folder.Should().StartWith(_layoutsPath + Path.DirectorySeparatorChar);
+        _layoutsPath.Should().StartWith(Path.GetTempPath());
+        Directory.Exists(audit.Folder).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
     public void Create_WhenTheTierIsNotOptedIn_Refuses(DesktopTier tier)
     {
         var act = () => ServerHarness.Create(tier, FixturePid, new FakeDesktop(), _ => null);
