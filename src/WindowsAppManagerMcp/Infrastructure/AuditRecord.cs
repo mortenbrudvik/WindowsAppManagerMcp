@@ -21,7 +21,7 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// launch is kept as a path or as a URL's scheme and host (<see cref="RedactExecutable"/>), and any other value is
 /// recorded as its length (<c>&lt;name&gt;Length</c>) or count (<c>&lt;name&gt;Count</c>). So typed text, keys,
 /// clipboard text, URL paths and queries, working directories and command-line arguments never reach the file. Of the
-/// result, only the numbers and booleans at its top level, its errorCode, the receiving window and a batch's items are
+/// result, only the numbers and booleans at its top level, its errorCode, get_clipboard's origin, the receiving window and a batch's items are
 /// kept; never its text.
 /// </remarks>
 public static class AuditRecord
@@ -38,8 +38,11 @@ public static class AuditRecord
     /// </summary>
     public static IReadOnlySet<string> NamedStringArguments { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position"
+        "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position", "format"
     };
+
+    /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
+    private const string ClipboardOriginProperty = "origin";
 
     /// <summary>The key under which the arguments a tool does not declare are counted.</summary>
     public const string UnknownArgumentsCount = "unknownArgumentsCount";
@@ -392,6 +395,13 @@ public static class AuditRecord
     private static JsonObject? Scalars(JsonObject body)
     {
         var scalars = new JsonObject();
+
+        // get_clipboard's origin (user, setClipboard, agentInput): whose clipboard content the agent read, never the content
+        if (Identifier(body, ClipboardOriginProperty) is { } origin)
+        {
+            scalars[ClipboardOriginProperty] = origin;
+        }
+
         foreach (var (name, value) in body)
         {
             if (name != ToolOutcome.SuccessProperty && value is JsonValue &&

@@ -347,5 +347,13 @@ public enum InputErrorCode
     /// (the "Scroll inactive windows when I hover over them" setting is off, or its value cannot be read), and the
     /// window at the point is not the foreground window, so the wheel would scroll another window. Nothing was sent.
     /// </summary>
-    WheelFollowsFocus = 42
+    WheelFollowsFocus = 42,
+
+    /// <summary>
+    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
+    /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
+    /// private, or clipboard history; or the clipboard could not be checked. A paste followed by a read would disclose it.
+    /// Nothing (more) was sent.
+    /// </summary>
+    PasteNotAllowed = 43
 }

@@ -122,7 +122,7 @@ public sealed record ServerPathsInfo(string Layouts, string? AuditLog = null);
 /// <summary>The tools the server serves (WAM_TOOLSETS, WAM_EXCLUDE_TOOLS, WAM_READ_ONLY).</summary>
 /// <param name="Enabled">The toolsets served.</param>
 /// <param name="Disabled">The toolsets not served; WAM_TOOLSETS turns them on.</param>
-/// <param name="Source">"default", WAM_TOOLSETS, or "all".</param>
+/// <param name="Source">"default", WAM_TOOLSETS, WAM_EXCLUDE_TOOLS (an entry it could not read left only the server toolset on), or "all".</param>
 /// <param name="ReadOnly">True when only tools annotated read-only are served.</param>
 /// <param name="ExcludedTools">Tools WAM_EXCLUDE_TOOLS leaves out.</param>
 /// <param name="ServedTools">How many tools tools/list lists.</param>

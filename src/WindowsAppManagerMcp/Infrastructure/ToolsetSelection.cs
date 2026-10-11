@@ -7,15 +7,16 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// for the toolsets that are on by default and <c>all</c> for every toolset. <c>+name</c> adds a toolset and <c>-name</c>
 /// removes one; with only such entries they change the default (<c>-browser,-process</c>). Not set: the default
 /// toolsets. The always-on toolset is always served.</item>
-/// <item><see cref="ExcludeToolsVariable"/>: tools to leave out, whatever their toolset; the catalog's always-served
-/// tool (get_server_info) stays.</item>
+/// <item><see cref="ExcludeToolsVariable"/>: tools to leave out, whatever their toolset, by tool name or by toolset name
+/// (every tool of that toolset); the catalog's always-served tool (get_server_info) stays.</item>
 /// <item><see cref="ReadOnlyVariable"/>: <c>1</c> serves only the tools whose [McpServerTool] sets ReadOnly = true (their
 /// tools/list annotation readOnlyHint).</item>
 /// </list>
 /// A name that is not a toolset or tool is ignored with a warning (logged at start, reported by get_server_info), as long
 /// as ignoring it serves fewer tools, not more. The variables exist to restrict the server, so a value that cannot be
 /// read fails closed: when a <c>-name</c> of <see cref="ToolsetsVariable"/> names no toolset (the user meant to remove
-/// one), or a plain name names none and no other plain name is valid (the user meant to replace the default), only the
+/// one), or a plain name names none and no other plain name is valid (the user meant to replace the default), or an entry
+/// of <see cref="ExcludeToolsVariable"/> names no tool or toolset (the user meant to remove something), only the
 /// always-on toolset is served. An unknown <c>+name</c> is ignored: it only asked for more. The agent can still call get_server_info, whose
 /// warnings say what was wrong, and tell the user; a server that refused to start would only show the client a failed
 /// connection, with the reason on a stderr the user may never see.
@@ -67,7 +68,10 @@ public sealed class ToolsetSelection
     /// <summary>The toolsets that are not served, in catalog order.</summary>
     public IReadOnlyList<string> Disabled { get; }
 
-    /// <summary>"default" (<see cref="ToolsetsVariable"/> not set), <see cref="ToolsetsVariable"/>, or "all" (<see cref="All"/>).</summary>
+    /// <summary>
+    /// "default" (<see cref="ToolsetsVariable"/> not set), <see cref="ToolsetsVariable"/>, <see cref="ExcludeToolsVariable"/>
+    /// (an entry it could not read left only the always-on toolset on), or "all" (<see cref="All"/>).
+    /// </summary>
     public string Source { get; }
 
     /// <summary>The tools <see cref="ExcludeToolsVariable"/> leaves out, as the catalog names them.</summary>
@@ -134,7 +138,16 @@ public sealed class ToolsetSelection
 
         var warnings = new List<string>();
         var (enabled, source) = ReadToolsets(environment(ToolsetsVariable), catalog, warnings);
-        var excluded = ReadExcludedTools(environment(ExcludeToolsVariable), catalog, warnings);
+        var (excluded, unreadable) = ReadExcludedTools(environment(ExcludeToolsVariable), catalog, warnings);
+        if (unreadable.Count > 0)
+        {
+            // Fail closed, as for an unknown -name of WAM_TOOLSETS: the entry was meant to remove a tool or toolset
+            warnings.Add($"{ExcludeToolsVariable}: ignoring {string.Join(", ", unreadable.Select(e => $"'{e}'"))} could serve tools " +
+                         $"the user meant to turn off, so only the '{catalog.AlwaysOn}' toolset is on, to be safe. Correct the " +
+                         "value to serve more tools.");
+            (enabled, source) = (new[] { catalog.AlwaysOn }, ExcludeToolsVariable);
+        }
+
         var readOnly = ReadReadOnly(environment(ReadOnlyVariable), warnings);
         return new ToolsetSelection(catalog, enabled, source, excluded, readOnly, warnings);
     }
@@ -225,27 +238,41 @@ public sealed class ToolsetSelection
         return (start.Concat(added).Except(removed, StringComparer.OrdinalIgnoreCase).ToList(), ToolsetsVariable);
     }
 
-    private static List<string> ReadExcludedTools(string? value, ToolsetCatalog catalog, List<string> warnings)
+    /// <summary>
+    /// The tools <see cref="ExcludeToolsVariable"/> leaves out: each entry is a tool name, or a toolset name that stands for
+    /// every tool of that toolset. Also the entries that name neither (<c>Unreadable</c>), which make the selection fail
+    /// closed.
+    /// </summary>
+    private static (List<string> Excluded, List<string> Unreadable) ReadExcludedTools(string? value, ToolsetCatalog catalog, List<string> warnings)
     {
         var excluded = new List<string>();
+        var unreadable = new List<string>();
         foreach (var entry in Split(value))
         {
             var tool = catalog.ToolNames.FirstOrDefault(name => string.Equals(name, entry, StringComparison.OrdinalIgnoreCase));
-            if (tool == null)
+            IReadOnlyList<string>? tools = tool != null ? [tool] : catalog.Find(entry)?.Tools;
+            if (tools == null)
             {
-                warnings.Add($"{ExcludeToolsVariable}: '{entry}' is not a tool of this server and is ignored.");
+                warnings.Add($"{ExcludeToolsVariable}: '{entry}' is not a tool or toolset of this server. The toolsets are " +
+                             $"{string.Join(", ", catalog.Toolsets.Select(t => t.Name).Order(StringComparer.Ordinal))}.");
+                unreadable.Add(entry);
+                continue;
             }
-            else if (string.Equals(tool, catalog.AlwaysServedTool, StringComparison.Ordinal))
+
+            foreach (var name in tools)
             {
-                warnings.Add($"{ExcludeToolsVariable}: '{tool}' is always served (it tells the agent which tools are off) and is not excluded.");
-            }
-            else if (!excluded.Contains(tool, StringComparer.Ordinal))
-            {
-                excluded.Add(tool);
+                if (string.Equals(name, catalog.AlwaysServedTool, StringComparison.Ordinal))
+                {
+                    warnings.Add($"{ExcludeToolsVariable}: '{name}' is always served (it tells the agent which tools are off) and is not excluded.");
+                }
+                else if (!excluded.Contains(name, StringComparer.Ordinal))
+                {
+                    excluded.Add(name);
+                }
             }
         }
 
-        return excluded;
+        return (excluded, unreadable);
     }
 
     private static bool ReadReadOnly(string? value, List<string> warnings)

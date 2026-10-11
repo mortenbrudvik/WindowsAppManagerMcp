@@ -127,10 +127,14 @@ public static class ServiceRegistration
 
         // The clipboard (roadmap M2.16): get_clipboard returns only what the agent put there unless the user allows more
         // (WAM_ALLOW_USER_CLIPBOARD, or a yes when asked); the input service tells the origin about the agent's copies
+        // (and the window they went to, which must be in front when the copy happens), and pastes only what
+        // get_clipboard would return (the paste guard)
         services.AddSingleton<INativeClipboardWrapper, NativeClipboardWrapper>();
-        services.AddSingleton<IClipboardOrigin, ClipboardOrigin>();
+        services.AddSingleton<IClipboardOrigin>(sp => new ClipboardOrigin(
+            sp.GetRequiredService<INativeClipboardWrapper>(), windows: sp.GetRequiredService<INativeWindowWrapper>()));
         services.AddSingleton(_ => ClipboardOptions.FromEnvironment());
         services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<IClipboardPasteGuard, ClipboardPasteGuard>();
 
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();

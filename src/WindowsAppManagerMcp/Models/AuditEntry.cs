@@ -26,7 +26,7 @@ namespace WindowsAppManagerMcp.Models;
 /// The arguments the tool declares: numbers and booleans where it declares them, named strings, and every other value as
 /// its length or count; undeclared arguments only as unknownArgumentsCount.
 /// </param>
-/// <param name="Result">The numbers and booleans of the result, such as charactersTyped or windowsArranged.</param>
+/// <param name="Result">The numbers and booleans of the result, such as charactersTyped or windowsArranged, and get_clipboard's origin.</param>
 /// <param name="ServerPid">The server's process ID: several servers can write the same day's file.</param>
 /// <param name="RequestId">The JSON-RPC request ID, as the server's stderr call log names it.</param>
 public sealed record AuditEntry(

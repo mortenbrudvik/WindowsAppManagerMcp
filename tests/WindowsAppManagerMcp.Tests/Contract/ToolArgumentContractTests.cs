@@ -219,6 +219,39 @@ public sealed class ToolArgumentContractTests : IDisposable
         payload.GetProperty("error").GetString().Should().Contain(message);
     }
 
+    [Theory]
+    [InlineData("""{ "url": "--remote-allow-origins=*" }""", "url")]
+    [InlineData("""{ "url": "  --utility-cmd-prefix=calc.exe" }""", "url")]
+    [InlineData("""{ "url": "/gpu-launcher=calc.exe" }""", "url")]
+    [InlineData("""{ "url": "-incognito" }""", "url")]
+    [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Google/Chrome/User Data" }""", "User Data")]
+    [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/Microsoft/Edge/User Data/Default" }""", "User Data")]
+    [InlineData("""{ "userDataDir": "C:/Users/someone/AppData/Local/BraveSoftware/Brave-Browser/user data/" }""", "User Data")]
+    public async Task LaunchBrowserWithDebug_RefusesASwitchAsUrl_AndARealProfile_AndLaunchesNothing(string arguments, string message)
+    {
+        // Review MCP-S-1: a url that Chromium reads as a switch is a command-line switch of the agent's choosing, and the
+        // open debug port on the user's real profile would hand its signed-in sessions to any local program
+        var result = await CallAsync("launch_browser_with_debug", arguments);
+
+        result.IsError.Should().BeTrue();
+        var payload = Payload(result);
+        payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        payload.GetProperty("error").GetString().Should().Contain(message).And.Contain("Nothing was launched");
+        _services.Processes.Verify(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(),
+            It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("""{ "url": "https://example.com/?q=--flag" }""")]
+    [InlineData("""{ "url": "example.com" }""")]
+    [InlineData("""{ "userDataDir": "C:/Temp/debug-profile" }""")]
+    public async Task LaunchBrowserWithDebug_TakesUrlsAndASeparateProfile(string arguments)
+    {
+        var result = await CallAsync("launch_browser_with_debug", arguments);
+
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+    }
+
     [Fact]
     public async Task SnapWindow_OnAMonitorThatDoesNotExist_ReportsInvalidMonitorIndex()
     {

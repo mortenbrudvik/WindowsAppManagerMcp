@@ -378,4 +378,359 @@ public class ClipboardOriginTests
     }
 
     #endregion
+
+    #region Harmless input does not keep the window open (review PRIVA-2)
+
+    [Fact]
+    public void RepeatedCopyKeysThatCopyNothing_DoNotMoveTheWindowsStart()
+    {
+        // Arrange - empty ^c every 4 s: each lands inside the window the first one opened
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(4));
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(2));
+
+        // Act - 6 s after the first keys, 2 s after the last, the user copies in the same app
+        AppCopies("hunter2");
+
+        // Assert
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    [Fact]
+    public void ClicksEvery1_9Seconds_DoNotKeepTheWindowOpen()
+    {
+        // Arrange - a click every 1.9 s for 19 s; none copies
+        for (var i = 0; i < 10; i++)
+        {
+            ClickSent();
+            _clock.Advance(TimeSpan.FromSeconds(1.9));
+            _sut.Poll();
+        }
+
+        // Act - the user copies in the same app, 0.1 s before the next click would come
+        AppCopies("hunter2");
+
+        // Assert
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    [Fact]
+    public void ClicksRightAfterAnEmptyClickWindow_OpenNoNewWindow_UntilTheAgentStopsClicking()
+    {
+        // Arrange - the first click's window passes without a copy; the agent keeps clicking
+        ClickSent();
+        _clock.Advance(ClipboardOrigin.ClickWindow - TimeSpan.FromMilliseconds(100));
+        ClickSent();
+        _clock.Advance(TimeSpan.FromMilliseconds(200));
+        _sut.Poll();
+        ClickSent();
+        AppCopies("hunter2");
+
+        // Assert - not the agent's: the click came within the cool-down
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+
+        // Act - once the agent has not clicked for the click window, a click opens one again
+        _clock.Advance(ClipboardOrigin.ClickWindow + TimeSpan.FromMilliseconds(100));
+        ClickSent();
+        AppCopies("the selection");
+        _sut.Classify(102).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void CopyKeysEvery5_1Seconds_OpenNoWindowAfterTheSecondEmptyOne()
+    {
+        // Arrange - ^c every 5.1 s: every new window would start just as the last one ends. A retry after the first empty
+        // window still opens one (the agent fixed the selection); after the second, the quiet time has doubled
+        for (var i = 0; i < 3; i++)
+        {
+            CopyKeysSent();
+            _clock.Advance(TimeSpan.FromSeconds(5.1));
+        }
+
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act
+        AppCopies("hunter2");
+
+        // Assert
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+        _sut.IsCopyPending(101).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ARetryOfCopyKeysAfterOneEmptyWindow_StillCounts()
+    {
+        CopyKeysSent();
+        _clock.Advance(CopyKeysWindowAndABit);
+        _sut.Poll();
+
+        CopyKeysSent();
+        AppCopies("the selection");
+
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void ACopy_ClearsTheEmptyWindowsBefore()
+    {
+        // Arrange - two empty windows, then a copy (after the quiet time)
+        CopyKeysSent();
+        _clock.Advance(CopyKeysWindowAndABit);
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(10.5));
+        CopyKeysSent();
+        AppCopies("the selection");
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act - copy keys right after the copy settled
+        CopyKeysSent();
+        AppCopies("the next selection");
+
+        // Assert
+        _sut.Classify(102).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    private static TimeSpan CopyKeysWindowAndABit => ClipboardOrigin.CopyKeysWindow + TimeSpan.FromMilliseconds(100);
+
+    [Fact]
+    public void CopyKeysAfterEmptyClicks_StillOpenAWindow()
+    {
+        // Arrange - the agent clicks to place the cursor and Shift-clicks to select; then it copies
+        ClickSent();
+        _clock.Advance(TimeSpan.FromSeconds(1.5));
+        ClickSent();
+        _clock.Advance(TimeSpan.FromSeconds(1.5));
+        _sut.Poll();
+
+        // Act
+        CopyKeysSent();
+        AppCopies("the selection");
+
+        // Assert
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void CopyKeysAfterAClick_InOneRun_HaveTheCopyKeysWindow_FromTheRunsStart()
+    {
+        // A selection click, then ^c a second later: the app has until 5 s after the click
+        ClickSent();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(3.5));
+        AppCopies("the selection");
+
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void ACopyRunLastsAtMostTheCopyKeysWindow_WhateverInputJoinsIt()
+    {
+        ClickSent();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(3.5));
+        CopyKeysSent();
+        _clock.Advance(TimeSpan.FromSeconds(1));
+
+        AppCopies("hunter2");
+
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent, "5.5 s after the run's first input");
+    }
+
+    #endregion
+
+    #region The window the input went to must be in front (review PRIVA-2)
+
+    private static readonly nint AgentWindow = 0x1000, UserWindow = 0x2000, MenuPopup = 0x3000;
+
+    private sealed class Desktop
+    {
+        public Desktop()
+        {
+            Mock.Setup(w => w.GetForegroundWindow()).Returns(() => Foreground);
+            Mock.Setup(w => w.GetAncestor(It.IsAny<nint>(), It.IsAny<WindowAncestor>())).Returns((nint h, WindowAncestor _) => h);
+            Mock.Setup(w => w.GetWindow(It.IsAny<nint>(), It.IsAny<uint>()))
+                .Returns((nint h, uint command) => command == 4 && Owners.TryGetValue(h, out var owner) ? owner : 0);
+            Mock.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns((nint h) => !Closed.Contains(h));
+            Mock.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns((nint h) => !Closed.Contains(h));
+        }
+
+        public nint Foreground { get; set; } = AgentWindow;
+
+        public Dictionary<nint, nint> Owners { get; } = [];
+
+        public HashSet<nint> Closed { get; } = [];
+
+        public Mock<INativeWindowWrapper> Mock { get; } = new();
+    }
+
+    private (ClipboardOrigin Origin, Desktop Desktop) WithWindows()
+    {
+        var desktop = new Desktop();
+        return (new ClipboardOrigin(_clipboard, _clock, Timeout.InfiniteTimeSpan, desktop.Mock.Object), desktop);
+    }
+
+    private static void Sent(ClipboardOrigin origin, string keys, nint receiving, nint anchor = 0) =>
+        origin.InputSent(origin.BeforeInput(SendKeysParser.Parse(keys), AppProcessId, receiving, anchor)!);
+
+    [Fact]
+    public void ACopyWhileTheWindowTheKeysWentToIsInFront_IsTheAgents()
+    {
+        var (origin, _) = WithWindows();
+        Sent(origin, "^c", AgentWindow);
+
+        AppCopies("the selection");
+
+        origin.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void ACopyInAnotherWindowOfTheSameApp_IsNotTheAgents_AndEndsTheWindow()
+    {
+        // Arrange - the agent's ^c in its browser window copied nothing; the user copies in their own browser window
+        var (origin, desktop) = WithWindows();
+        Sent(origin, "^c", AgentWindow);
+        desktop.Foreground = UserWindow;
+        AppCopies("hunter2");
+
+        // Act
+        origin.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+
+        // Assert - and the window is over: back in the agent's window, a later copy does not count either
+        desktop.Foreground = AgentWindow;
+        AppCopies("more of the user's");
+        origin.Classify(102).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    [Fact]
+    public void ACopyWhileNoWindowIsInFront_IsDecidedOnALaterRead()
+    {
+        var (origin, desktop) = WithWindows();
+        Sent(origin, "^c", AgentWindow);
+        desktop.Foreground = 0;
+        AppCopies("the selection");
+        origin.Poll();
+
+        desktop.Foreground = AgentWindow;
+
+        origin.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void ACopyFromAMenuThatClosed_CountsWhileItsOwnerIsInFront()
+    {
+        // Arrange - a click on a context menu's Copy item: the menu closes, its owner is in front again
+        var (origin, desktop) = WithWindows();
+        desktop.Owners[MenuPopup] = AgentWindow;
+        origin.InputSent(origin.BeforeInput(LeftClick, AppProcessId, MenuPopup)!);
+        desktop.Closed.Add(MenuPopup);
+
+        // Act
+        AppCopies("the selection");
+
+        // Assert
+        origin.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void ACopyFromAMenuThatIsStillOpen_DoesNotCountForItsOwner()
+    {
+        // The popup is still shown, so its owner in front is not where the input went
+        var (origin, desktop) = WithWindows();
+        desktop.Owners[MenuPopup] = AgentWindow;
+        origin.InputSent(origin.BeforeInput(LeftClick, AppProcessId, MenuPopup)!);
+
+        AppCopies("hunter2");
+
+        origin.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    [Fact]
+    public void ACopyWhileTheTargetedWindowIsInFront_Counts()
+    {
+        // The input went to a dialog of the window the caller targeted, which is in front again when the app copies
+        var (origin, _) = WithWindows();
+        Sent(origin, "^c", MenuPopup, anchor: AgentWindow);
+
+        AppCopies("the selection");
+
+        origin.Classify(101).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void WithWindows_InputWithoutAKnownWindow_CopiesNothingThatCounts()
+    {
+        var (origin, _) = WithWindows();
+        Sent(origin, "^c", receiving: 0);
+
+        AppCopies("the selection");
+
+        origin.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    #endregion
+
+    #region Paste (review PRIVA-1)
+
+    [Theory]
+    [InlineData("^v")]
+    [InlineData("^V")]
+    [InlineData("^+v")] // paste as plain text
+    [InlineData("^%v")] // paste special
+    [InlineData("+{INSERT}")]
+    [InlineData("+{INS}")]
+    [InlineData("hello^v")]
+    [InlineData("\u0016")] // SYN: an edit control takes it as Ctrl+V
+    public void PasteKeys_Paste(string keys)
+    {
+        ClipboardOrigin.PasteTrigger(SendKeysParser.Parse(keys)).Should().Be(ClipboardPasteKind.Paste);
+    }
+
+    [Theory]
+    [InlineData("v")]
+    [InlineData("^c")]
+    [InlineData("{INSERT}")]
+    [InlineData("%v")]
+    [InlineData("^{INSERT}")]
+    public void OtherKeys_DoNotPaste(string keys)
+    {
+        ClipboardOrigin.PasteTrigger(SendKeysParser.Parse(keys)).Should().BeNull();
+    }
+
+    [Fact]
+    public void WinV_OpensClipboardHistory()
+    {
+        ClipboardOrigin.PasteTrigger(SendKeysParser.Parse("#v", windowsModifier: true)).Should().Be(ClipboardPasteKind.History);
+    }
+
+    [Fact]
+    public void ARightClickPastes_OnlyInATerminal()
+    {
+        InputEvent[] rightClick = [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp)];
+
+        ClipboardOrigin.PasteTrigger(rightClick, "ConsoleWindowClass").Should().Be(ClipboardPasteKind.Paste);
+        ClipboardOrigin.PasteTrigger(rightClick, "CASCADIA_HOSTING_WINDOW_CLASS").Should().Be(ClipboardPasteKind.Paste);
+        ClipboardOrigin.PasteTrigger(rightClick, "Notepad").Should().BeNull();
+        ClipboardOrigin.PasteTrigger(rightClick).Should().BeNull();
+        ClipboardOrigin.PasteTrigger(LeftClick, "ConsoleWindowClass").Should().BeNull();
+    }
+
+    [Fact]
+    public void ContentTheUserAllowed_IsRemembered_UntilOtherContentIsAllowed()
+    {
+        _sut.UserAllowed(130);
+
+        _sut.IsUserAllowed(130).Should().BeTrue();
+        _sut.IsUserAllowed(131).Should().BeFalse();
+        _sut.IsUserAllowed(0).Should().BeFalse();
+
+        _sut.UserAllowed(0);
+        _sut.IsUserAllowed(130).Should().BeFalse();
+    }
+
+    #endregion
 }

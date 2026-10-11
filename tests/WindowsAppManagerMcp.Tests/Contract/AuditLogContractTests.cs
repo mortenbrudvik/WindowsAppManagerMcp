@@ -50,13 +50,13 @@ public class AuditLogContractTests
     }
 
     [Fact]
-    public void TheAuditedTools_AreTheInputCloseKillLaunchLayoutScrollAndClipboardWriteTools()
+    public void TheAuditedTools_AreTheInputCloseKillLaunchLayoutScrollAndClipboardTools()
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
             "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
             "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
-            "apply_layout", "save_layout", "delete_layout", "set_clipboard");
+            "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
     }
 
     [Fact]
@@ -75,11 +75,27 @@ public class AuditLogContractTests
     }
 
     [Fact]
-    public async Task NoReadOnlyTool_IsAudited()
+    public async Task NoReadOnlyTool_IsAudited_ButGetClipboard()
     {
+        // get_clipboard is the one read that can return the user's own clipboard (review PRIVA-4)
         var readOnly = (await ToolsAsync()).Where(t => Hint(t!, "readOnlyHint")).Select(t => t!["name"]!.GetValue<string>());
 
-        readOnly.Should().NotIntersectWith(AuditLogToolFilter.AuditedTools);
+        readOnly.Intersect(AuditLogToolFilter.AuditedTools).Should().Equal("get_clipboard");
+    }
+
+    [Fact]
+    public async Task GetClipboard_RecordsTheFormatOriginAndLength_NeverTheContent()
+    {
+        // Act
+        var (result, lines) = await CallAsync("get_clipboard", new Dictionary<string, object?> { ["format"] = "text" });
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("format").GetString().Should().Be("text");
+        line.GetProperty("result").GetProperty("origin").GetString().Should().Be(nameof(ClipboardContentOrigin.AgentInput));
+        line.GetProperty("result").GetProperty("length").GetInt32().Should().Be(TypicalDesktop.CopiedParagraph.Length);
+        line.GetRawText().Should().NotContain(TypicalDesktop.CopiedParagraph[..20]);
     }
 
     [Fact]
