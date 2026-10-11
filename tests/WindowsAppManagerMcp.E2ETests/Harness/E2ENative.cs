@@ -15,10 +15,11 @@ internal static class E2ENative
     public const uint GA_ROOT = 2;
     public const uint GA_ROOTOWNER = 3;
 
-    /// <summary>PROCESS_PER_MONITOR_DPI_AWARE, what the server's Program.cs requests.</summary>
+    /// <summary>PROCESS_PER_MONITOR_DPI_AWARE, the fallback the server's app manifest declares before Windows 10 1703.</summary>
     public const int ProcessPerMonitorDpiAware = 2;
 
-    private static readonly nint DpiAwarenessContextPerMonitorAwareV2 = -4;
+    /// <summary>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, what the server's app manifest declares.</summary>
+    public static readonly nint DpiAwarenessContextPerMonitorAwareV2 = -4;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
@@ -62,6 +63,10 @@ internal static class E2ENative
 
     [DllImport("shcore.dll")]
     public static extern int SetProcessDpiAwareness(int value);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetProcessDpiAwarenessContext(nint value);
 
     [DllImport("user32.dll")]
     private static extern nint GetThreadDpiAwarenessContext();
