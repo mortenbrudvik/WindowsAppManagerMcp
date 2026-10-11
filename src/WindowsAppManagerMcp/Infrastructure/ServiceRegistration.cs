@@ -87,6 +87,12 @@ public static class ServiceRegistration
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here
         services.AddSingleton<IElementRegistry, ElementRegistry>();
         services.AddSingleton<IElementSearchService, ElementSearchService>();
+        // The popups of a window (roadmap M3.5): find_ui_elements' windowAndPopups and desktop scopes, get_active_popups,
+        // and the tools that act on or wait for a popup
+        services.AddSingleton<IPopupService>(sp => new PopupService(
+            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<INativeProcessWrapper>(),
+            sp.GetRequiredService<IHostGuard>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetRequiredService<IUiaTree>(),
+            sp.GetRequiredService<IUiaWorker>(), sp.GetRequiredService<IElementRegistry>()));
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -177,6 +183,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
+        services.AddSingleton<PopupTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -246,6 +253,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
+            .WithServerTools<PopupTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

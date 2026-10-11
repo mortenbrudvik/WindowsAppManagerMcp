@@ -20,6 +20,16 @@ namespace WindowsAppManagerMcp.Services;
 /// enabledOnly, when every match was kept, each one whose fingerprint no other match shares; with them, which can hide an
 /// offscreen or disabled twin, a single match is checked by one more search of the window for its identity alone, limited
 /// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique.</para>
+/// <para><b>Scope</b> (roadmap M3.5): <see cref="ElementSearchScope.WindowAndPopups"/> also searches the window's popups
+/// (<see cref="IPopupService.GetPopups"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
+/// own), front first and before the window, since an open popup is in front of it; <see cref="ElementSearchScope.Desktop"/>
+/// searches the windows of <see cref="IPopupService.GetDesktopWindows"/> (the named window first). Every window is searched
+/// under the one deadline, the one maxResults and the one candidate limit (each window's search gets what the windows before
+/// it left), so a scope never multiplies the cost. Each match is registered under its own top-level window, the window a
+/// resolution searches. Only the named window is warmed up and searched below withinRef; it not responding or not being
+/// found fails the call as before, while another window that does not respond or closed meanwhile is skipped and counted
+/// (truncationReason PartsSkipped). Uniqueness (below) is judged per window, and the extra search that proves a single
+/// visible match unique runs only when the whole search found one match.</para>
 /// <para>A search the managed client cannot express (AppBar or SemanticZoom) runs again with the control types tested on
 /// the server. Reads of a match's details that fail leave those fields out; once the deadline has passed, or a provider did
 /// not answer in time, the remaining matches are described from what the search read (no further call). A read the worker
@@ -44,6 +54,7 @@ public sealed class ElementSearchService : IElementSearchService
     private readonly IElementRegistry _registry;
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
+    private readonly IPopupService? _popups;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the search under a deadline.</param>
@@ -52,18 +63,22 @@ public sealed class ElementSearchService : IElementSearchService
     /// is done.</param>
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are searched
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
+    /// <param name="popups">The windows of the windowAndPopups and desktop scopes (roadmap M3.5). The server always passes
+    /// it; without it every search covers the window alone.</param>
     public ElementSearchService(
         IUiaTree tree,
         IUiaWorker worker,
         IElementRegistry registry,
         INativeWindowWrapper? windows = null,
-        IAccessibilityWarmup? warmup = null)
+        IAccessibilityWarmup? warmup = null,
+        IPopupService? popups = null)
     {
         _tree = tree;
         _worker = worker;
         _registry = registry;
         _windows = windows;
         _warmup = warmup;
+        _popups = popups;
     }
 
     /// <inheritdoc />
@@ -72,13 +87,14 @@ public sealed class ElementSearchService : IElementSearchService
         ArgumentNullException.ThrowIfNull(query);
         var stopwatch = Stopwatch.StartNew();
         var handle = query.WindowHandle;
-        var started = new SearchStarted();
+        var started = new SearchStarted { MaxResults = Math.Clamp(query.MaxResults, 1, MaxResultsLimit) };
 
         FindElementsResult Failure(string error, UIElementErrorCode code, string? title = null) =>
             new(false, (long)handle, title, 0, false, null, Elapsed(stopwatch), query.WithinRef, Error: error, ErrorCode: code,
                 AccessibilityWarmup: started.Warmup);
 
-        if (handle == nint.Zero)
+        var scope = ScopeOf(query);
+        if (handle == nint.Zero && scope != ElementSearchScope.Desktop)
         {
             return Failure("Invalid window handle (zero)", UIElementErrorCode.InvalidHandle);
         }
@@ -112,8 +128,8 @@ public sealed class ElementSearchService : IElementSearchService
         try
         {
             return await _worker.RunAsync(
-                UiaTargets.TargetProcessId(_windows, handle),
-                token => Find(query, criteria, maxResults, AccessibilityWarmup.BudgetFor(timeout), started, stopwatch, token),
+                handle == nint.Zero ? 0 : UiaTargets.TargetProcessId(_windows, handle),
+                token => Find(query, scope, criteria, maxResults, AccessibilityWarmup.BudgetFor(timeout), started, stopwatch, token),
                 deadline.Token,
                 StopGrace).ConfigureAwait(false);
         }
@@ -135,18 +151,48 @@ public sealed class ElementSearchService : IElementSearchService
         {
             // The worker gave up on a search stuck in an application that does not answer: what it found is still returned,
             // described from what the search read
-            return started.Search is { } search && search.Snapshot() is { MatchCount: > 0 } partial
+            return started.Snapshot() is { MatchCount: > 0 } partial
                 ? Result(query, query.WithinRef, started.Title, partial with { Stop = ElementSearchStop.Timeout },
-                    Describe(query, criteria, partial.Matches, started.Generation, null, _ => null, default), started.Warmup,
-                    stopwatch)
+                    Describe(query, criteria, partial.Matches, started.Generation, mayRead: false, _ => null, default), started.Warmup,
+                    stopwatch) with { Scope = scope }
                 : Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut, started.Title);
         }
     }
 
+    /// <summary>
+    /// The scope a query searches: the window alone below withinRef, the scope asked for, or the default (windowAndPopups
+    /// when the window or one of its popups is in front, else window). Without the popup service, the window alone.
+    /// </summary>
+    private ElementSearchScope ScopeOf(ElementQuery query)
+    {
+        if (query.WithinRef != null || _popups == null)
+        {
+            return ElementSearchScope.Window;
+        }
+
+        if (query.WindowHandle == nint.Zero)
+        {
+            // Only a desktop search may name no window; any other is an invalid handle, as it always was
+            return query.Scope ?? ElementSearchScope.Window;
+        }
+
+        return query.Scope ?? (_popups.IsInForeground(query.WindowHandle) ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window);
+    }
+
+    /// <summary>The windows a scope covers, in the order searched, and how many it left out (desktop only).</summary>
+    private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(nint handle, ElementSearchScope scope) => scope switch
+    {
+        ElementSearchScope.WindowAndPopups when _popups != null =>
+            ([.. _popups.GetPopups(handle).Select(p => p.Handle), handle], 0, 0),
+        ElementSearchScope.Desktop when _popups != null =>
+            _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
+        _ => ([handle], 0, 0)
+    };
+
     /// <summary>The search, on the worker thread.</summary>
     private FindElementsResult Find(
-        ElementQuery query, ElementCriteria criteria, int maxResults, TimeSpan warmupBudget, SearchStarted started,
-        Stopwatch stopwatch, CancellationToken token)
+        ElementQuery query, ElementSearchScope scope, ElementCriteria criteria, int maxResults, TimeSpan warmupBudget,
+        SearchStarted started, Stopwatch stopwatch, CancellationToken token)
     {
         var handle = query.WindowHandle;
 
@@ -156,7 +202,8 @@ public sealed class ElementSearchService : IElementSearchService
 
         try
         {
-            if (UiaTargets.NotRespondingReason(_windows, handle, "its UI elements were not searched") is { } notResponding)
+            if (handle != nint.Zero &&
+                UiaTargets.NotRespondingReason(_windows, handle, "its UI elements were not searched") is { } notResponding)
             {
                 return Failure(notResponding, UIElementErrorCode.NotResponding);
             }
@@ -166,27 +213,30 @@ public sealed class ElementSearchService : IElementSearchService
                 return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
             }
 
-            IUiaNode? window;
-            try
+            IUiaNode? window = null;
+            if (handle != nint.Zero)
             {
-                window = _tree.FromHandle(handle);
-            }
-            catch (UiaElementUnavailableException)
-            {
-                window = null;
+                try
+                {
+                    window = _tree.FromHandle(handle);
+                }
+                catch (UiaElementUnavailableException)
+                {
+                    window = null;
+                }
+
+                if (window == null)
+                {
+                    return Failure("Window not found or handle is invalid", UIElementErrorCode.WindowNotFound);
+                }
+
+                // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the
+                // search does not miss the page's elements
+                started.Warmup = _warmup?.WarmUp(handle, warmupBudget, token);
+                started.Title = TryReadName(window);
             }
 
-            if (window == null)
-            {
-                return Failure("Window not found or handle is invalid", UIElementErrorCode.WindowNotFound);
-            }
-
-            // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the search
-            // does not miss the page's elements
-            started.Warmup = _warmup?.WarmUp(handle, warmupBudget, token);
-
-            var title = TryReadName(window);
-            started.Title = title;
+            var title = started.Title;
             var root = window;
             var withinRef = query.WithinRef;
             if (query.WithinRef != null)
@@ -214,32 +264,88 @@ public sealed class ElementSearchService : IElementSearchService
 
             var generation = _registry.NextGeneration();
             started.Generation = generation;
-            ElementSearchOutcome outcome;
+            var (windows, excluded, overLimit) = WindowsOf(handle, scope);
+            var compiled = criteria.Compile();
             var controlTypesOnServer = false;
-            try
+            foreach (var target in windows)
             {
-                outcome = Run(criteria.Compile(), maxResults, root, started, token);
-            }
-            catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
-            {
-                // The managed client cannot search for AppBar or SemanticZoom: test the control types here
-                controlTypesOnServer = true;
-                outcome = Run(criteria.Compile(controlTypesOnServer: true), maxResults, root, started, token);
+                if (token.IsCancellationRequested)
+                {
+                    started.Stop(ElementSearchStop.Timeout);
+                    break;
+                }
+
+                var candidatesLeft = ElementSearch.MaxCandidates - started.Candidates;
+                if (candidatesLeft <= 0)
+                {
+                    started.Stop(ElementSearchStop.CandidateLimit);
+                    break;
+                }
+
+                var isNamed = target == handle;
+                var node = isNamed ? root : OpenOther(target);
+                if (node == null)
+                {
+                    started.SkipWindow();
+                    continue;
+                }
+
+                var keep = Math.Max(1, maxResults - started.Kept);
+                ElementSearchOutcome outcome;
+                try
+                {
+                    outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                }
+                catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
+                {
+                    // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this
+                    // window and the next ones
+                    controlTypesOnServer = true;
+                    compiled = criteria.Compile(controlTypesOnServer: true);
+                    outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                }
+                catch (Exception ex) when (!isNamed && ex is not (TimeoutException or OperationCanceledException or
+                                                                  System.Text.RegularExpressions.RegexMatchTimeoutException))
+                {
+                    // A popup that closed meanwhile, or whose provider failed: the other windows are still searched
+                    started.Abandon(target);
+                    started.SkipWindow();
+                    continue;
+                }
+
+                started.Complete(target, node, outcome);
+                if (outcome.Stop != ElementSearchStop.None)
+                {
+                    break;
+                }
             }
 
-            if (outcome.MatchCount == 0 && outcome.Stop == ElementSearchStop.Timeout)
+            var total = started.Snapshot();
+            if (total.MatchCount == 0 && total.Stop == ElementSearchStop.Timeout)
             {
                 return Failure(
-                    $"The timeout passed before any element matching {criteria.Describe()} was found ({outcome.Candidates} " +
+                    $"The timeout passed before any element matching {criteria.Describe()} was found ({total.Candidates} " +
                     "candidates checked). Try again with a larger timeoutMs, or search a smaller part with withinRef.",
                     UIElementErrorCode.OperationTimedOut, title);
             }
 
             var unique = query.WithinRef == null
-                ? Uniqueness(criteria, controlTypesOnServer, outcome, window, token)
+                ? Uniqueness(criteria, controlTypesOnServer, started.Searched, total.MatchCount, token)
                 : _ => null;
-            return Result(query, withinRef, title, outcome,
-                Describe(query, criteria, outcome.Matches, generation, root, unique, token), started.Warmup, stopwatch);
+            var result = Result(query, withinRef, title, total,
+                Describe(query, criteria, total.Matches, generation, mayRead: true, unique, token), started.Warmup, stopwatch);
+            return scope == ElementSearchScope.Window
+                ? result with { Scope = scope }
+                : result with
+                {
+                    Scope = scope,
+                    WindowsSearched = started.Searched.Count,
+                    WindowsExcluded = excluded > 0 ? excluded : null,
+                    Truncated = result.Truncated || overLimit > 0,
+                    TruncationReason = result.TruncationReason is { } reason && reason != ElementSearchTruncation.MaxResults
+                        ? reason
+                        : overLimit > 0 ? ElementSearchTruncation.WindowLimit : result.TruncationReason
+                };
         }
         catch (UiaElementUnavailableException ex)
         {
@@ -265,58 +371,103 @@ public sealed class ElementSearchService : IElementSearchService
         }
     }
 
-    private ElementSearchOutcome Run(
-        (UiaCondition Condition, Func<UiaElement, bool>? Filter) compiled, int maxResults, IUiaNode root, SearchStarted started,
-        CancellationToken token)
+    /// <summary>
+    /// The node of a window of the scope other than the named one, or null when it must be skipped: it does not respond
+    /// (it would hold the search until the deadline), it closed, or UI Automation cannot read it.
+    /// </summary>
+    private IUiaNode? OpenOther(nint window)
     {
-        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, maxResults);
-        started.Search = search;
+        if (UiaTargets.NotRespondingReason(_windows, window) != null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return _tree.FromHandle(window);
+        }
+        catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+        {
+            return null;
+        }
+    }
+
+    private ElementSearchOutcome Run(
+        (UiaCondition Condition, Func<UiaElement, bool>? Filter) compiled, int keep, int maxCandidates, nint window, IUiaNode root,
+        SearchStarted started, CancellationToken token)
+    {
+        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, keep, maxCandidates);
+        started.Begin(window, search);
         return search.Run(root, token);
     }
 
     /// <summary>
-    /// Whether the criteria fit each kept match alone in the window (see the remarks): true, false, or null when that is
-    /// not known. <paramref name="outcome"/> is a search of the whole window.
+    /// Whether the criteria fit each kept match alone in its window (see the remarks): true, false, or null when that is
+    /// not known. Each searched window's outcome is a search of that whole window (or of withinRef's element, for which the
+    /// caller asks nothing).
     /// </summary>
     private Func<UiaElement, bool?> Uniqueness(
-        ElementCriteria criteria, bool controlTypesOnServer, ElementSearchOutcome outcome, IUiaNode window, CancellationToken token)
+        ElementCriteria criteria, bool controlTypesOnServer, IReadOnlyList<SearchedWindow> searched, int totalMatches,
+        CancellationToken token)
     {
-        var matches = outcome.Matches;
-        var twins = new HashSet<UiaElement>(ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < matches.Count; i++)
+        var verdicts = new Dictionary<UiaElement, bool?>(ReferenceEqualityComparer.Instance);
+        foreach (var window in searched)
         {
-            for (var j = i + 1; j < matches.Count; j++)
+            var outcome = window.Outcome;
+            var matches = window.Kept;
+            var twins = new HashSet<UiaElement>(ReferenceEqualityComparer.Instance);
+            for (var i = 0; i < outcome.Matches.Count; i++)
             {
-                if (ElementRegistry.SameElement(ElementRegistry.Fingerprint(matches[i], null), matches[j]))
+                for (var j = i + 1; j < outcome.Matches.Count; j++)
                 {
-                    twins.Add(matches[i]);
-                    twins.Add(matches[j]);
+                    if (ElementRegistry.SameElement(ElementRegistry.Fingerprint(outcome.Matches[i], null), outcome.Matches[j]))
+                    {
+                        twins.Add(outcome.Matches[i]);
+                        twins.Add(outcome.Matches[j]);
+                    }
                 }
             }
+
+            bool? Unproven(UiaElement m) => twins.Contains(m) ? false : null;
+            if (!outcome.Complete)
+            {
+                foreach (var match in matches)
+                {
+                    verdicts[match] = Unproven(match);
+                }
+
+                continue;
+            }
+
+            if (!criteria.VisibleOnly && !criteria.EnabledOnly)
+            {
+                // Every element the criteria fit in this window was a match; when all were kept, the ones without a twin are
+                // alone in it
+                var allKept = outcome.MatchCount == matches.Count;
+                foreach (var match in matches)
+                {
+                    verdicts[match] = twins.Contains(match) ? false : allKept ? true : null;
+                }
+
+                continue;
+            }
+
+            if (outcome.MatchCount != 1 || totalMatches != 1 || matches.Count != 1 || token.IsCancellationRequested)
+            {
+                foreach (var match in matches)
+                {
+                    verdicts[match] = Unproven(match);
+                }
+
+                continue;
+            }
+
+            // A single match among the visible or enabled ones: an offscreen or disabled twin would not have been found, so
+            // search the window for its identity alone
+            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window.Node, token);
         }
 
-        if (!outcome.Complete)
-        {
-            return m => twins.Contains(m) ? false : null;
-        }
-
-        if (!criteria.VisibleOnly && !criteria.EnabledOnly)
-        {
-            // Every element the criteria fit was a match; when all were kept, the ones without a twin are alone
-            var allKept = outcome.MatchCount == matches.Count;
-            return m => twins.Contains(m) ? false : allKept ? true : null;
-        }
-
-        if (outcome.MatchCount != 1 || token.IsCancellationRequested)
-        {
-            return m => twins.Contains(m) ? false : null;
-        }
-
-        // A single match among the visible or enabled ones: an offscreen or disabled twin would not have been found, so
-        // search the window for its identity alone
-        var match = matches[0];
-        var proven = ProveAlone(criteria.Identity, controlTypesOnServer, match, window, token);
-        return m => ReferenceEquals(m, match) ? proven : null;
+        return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
     }
 
     /// <summary>
@@ -350,15 +501,15 @@ public sealed class ElementSearchService : IElementSearchService
     }
 
     private static FindElementsResult Result(
-        ElementQuery query, string? withinRef, string? title, ElementSearchOutcome outcome, IReadOnlyList<FoundElement> elements,
+        ElementQuery query, string? withinRef, string? title, SearchTotal total, IReadOnlyList<FoundElement> elements,
         AccessibilityWarmupInfo? warmup, Stopwatch stopwatch)
     {
-        ElementSearchTruncation? reason = outcome.Stop switch
+        ElementSearchTruncation? reason = total.Stop switch
         {
             ElementSearchStop.Timeout => ElementSearchTruncation.Timeout,
             ElementSearchStop.CandidateLimit => ElementSearchTruncation.SearchLimit,
-            _ when outcome.SkippedParts > 0 => ElementSearchTruncation.PartsSkipped,
-            _ when outcome.MatchCount > elements.Count => ElementSearchTruncation.MaxResults,
+            _ when total.SkippedParts > 0 => ElementSearchTruncation.PartsSkipped,
+            _ when total.MatchCount > elements.Count => ElementSearchTruncation.MaxResults,
             _ => null
         };
 
@@ -366,7 +517,7 @@ public sealed class ElementSearchService : IElementSearchService
             Success: true,
             WindowHandle: (long)query.WindowHandle,
             WindowTitle: title,
-            MatchCount: outcome.MatchCount,
+            MatchCount: total.MatchCount,
             Truncated: reason != null,
             Elements: elements,
             ElapsedMilliseconds: Elapsed(stopwatch),
@@ -376,22 +527,22 @@ public sealed class ElementSearchService : IElementSearchService
     }
 
     /// <summary>
-    /// The kept matches as find_ui_elements returns them, each registered. With <paramref name="root"/> null (an abandoned
-    /// search, read on the caller's thread) nothing is read: every field comes from what the search read.
+    /// The kept matches as find_ui_elements returns them, each registered under the window it was found in. With
+    /// <paramref name="mayRead"/> false (an abandoned search, read on the caller's thread) nothing is read: every field
+    /// comes from what the search read.
     /// </summary>
     private List<FoundElement> Describe(
-        ElementQuery query, ElementCriteria criteria, IReadOnlyList<UiaElement> matches, long generation, IUiaNode? root,
-        Func<UiaElement, bool?> unique, CancellationToken token)
+        ElementQuery query, ElementCriteria criteria, IReadOnlyList<(nint Window, UiaElement Element)> matches, long generation,
+        bool mayRead, Func<UiaElement, bool?> unique, CancellationToken token)
     {
-        var mayRead = root != null;
         var found = new List<FoundElement>(matches.Count);
-        foreach (var match in matches)
+        foreach (var (window, match) in matches)
         {
             string? elementRef = null;
             try
             {
                 elementRef = _registry.Register(
-                    query.WindowHandle, match, new ElementOrigin(generation, criteria.Identity, Unique: unique(match)));
+                    window, match, new ElementOrigin(generation, criteria.Identity, Unique: unique(match)));
             }
             catch (Exception)
             {
@@ -399,6 +550,11 @@ public sealed class ElementSearchService : IElementSearchService
             }
 
             var element = Minimal(match, elementRef);
+            if (window != query.WindowHandle)
+            {
+                element = element with { WindowHandle = (long)window };
+            }
+
             if (mayRead && !token.IsCancellationRequested)
             {
                 try
@@ -542,19 +698,33 @@ public sealed class ElementSearchService : IElementSearchService
 
     private static double Elapsed(Stopwatch stopwatch) => Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2);
 
-    /// <summary>The search of one call once it has started, for the caller when the worker abandons it.</summary>
+    /// <summary>A window of the scope, searched: its node, its search's outcome and the matches kept from it.</summary>
+    private sealed record SearchedWindow(nint Handle, IUiaNode Node, ElementSearchOutcome Outcome, IReadOnlyList<UiaElement> Kept);
+
+    /// <summary>What the searches of every window of the scope found, together.</summary>
+    /// <param name="Matches">The kept matches, each with the window it was found in, in the order searched.</param>
+    /// <param name="SkippedParts">Parts of the windows that could not be searched, plus the windows that could not be.</param>
+    private sealed record SearchTotal(
+        IReadOnlyList<(nint Window, UiaElement Element)> Matches, int MatchCount, int Candidates, ElementSearchStop Stop, int SkippedParts);
+
+    /// <summary>
+    /// The search of one call once it has started: the windows searched so far and the search running, for the caller when
+    /// the worker abandons it, and the totals the next window's search starts from (what is left of maxResults and of the
+    /// candidate limit).
+    /// </summary>
     private sealed class SearchStarted
     {
-        private ElementSearch? _search;
+        private readonly object _gate = new();
+        private readonly List<SearchedWindow> _searched = [];
+        private (nint Window, ElementSearch Search)? _current;
+        private int _skippedWindows;
+        private ElementSearchStop _stop;
         private string? _title;
         private long _generation;
         private AccessibilityWarmupInfo? _warmup;
 
-        public ElementSearch? Search
-        {
-            get => Volatile.Read(ref _search);
-            set => Volatile.Write(ref _search, value);
-        }
+        /// <summary>How many matches the call returns, from all its windows together.</summary>
+        public int MaxResults { get; init; } = MaxResultsLimit;
 
         public string? Title
         {
@@ -572,6 +742,115 @@ public sealed class ElementSearchService : IElementSearchService
         {
             get => Volatile.Read(ref _warmup);
             set => Volatile.Write(ref _warmup, value);
+        }
+
+        /// <summary>The windows whose search ran, in order.</summary>
+        public IReadOnlyList<SearchedWindow> Searched
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _searched.ToList();
+                }
+            }
+        }
+
+        /// <summary>The matches kept from the windows searched.</summary>
+        public int Kept
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _searched.Sum(w => w.Kept.Count);
+                }
+            }
+        }
+
+        /// <summary>The provider's matches in the windows searched, before the name filter.</summary>
+        public int Candidates
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _searched.Sum(w => w.Outcome.Candidates);
+                }
+            }
+        }
+
+        public void Begin(nint window, ElementSearch search)
+        {
+            lock (_gate)
+            {
+                _current = (window, search);
+            }
+        }
+
+        /// <summary>The running search of <paramref name="window"/> failed: what it found does not count.</summary>
+        public void Abandon(nint window)
+        {
+            lock (_gate)
+            {
+                if (_current is { } current && current.Window == window)
+                {
+                    _current = null;
+                }
+            }
+        }
+
+        public void Complete(nint window, IUiaNode node, ElementSearchOutcome outcome)
+        {
+            lock (_gate)
+            {
+                var room = Math.Max(0, MaxResults - _searched.Sum(w => w.Kept.Count));
+                _searched.Add(new SearchedWindow(window, node, outcome, outcome.Matches.Take(room).ToList()));
+                _current = null;
+            }
+        }
+
+        public void SkipWindow()
+        {
+            lock (_gate)
+            {
+                _skippedWindows++;
+            }
+        }
+
+        /// <summary>The search stopped before the next window.</summary>
+        public void Stop(ElementSearchStop stop)
+        {
+            lock (_gate)
+            {
+                if (_stop == ElementSearchStop.None)
+                {
+                    _stop = stop;
+                }
+            }
+        }
+
+        /// <summary>Everything found so far, the running search included; safe to call from any thread.</summary>
+        public SearchTotal Snapshot()
+        {
+            lock (_gate)
+            {
+                var windows = _searched.Select(w => (w.Handle, w.Outcome, Kept: (IReadOnlyList<UiaElement>)w.Kept)).ToList();
+                if (_current is { } current)
+                {
+                    var running = current.Search.Snapshot();
+                    var room = Math.Max(0, MaxResults - windows.Sum(w => w.Kept.Count));
+                    windows.Add((current.Window, running, running.Matches.Take(room).ToList()));
+                }
+
+                var stop = windows.Select(w => w.Outcome.Stop).FirstOrDefault(s => s != ElementSearchStop.None);
+                return new SearchTotal(
+                    Matches: windows.SelectMany(w => w.Kept.Select(m => (w.Handle, m))).ToList(),
+                    MatchCount: windows.Sum(w => w.Outcome.MatchCount),
+                    Candidates: windows.Sum(w => w.Outcome.Candidates),
+                    Stop: stop != ElementSearchStop.None ? stop : _stop,
+                    SkippedParts: windows.Sum(w => w.Outcome.SkippedParts) + _skippedWindows);
+            }
         }
     }
 }

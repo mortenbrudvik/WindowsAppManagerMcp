@@ -132,6 +132,14 @@ public static class TypicalDesktop
             ["Invoke"]),
     ];
 
+    /// <summary>What get_active_popups returns for Notepad (roadmap M3.5): its open context menu and a Save As dialog.</summary>
+    public static IReadOnlyList<ActivePopup> NotepadPopups { get; } =
+    [
+        new("w4120036e1", 2493112, PopupKind.Menu, null, "#32768", 4120, "Notepad", null, new BoundsDto(612, 240, 268, 410), "Menu"),
+        new("w4120037e1", 3017452, PopupKind.Dialog, "Save As", "#32770", 4120, "Notepad", NotepadHandle,
+            new BoundsDto(420, 180, 960, 640), "Window", IsBlocking: true),
+    ];
+
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
 

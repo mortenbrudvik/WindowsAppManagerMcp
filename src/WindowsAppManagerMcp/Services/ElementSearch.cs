@@ -13,7 +13,7 @@ public enum ElementSearchStop
     /// <summary>Its cancellation token was cancelled (the caller's deadline), or a provider did not answer in time.</summary>
     Timeout,
 
-    /// <summary>The provider had matched <see cref="ElementSearch.MaxCandidates"/> elements before the client filter.</summary>
+    /// <summary>The provider had matched the candidate limit (<see cref="ElementSearch.MaxCandidates"/> at most) before the client filter.</summary>
     CandidateLimit
 }
 
@@ -88,6 +88,7 @@ public sealed class ElementSearch
     private readonly UiaCondition _condition;
     private readonly Func<UiaElement, bool>? _filter;
     private readonly int _keep;
+    private readonly int _maxCandidates;
     private readonly List<UiaElement> _matches = [];
     private int _matchCount;
     private int _candidates;
@@ -99,13 +100,18 @@ public sealed class ElementSearch
     /// <param name="filter">A further test on each element the provider matched (a name that contains a text or matches a
     /// regular expression), or null.</param>
     /// <param name="keep">How many matches to keep; the rest are only counted.</param>
-    public ElementSearch(IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep)
+    /// <param name="maxCandidates">The search stops once the provider has matched this many elements (at most
+    /// <see cref="MaxCandidates"/>, the default): a search of several windows (roadmap M3.5) passes what is left of one
+    /// limit for all of them.</param>
+    public ElementSearch(IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep, int maxCandidates = MaxCandidates)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(keep, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCandidates, 1);
         _tree = tree;
         _condition = condition;
         _filter = filter;
         _keep = keep;
+        _maxCandidates = Math.Min(maxCandidates, MaxCandidates);
     }
 
     /// <summary>Searches the elements below <paramref name="root"/> (not the root itself).</summary>
@@ -278,7 +284,7 @@ public sealed class ElementSearch
 
         lock (_gate)
         {
-            if (_candidates >= MaxCandidates)
+            if (_candidates >= _maxCandidates)
             {
                 _stop = _stop == ElementSearchStop.None ? ElementSearchStop.CandidateLimit : _stop;
                 return true;
