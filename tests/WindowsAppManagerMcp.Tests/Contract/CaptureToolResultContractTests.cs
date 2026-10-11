@@ -235,7 +235,7 @@ public class CaptureToolResultContractTests
         var screenshotService = new ScreenshotService(_captureWrapper.Object, _monitorService.Object, Mock.Of<INativeWindowWrapper>());
         var tools = new ScreenshotTools(screenshotService, _uiElementService.Object, _windowService.Object,
             new TargetPolicy(TargetPolicySettings.Default));
-        return InProcessMcpServer.StartAsync([], builder => builder.AddToolErrorReporting().WithTools(tools));
+        return InProcessMcpServer.StartAsync([], builder => builder.AddToolErrorReporting().WithServerTools(tools));
     }
 
     private static string TextOf(CallToolResult result) =>

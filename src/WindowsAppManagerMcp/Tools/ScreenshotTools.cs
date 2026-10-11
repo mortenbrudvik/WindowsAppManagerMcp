@@ -22,7 +22,7 @@ public class ScreenshotTools
         "scaleFactor is the monitor's DPI scale, for information only; never multiply by it.";
 
     internal const string FormatDescription =
-        "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. " +
+        "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). " +
         "With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.";
 
     internal const string QualityDescription = "JPEG quality (1-100). Only used for JPEG. Default: 80";
@@ -33,7 +33,7 @@ public class ScreenshotTools
 
     internal const string OutputDescription =
         "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), " +
-        "'both' (image, file and metadata) or 'metadata' (only the metadata, no image).";
+        "'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.";
 
     internal const string OutputPathDescription =
         "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
@@ -66,14 +66,14 @@ public class ScreenshotTools
         _targetPolicy = targetPolicy ?? throw new ArgumentNullException(nameof(targetPolicy));
     }
 
-    [McpServerTool(Name = "list_screens")]
+    [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List all available screens/monitors for capture. Returns screen information including bounds, work area, scale factor, and virtual screen bounds (the combined area of all monitors).")]
     public ScreenListResult ListScreens()
     {
         return _screenshotService.ListScreens();
     }
 
-    [McpServerTool(Name = "take_screenshot")]
+    [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a specific monitor. " + ImageResultDescription + ImageToScreenDescription +
                  " Use list_screens to get available monitor indices.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
@@ -81,13 +81,13 @@ public class ScreenshotTools
         [Description("Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -102,7 +102,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureMonitor(index, options));
     }
 
-    [McpServerTool(Name = "capture_region")]
+    [McpServerTool(Name = "capture_region", Title = "Capture Screen Region", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture an arbitrary screen region given in screen coordinates. " + ImageResultDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult CaptureRegion(
@@ -115,13 +115,13 @@ public class ScreenshotTools
         [Description("Height of the region in pixels")]
         int height,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -135,7 +135,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureRegion(x, y, width, height, options));
     }
 
-    [McpServerTool(Name = "capture_window")]
+    [McpServerTool(Name = "capture_window", Title = "Capture Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized (CaptureFailed). " +
                  "A window of an app the user's policy denies is refused (TargetDeniedByPolicy). " +
                  ImageResultDescription +
@@ -148,13 +148,13 @@ public class ScreenshotTools
         [Description("Whether to include the window frame/decoration (title bar, borders). Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -177,7 +177,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureWindow((nint)handle, includeFrame, options));
     }
 
-    [McpServerTool(Name = "capture_with_elements")]
+    [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a window with UI element bounding boxes drawn on it. " + ImageResultDescription +
                  "The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). " +
                  "Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +
@@ -190,7 +190,7 @@ public class ScreenshotTools
         [Description("Whether to include the window frame/decoration. Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description("How many levels below the window to read (1-10). 1 reads only the window's direct children. Default: 5")]
@@ -208,7 +208,7 @@ public class ScreenshotTools
         [Description(MaxDimensionDescription + " imageBounds are scaled with the image; screenBounds stay in screen pixels.")]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -293,21 +293,22 @@ public class ScreenshotTools
         "the user in the server's environment; no tool argument changes it.";
 
     private static CaptureOptions Options(
-        string? format,
+        CaptureFormat format,
         int quality,
         int? maxDimension,
-        string? output,
+        CaptureOutputMode output,
         string? outputPath,
         bool overwrite,
         bool saveToFile,
         int? maxWidth) =>
         new()
         {
-            Format = format,
+            // The service takes the names; the enums were checked when the arguments were bound
+            Format = ToolEnum<CaptureFormat>.Name(format),
             Quality = quality,
             MaxDimension = maxDimension,
             MaxWidth = maxWidth,
-            Output = output,
+            Output = ToolEnum<CaptureOutputMode>.Name(output),
             OutputPath = outputPath,
             Overwrite = overwrite,
             SaveToFile = saveToFile

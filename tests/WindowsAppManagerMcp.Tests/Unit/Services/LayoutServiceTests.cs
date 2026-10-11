@@ -650,7 +650,7 @@ public class LayoutServiceTests : IDisposable
         _mockWindowService.Setup(w => w.SetWindowBounds(hung.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(new WindowNotRespondingException(hung.Handle, "Window 1001 did not answer within 5 s."));
         _mockWindowService.Setup(w => w.SetWindowBounds(fine.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(true);
+            .Returns(WindowChangeResult.Done(fine.Handle));
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
             "hung-test",
@@ -661,7 +661,7 @@ public class LayoutServiceTests : IDisposable
             }));
 
         // Act
-        var result = await sut.ApplyPresetAsync("hung-test", matchBy: "process_only");
+        var result = await sut.ApplyPresetAsync("hung-test", matchBy: LayoutMatchBy.ProcessOnly);
 
         // Assert - not focused either: the focus step needs the window placed first
         result.Success.Should().BeFalse();
@@ -707,7 +707,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use process_only matching
-        var result = await sut.ApplyPresetAsync("process-only-test", matchBy: "process_only");
+        var result = await sut.ApplyPresetAsync("process-only-test", matchBy: LayoutMatchBy.ProcessOnly);
 
         // Assert - Should find and arrange the window despite title mismatch
         result.Success.Should().BeTrue();
@@ -754,7 +754,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use title_only matching
-        var result = await sut.ApplyPresetAsync("title-only-test", matchBy: "title_only");
+        var result = await sut.ApplyPresetAsync("title-only-test", matchBy: LayoutMatchBy.TitleOnly);
 
         // Assert - Should find and arrange the window despite process mismatch
         result.Success.Should().BeTrue();
@@ -811,7 +811,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use process_and_title matching (default)
-        var result = await sut.ApplyPresetAsync("both-test", matchBy: "process_and_title");
+        var result = await sut.ApplyPresetAsync("both-test", matchBy: LayoutMatchBy.ProcessAndTitle);
 
         // Assert - Should only match the window that has BOTH conditions met
         result.Success.Should().BeTrue();
@@ -881,7 +881,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act
-        var result = await sut.ApplyPresetAsync("multi-window-test", matchBy: "process_and_title");
+        var result = await sut.ApplyPresetAsync("multi-window-test", matchBy: LayoutMatchBy.ProcessAndTitle);
 
         // Assert - All three windows should be arranged
         result.Success.Should().BeTrue();
@@ -1198,7 +1198,8 @@ public class LayoutServiceTests : IDisposable
     {
         _mockWindowService.Setup(w => w.SetWindowBounds(
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(false);
+            .Returns((nint handle, int _, int _, int _, int _, bool _) =>
+                WindowChangeResult.Failed(handle, WindowErrorCode.AccessDenied, "Windows blocked the change"));
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("stuck-window",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad")]));
@@ -1208,6 +1209,8 @@ public class LayoutServiceTests : IDisposable
         result.Success.Should().BeFalse();
         result.WindowsArranged.Should().Be(0);
         result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("AccessDenied: Windows blocked the change",
+            "the window change's own code and reason are named in the placement's error");
     }
 
     [Fact]

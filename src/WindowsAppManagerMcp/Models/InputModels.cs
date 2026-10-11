@@ -312,5 +312,12 @@ public enum InputErrorCode
     /// at the point has captured the mouse, so the click or move could go to that window instead, or the capture
     /// could not be read, so where it would go is not known. Nothing (more) was sent.
     /// </summary>
-    MouseInUse = 40
+    MouseInUse = 40,
+
+    /// <summary>
+    /// Mouse input: Windows did not move the pointer to the point (SetCursorPos failed, for example because the
+    /// input desktop cannot be reached). Nothing was clicked. Not SendInputFailed, which means the input itself was
+    /// not accepted (roadmap M2.2).
+    /// </summary>
+    CursorPositionFailed = 41
 }

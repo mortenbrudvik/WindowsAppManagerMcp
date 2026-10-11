@@ -26,10 +26,12 @@ public class InputGateToolFilterTests
                 InputGateToolFilter.InputTools.Contains(tool),
                 InputGateToolFilter.WindowChangingTools.Contains(tool),
                 InputGateToolFilter.ReadOnlyTools.Contains(tool),
-                InputGateToolFilter.ControlTools.Contains(tool)
+                InputGateToolFilter.ControlTools.Contains(tool),
+                InputGateToolFilter.SelfGatedTools.Contains(tool)
             };
             lists.Count(inList => inList).Should().Be(1,
-                $"'{tool}' must be classified as an input tool, a window-changing tool, a read-only tool or a control tool");
+                $"'{tool}' must be classified as an input tool, a window-changing tool, a read-only tool, a control tool or a " +
+                "tool that takes the gate itself after asking the user");
         }
     }
 
@@ -40,7 +42,29 @@ public class InputGateToolFilterTests
             .Concat(InputGateToolFilter.WindowChangingTools)
             .Concat(InputGateToolFilter.ReadOnlyTools)
             .Concat(InputGateToolFilter.ControlTools)
+            .Concat(InputGateToolFilter.SelfGatedTools)
             .Should().BeSubsetOf(ServerToolCatalog.ServedToolNames);
+    }
+
+    [Theory]
+    [InlineData("kill_process")]
+    [InlineData("close_windows_batch")]
+    public async Task AToolThatAsksTheUser_IsNotHeldInTheGateByTheFilter(string tool)
+    {
+        // Arrange - it takes the gate itself, after its question (UserConfirmationContractTests)
+        var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = InputGateToolFilter.Filter((_, _) =>
+        {
+            ran.TrySetResult();
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        using var gate = InputGate.Enter();
+
+        // Act
+        await handler(CreateRequest(tool), CancellationToken.None).AsTask().WaitAsync(Timeout);
+
+        // Assert
+        ran.Task.IsCompleted.Should().BeTrue($"{tool} runs at once: the filter does not wait for the gate for it");
     }
 
     [Theory]
@@ -155,7 +179,7 @@ public class InputGateToolFilterTests
     [InlineData("focus_window")]
     [InlineData("launch_application")]
     [InlineData("close_window")]
-    [InlineData("kill_process")]
+    [InlineData("move_window")]
     [InlineData("set_window_state")]
     [InlineData("a_tool_nobody_classified")] // fails safe
     public async Task WhilePaused_AWindowChangingTool_ReturnsPausedByUser_AndDoesNotRun(string tool)

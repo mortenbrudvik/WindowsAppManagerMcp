@@ -67,7 +67,7 @@ public class InputSimulationTools
         _inputService = inputService;
     }
 
-    [McpServerTool(Name = "click")]
+    [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a left mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote +
                  " Mouse results also report actualX and actualY, the cursor position afterwards.")]
     public ClickResult Click(
@@ -86,7 +86,7 @@ public class InputSimulationTools
         return _inputService.Click(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "right_click")]
+    [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote)]
     public ClickResult RightClick(
         [Description(XDescription)]
@@ -104,7 +104,7 @@ public class InputSimulationTools
         return _inputService.RightClick(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "double_click")]
+    [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
     public ClickResult DoubleClick(
         [Description(XDescription)]
@@ -125,7 +125,7 @@ public class InputSimulationTools
             cancellationToken);
     }
 
-    [McpServerTool(Name = "mouse_move")]
+    [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
                  " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." + GuardNote)]
     public MouseMoveResult MouseMove(
@@ -144,7 +144,7 @@ public class InputSimulationTools
         return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "type_text")]
+    [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Type text by simulating Unicode keyboard input. Works with any language/characters." + KeyboardTargetNote +
                  " The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
@@ -166,7 +166,7 @@ public class InputSimulationTools
         return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "send_keys")]
+    [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home)." + KeyboardTargetNote +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +

@@ -222,7 +222,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use process_only matching (ignores title mismatch)
-        var result = await sut.ApplyPresetAsync("process-match-test", matchBy: "process_only");
+        var result = await sut.ApplyPresetAsync("process-match-test", matchBy: LayoutMatchBy.ProcessOnly);
 
         // Assert
         result.WindowsArranged.Should().Be(1);
@@ -259,7 +259,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use title_only matching (ignores process mismatch)
-        var result = await sut.ApplyPresetAsync("title-match-test", matchBy: "title_only");
+        var result = await sut.ApplyPresetAsync("title-match-test", matchBy: LayoutMatchBy.TitleOnly);
 
         // Assert
         result.WindowsArranged.Should().Be(1);
@@ -297,7 +297,7 @@ public class LayoutServiceIntegrationTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use default process_and_title matching
-        var result = await sut.ApplyPresetAsync("both-match-test", matchBy: "process_and_title");
+        var result = await sut.ApplyPresetAsync("both-match-test", matchBy: LayoutMatchBy.ProcessAndTitle);
 
         // Assert - Only window 1001 should match (both criteria)
         result.WindowsArranged.Should().Be(1);

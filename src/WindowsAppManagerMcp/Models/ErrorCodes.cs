@@ -81,7 +81,27 @@ public enum WindowErrorCode
     /// its window in the notification area. It was not activated, because keyboard input would then go to a
     /// window the user cannot see.
     /// </summary>
-    WindowHidden = 27
+    WindowHidden = 27,
+
+    // Codes added in M2 (honest results and typed parameters, roadmap M2.1, M2.2 and M2.10):
+
+    /// <summary>get_foreground_window: no window is in the foreground (windows are switching, or a UAC prompt or the lock screen is shown).</summary>
+    NoForegroundWindow = 28,
+
+    /// <summary>The window state is not one of the allowed values (minimize, maximize, restore and their aliases).</summary>
+    InvalidState = 29,
+
+    /// <summary>The positioning of move_window_to_monitor is not one of the allowed values.</summary>
+    InvalidPositioning = 30,
+
+    /// <summary>The user declined, dismissed or did not answer the confirmation question (elicitation). Nothing was done.</summary>
+    ConfirmationDeclined = 31,
+
+    /// <summary>
+    /// The window changed after the user confirmed: its handle now belongs to a different process than the one the
+    /// user was asked about. Nothing was sent to it.
+    /// </summary>
+    HandleMismatch = 32
 }
 
 /// <summary>
@@ -215,7 +235,13 @@ public enum ProcessErrorCode
     /// the child processes the forced kill would also end could not be checked against the target policy and the
     /// host guard. Nothing was terminated.
     /// </summary>
-    ProcessTreeUnreadable = 15
+    ProcessTreeUnreadable = 15,
+
+    /// <summary>
+    /// The MCP client can ask the user (elicitation), and the user declined, dismissed or did not answer the
+    /// confirmation question (roadmap M2.10). Nothing was done.
+    /// </summary>
+    ConfirmationDeclined = 16
 }
 
 /// <summary>
@@ -251,7 +277,10 @@ public enum LayoutErrorCode
     WindowNotFound = 8,
 
     /// <summary>No windows matched the capture filters, so nothing was saved.</summary>
-    NoWindowsCaptured = 9
+    NoWindowsCaptured = 9,
+
+    /// <summary>apply_layout's matchBy is not one of the allowed values (roadmap M2.2). Nothing was arranged.</summary>
+    InvalidMatchBy = 10
 }
 
 /// <summary>

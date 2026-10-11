@@ -87,25 +87,30 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle) => windows.FirstOrDefault(w => w.Handle == handle) ?? notepad);
         Windows.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns(true);
         Windows.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns(new TargetPolicyVerdict(true, notepad.ProcessName, null));
-        Windows.Setup(w => w.MoveWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>())).Returns(true);
-        Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>())).Returns(true);
+        Windows.Setup(w => w.MoveWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.ResizeWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>()))
+            .Returns((nint handle, int _, int _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(true);
-        Windows.Setup(w => w.SetWindowState(It.IsAny<nint>(), It.IsAny<WindowState>())).Returns(true);
-        Windows.Setup(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>())).Returns(true);
-        Windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>())).Returns(true);
+            .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.SetWindowState(It.IsAny<nint>(), It.IsAny<WindowStateRequest>()))
+            .Returns((nint handle, WindowStateRequest _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.SnapWindow(It.IsAny<nint>(), It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()))
+            .Returns((nint handle, SnapPosition _, int? _, bool _) => WindowChangeResult.Done(handle));
+        Windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, MonitorPositioning _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>())).Returns((nint handle, bool _) => new WindowCloseResult(handle, true));
         Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(h => new WindowCloseResult(h, true)).ToList());
         Windows.Setup(w => w.SetWindowBoundsBatchAsync(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _, CancellationToken _) =>
-                placements.Select(p => (p.Handle, true, (string?)null)).ToList());
+                placements.Select(p => WindowChangeResult.Done(p.Handle)).ToList());
         Windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _, CancellationToken _) =>
-                placements.Select(p => (p.Handle, true, (string?)null)).ToList());
-        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowState)> changes, int _, CancellationToken _) =>
-                changes.Select(c => (c.Handle, true, (string?)null)).ToList());
+                placements.Select(p => WindowChangeResult.Done(p.Handle)).ToList());
+        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowStateRequest)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowStateRequest)> changes, int _, CancellationToken _) =>
+                changes.Select(c => WindowChangeResult.Done(c.Handle)).ToList());
 
         Foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
             .Returns((nint handle, int _) => new FocusOutcome
@@ -150,7 +155,7 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.GetPreset(It.IsAny<string>())).Returns(preset);
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(true, preset.Name, WindowsArranged: preset.Placements.Count, Focus: [TypicalDesktop.NotepadFocused]));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) => new LayoutDeleteResult(true, name));
@@ -222,13 +227,13 @@ public sealed class ContractServices : IDisposable
                 handles.Select(h => new WindowCloseResult(h, false, WindowErrorCode.InvalidHandle, invalid)).ToList());
         Windows.Setup(w => w.SetWindowBoundsBatchAsync(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(nint Handle, int, int, int, int, bool)> placements, int _, CancellationToken _) =>
-                placements.Select(p => (p.Handle, false, (string?)invalid)).ToList());
+                placements.Select(p => WindowChangeResult.Failed(p.Handle, WindowErrorCode.InvalidHandle, invalid)).ToList());
         Windows.Setup(w => w.SnapWindowsBatchAsync(It.IsAny<IReadOnlyList<(nint, SnapPosition, int?, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<(nint Handle, SnapPosition, int?, bool)> placements, int _, CancellationToken _) =>
-                placements.Select(p => (p.Handle, false, (string?)invalid)).ToList());
-        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowState)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowState)> changes, int _, CancellationToken _) =>
-                changes.Select(c => (c.Handle, false, (string?)invalid)).ToList());
+                placements.Select(p => WindowChangeResult.Failed(p.Handle, WindowErrorCode.InvalidHandle, invalid)).ToList());
+        Windows.Setup(w => w.SetWindowStateBatchAsync(It.IsAny<IReadOnlyList<(nint, WindowStateRequest)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<(nint Handle, WindowStateRequest)> changes, int _, CancellationToken _) =>
+                changes.Select(c => WindowChangeResult.Failed(c.Handle, WindowErrorCode.InvalidHandle, invalid)).ToList());
 
         Foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
             .Returns((nint handle, int _) => new FocusOutcome { Target = handle, ErrorCode = WindowErrorCode.InvalidHandle, Error = invalid });
@@ -258,8 +263,8 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.GetStorageError()).Returns("The layouts folder cannot be written");
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(false, null, ErrorMessage: "The layouts folder cannot be written", ErrorCode: nameof(LayoutErrorCode.SaveFailed)));
-        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string name, string _, bool _, IProgress<OperationProgress>? _, CancellationToken _) =>
+        Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string name, LayoutMatchBy _, bool _, IProgress<OperationProgress>? _, CancellationToken _) =>
                 new LayoutApplyResult(false, name, Errors: [$"Layout preset '{name}' was not found"], ErrorCode: nameof(LayoutErrorCode.PresetNotFound)));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) =>

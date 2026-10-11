@@ -511,7 +511,7 @@ public class WindowServiceTests
     #region T2.5-T2.8: Window Manipulation Tests (Mocked Native Wrapper)
 
     [Fact]
-    public void MoveWindow_WithInvalidHandle_ReturnsFalse()
+    public void MoveWindow_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
@@ -520,12 +520,13 @@ public class WindowServiceTests
         var result = sut.MoveWindow(new nint(InvalidHandleValue), 100, 100);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
-    public void ResizeWindow_WithInvalidHandle_ReturnsFalse()
+    public void ResizeWindow_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
@@ -534,12 +535,13 @@ public class WindowServiceTests
         var result = sut.ResizeWindow(new nint(InvalidHandleValue), 800, 600);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
-    public void SetWindowBounds_WithInvalidHandle_ReturnsFalse()
+    public void SetWindowBounds_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
@@ -548,21 +550,23 @@ public class WindowServiceTests
         var result = sut.SetWindowBounds(new nint(InvalidHandleValue), 100, 100, 800, 600);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 
     [Fact]
-    public void SetWindowState_WithInvalidHandle_ReturnsFalse()
+    public void SetWindowState_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
 
         // Act
-        var result = sut.SetWindowState(new nint(InvalidHandleValue), WindowState.Minimized);
+        var result = sut.SetWindowState(new nint(InvalidHandleValue), WindowStateRequest.Minimize);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 
@@ -571,7 +575,7 @@ public class WindowServiceTests
     #region T2.9: SnapWindow Tests (Invalid Handle)
 
     [Fact]
-    public void SnapWindow_WithInvalidHandle_ReturnsFalse()
+    public void SnapWindow_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
@@ -580,7 +584,8 @@ public class WindowServiceTests
         var result = sut.SnapWindow(new nint(InvalidHandleValue), SnapPosition.LeftHalf);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 
@@ -589,7 +594,7 @@ public class WindowServiceTests
     #region T2.10: MoveWindowToMonitor Tests (Invalid Handle)
 
     [Fact]
-    public void MoveWindowToMonitor_WithInvalidHandle_ReturnsFalse()
+    public void MoveWindowToMonitor_WithInvalidHandle_IsInvalidHandle()
     {
         // Arrange
         var (sut, native) = CreateSutWithNoValidWindows();
@@ -598,7 +603,8 @@ public class WindowServiceTests
         var result = sut.MoveWindowToMonitor(new nint(InvalidHandleValue), 0);
 
         // Assert
-        result.Should().BeFalse();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.InvalidHandle);
         VerifyNoWindowWasChanged(native);
     }
 

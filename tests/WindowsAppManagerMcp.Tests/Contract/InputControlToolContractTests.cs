@@ -97,14 +97,14 @@ public sealed class InputControlToolContractTests : IDisposable
                     }))
                     .AddToolErrorReporting()
                     .AddInputGateSerialization()
-                    .WithTools(new InputSimulationTools(service));
+                    .WithServerTools(new InputSimulationTools(service));
 
                 // The input control tools are registered as the server registers them: the SDK builds a new
                 // instance from the services for every call, so no state of theirs outlives a call. Only a test
                 // that needs a shorter answer timeout registers one instance instead.
                 _ = answerTimeout is { } timeout
-                    ? builder.WithTools(new InputControlTools(session, _hotkey, timeout))
-                    : builder.WithTools<InputControlTools>();
+                    ? builder.WithServerTools(new InputControlTools(session, _hotkey, timeout))
+                    : builder.WithServerTools<InputControlTools>();
             },
             clientOptions: InProcessMcpServer.WithRevision(options, revision),
             configureServices: services => services
@@ -116,8 +116,13 @@ public sealed class InputControlToolContractTests : IDisposable
 
     private static JsonElement Payload(CallToolResult result)
     {
-        result.IsError.Should().NotBe(true);
-        return JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        var payload = JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        if (payload.TryGetProperty("success", out var success))
+        {
+            (result.IsError == true).Should().Be(!success.GetBoolean(), "a result goes out with isError = !success (roadmap M2.1)");
+        }
+
+        return payload;
     }
 
     private static ValueTask<ElicitResult> Answer(string action, bool? resume = null) =>

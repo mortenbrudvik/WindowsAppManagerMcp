@@ -39,6 +39,15 @@ public interface IProcessService
     string? GetProcessPath(int processId);
 
     /// <summary>
+    /// The checks of <see cref="KillProcessAsync"/> without acting: the refusal it would return for this process
+    /// (except a missing confirm), or the process's name and, with <paramref name="forceKill"/>, the child processes it
+    /// would also end. Without <paramref name="forceKill"/>, a process without a main window is refused with
+    /// NoClosableWindow, as the graceful close would refuse it. kill_process uses it to ask the user before it enters the
+    /// input gate.
+    /// </summary>
+    KillTargetCheck CheckKillTarget(int processId, bool forceKill, int gracefulTimeoutMs, string? expectedProcessName = null);
+
+    /// <summary>
     /// Terminates a process by its ID.
     /// </summary>
     /// <param name="processId">The process ID to terminate.</param>

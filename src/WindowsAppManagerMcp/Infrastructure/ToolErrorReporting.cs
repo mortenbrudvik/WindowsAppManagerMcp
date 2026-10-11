@@ -96,7 +96,8 @@ public static class ToolErrorReporting
 
             try
             {
-                var result = await next(request, cancellationToken).ConfigureAwait(false);
+                // A result that says success false goes out with isError (roadmap M2.1), whichever tool returned it
+                var result = ToolOutcome.WithIsError(await next(request, cancellationToken).ConfigureAwait(false));
                 call.Finished(result.IsError == true ? $"isError {ReportedErrorCode(result) ?? "(no errorCode)"}" : "ok");
                 return result;
             }
@@ -129,6 +130,17 @@ public static class ToolErrorReporting
                         "Tool '{ToolName}' returned error {ErrorCode}: {ErrorMessage}", toolName, errorCode, deliberate.Message);
                     call.Finished($"isError {errorCode}");
                     return CreateToolErrorResult(toolName, errorCode, deliberate.Message);
+                }
+
+                if (exception is ToolArgumentException invalidValue)
+                {
+                    // A value outside an argument's allowed values (roadmap M2.2): the converter's code and message
+                    logger.LogInformation(
+                        "Tool '{ToolName}' was called with an invalid value: {ErrorCode}: {ErrorMessage}",
+                        toolName, invalidValue.ErrorCode, invalidValue.Message);
+                    call.Finished($"isError {invalidValue.ErrorCode}");
+                    return CreateToolErrorResult(toolName, invalidValue.ErrorCode,
+                        $"Invalid arguments for tool '{toolName}'. {invalidValue.Message} Nothing was done.");
                 }
 
                 if (IsArgumentBindingFailure(exception))

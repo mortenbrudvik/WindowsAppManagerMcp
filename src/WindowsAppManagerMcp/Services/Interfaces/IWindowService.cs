@@ -44,17 +44,34 @@ public interface IWindowService
     /// </summary>
     bool IsUserFacingAppWindow(nint handle);
 
-    bool MoveWindow(nint handle, int x, int y, bool bringToFront = true);
+    // The window changes (roadmap M2.2). Each refuses an invalid handle (InvalidHandle) and a window the target policy
+    // denies (TargetDeniedByPolicy) before anything is sent, and reports a refused SetWindowPos with its Win32 error
+    // (5: AccessDenied). A window that does not answer throws WindowNotRespondingException (IWindowCallRunner).
 
-    bool ResizeWindow(nint handle, int width, int height);
+    WindowChangeResult MoveWindow(nint handle, int x, int y, bool bringToFront = true);
 
-    bool SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true);
+    WindowChangeResult ResizeWindow(nint handle, int width, int height);
 
-    bool SetWindowState(nint handle, WindowState state);
+    WindowChangeResult SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true);
 
-    bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true);
+    /// <summary>
+    /// Minimizes, maximizes or restores the window, and succeeds only when the window is seen in that state within
+    /// WindowService.StateChangeTimeout (StateChangeFailed otherwise). Restore is the Windows Restore command: a minimized
+    /// window returns to the state it had before (normal or maximized), any other window becomes normal.
+    /// </summary>
+    WindowChangeResult SetWindowState(nint handle, WindowStateRequest state);
 
-    bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center", bool bringToFront = true);
+    /// <summary>
+    /// Snaps the window on monitor <paramref name="monitorIndex"/>, or on its own monitor when it is null. An index that
+    /// is not a monitor fails with InvalidMonitorIndex and the valid range.
+    /// </summary>
+    WindowChangeResult SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true);
+
+    /// <summary>
+    /// Moves the window to monitor <paramref name="monitorIndex"/> (InvalidMonitorIndex with the valid range when it is not
+    /// one). Maximize moves the window there first, then maximizes it, and succeeds only when it is maximized there.
+    /// </summary>
+    WindowChangeResult MoveWindowToMonitor(nint handle, int monitorIndex, MonitorPositioning positioning = MonitorPositioning.Center, bool bringToFront = true);
 
     bool IsValidWindow(nint handle);
 
@@ -79,19 +96,20 @@ public interface IWindowService
 
     // Batch operations. Each changes one window after another, with delayBetweenMs (clamped to 0-5000) between two
     // windows; the cancellation token ends the batch between windows and during that delay: the windows already
-    // changed stay changed, and the call throws OperationCanceledException.
-    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowBoundsBatchAsync(
+    // changed stay changed, and the call throws OperationCanceledException. Each window gets its own result, in order:
+    // a window that fails, or does not answer (NotResponding), does not stop the batch.
+    Task<IReadOnlyList<WindowChangeResult>> SetWindowBoundsBatchAsync(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SnapWindowsBatchAsync(
+    Task<IReadOnlyList<WindowChangeResult>> SnapWindowsBatchAsync(
         IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)> placements,
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowStateBatchAsync(
-        IReadOnlyList<(nint Handle, WindowState State)> changes,
+    Task<IReadOnlyList<WindowChangeResult>> SetWindowStateBatchAsync(
+        IReadOnlyList<(nint Handle, WindowStateRequest State)> changes,
         int delayBetweenMs = 30,
         CancellationToken cancellationToken = default);
 

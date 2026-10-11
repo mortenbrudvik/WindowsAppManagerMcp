@@ -95,13 +95,19 @@ public class InputToolGuardContractTests
         var service = new InputSimulationService(monitors.Object, _input.Object, guard, new InputSession(_input.Object));
         return InProcessMcpServer.StartAsync(
             [],
-            builder => builder.AddToolErrorReporting().WithTools(new InputSimulationTools(service)));
+            builder => builder.AddToolErrorReporting().WithServerTools(new InputSimulationTools(service)));
     }
 
     private static JsonElement ParsePayload(CallToolResult result)
     {
-        result.IsError.Should().NotBe(true, "guard refusals are ordinary results with success: false");
-        return JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        // A guard refusal is a result with success false and its errorCode, sent with isError (roadmap M2.1)
+        var payload = JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        if (payload.TryGetProperty("success", out var success))
+        {
+            (result.IsError == true).Should().Be(!success.GetBoolean(), "a result goes out with isError = !success (roadmap M2.1)");
+        }
+
+        return payload;
     }
 
     [Fact]

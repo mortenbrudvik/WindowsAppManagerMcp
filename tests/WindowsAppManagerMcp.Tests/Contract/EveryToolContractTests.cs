@@ -9,12 +9,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// Contract: every tool the server serves, called the way an agent calls it, over MCP through the production tool
 /// and filter registrations, with mocked services (<see cref="ContractRun"/>). A typical call returns non-empty
 /// JSON content with success true and isError not set, and a capture returns an image block first. A failing call
-/// (the services report invalid handles, errors and empty lists) returns isError = !success.
-/// <para>
-/// Roadmap M2.1 makes every tool report isError = !success and replaces null results. Until then the tools in
-/// <see cref="IsErrorPendingM21"/> and <see cref="NullResultPendingM21"/> are checked for the old behavior, and a
-/// tool that no longer needs its entry fails here until the entry is removed, so the lists only shrink.
-/// </para>
+/// (the services report invalid handles, errors and empty lists) returns non-empty content and isError = !success
+/// (roadmap M2.1): no tool sends a failure with isError false, and none returns null, which a client receives as
+/// empty content.
 /// </summary>
 public class EveryToolContractTests
 {
@@ -80,23 +77,6 @@ public class EveryToolContractTests
             ["delete_layout"] = Args("""{ "name": "layout-1" }"""),
         };
 
-    /// <summary>
-    /// Tools whose failure result still goes out with isError false (roadmap M2.1). Every other tool already reports
-    /// isError = !success: the captures (ToolImages), and the tools whose failure is a tool error (ToolErrorException
-    /// or an exception the error filter reports).
-    /// </summary>
-    private static readonly HashSet<string> IsErrorPendingM21 = new(StringComparer.Ordinal)
-    {
-        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window", "close_window",
-        "snap_window", "move_window_to_monitor", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug", "click",
-        "right_click", "double_click", "mouse_move", "type_text", "send_keys", "resume_input", "launch_application",
-        "kill_process", "save_layout", "apply_layout", "delete_layout"
-    };
-
-    /// <summary>Tools that return null, which the SDK sends as empty content (roadmap M2.1: return {found: false} instead).</summary>
-    private static readonly HashSet<string> NullResultPendingM21 = new(StringComparer.Ordinal) { "get_foreground_window" };
-
     /// <summary>The failing call of these tools fails differently than the mode's defaults.</summary>
     private static readonly IReadOnlyDictionary<string, Action<ContractServices>> FailingArrange =
         new Dictionary<string, Action<ContractServices>>(StringComparer.Ordinal)
@@ -131,8 +111,6 @@ public class EveryToolContractTests
     {
         Arguments.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
             "every tool is called in the contract run; a new tool needs typical arguments here");
-        IsErrorPendingM21.Should().BeSubsetOf(Arguments.Keys);
-        NullResultPendingM21.Should().BeSubsetOf(Arguments.Keys);
     }
 
     [Theory]
@@ -187,12 +165,6 @@ public class EveryToolContractTests
         var result = await ContractRun.CallAsync(ContractMode.Failing, tool, ArgumentsFor(tool), FailingArrange.GetValueOrDefault(tool));
 
         // Assert
-        if (NullResultPendingM21.Contains(tool))
-        {
-            result.Content.Should().BeEmpty("'{0}' still returns null (M2.1); remove it from NullResultPendingM21", tool);
-            return;
-        }
-
         result.Content.Should().NotBeEmpty("'{0}' must say why it failed", tool);
         var text = result.Content.OfType<TextContentBlock>().Single().Text;
         result.Content.OfType<ImageContentBlock>().Should().BeEmpty("a failed call has no image");
@@ -209,13 +181,6 @@ public class EveryToolContractTests
         if (!NoFailingCall.Contains(tool))
         {
             success.Should().BeFalse("the failing call of '{0}' fails: {1}", tool, text);
-        }
-
-        if (IsErrorPendingM21.Contains(tool))
-        {
-            result.IsError.Should().NotBe(true,
-                "'{0}' now reports isError on failure: remove it from IsErrorPendingM21", tool);
-            return;
         }
 
         (result.IsError == true).Should().Be(!success, "isError must be !success for '{0}': {1}", tool, text);

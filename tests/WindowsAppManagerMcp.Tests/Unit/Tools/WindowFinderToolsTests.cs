@@ -236,7 +236,7 @@ public class WindowFinderToolsTests
     #region GetForegroundWindow Tests
 
     [Fact]
-    public void GetForegroundWindow_ReturnsNull_WhenNoForegroundWindow()
+    public void GetForegroundWindow_WhenNoWindowIsInTheForeground_IsANoForegroundWindowToolError()
     {
         // Arrange
         _mockWindowService.Setup(w => w.GetForegroundWindow())
@@ -244,10 +244,11 @@ public class WindowFinderToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetForegroundWindow();
+        var act = () => sut.GetForegroundWindow();
 
-        // Assert
-        result.Should().BeNull();
+        // Assert - roadmap M2.1: never a null result, which a client receives as empty content
+        act.Should().Throw<WindowsAppManagerMcp.Infrastructure.ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains("No window is in the foreground"));
     }
 
     [Fact]

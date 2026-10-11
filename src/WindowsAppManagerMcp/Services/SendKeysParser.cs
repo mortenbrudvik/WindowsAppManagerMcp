@@ -42,7 +42,8 @@ public static class SendKeysParser
     /// <paramref name="windowsModifier"/> also reads <c>#</c> as the Windows-key modifier; send_keys does
     /// not (there <c>#</c> is the character), only the destructive-chord settings do.
     /// </summary>
-    /// <exception cref="ArgumentException">A brace is not closed, or a key name is unknown.</exception>
+    /// <exception cref="KeySyntaxException">A brace is not closed (InvalidKeySpecification).</exception>
+    /// <exception cref="ArgumentException">A key name is unknown (UnknownKey).</exception>
     public static List<InputEvent> Parse(string keys, bool windowsModifier = false)
     {
         ArgumentNullException.ThrowIfNull(keys);
@@ -83,7 +84,7 @@ public static class SendKeysParser
                 var endBrace = keys.IndexOf('}', i + 1);
                 if (endBrace == -1)
                 {
-                    throw new ArgumentException($"Unclosed brace at position {i}");
+                    throw new KeySyntaxException($"Unclosed brace at position {i}");
                 }
 
                 var keyName = keys.Substring(i + 1, endBrace - i - 1).ToUpperInvariant();
@@ -321,3 +322,9 @@ public static class SendKeysParser
         return 0;
     }
 }
+
+/// <summary>
+/// The keys string is not valid SendKeys syntax, such as a brace that is not closed: a mistake the agent fixes in
+/// the string, reported as InvalidKeySpecification, unlike an unknown key name (UnknownKey).
+/// </summary>
+public sealed class KeySyntaxException(string message) : ArgumentException(message);

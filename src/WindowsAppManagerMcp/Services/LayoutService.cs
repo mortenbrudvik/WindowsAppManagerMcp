@@ -339,7 +339,7 @@ public class LayoutService : ILayoutService
 
     public async Task<LayoutApplyResult> ApplyPresetAsync(
         string name,
-        string matchBy = "process_and_title",
+        LayoutMatchBy matchBy = LayoutMatchBy.ProcessAndTitle,
         bool launchMissing = false,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
@@ -484,16 +484,18 @@ public class LayoutService : ILayoutService
             var h = (int)(placement.Position.Height * workArea.Height);
 
             bool placed;
-            string? notResponding = null;
+            string? notPlaced = null;
             try
             {
-                placed = _windowService.SetWindowBounds(window.Handle, x, y, w, h);
+                var change = _windowService.SetWindowBounds(window.Handle, x, y, w, h);
+                placed = change.Success;
+                notPlaced = change.Success ? null : $"{change.ErrorCode}: {change.Error}";
             }
             catch (WindowNotRespondingException ex)
             {
                 // The application is hung or busy: this placement fails, and the others still run
                 placed = false;
-                notResponding = ex.Message;
+                notPlaced = $"{nameof(WindowErrorCode.NotResponding)}: {ex.Message}";
             }
 
             string outcome;
@@ -523,7 +525,7 @@ public class LayoutService : ILayoutService
             {
                 outcome = "could not be arranged";
                 AddError(LayoutErrorCode.ArrangeFailed,
-                    $"Failed to arrange window '{window.Title}' for {label}{(notResponding == null ? string.Empty : $": {notResponding}")}");
+                    $"Failed to arrange window '{window.Title}' for {label}{(notPlaced == null ? string.Empty : $": {notPlaced}")}");
             }
 
             // Small delay between window operations
@@ -532,18 +534,19 @@ public class LayoutService : ILayoutService
         }
     }
 
-    private IReadOnlyList<WindowInfo> FindMatchingWindows(WindowMatcher matcher, string matchBy)
+    private IReadOnlyList<WindowInfo> FindMatchingWindows(WindowMatcher matcher, LayoutMatchBy matchBy)
     {
         var windows = _windowService.GetAllWindows(includeMinimized: true);
         var results = new List<WindowInfo>();
 
         foreach (var window in windows)
         {
-            var matches = matchBy.ToLowerInvariant() switch
+            var matches = matchBy switch
             {
-                "process_only" => MatchesProcessName(window, matcher),
-                "title_only" => MatchesTitle(window, matcher),
-                _ => MatchesProcessName(window, matcher) && MatchesTitle(window, matcher)
+                LayoutMatchBy.ProcessOnly => MatchesProcessName(window, matcher),
+                LayoutMatchBy.TitleOnly => MatchesTitle(window, matcher),
+                LayoutMatchBy.ProcessAndTitle => MatchesProcessName(window, matcher) && MatchesTitle(window, matcher),
+                _ => throw new ArgumentOutOfRangeException(nameof(matchBy), matchBy, "Not a matchBy value.")
             };
 
             if (matches)

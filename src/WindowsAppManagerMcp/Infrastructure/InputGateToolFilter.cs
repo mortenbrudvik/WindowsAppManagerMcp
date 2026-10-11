@@ -15,9 +15,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// take the gate themselves, around their checks and batches; read-only tools run without it.
 /// </summary>
 /// <remarks>
-/// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/> and <see cref="ControlTools"/>
-/// runs inside the gate, so a new tool is serialized until it is reviewed onto another list. A contract test
-/// checks that every tool the server serves is in exactly one of the four lists. A name the server does not
+/// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/>, <see cref="ControlTools"/> and
+/// <see cref="SelfGatedTools"/> runs inside the gate, so a new tool is serialized until it is reviewed onto another
+/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. A name the server does not
 /// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
 /// cannot change which window is in front.
 /// <para>
@@ -52,9 +52,21 @@ public static class InputGateToolFilter
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window", "close_window",
-        "close_windows_batch", "snap_window", "move_window_to_monitor", "set_windows_bounds_batch",
+        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch",
         "snap_windows_batch", "set_windows_state_batch", "apply_layout", "launch_application",
-        "launch_applications_batch", "kill_process", "launch_browser_with_debug"
+        "launch_applications_batch", "launch_browser_with_debug"
+    };
+
+    /// <summary>
+    /// Tools that change windows or stop processes like <see cref="WindowChangingTools"/>, but may first ask the user
+    /// to confirm (elicitation, roadmap M2.10). A question must never hold the gate: the user may take minutes to answer,
+    /// and every input and window call would wait for them. So these tools run without this filter, ask first, and then
+    /// take the gate themselves with <see cref="EnterAsync"/>, which waits, refuses and reports a pause exactly as this
+    /// filter does.
+    /// </summary>
+    public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "kill_process", "close_windows_batch"
     };
 
     /// <summary>
@@ -95,7 +107,60 @@ public static class InputGateToolFilter
 
     /// <summary>True when the tool runs inside the gate through this filter.</summary>
     public static bool RunsInsideTheGate(string? toolName) =>
-        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName) && !ControlTools.Contains(toolName));
+        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName) && !ControlTools.Contains(toolName) &&
+                             !SelfGatedTools.Contains(toolName));
+
+    /// <summary>
+    /// For the <see cref="SelfGatedTools"/>: refuses with a PausedByUser tool error while the user has paused input,
+    /// before the tool asks the user anything.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused.</exception>
+    public static void ThrowIfPaused(IInputSession? session)
+    {
+        if (session?.IsPaused == true)
+        {
+            throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+        }
+    }
+
+    /// <summary>
+    /// For the <see cref="SelfGatedTools"/>, after any question to the user: waits for the input gate as this filter
+    /// does and returns it, to be disposed when the tool is done. A pause before or during the wait, or just as the gate
+    /// is taken, is a PausedByUser tool error; a gate that is not free within <paramref name="timeout"/> (default
+    /// <see cref="GateWaitTimeout"/>) is InputBusy. Either way nothing has been done.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused, or the gate is busy.</exception>
+    public static async Task<IDisposable> EnterAsync(IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    {
+        ThrowIfPaused(session);
+        var wait = timeout ?? GateWaitTimeout;
+
+        IDisposable? gate;
+        using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session?.PauseToken ?? CancellationToken.None))
+        {
+            try
+            {
+                gate = await InputGate.TryEnterAsync(wait, waiting.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session!));
+            }
+        }
+
+        if (gate == null)
+        {
+            throw new ToolErrorException(nameof(InputErrorCode.InputBusy), BusyMessage(wait));
+        }
+
+        if (session?.IsPaused == true)
+        {
+            gate.Dispose();
+            throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+        }
+
+        return gate;
+    }
 
     /// <summary>
     /// Call-tool filter: a tool that <see cref="RunsInsideTheGate"/> waits for the input gate and holds it
@@ -163,14 +228,18 @@ public static class InputGateToolFilter
         (name == null || !tools.TryGetPrimitive(name, out _));
 
     private static CallToolResult BusyResult(string? toolName, TimeSpan waited) =>
-        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(InputErrorCode.InputBusy),
-            $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
-            "did not start. Retry when your other calls have finished.");
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(InputErrorCode.InputBusy), BusyMessage(waited));
 
     private static CallToolResult PausedResult(string? toolName, IInputSession session) =>
-        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser),
-            $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
-            "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
-            "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
-            "or by confirming resume_input.");
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+
+    private static string BusyMessage(TimeSpan waited) =>
+        $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
+        "did not start. Retry when your other calls have finished.";
+
+    private static string PausedMessage(IInputSession session) =>
+        $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+        "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
+        "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
+        "or by confirming resume_input.";
 }

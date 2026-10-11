@@ -21,11 +21,21 @@ public class WindowService : IWindowService
     /// </summary>
     public const int MaxDelayBetweenMs = 5000;
 
+    /// <summary>
+    /// How long a state change (minimize, maximize, restore) waits for the window to be seen in the new state before it
+    /// reports StateChangeFailed: applications that animate the change take a moment.
+    /// </summary>
+    public static readonly TimeSpan StateChangeTimeout = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>How often the state is read while a state change waits for it.</summary>
+    private static readonly TimeSpan StatePollInterval = TimeSpan.FromMilliseconds(20);
+
     private readonly IMonitorService _monitorService;
     private readonly INativeWindowWrapper _nativeWrapper;
     private readonly IHostGuard _hostGuard;
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IWindowCallRunner _windowCalls;
+    private readonly TimeSpan _stateChangeTimeout;
 
     /// <param name="monitorService">Monitor lookups.</param>
     /// <param name="nativeWrapper">The window calls.</param>
@@ -40,18 +50,23 @@ public class WindowService : IWindowService
     /// Runs the calls that can block on another thread's window (SetWindowPos, ShowWindow) with a deadline;
     /// default a <see cref="WindowCallRunner"/> over <paramref name="nativeWrapper"/>.
     /// </param>
+    /// <param name="stateChangeTimeout">
+    /// How long a state change waits to see the new state; default <see cref="StateChangeTimeout"/>. Tests pass zero.
+    /// </param>
     public WindowService(
         IMonitorService monitorService,
         INativeWindowWrapper nativeWrapper,
         IHostGuard hostGuard,
         ITargetPolicy? targetPolicy = null,
-        IWindowCallRunner? windowCalls = null)
+        IWindowCallRunner? windowCalls = null,
+        TimeSpan? stateChangeTimeout = null)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
         _hostGuard = hostGuard ?? throw new ArgumentNullException(nameof(hostGuard));
         _targetPolicy = targetPolicy;
         _windowCalls = windowCalls ?? new WindowCallRunner(nativeWrapper);
+        _stateChangeTimeout = stateChangeTimeout ?? StateChangeTimeout;
     }
 
     /// <summary>The delay a batch sleeps between two windows for <paramref name="delayBetweenMs"/>: 0 to <see cref="MaxDelayBetweenMs"/>.</summary>
@@ -137,19 +152,15 @@ public class WindowService : IWindowService
             includeCloaked: false,
             out _);
 
-    public bool MoveWindow(nint handle, int x, int y, bool bringToFront = true)
+    public WindowChangeResult MoveWindow(nint handle, int x, int y, bool bringToFront = true)
     {
-        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
-            return false;
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
 
-        var rect = _nativeWrapper.GetWindowRect(handle);
-        if (rect == null)
-            return false;
+        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+            return WindowGone(handle);
 
-        var width = rect.Value.Right - rect.Value.Left;
-        var height = rect.Value.Bottom - rect.Value.Top;
-
-        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        return Place(handle, x, y, rect.Right - rect.Left, rect.Bottom - rect.Top, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
     }
 
     /// <summary>
@@ -161,136 +172,199 @@ public class WindowService : IWindowService
     private static uint PlacementFlags(bool bringToFront) =>
         bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
 
-    public bool ResizeWindow(nint handle, int width, int height)
+    public WindowChangeResult ResizeWindow(nint handle, int width, int height)
     {
-        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
-            return false;
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
 
-        var rect = _nativeWrapper.GetWindowRect(handle);
-        if (rect == null)
-            return false;
+        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+            return WindowGone(handle);
 
-        return SetWindowPos(
-            handle,
-            rect.Value.Left, rect.Value.Top, width, height,
-            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE);
+        return Place(handle, rect.Left, rect.Top, width, height, NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE,
+            WindowErrorCode.ResizeFailed);
     }
 
-    public bool SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
-        IsValidWindow(handle) && !IsDeniedByPolicy(handle) && ApplyBounds(handle, x, y, width, height, bringToFront);
+    public WindowChangeResult SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
+        ChangeRefusal(handle) ?? ApplyBounds(handle, x, y, width, height, bringToFront);
 
     /// <summary>Places a window that was checked already, restoring it first if it is minimized.</summary>
-    private bool ApplyBounds(nint handle, int x, int y, int width, int height, bool bringToFront)
+    private WindowChangeResult ApplyBounds(nint handle, int x, int y, int width, int height, bool bringToFront)
     {
-        // Restore window first if minimized
         if (_nativeWrapper.IsIconic(handle))
         {
             ShowWindow(handle, NativeEnums.SW_RESTORE);
         }
 
-        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        return Place(handle, x, y, width, height, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
     }
 
-    public bool SetWindowState(nint handle, WindowState state) =>
-        IsValidWindow(handle) && !IsDeniedByPolicy(handle) && ApplyState(handle, state);
+    public WindowChangeResult SetWindowState(nint handle, WindowStateRequest state) =>
+        ChangeRefusal(handle) ?? ApplyState(handle, state);
 
-    /// <summary>Changes the show state of a window that was checked already.</summary>
-    private bool ApplyState(nint handle, WindowState state)
+    /// <summary>
+    /// Changes the show state of a window that was checked already, and reports success only when the window is seen in
+    /// that state within <see cref="StateChangeTimeout"/>: ShowWindow's return value says whether the window was visible
+    /// before the call, not whether the command worked.
+    /// </summary>
+    private WindowChangeResult ApplyState(nint handle, WindowStateRequest state)
     {
-        var cmd = state switch
+        var command = state switch
         {
-            WindowState.Minimized => NativeEnums.SW_MINIMIZE,
-            WindowState.Maximized => NativeEnums.SW_MAXIMIZE,
-            WindowState.Normal => NativeEnums.SW_RESTORE,
-            _ => NativeEnums.SW_RESTORE
+            WindowStateRequest.Minimize => NativeEnums.SW_MINIMIZE,
+            WindowStateRequest.Maximize => NativeEnums.SW_MAXIMIZE,
+            WindowStateRequest.Restore => NativeEnums.SW_RESTORE,
+            _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Not a window state.")
         };
 
-        return ShowWindow(handle, cmd);
+        var wasMinimized = _nativeWrapper.IsIconic(handle);
+        ShowWindow(handle, command);
+        return WaitForState(handle, state, wasMinimized);
     }
 
-    public bool SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
+    /// <summary>
+    /// Waits up to <see cref="StateChangeTimeout"/> for the window to be in <paramref name="state"/> (applications that
+    /// animate take a moment), polling the state, which reads it without waiting for the window's thread.
+    /// </summary>
+    private WindowChangeResult WaitForState(nint handle, WindowStateRequest state, bool wasMinimized)
     {
-        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
-            return false;
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (!IsInState(handle, state, wasMinimized))
+        {
+            if (!_nativeWrapper.IsWindow(handle))
+                return WindowGone(handle);
+
+            if (waited.Elapsed >= _stateChangeTimeout)
+            {
+                return WindowChangeResult.Failed(handle, WindowErrorCode.StateChangeFailed,
+                    $"The window did not become {Describe(state)} within {_stateChangeTimeout.TotalMilliseconds:0} ms: it is " +
+                    $"{ObservedState(handle)}. The application may have refused or delayed the change, or it may run with higher " +
+                    "privileges (for example as administrator), which Windows does not let this server change. Check the window " +
+                    "(find_windows with its handle) before acting on it.");
+            }
+
+            Thread.Sleep(StatePollInterval);
+        }
+
+        return WindowChangeResult.Done(handle);
+    }
+
+    /// <summary>
+    /// Whether the window is in <paramref name="state"/>. Restore is the Windows Restore command: a minimized window is no
+    /// longer minimized (it returns to normal, or to maximized when it was maximized before it was minimized), and a
+    /// window that was not minimized is no longer maximized.
+    /// </summary>
+    private bool IsInState(nint handle, WindowStateRequest state, bool wasMinimized) => state switch
+    {
+        WindowStateRequest.Minimize => _nativeWrapper.IsIconic(handle),
+        WindowStateRequest.Maximize =>
+            !_nativeWrapper.IsIconic(handle) && _nativeWrapper.IsZoomed(handle) && _nativeWrapper.IsWindowVisible(handle),
+        _ => !_nativeWrapper.IsIconic(handle) && _nativeWrapper.IsWindowVisible(handle) && (wasMinimized || !_nativeWrapper.IsZoomed(handle))
+    };
+
+    private static string Describe(WindowStateRequest state) => state switch
+    {
+        WindowStateRequest.Minimize => "minimized",
+        WindowStateRequest.Maximize => "maximized",
+        _ => "restored"
+    };
+
+    private string ObservedState(nint handle) =>
+        _nativeWrapper.IsIconic(handle) ? "minimized"
+        : !_nativeWrapper.IsWindowVisible(handle) ? "hidden"
+        : _nativeWrapper.IsZoomed(handle) ? "maximized"
+        : "normal";
+
+    public WindowChangeResult SnapWindow(nint handle, SnapPosition position, int? monitorIndex = null, bool bringToFront = true)
+    {
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
 
         var targetMonitor = monitorIndex ?? _monitorService.GetMonitorIndex(handle);
-        var bounds = _monitorService.CalculateSnapBounds(targetMonitor, position);
+        if (MonitorIndexRefusal(handle, targetMonitor) is { } invalid)
+            return invalid;
+
+        MonitorRect bounds;
+        try
+        {
+            bounds = _monitorService.CalculateSnapBounds(targetMonitor, position);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // The displays changed between the check and the calculation
+            return MonitorIndexRefusal(handle, targetMonitor) ?? throw new InvalidOperationException("The monitor list changed.");
+        }
 
         return ApplyBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height, bringToFront);
     }
 
-    public bool MoveWindowToMonitor(nint handle, int monitorIndex, string positioning = "center", bool bringToFront = true)
+    public WindowChangeResult MoveWindowToMonitor(
+        nint handle, int monitorIndex, MonitorPositioning positioning = MonitorPositioning.Center, bool bringToFront = true)
     {
-        if (!IsValidWindow(handle) || IsDeniedByPolicy(handle))
-            return false;
+        if (ChangeRefusal(handle) is { } refused)
+            return refused;
 
         var monitors = _monitorService.GetAllMonitors();
-        if (monitorIndex < 0 || monitorIndex >= monitors.Count)
-            return false;
+        if (MonitorIndexRefusal(handle, monitorIndex, monitors.Count) is { } invalid)
+            return invalid;
 
-        var targetMonitor = monitors[monitorIndex];
-        var workArea = targetMonitor.WorkArea;
+        var workArea = monitors[monitorIndex].WorkArea;
+        if (positioning == MonitorPositioning.Maximize)
+            return MaximizeOnMonitor(handle, monitorIndex, workArea);
 
-        // Get current window size
-        var rect = _nativeWrapper.GetWindowRect(handle);
-        if (rect == null)
-            return false;
+        // The window keeps its current size
+        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+            return WindowGone(handle);
 
-        var width = rect.Value.Right - rect.Value.Left;
-        var height = rect.Value.Bottom - rect.Value.Top;
-
-        int x, y;
-
-        switch (positioning.ToLowerInvariant())
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        var (x, y) = positioning switch
         {
-            case "center":
-                x = workArea.X + (workArea.Width - width) / 2;
-                y = workArea.Y + (workArea.Height - height) / 2;
-                break;
+            MonitorPositioning.Center => (workArea.X + (workArea.Width - width) / 2, workArea.Y + (workArea.Height - height) / 2),
+            MonitorPositioning.TopLeft => (workArea.X, workArea.Y),
+            MonitorPositioning.TopRight => (workArea.X + workArea.Width - width, workArea.Y),
+            MonitorPositioning.BottomLeft => (workArea.X, workArea.Y + workArea.Height - height),
+            MonitorPositioning.BottomRight => (workArea.X + workArea.Width - width, workArea.Y + workArea.Height - height),
+            MonitorPositioning.Restore => (workArea.X, workArea.Y),
+            _ => throw new ArgumentOutOfRangeException(nameof(positioning), positioning, "Not a positioning.")
+        };
 
-            case "topleft":
-            case "top_left":
-                x = workArea.X;
-                y = workArea.Y;
-                break;
+        return ApplyBounds(handle, x, y, width, height, bringToFront);
+    }
 
-            case "topright":
-            case "top_right":
-                x = workArea.X + workArea.Width - width;
-                y = workArea.Y;
-                break;
+    /// <summary>
+    /// Maximizes the window on monitor <paramref name="monitorIndex"/>. SW_MAXIMIZE maximizes a window on the monitor it is
+    /// on, and SetWindowPos does not take a maximized window to another monitor, so a maximized or minimized window is
+    /// restored first (twice for a window that was maximized before it was minimized) and moved into the target work area,
+    /// and only then maximized. Success requires the window to be maximized on that monitor.
+    /// </summary>
+    private WindowChangeResult MaximizeOnMonitor(nint handle, int monitorIndex, MonitorRect workArea)
+    {
+        if (_monitorService.GetMonitorIndex(handle) != monitorIndex)
+        {
+            for (var i = 0; i < 2 && (_nativeWrapper.IsIconic(handle) || _nativeWrapper.IsZoomed(handle)); i++)
+            {
+                ShowWindow(handle, NativeEnums.SW_RESTORE);
+            }
 
-            case "bottomleft":
-            case "bottom_left":
-                x = workArea.X;
-                y = workArea.Y + workArea.Height - height;
-                break;
+            if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+                return WindowGone(handle);
 
-            case "bottomright":
-            case "bottom_right":
-                x = workArea.X + workArea.Width - width;
-                y = workArea.Y + workArea.Height - height;
-                break;
-
-            case "maximize":
-                return ApplyState(handle, WindowState.Maximized);
-
-            case "restore":
-                return ApplyBounds(handle, workArea.X, workArea.Y, width, height, bringToFront);
-
-            default:
-                x = workArea.X + (workArea.Width - width) / 2;
-                y = workArea.Y + (workArea.Height - height) / 2;
-                break;
+            var moved = Place(handle, workArea.X, workArea.Y,
+                Math.Min(rect.Right - rect.Left, workArea.Width), Math.Min(rect.Bottom - rect.Top, workArea.Height),
+                NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE, WindowErrorCode.MoveFailed);
+            if (!moved.Success)
+                return moved;
         }
 
-        // Restore if minimized
-        if (_nativeWrapper.IsIconic(handle))
-        {
-            ShowWindow(handle, NativeEnums.SW_RESTORE);
-        }
+        var maximized = ApplyState(handle, WindowStateRequest.Maximize);
+        if (!maximized.Success)
+            return maximized;
 
-        return SetWindowPos(handle, x, y, width, height, PlacementFlags(bringToFront));
+        var actual = _monitorService.GetMonitorIndex(handle);
+        return actual == monitorIndex
+            ? WindowChangeResult.Done(handle)
+            : WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
+                $"The window was maximized on monitor {actual}, not on monitor {monitorIndex}: it did not move there. Check it with find_windows.");
     }
 
     public bool IsValidWindow(nint handle)
@@ -298,14 +372,74 @@ public class WindowService : IWindowService
         return handle != nint.Zero && _nativeWrapper.IsWindow(handle);
     }
 
-    /// <summary>SetWindowPos, with a deadline (<see cref="IWindowCallRunner"/>).</summary>
-    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
-    private bool SetWindowPos(nint handle, int x, int y, int width, int height, uint flags) =>
-        _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags));
+    /// <summary>
+    /// Why a window change is refused before anything is sent: the handle is not a window (InvalidHandle), or the
+    /// target policy denies the window (TargetDeniedByPolicy). Null when the change can go ahead.
+    /// </summary>
+    private WindowChangeResult? ChangeRefusal(nint handle)
+    {
+        if (!IsValidWindow(handle))
+            return WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle, InvalidHandleMessage);
 
-    /// <summary>ShowWindow, with a deadline (<see cref="IWindowCallRunner"/>).</summary>
+        return EvaluateTargetPolicy(handle) is { Allowed: false } verdict
+            ? WindowChangeResult.Failed(handle, WindowErrorCode.TargetDeniedByPolicy, WindowChangeRefusal(handle, verdict))
+            : null;
+    }
+
+    /// <summary>The error of a window handle that is not a window.</summary>
+    public const string InvalidHandleMessage = "Invalid window handle";
+
+    private static WindowChangeResult WindowGone(nint handle) =>
+        WindowChangeResult.Failed(handle, WindowErrorCode.InvalidHandle,
+            "The window no longer exists: it closed during the call. Call find_windows for a current handle.");
+
+    private WindowChangeResult? MonitorIndexRefusal(nint handle, int monitorIndex) =>
+        MonitorIndexRefusal(handle, monitorIndex, _monitorService.GetAllMonitors().Count);
+
+    /// <summary>InvalidMonitorIndex with the valid range when <paramref name="monitorIndex"/> is not a monitor, otherwise null.</summary>
+    private static WindowChangeResult? MonitorIndexRefusal(nint handle, int monitorIndex, int monitorCount) =>
+        monitorIndex >= 0 && monitorIndex < monitorCount
+            ? null
+            : WindowChangeResult.Failed(handle, WindowErrorCode.InvalidMonitorIndex, MonitorIndexMessage(monitorIndex, monitorCount));
+
+    /// <summary>The error of a monitor index that is out of range, with the valid range. Nothing was changed.</summary>
+    public static string MonitorIndexMessage(int monitorIndex, int monitorCount) =>
+        monitorCount == 0
+            ? $"Monitor index {monitorIndex} does not exist: no monitor was found. Nothing was changed."
+            : $"Monitor index {monitorIndex} does not exist: valid indexes are 0 to {monitorCount - 1} " +
+              $"({monitorCount} monitor{(monitorCount == 1 ? string.Empty : "s")}). Nothing was changed. Call get_monitors to see them.";
+
+    /// <summary>
+    /// SetWindowPos, with a deadline (<see cref="IWindowCallRunner"/>). A refused call reports its Win32 error:
+    /// ERROR_ACCESS_DENIED (5) is <see cref="WindowErrorCode.AccessDenied"/> (User Interface Privilege Isolation blocks
+    /// changes to windows of more privileged processes), any other error <paramref name="failure"/>.
+    /// </summary>
     /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
-    private bool ShowWindow(nint handle, int command) =>
+    private WindowChangeResult Place(nint handle, int x, int y, int width, int height, uint flags, WindowErrorCode failure)
+    {
+        var placed = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags));
+        return placed.Succeeded ? WindowChangeResult.Done(handle) : NotPlaced(handle, placed.Win32Error, failure);
+    }
+
+    private static WindowChangeResult NotPlaced(nint handle, int win32Error, WindowErrorCode failure) => win32Error switch
+    {
+        NativeEnums.ERROR_ACCESS_DENIED => WindowChangeResult.Failed(handle, WindowErrorCode.AccessDenied,
+            $"Windows blocked the change (Win32 error {win32Error}, access denied). The window most likely belongs to an app " +
+            "running with higher privileges, for example as administrator: User Interface Privilege Isolation blocks this " +
+            "server from moving or resizing it. Nothing was changed; ask the user to do this step."),
+        NativeEnums.ERROR_INVALID_WINDOW_HANDLE => WindowGone(handle),
+        // SetWindowPos can fail without setting the last error, and error 0's text is "The operation completed successfully"
+        0 => WindowChangeResult.Failed(handle, failure,
+            $"Windows refused to {(failure == WindowErrorCode.ResizeFailed ? "resize" : "move")} the window without giving a reason " +
+            "(the application may have rejected the change). Nothing was changed."),
+        _ => WindowChangeResult.Failed(handle, failure,
+            $"Windows did not {(failure == WindowErrorCode.ResizeFailed ? "resize" : "move")} the window (Win32 error {win32Error}: " +
+            $"{new System.ComponentModel.Win32Exception(win32Error).Message}).")
+    };
+
+    /// <summary>ShowWindow, with a deadline (<see cref="IWindowCallRunner"/>). Its return value is the previous visibility, so it is not returned.</summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    private void ShowWindow(nint handle, int command) =>
         _windowCalls.Run(handle, () => _nativeWrapper.ShowWindow(handle, command));
 
     public WindowCloseResult CloseWindow(nint handle, bool force)
@@ -371,8 +505,6 @@ public class WindowService : IWindowService
         return null;
     }
 
-    private bool IsDeniedByPolicy(nint handle) => EvaluateTargetPolicy(handle) is { Allowed: false };
-
     /// <summary>
     /// The error of a window change that the target policy refuses with <paramref name="verdict"/>: the
     /// Window Control tools report it with TargetDeniedByPolicy.
@@ -428,129 +560,81 @@ public class WindowService : IWindowService
             "Nothing was closed.")
     };
 
-    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowBoundsBatchAsync(
+    public Task<IReadOnlyList<WindowChangeResult>> SetWindowBoundsBatchAsync(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
         int delayBetweenMs = 50,
-        CancellationToken cancellationToken = default)
-    {
-        var results = new List<(nint Handle, bool Success, string? Error)>();
+        CancellationToken cancellationToken = default) =>
+        RunBatchAsync(
+            placements.Count,
+            i => placements[i].Handle,
+            i => SetWindowBounds(placements[i].Handle, placements[i].X, placements[i].Y, placements[i].Width, placements[i].Height,
+                placements[i].BringToFront),
+            WindowErrorCode.MoveFailed,
+            delayBetweenMs,
+            cancellationToken);
 
-        for (var i = 0; i < placements.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var placement = placements[i];
-            var changed = false;
-            try
-            {
-                if (!IsValidWindow(placement.Handle))
-                {
-                    results.Add((placement.Handle, false, "Invalid window handle"));
-                    continue;
-                }
-
-                var success = SetWindowBounds(
-                    placement.Handle,
-                    placement.X,
-                    placement.Y,
-                    placement.Width,
-                    placement.Height,
-                    placement.BringToFront);
-
-                results.Add((placement.Handle, success, success ? null : "SetWindowBounds failed"));
-                changed = true;
-            }
-            catch (Exception ex)
-            {
-                results.Add((placement.Handle, false, ex.Message));
-            }
-
-            if (changed)
-            {
-                await PauseBetweenWindowsAsync(delayBetweenMs, i, placements.Count, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        return results;
-    }
-
-    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SnapWindowsBatchAsync(
+    public Task<IReadOnlyList<WindowChangeResult>> SnapWindowsBatchAsync(
         IReadOnlyList<(nint Handle, SnapPosition Position, int? MonitorIndex, bool BringToFront)> placements,
         int delayBetweenMs = 50,
-        CancellationToken cancellationToken = default)
-    {
-        var results = new List<(nint Handle, bool Success, string? Error)>();
+        CancellationToken cancellationToken = default) =>
+        RunBatchAsync(
+            placements.Count,
+            i => placements[i].Handle,
+            i => SnapWindow(placements[i].Handle, placements[i].Position, placements[i].MonitorIndex, placements[i].BringToFront),
+            WindowErrorCode.MoveFailed,
+            delayBetweenMs,
+            cancellationToken);
 
-        for (var i = 0; i < placements.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var placement = placements[i];
-            var changed = false;
-            try
-            {
-                if (!IsValidWindow(placement.Handle))
-                {
-                    results.Add((placement.Handle, false, "Invalid window handle"));
-                    continue;
-                }
-
-                var success = SnapWindow(
-                    placement.Handle,
-                    placement.Position,
-                    placement.MonitorIndex,
-                    placement.BringToFront);
-
-                results.Add((placement.Handle, success, success ? null : "SnapWindow failed"));
-                changed = true;
-            }
-            catch (Exception ex)
-            {
-                results.Add((placement.Handle, false, ex.Message));
-            }
-
-            if (changed)
-            {
-                await PauseBetweenWindowsAsync(delayBetweenMs, i, placements.Count, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        return results;
-    }
-
-    public async Task<IReadOnlyList<(nint Handle, bool Success, string? Error)>> SetWindowStateBatchAsync(
-        IReadOnlyList<(nint Handle, WindowState State)> changes,
+    public Task<IReadOnlyList<WindowChangeResult>> SetWindowStateBatchAsync(
+        IReadOnlyList<(nint Handle, WindowStateRequest State)> changes,
         int delayBetweenMs = 30,
-        CancellationToken cancellationToken = default)
-    {
-        var results = new List<(nint Handle, bool Success, string? Error)>();
+        CancellationToken cancellationToken = default) =>
+        RunBatchAsync(
+            changes.Count,
+            i => changes[i].Handle,
+            i => SetWindowState(changes[i].Handle, changes[i].State),
+            WindowErrorCode.StateChangeFailed,
+            delayBetweenMs,
+            cancellationToken);
 
-        for (var i = 0; i < changes.Count; i++)
+    /// <summary>
+    /// Changes <paramref name="count"/> windows one after another. A window that fails does not stop the batch: its result
+    /// says why, with NotResponding for a window that did not answer in time and <paramref name="failure"/> for an
+    /// unexpected error. The batch pauses <paramref name="delayBetweenMs"/> after each window that was changed.
+    /// </summary>
+    private static async Task<IReadOnlyList<WindowChangeResult>> RunBatchAsync(
+        int count,
+        Func<int, nint> handleOf,
+        Func<int, WindowChangeResult> change,
+        WindowErrorCode failure,
+        int delayBetweenMs,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<WindowChangeResult>(count);
+
+        for (var i = 0; i < count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var change = changes[i];
-            var changed = false;
+            WindowChangeResult result;
             try
             {
-                if (!IsValidWindow(change.Handle))
-                {
-                    results.Add((change.Handle, false, "Invalid window handle"));
-                    continue;
-                }
-
-                var success = SetWindowState(change.Handle, change.State);
-                results.Add((change.Handle, success, success ? null : "SetWindowState failed"));
-                changed = true;
+                result = change(i);
+            }
+            catch (WindowNotRespondingException ex)
+            {
+                result = WindowChangeResult.Failed(handleOf(i), WindowErrorCode.NotResponding, ex.Message);
             }
             catch (Exception ex)
             {
-                results.Add((change.Handle, false, ex.Message));
+                result = WindowChangeResult.Failed(handleOf(i), failure, ex.Message);
             }
 
-            if (changed)
+            results.Add(result);
+
+            if (result.Success)
             {
-                await PauseBetweenWindowsAsync(delayBetweenMs, i, changes.Count, cancellationToken).ConfigureAwait(false);
+                await PauseBetweenWindowsAsync(delayBetweenMs, i, count, cancellationToken).ConfigureAwait(false);
             }
         }
 

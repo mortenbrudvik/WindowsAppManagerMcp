@@ -132,7 +132,7 @@ public static class TestDataFactory
         mock.Setup(w => w.SetWindowBounds(
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(true);
+            .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
 
         // GetWindowInfo returns the first matching window, or a default for any valid handle
         foreach (var window in testWindows)
@@ -295,7 +295,7 @@ public static class TestDataFactory
         // Window manipulation - return true for valid handles
         mock.Setup(n => n.SetWindowPos(It.Is<nint>(h => h != nint.Zero),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
         mock.Setup(n => n.ShowWindow(It.Is<nint>(h => h != nint.Zero), It.IsAny<int>()))
             .Returns(true);
         mock.Setup(n => n.SetForegroundWindow(It.Is<nint>(h => h != nint.Zero)))
@@ -699,4 +699,44 @@ public static class TestDataFactory
     }
 
     #endregion
+
+    /// <summary>
+    /// Makes ShowWindow on <paramref name="handle"/> change what IsIconic, IsZoomed and IsWindowVisible report, as
+    /// Windows does: SW_MINIMIZE minimizes (remembering whether the window was maximized), SW_MAXIMIZE maximizes, and
+    /// SW_RESTORE returns a minimized window to its previous state and makes any other window normal. The window is
+    /// visible. Returns the state as it is now, for assertions.
+    /// </summary>
+    public static Func<WindowState> SimulateShowStates(Mock<INativeWindowWrapper> native, nint handle, WindowState initial = WindowState.Normal)
+    {
+        var minimized = initial == WindowState.Minimized;
+        var maximized = initial == WindowState.Maximized;
+        var restoresToMaximized = false;
+
+        native.Setup(n => n.IsIconic(handle)).Returns(() => minimized);
+        native.Setup(n => n.IsZoomed(handle)).Returns(() => maximized);
+        native.Setup(n => n.IsWindowVisible(handle)).Returns(true);
+        native.Setup(n => n.ShowWindow(handle, It.IsAny<int>())).Returns((nint _, int command) =>
+        {
+            switch (command)
+            {
+                case 6: // SW_MINIMIZE
+                    restoresToMaximized = maximized || (minimized && restoresToMaximized);
+                    minimized = true;
+                    maximized = false;
+                    break;
+                case 3: // SW_MAXIMIZE
+                    minimized = false;
+                    maximized = true;
+                    break;
+                case 9: // SW_RESTORE
+                    maximized = minimized && restoresToMaximized;
+                    minimized = false;
+                    break;
+            }
+
+            return true;
+        });
+
+        return () => minimized ? WindowState.Minimized : maximized ? WindowState.Maximized : WindowState.Normal;
+    }
 }

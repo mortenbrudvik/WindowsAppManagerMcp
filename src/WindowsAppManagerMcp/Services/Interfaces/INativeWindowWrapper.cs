@@ -50,8 +50,12 @@ public interface INativeWindowWrapper
     /// <summary>
     /// Sets the window position and size. The window also goes to the top of the Z order (HWND_TOP)
     /// unless <paramref name="flags"/> has SWP_NOZORDER, and it is activated unless they have SWP_NOACTIVATE.
+    /// When Windows refuses it, the result carries the Win32 error read right after the call:
+    /// ERROR_ACCESS_DENIED (5) when User Interface Privilege Isolation blocks changes to a window of a more
+    /// privileged process (an app running as administrator), ERROR_INVALID_WINDOW_HANDLE (1400) when the
+    /// window is gone.
     /// </summary>
-    bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
+    Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
 
     /// <summary>
     /// Sets the show state of the specified window.
