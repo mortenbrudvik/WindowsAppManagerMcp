@@ -87,6 +87,8 @@ public static class ServiceRegistration
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here
         services.AddSingleton<IElementRegistry, ElementRegistry>();
         services.AddSingleton<IElementSearchService, ElementSearchService>();
+        // read_element_text and read_table (roadmap M3.9): text and tables through the patterns, by ref or find's criteria
+        services.AddSingleton<IElementReadService, ElementReadService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -177,6 +179,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
+        services.AddSingleton<ElementReadTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -246,6 +249,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
+            .WithServerTools<ElementReadTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

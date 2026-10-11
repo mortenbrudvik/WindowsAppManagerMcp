@@ -688,6 +688,27 @@ public sealed class UiaTree : IUiaTree
             var text = string.Join("\n", pattern.GetSelection().Select(range => range.GetText(maxLength) ?? string.Empty));
             return maxLength >= 0 && text.Length > maxLength ? text[..maxLength] : text;
         });
+
+        public UiaTextPage GetTextPage(int offset, int maxLength) => Translate(() =>
+        {
+            // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
+            var range = pattern.DocumentRange;
+            var start = offset > 0
+                ? range.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start,
+                    System.Windows.Automation.Text.TextUnit.Character, offset)
+                : 0;
+            range.MoveEndpointByRange(System.Windows.Automation.Text.TextPatternRangeEndpoint.End, range,
+                System.Windows.Automation.Text.TextPatternRangeEndpoint.Start);
+            var length = range.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End,
+                System.Windows.Automation.Text.TextUnit.Character, Math.Max(1, maxLength));
+            var text = length > 0 ? range.GetText(-1) ?? string.Empty : string.Empty;
+
+            // A full page: one more character after it tells whether text follows
+            var hasMore = length >= maxLength &&
+                          range.Clone().MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End,
+                              System.Windows.Automation.Text.TextUnit.Character, 1) > 0;
+            return new UiaTextPage(text, start, length, hasMore);
+        });
     }
 
     private sealed class GridPatternAdapter(System.Windows.Automation.GridPattern pattern) : IUiaGridPattern

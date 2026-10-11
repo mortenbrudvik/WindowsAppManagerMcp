@@ -199,6 +199,7 @@ public class WrapperCatalogTests
     [InlineData(typeof(IUiaWindowPattern), nameof(IUiaWindowPattern.Close), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaLegacyIAccessiblePattern), nameof(IUiaLegacyIAccessiblePattern.DoDefaultAction), WrapperCallKind.UiaAction)]
     [InlineData(typeof(IUiaTextPattern), nameof(IUiaTextPattern.GetText), WrapperCallKind.Read)]
+    [InlineData(typeof(IUiaTextPattern), nameof(IUiaTextPattern.GetTextPage), WrapperCallKind.Read)]
     public void Find_ClassifiesTheMembersTheScenariosAndLaterWavesDependOn(Type type, string name, WrapperCallKind expected)
     {
         var method = AllMethods(type).Single(m => m.Name == name);

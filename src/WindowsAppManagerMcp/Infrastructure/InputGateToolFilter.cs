@@ -87,7 +87,9 @@ public static class InputGateToolFilter
         "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
         "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info",
         // Waits up to a minute; holding the gate meanwhile would stall every window and input call (roadmap M3.7)
-        "wait_for_window"
+        "wait_for_window",
+        // Read an element's text and a table's cells (roadmap M3.9)
+        "read_element_text", "read_table"
     };
 
     /// <summary>

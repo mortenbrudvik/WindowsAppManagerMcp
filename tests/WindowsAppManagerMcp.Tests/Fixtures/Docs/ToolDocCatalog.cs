@@ -82,6 +82,8 @@ public static class ToolDocCatalog
             new("find_ui_elements", "Find elements by name, automationId, controlType or className; refs, click points", "window (or handle)", "name", "nameMatch", "automationId", "controlType", "withinRef", "detail"),
             new("get_focused_element", "Element with keyboard focus, its window and process", "timeoutMs"),
             new("get_element_at_point", "Element at a screen point, its ancestors and window", "x", "y", "ancestors"),
+            new("read_element_text", "An element's text a page at a time (document, value or name); never a password", "ref", "window (with criteria)", "offset", "maxLength"),
+            new("read_table", "A table's or list's headers and cells a page of rows at a time", "ref", "startRow", "maxRows", "maxColumns"),
         ]),
         new("Browser Reading",
         [

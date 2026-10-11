@@ -78,6 +78,16 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheElementReads_AreASingleton_AndTheirToolsResolve()
+    {
+        // read_element_text and read_table (roadmap M3.9); resolving starts no UI Automation client
+        var reads = _serviceProvider.GetRequiredService<IElementReadService>();
+
+        reads.Should().BeOfType<ElementReadService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementReadService>());
+        _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.ElementReadTools>().Should().NotBeNull();
+    }
+
+    [Fact]
     public void TheElementRegistryAndSearch_AreSingletons_BuiltWithTheProductionConstructor()
     {
         // Resolving constructs them only: neither UI Automation engine starts a client before its first read
