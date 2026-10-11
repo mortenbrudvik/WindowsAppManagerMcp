@@ -10,7 +10,10 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <remarks>
 /// Elements are returned as snapshots. Once the element registry exists (M3.4), the results can
-/// also carry a ref that later calls can act on.
+/// also carry a ref that later calls can act on. A window that shows web content (Chromium, Electron, WebView2) is warmed
+/// up first (<see cref="IAccessibilityWarmup"/>, roadmap M3.3), within a third of the timeout: the foreground window for the
+/// focused element, the window at the point for the element at a point. Otherwise the first read of such a window finds
+/// only its frame, because its page's tree is built only once asked for.
 /// </remarks>
 public class ElementInspectionService : IElementInspectionService
 {
@@ -28,19 +31,24 @@ public class ElementInspectionService : IElementInspectionService
     private readonly INativeHitTestWrapper _hitTest;
     private readonly INativeWindowWrapper _windows;
     private readonly IMonitorService _monitors;
+    private readonly IAccessibilityWarmup? _warmup;
 
+    /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
+    /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
     public ElementInspectionService(
         IUiaTree tree,
         IUiaWorker worker,
         INativeHitTestWrapper hitTest,
         INativeWindowWrapper windows,
-        IMonitorService monitors)
+        IMonitorService monitors,
+        IAccessibilityWarmup? warmup = null)
     {
         _tree = tree;
         _worker = worker;
         _hitTest = hitTest;
         _windows = windows;
         _monitors = monitors;
+        _warmup = warmup;
     }
 
     /// <inheritdoc />
@@ -53,21 +61,24 @@ public class ElementInspectionService : IElementInspectionService
 
         // Keyboard focus is in the foreground window, so a hung foreground application is the one
         // that can block this read
-        var targetProcessId = AppProcessOf(SafeRead(_windows.GetForegroundWindow));
+        var foreground = SafeRead(_windows.GetForegroundWindow);
+        var targetProcessId = AppProcessOf(foreground);
 
         return ReadAsync(
             targetProcessId,
-            () =>
+            token =>
             {
                 if (!_tree.IsAvailable())
                 {
                     return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
                 }
 
+                var warmup = WarmUp(foreground, timeout, token);
                 var node = _tree.GetFocusedElement();
                 if (node == null)
                 {
-                    return Failure("No element has keyboard focus.", UIElementErrorCode.ElementNotFound);
+                    return Failure("No element has keyboard focus.", UIElementErrorCode.ElementNotFound)
+                        with { AccessibilityWarmup = warmup };
                 }
 
                 var (details, identity) = ReadDetails(node);
@@ -81,7 +92,8 @@ public class ElementInspectionService : IElementInspectionService
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
                     ProcessName: processName,
-                    ElapsedMilliseconds: Elapsed(stopwatch));
+                    ElapsedMilliseconds: Elapsed(stopwatch),
+                    AccessibilityWarmup: warmup);
             },
             Failure,
             "The focused element",
@@ -118,17 +130,20 @@ public class ElementInspectionService : IElementInspectionService
 
         return ReadAsync(
             AppProcessOf(hitWindow),
-            () =>
+            token =>
             {
                 if (!_tree.IsAvailable())
                 {
                     return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
                 }
 
+                // Before the hit test: a page whose tree is not built yet answers with its render widget's pane
+                var warmup = WarmUp(hitWindow, timeout, token);
                 var node = _tree.FromPoint(x, y);
                 if (node == null)
                 {
-                    return Failure($"There is no UI Automation element at ({x}, {y}).", UIElementErrorCode.ElementNotFound);
+                    return Failure($"There is no UI Automation element at ({x}, {y}).", UIElementErrorCode.ElementNotFound)
+                        with { AccessibilityWarmup = warmup };
                 }
 
                 var (details, identity) = ReadDetails(node);
@@ -150,7 +165,8 @@ public class ElementInspectionService : IElementInspectionService
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
                     ProcessName: processName,
-                    ElapsedMilliseconds: Elapsed(stopwatch));
+                    ElapsedMilliseconds: Elapsed(stopwatch),
+                    AccessibilityWarmup: warmup);
             },
             Failure,
             "The element at the point",
@@ -164,7 +180,7 @@ public class ElementInspectionService : IElementInspectionService
     /// </summary>
     private async Task<T> ReadAsync<T>(
         int targetProcessId,
-        Func<T> read,
+        Func<CancellationToken, T> read,
         Func<string, UIElementErrorCode, T> failure,
         string subject,
         TimeSpan timeout,
@@ -175,7 +191,7 @@ public class ElementInspectionService : IElementInspectionService
 
         try
         {
-            return await _worker.RunAsync(targetProcessId, _ => read(), deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
+            return await _worker.RunAsync(targetProcessId, read, deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
@@ -206,6 +222,13 @@ public class ElementInspectionService : IElementInspectionService
             return failure($"Error reading UI Automation: {ex.Message}", UIElementErrorCode.OperationException);
         }
     }
+
+    /// <summary>
+    /// Warms up the web content of <paramref name="window"/> (roadmap M3.3) within a third of <paramref name="timeout"/>, so
+    /// the read keeps most of it; null when there is no window, nothing to warm up, or no warm-up service.
+    /// </summary>
+    private AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan timeout, CancellationToken cancellationToken) =>
+        window == nint.Zero ? null : _warmup?.WarmUp(window, AccessibilityWarmup.BudgetFor(timeout), cancellationToken);
 
     /// <summary>
     /// The process of the application that <paramref name="window"/> (a top-level window) shows, or 0
@@ -307,7 +330,8 @@ public class ElementInspectionService : IElementInspectionService
                     ControlType: properties.ControlType,
                     AutomationId: EmptyToNull(properties.AutomationId),
                     ClassName: EmptyToNull(identity.ClassName),
-                    Bounds: properties.Bounds.ToBounds()));
+                    Bounds: properties.Bounds.ToBounds(),
+                    FrameworkId: EmptyToNull(identity.FrameworkId)));
                 current = parent;
             }
         }

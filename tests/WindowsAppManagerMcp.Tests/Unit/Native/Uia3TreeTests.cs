@@ -155,7 +155,7 @@ public class Uia3TreeTests
                  {
                      UiaIds.NameProperty, UiaIds.ControlTypeProperty, UiaIds.LocalizedControlTypeProperty, UiaIds.AutomationIdProperty,
                      UiaIds.ClassNameProperty, UiaIds.BoundingRectangleProperty, UiaIds.IsEnabledProperty, UiaIds.IsOffscreenProperty,
-                     UiaIds.IsKeyboardFocusableProperty, UiaIds.RuntimeIdProperty
+                     UiaIds.IsKeyboardFocusableProperty, UiaIds.RuntimeIdProperty, UiaIds.FrameworkIdProperty
                  }.Concat(UiaIds.PatternAvailability.Select(p => p.Property)))
         {
             walk.Verify(r => r.AddProperty(property), Times.Once, $"property {property}");
@@ -223,6 +223,7 @@ public class Uia3TreeTests
             availablePatternProperties: [UiaIds.IsInvokePatternAvailableProperty, UiaIds.IsLegacyIAccessiblePatternAvailableProperty]);
         save.Setup(e => e.GetCachedPropertyValue(UiaIds.AutomationIdProperty)).Returns("SaveBtn");
         save.Setup(e => e.GetCachedPropertyValue(UiaIds.ClassNameProperty)).Returns("Button");
+        save.Setup(e => e.GetCachedPropertyValue(UiaIds.FrameworkIdProperty)).Returns("Win32");
         var children = ArrayOf(save);
         window.Setup(e => e.FindAllBuildCache(TreeScope.TreeScope_Children, _controlView.Object, It.IsAny<IUIAutomationCacheRequest>()))
             .Returns(children.Object);
@@ -231,7 +232,7 @@ public class Uia3TreeTests
         var element = sut.GetChildElements(node, CancellationToken.None).Single();
 
         // Assert
-        element.Properties.Should().Be(new UiaNodeProperties("Save", "Button", "SaveBtn", new UiaRect(812.5, 44, 80, 24), false, false));
+        element.Properties.Should().Be(new UiaNodeProperties("Save", "Button", "SaveBtn", new UiaRect(812.5, 44, 80, 24), false, false, "Win32"));
         element.ClassName.Should().Be("Button");
         element.IsKeyboardFocusable.Should().BeTrue();
         element.Patterns.Should().Be(UiaPatterns.Invoke | UiaPatterns.LegacyIAccessible);

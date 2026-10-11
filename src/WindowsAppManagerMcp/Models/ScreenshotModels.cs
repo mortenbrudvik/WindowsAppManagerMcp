@@ -113,6 +113,8 @@ public record VirtualScreenBounds(
 /// <see cref="ElementsError"/> and <see cref="ElementsErrorCode"/> (the get_ui_elements code, for example
 /// OperationTimedOut) and no elements. <see cref="Truncated"/> is true when the element list is incomplete
 /// (the walk failed, timed out or skipped elements), and <see cref="TruncationReason"/> says why.
+/// <see cref="AccessibilityWarmup"/> is set when the window shows web content and the walk waited for it first (roadmap
+/// M3.3), as in get_ui_elements.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -141,7 +143,8 @@ public record AnnotatedScreenshotResult(
     string? ElementsError = null,
     string? ElementsErrorCode = null,
     bool? Truncated = null,
-    string? TruncationReason = null
+    string? TruncationReason = null,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 ) : ICaptureMetadata;
 
 /// <summary>

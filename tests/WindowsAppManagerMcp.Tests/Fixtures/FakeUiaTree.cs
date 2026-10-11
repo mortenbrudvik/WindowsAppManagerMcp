@@ -91,7 +91,7 @@ public sealed class FakeUiaTree : IUiaTree
         _reads.Enqueue($"Read:{fake.Name}");
         fake.OnRead?.Invoke();
         ThrowIfSet(fake.ReadException);
-        return new UiaNodeProperties(fake.Name, fake.ControlType, fake.AutomationId, fake.Bounds, fake.IsEnabled, fake.IsOffscreen);
+        return new UiaNodeProperties(fake.Name, fake.ControlType, fake.AutomationId, fake.Bounds, fake.IsEnabled, fake.IsOffscreen, fake.FrameworkId);
     }
 
     public UiaNodeInteraction ReadInteraction(IUiaNode node)
@@ -220,7 +220,7 @@ public sealed class FakeUiaTree : IUiaTree
         ThrowIfSet(node.InteractionException);
         return new UiaElement(
             node,
-            new UiaNodeProperties(node.Name, node.ControlType, node.AutomationId, node.Bounds, node.IsEnabled, node.IsOffscreen),
+            new UiaNodeProperties(node.Name, node.ControlType, node.AutomationId, node.Bounds, node.IsEnabled, node.IsOffscreen, node.FrameworkId),
             node.ClassName,
             node.IsKeyboardFocusable,
             node.Patterns,
