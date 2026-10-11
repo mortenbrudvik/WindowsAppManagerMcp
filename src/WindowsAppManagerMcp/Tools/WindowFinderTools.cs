@@ -9,17 +9,20 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Tools;
 
 [McpServerToolType]
-public class WindowFinderTools
+public partial class WindowFinderTools
 {
     private readonly IWindowService _windowService;
     private readonly INativeHitTestWrapper? _hitTest;
+    private readonly IWindowWaitService? _windowWait;
 
     /// <param name="windowService">Window reads and the window selectors.</param>
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
-    public WindowFinderTools(IWindowService windowService, INativeHitTestWrapper? hitTest = null)
+    /// <param name="windowWait">wait_for_window's waits (roadmap M3.7); the server always registers it.</param>
+    public WindowFinderTools(IWindowService windowService, INativeHitTestWrapper? hitTest = null, IWindowWaitService? windowWait = null)
     {
         _windowService = windowService;
         _hitTest = hitTest;
+        _windowWait = windowWait;
     }
 
     /// <summary>The window parameters every tool shares with find_windows (roadmap M2.4).</summary>

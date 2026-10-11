@@ -1,13 +1,13 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 54 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 55 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info) | 5 |
+| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) | 6 |
 | [Window Control](#window-control) | [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [focus_window](#focus_window), [close_window](#close_window), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor) | 8 |
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
@@ -181,6 +181,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 |------|---------------------------|------------------------|
 | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | The UI Automation walk, before its `timeoutMs`; nothing is captured | Every 100 elements read |
 | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | The wait for UI Automation | - |
+| [wait_for_window](#wait_for_window) | The wait, at once | About once a second: the milliseconds waited of `timeoutMs`, and what the last read saw |
 | [launch_application](#launch_application), [launch_browser_with_debug](#launch_browser_with_debug) | Before the start, the launch; after it, the wait for the window (the program keeps running) | - |
 | [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for the windows | As each application is done (refused, started, or its window wait ended): `i of n` and its outcome |
 | [apply_layout](#apply_layout) | The placements not arranged yet, and a launch's wait for its window | After each placement: `i of n` and its outcome |
@@ -209,7 +210,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | What it covers | Tools |
 |---------|---------|----------------|-------|
 | `server` | always on | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info) |
+| `windows` | on | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | UI Automation: element trees, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
@@ -226,7 +227,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 **Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 20 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
+Read-only mode serves these 21 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -271,7 +272,7 @@ Every window reports two rectangles: `bounds`, the window rect (GetWindowRect), 
 
 ### Window selectors
 
-Every tool that acts on one window takes it as `handle` (`windowHandle` for the [Input Simulation](#input-simulation) tools) or as `window`, a **window selector**: an object with the filters of [find_windows](#find_windows). Pass one of the two, not both (`InvalidArguments`). The tools that take a window this way are the [Window Control](#window-control) tools, the items of the window [Batch Operations](#batch-operations), [close_application](#close_application), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [get_ui_elements](#get_ui_elements), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content) and the input tools. A selector is resolved to exactly one window before the tool does anything: it never picks the first of several matches. Prefer a selector to a handle copied from an earlier listing: it costs no extra call, and it cannot act on a window that closed meanwhile.
+Every tool that acts on one window takes it as `handle` (`windowHandle` for the [Input Simulation](#input-simulation) tools) or as `window`, a **window selector**: an object with the filters of [find_windows](#find_windows). Pass one of the two, not both (`InvalidArguments`). The tools that take a window this way are the [Window Control](#window-control) tools, the items of the window [Batch Operations](#batch-operations), [close_application](#close_application), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) (which resolves it again on every poll), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [get_ui_elements](#get_ui_elements), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content) and the input tools. A selector is resolved to exactly one window before the tool does anything: it never picks the first of several matches. Prefer a selector to a handle copied from an earlier listing: it costs no extra call, and it cannot act on a window that closed meanwhile.
 
 | Field | Meaning |
 |-------|---------|
@@ -640,6 +641,100 @@ A window named by its handle is read whatever the listing filter would say: unti
 ```
 
 A handle that is not a window returns `success: false` with `errorCode: "InvalidHandle"`. A selector that names no single window is a tool error: `WindowNotFound`, `AmbiguousWindow` (with `candidates`) or `HandleMismatch` (see [Window selectors](#window-selectors)).
+
+### wait_for_window
+
+Wait on the server until a window condition holds (roadmap M3.7), instead of sleeping or calling [find_windows](#find_windows) again and again: after a launch, a click that opens a dialog, a close or a save. Read-only: it never changes a window, it runs outside the input gate (input and window calls go ahead while it waits), and it keeps working while input is paused.
+
+<!-- tools:begin params:wait_for_window -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| window | object | Yes | - | The window(s) to wait for: a window selector with find_windows' filters (processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {"handle": 1706796, "titleContains": "report.txt"}) |
+| condition | string (one of: `"exists"`, `"gone"`, `"foreground"`, `"visible"`, `"title_changed"`, `"input_idle"`) | No | "exists" | What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle' |
+| newOnly | boolean | No | false | Only count windows that open after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone or title_changed |
+| excludeHandles | integer[] | No | - | Handles of windows that never count: the matching windows you saw before you acted (at most 256). Not with title_changed |
+| previousTitle | string | No | - | title_changed only: the title you read before acting (default: the title when the wait starts, which misses a change that already happened) |
+| timeoutMs | integer | No | 10000 | How long to wait, 0-60000 ms (default: 10000); 0 checks once |
+| stableMs | integer | No | 300 | How long the condition must hold before it counts, 0-10000 ms (default: 300; at most timeoutMs) |
+<!-- tools:end params:wait_for_window -->
+
+| `condition` | Satisfied when | `window` in the result |
+|-------------|----------------|------------------------|
+| `exists` (default) | A window that counts (see below) is open: the listing's rules, so visible windows, minimized ones included | That window; `matchCount` and `candidates` instead when several count |
+| `gone` | No window that counts is open any more. By handle: the handle is no window (a hidden window still exists) | - |
+| `foreground` | A window that counts is the foreground window | That window |
+| `visible` | A window that counts is on screen: visible, not minimized, not cloaked | That window |
+| `title_changed` | The one window the selector names when the call starts has a title other than `previousTitle` (default: its title then); a title that passes through "Saving..." counts once the new title has held for `stableMs` | The window with its new title, and `previousTitle` |
+| `input_idle` | The one window that counts is not hung (IsHungAppWindow) and its process reports input idle (WaitForInputIdle, at most 250 ms per poll; best effort, see below) | The window, and `idleCheck` |
+
+**Which windows count.** Every poll resolves `window` with the rules of a [window selector](#window-selectors): the filters run as find_windows does (an untitled dialog needs `className`, such as `#32770`, or `includeUntitled`; a window on another virtual desktop needs `includeCloaked`), and a `handle` or `foreground` is read as get_window_info reads it. The handles in `excludeHandles` never count, and with `newOnly` neither do the windows that were open when the call started; `index` then picks one of the windows that are left, front to back. A `handle` with filters waits for that window to match them, so `{"handle": 1706796, "titleContains": "report.txt"}` with `exists` waits for that window's title to name the file. `{"foreground": true}` alone names no window and is refused (`InvalidArguments`); name the window and use `condition: "foreground"`.
+
+**Catching the window your action opened.** Your action and the wait run one after another, so the window may already be open when the wait starts, and `newOnly` would miss it. Read the matching windows before you act (find_windows) and pass their handles as `excludeHandles`; for `title_changed`, pass the title you read before acting as `previousTitle`.
+
+**Timing.** The server reads the windows every 100 ms for the first 2 seconds, then every 250 ms, until the condition has held for `stableMs` (default 300, which skips splash screens and a dialog that closes and opens again) or `timeoutMs` (default 10000, at most 60000) has passed. `timeoutMs: 0` checks once (`stableMs` is cut to `timeoutMs`). A client that sends a progress token gets a progress notification about once a second (`progress` is the milliseconds waited, `total` is `timeoutMs`), and a cancelled call stops waiting at once (see [Cancellation and progress](#cancellation-and-progress)).
+
+**input_idle is best effort.** It waits until the window is not hung and its process reports input idle. Windows answers WaitForInputIdle only once per process, the first time it waits for input after it started; later calls return at once, busy or not, so `input_idle` means something right after a launch and little later. A console program has no message loop, so only the hung check applies (`idleCheck: "respondingOnly"`; `"inputIdle"` when Windows reported idle). The check runs on the process that owns the window (a Store app's own process, not `ApplicationFrameHost`), never on a launcher that handed off, so a launcher's own state never counts. To wait for a control inside the window, read it with [get_ui_elements](#get_ui_elements).
+
+**Outcomes.** A wait that is not satisfied is a failure (`success: false`, so the call goes out with `isError: true`, as every failure does, see [Tool errors](#tool-errors)): the agent must not go on as if the window were there. The result still says what was seen.
+
+| Outcome | errorCode | Result |
+|---------|-----------|--------|
+| Satisfied | - | `success` and `satisfied` `true`, `timedOut` `false`, `elapsedMs`, `window` (or `matchCount` and up to 5 `candidates`); `previousTitle` for title_changed, `idleCheck` for input_idle; `warning` for a `gone` wait whose selector matched no window when it started (a misspelled selector is gone at once) |
+| Timed out | `WaitTimedOut` | `satisfied` `false`, `timedOut` `true`, `elapsedMs`, `window` as last seen (the window still open, not in front, not on screen, not idle, or with its old title) or `candidates` when several; `error` says what was seen |
+| The named window closed | `InvalidHandle` | `window.handle` is no window, for any condition but `gone` (it can never match), or title_changed's window closed during the wait. Ends at once |
+| Several windows | `AmbiguousWindow` | title_changed's selector names several windows when the call starts, or input_idle finds several: `candidates`. Ends at once |
+| No window to follow | `WindowNotFound`, `HandleMismatch` | title_changed's selector names no window (or a reused handle) when the call starts |
+| An argument that cannot be used | `InvalidArguments` (tool error) | A selector that cannot be used, `timeoutMs` outside 0-60000, `stableMs` outside 0-10000, more than 256 `excludeHandles`, `newOnly` with `gone` or `title_changed`, `excludeHandles` with `title_changed`, or `previousTitle` without it. Nothing was waited for |
+
+**Example:**
+> "Click Save As, then wait for the dialog."
+
+```json
+{
+  "name": "wait_for_window",
+  "arguments": { "window": { "processName": "notepad", "className": "#32770" }, "excludeHandles": [1706796] }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "satisfied": true,
+  "timedOut": false,
+  "elapsedMs": 640,
+  "window": {
+    "handle": 1706944,
+    "title": "Save As",
+    "processName": "notepad",
+    "processId": 10244,
+    "bounds": { "x": 400, "y": 200, "width": 960, "height": 640 },
+    "state": "normal",
+    "isVisible": true,
+    "monitorIndex": 0,
+    "className": "#32770",
+    "isCloaked": false,
+    "ownerHandle": 1706796,
+    "visibleBounds": { "x": 407, "y": 200, "width": 946, "height": 633 }
+  }
+}
+```
+
+A timeout (`isError: true`):
+
+```json
+{
+  "success": false,
+  "satisfied": false,
+  "timedOut": true,
+  "elapsedMs": 10000,
+  "error": "No window matching processName 'notepad', className '#32770' (not the excluded handle) appeared within 10000 ms. Check what is open with find_windows; processName is the whole process name (set processNameContains for a part of it), windows on other virtual desktops need includeCloaked, hidden windows only by handle. Nothing was changed; wait again (a longer timeoutMs) or check the state with a read tool.",
+  "errorCode": "WaitTimedOut"
+}
+```
+
+It polls for now; it will wake on window events once roadmap M7.2 records them.
 
 ---
 
@@ -4667,6 +4762,14 @@ the old behavior sees now. The plugin's committed exe has them since release 1.1
   captures the image without overlays and reports it as `elementsErrorCode`. New parameter `format` (`tree`, the
   default and the old shape, `flat` or `text`), and get_server_info reports `uiAutomation`.
 
+Since 1.14.0 (roadmap M3):
+
+- **wait_for_window (M3.7).** A new read-only tool in the `windows` toolset waits on the server until a window exists,
+  is gone, is in front, is on screen, has a new title or is ready for input, instead of sleeping and calling
+  find_windows again. A wait that is not satisfied is a failure (`isError: true`) with the new errorCode
+  `WaitTimedOut`, and its result still carries `timedOut`, `elapsedMs` and the window as last seen. The server
+  instructions' waiting rule now names it, and read-only mode serves it.
+
 ## Error Codes
 
 ### Tool errors
@@ -4798,7 +4901,7 @@ table, it gives more detail.
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools, [get_clipboard](#get_clipboard) (tool error) | `format` is not auto, png, jpeg or jpg (get_clipboard: text, html or files); `error` lists them |
-| `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`) | The window handle is zero or invalid, or the window no longer exists |
+| `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`), [wait_for_window](#wait_for_window) | The window handle is zero or invalid, or the window no longer exists. wait_for_window: the window its `window.handle` names (or title_changed's window) closed, so the condition can never hold; the wait ended at once |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string is not valid syntax, such as a `{` without its `}`, or nothing could be read from it; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
@@ -4871,6 +4974,7 @@ table, it gives more detail.
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
+| `WaitTimedOut` | [wait_for_window](#wait_for_window) | The condition did not hold within `timeoutMs`. The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
 | `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true`, or restore it first with [set_window_state](#set_window_state) |

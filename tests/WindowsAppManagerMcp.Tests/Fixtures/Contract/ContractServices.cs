@@ -59,6 +59,7 @@ public sealed class ContractServices : IDisposable
     public Mock<IInputSafetyInfo> Safety { get; } = new();
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
+    public Mock<IWindowWaitService> WindowWait { get; } = new();
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
@@ -92,6 +93,7 @@ public sealed class ContractServices : IDisposable
         // The SDK creates the tool classes for every call from these registrations
         services.AddSingleton(Windows.Object);
         services.AddSingleton(CloseVerifier.Object);
+        services.AddSingleton(WindowWait.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);
@@ -214,6 +216,19 @@ public sealed class ContractServices : IDisposable
             }, IsDialog: true, IsBlocking: true)
         ]);
         CloseVerifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
+        // wait_for_window (roadmap M3.7): Notepad's Save As dialog opened and stayed
+        WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WindowConditionResult
+            {
+                Satisfied = true,
+                ElapsedMs = 640,
+                MatchCount = 1,
+                Window = notepad with
+                {
+                    Handle = 0x1A0C00, Title = "Save As", ClassName = "#32770", OwnerHandle = (nint)TypicalDesktop.NotepadHandle,
+                    Bounds = new WindowRect(400, 200, 960, 640), VisibleBounds = new WindowRect(407, 200, 946, 633)
+                }
+            });
         CloseVerifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
                 handles.Select(h => new CloseObservation(h, CloseStatus.Closed)).ToList());
@@ -370,6 +385,14 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
         Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
         Windows.Setup(w => w.GetOwnedWindows(It.IsAny<nint>(), It.IsAny<bool>())).Returns([]);
+        WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WindowConditionResult
+            {
+                TimedOut = true,
+                ElapsedMs = 10_000,
+                ErrorCode = nameof(WindowErrorCode.WaitTimedOut),
+                Error = "No window matching titleEquals 'Save As' appeared within 10000 ms."
+            });
         Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) =>
                 handles.Select(h => new WindowCloseResult(h, false, WindowErrorCode.InvalidHandle, invalid)).ToList());

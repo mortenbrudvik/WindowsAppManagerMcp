@@ -4461,6 +4461,140 @@
         "openWorldHint": false,
         "readOnlyHint": false
       }
+    },
+    {
+      "name": "wait_for_window",
+      "title": "Wait for Window",
+      "description": "Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: after a launch, a click that opens a dialog, a close or a save. window is a selector as in find_windows (an untitled dialog needs className or includeUntitled). condition: 'exists' (default: a matching window is open, minimized included), 'gone' (none is open any more; by handle: it closed), 'foreground' (a matching window is in front), 'visible' (on screen: not minimized, hidden or cloaked), 'title_changed' (the one window named has a title other than previousTitle) or 'input_idle' (best effort: the window is not hung and its process reports input idle, which Windows answers only once per process, right after it starts, and never for console programs; Store apps and programs started through a launcher are checked on the window's own process, not the launcher's). The condition must hold for stableMs, which skips splash screens and dialogs that close and reopen. To catch the window your last action opened, pass the matching handles you saw before it as excludeHandles. Returns satisfied, elapsedMs and window; when several windows satisfy it, window is left out and matchCount and candidates list them. Not satisfied is a tool error: WaitTimedOut after timeoutMs (timedOut true, window as last seen: the one still open, not in front or with the old title); InvalidHandle when the named window closed and cannot match any more; AmbiguousWindow, with candidates, when title_changed or input_idle match several windows; WindowNotFound when title_changed names none. Only reads windows, and other tools run meanwhile.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "description": "The window(s) to wait for: a window selector with find_windows' filters (processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {\"handle\": 1706796, \"titleContains\": \"report.txt\"})",
+            "type": "object",
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "condition": {
+            "description": "What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle'",
+            "default": "exists",
+            "type": "string",
+            "enum": [
+              "exists",
+              "gone",
+              "foreground",
+              "visible",
+              "title_changed",
+              "input_idle"
+            ]
+          },
+          "newOnly": {
+            "description": "Only count windows that open after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone or title_changed",
+            "type": "boolean",
+            "default": false
+          },
+          "excludeHandles": {
+            "description": "Handles of windows that never count: the matching windows you saw before you acted (at most 256). Not with title_changed",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer"
+            },
+            "default": null
+          },
+          "previousTitle": {
+            "description": "title_changed only: the title you read before acting (default: the title when the wait starts, which misses a change that already happened)",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "timeoutMs": {
+            "description": "How long to wait, 0-60000 ms (default: 10000); 0 checks once",
+            "type": "integer",
+            "default": 10000
+          },
+          "stableMs": {
+            "description": "How long the condition must hold before it counts, 0-10000 ms (default: 300; at most timeoutMs)",
+            "type": "integer",
+            "default": 300
+          }
+        },
+        "required": [
+          "window"
+        ]
+      },
+      "annotations": {
+        "title": "Wait for Window",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
     }
   ]
 }

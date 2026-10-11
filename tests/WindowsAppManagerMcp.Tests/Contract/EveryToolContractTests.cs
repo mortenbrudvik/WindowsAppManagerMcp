@@ -30,6 +30,7 @@ public class EveryToolContractTests
             ["close_application"] = Args("""{ "processName": "notepad" }"""),
             ["get_owned_windows"] = Args("""{ "handle": 1706796 }"""),
             ["get_window_info"] = Args("""{ "window": { "processName": "notepad" }, "detail": "full" }"""),
+            ["wait_for_window"] = Args("""{ "window": { "titleEquals": "Save As" }, "excludeHandles": [1706796] }"""),
             ["snap_window"] = Args("""{ "handle": 1706796, "position": "left_half" }"""),
             ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitorIndex": 1 }"""),
             ["set_windows_bounds_batch"] = Args("""

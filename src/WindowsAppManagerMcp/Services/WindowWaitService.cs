@@ -4,7 +4,8 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>
 /// Finds the window a launch opens by comparing the top-level windows against a baseline taken before the start
-/// (roadmap M2.6). See <see cref="IWindowWaitService.WaitForNewWindowAsync"/>.
+/// (roadmap M2.6). See <see cref="IWindowWaitService.WaitForNewWindowAsync"/>. The waits for a window condition
+/// (roadmap M3.7, wait_for_window) are in WindowWaitService.Conditions.cs.
 /// </summary>
 /// <remarks>
 /// Only reads that do not wait for an application: EnumWindows, GetWindowText (which reads the stored title of
@@ -12,7 +13,7 @@ namespace WindowsAppManagerMcp.Services;
 /// listing predicate, and GetWindowThreadProcessId. The one wait, WaitForInputIdle, is bounded. Each poll reads only
 /// the windows that are new against the baseline, plus the foreground window and the titles of the baseline's windows.
 /// </remarks>
-public sealed class WindowWaitService : IWindowWaitService
+public sealed partial class WindowWaitService : IWindowWaitService
 {
     /// <summary>How often the windows are read.</summary>
     public const int PollIntervalMs = 100;
