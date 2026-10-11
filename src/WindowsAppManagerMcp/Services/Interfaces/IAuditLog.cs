@@ -31,8 +31,12 @@ public interface IAuditLog
     /// </param>
     AuditCall Begin(string tool, IEnumerable<KeyValuePair<string, JsonElement>>? arguments, string? requestId, JsonElement? inputSchema = null);
 
-    /// <summary>Finishes the record with the call's result (null when it threw) and outcome, and appends its line.</summary>
-    void End(AuditCall call, CallToolResult? result, string outcome);
+    /// <summary>
+    /// Finishes the record with the call's result (null when it threw) and outcome, and hands its line to the writer. The
+    /// task completes once the line is written, or after a bounded wait (<see cref="AuditLog.MaxCallDelay"/>) when the
+    /// writer is slow; it never faults, and the wait holds no thread.
+    /// </summary>
+    Task EndAsync(AuditCall call, CallToolResult? result, string outcome);
 }
 
 /// <summary>A call <see cref="IAuditLog.Begin"/> started: what is known before the tool runs.</summary>

@@ -81,22 +81,22 @@ public static class AuditLogToolFilter
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                End(audit!, call, null, AuditOutcome.Cancelled);
+                await EndAsync(audit!, call, null, AuditOutcome.Cancelled).ConfigureAwait(false);
                 throw;
             }
             catch (McpProtocolException)
             {
-                End(audit!, call, null, AuditOutcome.ProtocolError);
+                await EndAsync(audit!, call, null, AuditOutcome.ProtocolError).ConfigureAwait(false);
                 throw;
             }
             catch (Exception)
             {
                 // The error filter inside turns every other exception into an error result; recorded all the same
-                End(audit!, call, null, AuditOutcome.Error);
+                await EndAsync(audit!, call, null, AuditOutcome.Error).ConfigureAwait(false);
                 throw;
             }
 
-            End(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok);
+            await EndAsync(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok).ConfigureAwait(false);
             return result;
         };
 
@@ -114,11 +114,15 @@ public static class AuditLogToolFilter
         }
     }
 
-    private static void End(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
+    /// <summary>
+    /// Finishes the record. The log bounds its own wait; this also bounds a log that breaks its contract, so that a call
+    /// waits for its line at most <see cref="Services.AuditLog.MaxCallDelay"/>, without a thread.
+    /// </summary>
+    private static async Task EndAsync(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
     {
         try
         {
-            audit.End(call, result, outcome);
+            await audit.EndAsync(call, result, outcome).WaitAsync(Services.AuditLog.MaxCallDelay).ConfigureAwait(false);
         }
         catch (Exception)
         {

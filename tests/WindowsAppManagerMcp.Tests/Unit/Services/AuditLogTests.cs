@@ -26,10 +26,10 @@ public sealed class AuditLogTests : IDisposable
 
     private static CallToolResult Ok() => new() { Content = [new TextContentBlock { Text = """{"success":true}""" }] };
 
-    private static void Record(AuditLog log, string tool, object? arguments = null, CallToolResult? result = null)
+    private static async Task Record(AuditLog log, string tool, object? arguments = null, CallToolResult? result = null)
     {
         var call = log.Begin(tool, arguments == null ? null : Arguments(arguments), "1");
-        log.End(call, result ?? Ok(), AuditOutcome.Ok);
+        await log.EndAsync(call, result ?? Ok(), AuditOutcome.Ok);
     }
 
     private string[] Lines(string day) => File.ReadAllLines(DayFile(day));
@@ -67,7 +67,7 @@ public sealed class AuditLogTests : IDisposable
     }
 
     [Fact]
-    public void End_AppendsOneJsonLinePerCall_ToTheDaysFile()
+    public async Task End_AppendsOneJsonLinePerCall_ToTheDaysFile()
     {
         // Arrange
         var log = CreateLog();
@@ -75,8 +75,8 @@ public sealed class AuditLogTests : IDisposable
         // Act
         var call = log.Begin("click", Arguments(new { x = 1, y = 2 }), "5");
         _clock.Advance(TimeSpan.FromMilliseconds(250));
-        log.End(call, Ok(), AuditOutcome.Ok);
-        Record(log, "close_window", new { handle = 9 });
+        await log.EndAsync(call, Ok(), AuditOutcome.Ok);
+        await Record(log, "close_window", new { handle = 9 });
 
         // Assert
         var lines = Lines("2026-10-10");
@@ -92,20 +92,20 @@ public sealed class AuditLogTests : IDisposable
     }
 
     [Fact]
-    public void ANewDay_StartsANewFile()
+    public async Task ANewDay_StartsANewFile()
     {
         var log = CreateLog();
 
-        Record(log, "click");
+        await Record(log, "click");
         _clock.Advance(TimeSpan.FromHours(12));
-        Record(log, "click");
+        await Record(log, "click");
 
         Lines("2026-10-10").Should().HaveCount(1);
         Lines("2026-10-11").Should().HaveCount(1);
     }
 
     [Fact]
-    public void TheFirstLineOfADay_DeletesTheDaysFilesOlderThanTheRetention_AndNothingElse()
+    public async Task TheFirstLineOfADay_DeletesTheDaysFilesOlderThanTheRetention_AndNothingElse()
     {
         // Arrange - seven days are kept: on 2026-10-10 the files of 10-03 and before go
         Directory.CreateDirectory(_folder);
@@ -125,7 +125,7 @@ public sealed class AuditLogTests : IDisposable
         var log = CreateLog();
 
         // Act
-        Record(log, "click");
+        await Record(log, "click");
 
         // Assert
         old.Should().AllSatisfy(day => File.Exists(DayFile(day)).Should().BeFalse($"{day} is older than seven days"));
@@ -134,13 +134,13 @@ public sealed class AuditLogTests : IDisposable
 
         // A day later, the next line deletes the next day's file
         _clock.Advance(TimeSpan.FromDays(1));
-        Record(log, "click");
+        await Record(log, "click");
         File.Exists(DayFile("2026-10-04")).Should().BeFalse();
         File.Exists(DayFile("2026-10-09")).Should().BeTrue();
     }
 
     [Fact]
-    public void Begin_ReadsTheTargetWindowsAndProcesses_BeforeTheCallChangesThem()
+    public async Task Begin_ReadsTheTargetWindowsAndProcesses_BeforeTheCallChangesThem()
     {
         // Arrange - window 100 is Notepad's until the close
         _windows.Setup(w => w.IsWindow(100)).Returns(true);
@@ -155,8 +155,8 @@ public sealed class AuditLogTests : IDisposable
         var kill = log.Begin("kill_process", Arguments(new { processId = 77 }), "2");
         _windows.Setup(w => w.IsWindow(100)).Returns(false);
         _windows.Setup(w => w.GetProcessName(It.IsAny<uint>())).Returns((string?)null);
-        log.End(close, Ok(), AuditOutcome.Ok);
-        log.End(kill, Ok(), AuditOutcome.Ok);
+        await log.EndAsync(close, Ok(), AuditOutcome.Ok);
+        await log.EndAsync(kill, Ok(), AuditOutcome.Ok);
 
         // Assert
         var lines = Lines("2026-10-10").Select(l => JsonDocument.Parse(l).RootElement).ToList();
@@ -180,7 +180,7 @@ public sealed class AuditLogTests : IDisposable
     }
 
     [Fact]
-    public void Begin_AndEnd_NeverThrow()
+    public async Task Begin_AndEnd_NeverThrow()
     {
         // Arrange - every read fails
         _windows.Setup(w => w.IsWindow(It.IsAny<nint>())).Throws(new InvalidOperationException("boom"));
@@ -188,20 +188,20 @@ public sealed class AuditLogTests : IDisposable
         var log = CreateLog();
 
         // Act
-        var act = () =>
+        var act = async () =>
         {
             var call = log.Begin("close_window", Arguments(new { handle = 100, processId = 5 }), null);
-            log.End(call, new CallToolResult { Content = [new TextContentBlock { Text = "not json" }] }, AuditOutcome.Ok);
+            await log.EndAsync(call, new CallToolResult { Content = [new TextContentBlock { Text = "not json" }] }, AuditOutcome.Ok);
         };
 
         // Assert - the line is still written, with what is known
-        act.Should().NotThrow();
+        await act.Should().NotThrowAsync();
         var line = JsonDocument.Parse(Lines("2026-10-10").Single()).RootElement;
         line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(100);
     }
 
     [Fact]
-    public void AFolderThatCannotBeWritten_NeverBreaksTheCall_AndIsReportedOnce_UntilAWriteWorksAgain()
+    public async Task AFolderThatCannotBeWritten_NeverBreaksTheCall_AndIsReportedOnce_UntilAWriteWorksAgain()
     {
         // Arrange - a file stands where the folder should be
         Directory.CreateDirectory(Path.GetDirectoryName(_folder)!);
@@ -209,21 +209,21 @@ public sealed class AuditLogTests : IDisposable
         var log = CreateLog();
 
         // Act
-        var act = () =>
+        var act = async () =>
         {
-            Record(log, "click");
-            Record(log, "click");
+            await Record(log, "click");
+            await Record(log, "click");
         };
 
         // Assert
-        act.Should().NotThrow();
+        await act.Should().NotThrowAsync();
         log.LastError.Should().NotBeNull().And.Contain(_folder);
         _logger.Entries.Where(e => e.Level == LogLevel.Warning).Should().ContainSingle()
             .Which.Message.Should().Contain("audit log").And.Contain(_folder);
 
         // The folder can be written again: the next line is written and the error is gone
         File.Delete(_folder);
-        Record(log, "click");
+        await Record(log, "click");
         log.LastError.Should().BeNull();
         Lines("2026-10-10").Should().HaveCount(1);
     }
@@ -242,7 +242,7 @@ public sealed class AuditLogTests : IDisposable
     }
 
     [Fact]
-    public void AFileAnotherServerIsWriting_IsWaitedFor_Briefly()
+    public async Task AFileAnotherServerIsWriting_IsWaitedFor_Briefly()
     {
         // Arrange - another server holds the day's file open for writing (the log opens it so that only one writer at a time
         // can); it closes the file when the writer tries again, so the retry is exercised whatever the machine's speed
@@ -260,7 +260,7 @@ public sealed class AuditLogTests : IDisposable
             });
 
         // Act
-        Record(log, "click");
+        await Record(log, "click");
 
         // Assert
         attempts.Should().Equal(1, 2);
@@ -299,7 +299,7 @@ public sealed class AuditLogTests : IDisposable
 
         for (var i = 0; i < 5; i++)
         {
-            Record(log, "type_text", new { text = new string('x', i + 1) });
+            await Record(log, "type_text", new { text = new string('x', i + 1) });
         }
 
         stalled.Set();
@@ -307,6 +307,49 @@ public sealed class AuditLogTests : IDisposable
 
         Lines("2026-10-10").Select(l => JsonDocument.Parse(l).RootElement.GetProperty("args").GetProperty("textLength").GetInt32())
             .Should().Equal(1, 2, 3, 4, 5);
+    }
+
+    /// <summary>
+    /// M2 follow-up F5: the call waits for its line without holding a thread. EndAsync hands the line over and returns a
+    /// task that completes once the line is written (or the call delay passed), so a stalled writer ties up no thread of the
+    /// pool that the server's other calls run on.
+    /// </summary>
+    [Fact]
+    public async Task End_WaitsForTheLine_WithoutBlockingTheCallingThread()
+    {
+        // Arrange - the writer is stuck until the test lets go; the call delay is long
+        using var stalled = new ManualResetEventSlim();
+        var log = new AuditLog(new AuditLogOptions(_folder, AuditLogOptions.DefaultRetention), _windows.Object, _clock, _logger,
+            maxCallDelay: TimeSpan.FromSeconds(30), writeAttempt: _ => stalled.Wait(TimeSpan.FromSeconds(30)));
+        var call = log.Begin("click", null, "1");
+
+        // Act - the method returns at once, with the wait still pending
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var end = log.EndAsync(call, Ok(), AuditOutcome.Ok);
+        var returnedAfter = watch.Elapsed;
+        var pendingWhileStalled = !end.IsCompleted;
+        stalled.Set();
+        var finished = await Task.WhenAny(end, Task.Delay(TimeSpan.FromSeconds(20))) == end;
+
+        // Assert
+        returnedAfter.Should().BeLessThan(TimeSpan.FromSeconds(5), "the caller's thread does not wait for the writer");
+        pendingWhileStalled.Should().BeTrue("the call still waits for its line, without a thread");
+        finished.Should().BeTrue("the wait ends when the line is written");
+        Lines("2026-10-10").Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task TheWriter_RunsOnAThreadOfItsOwn_NotOnTheThreadPool()
+    {
+        // A writer queued on a busy pool would wait behind the calls that wait for it
+        bool? onPool = null;
+        var log = new AuditLog(new AuditLogOptions(_folder, AuditLogOptions.DefaultRetention), _windows.Object, _clock, _logger,
+            writeAttempt: _ => onPool = Thread.CurrentThread.IsThreadPoolThread);
+
+        await Record(log, "click");
+
+        onPool.Should().BeFalse();
+        Lines("2026-10-10").Should().ContainSingle();
     }
 
     /// <summary>A clock whose local time zone is UTC, so the day's file does not depend on the machine's zone.</summary>
