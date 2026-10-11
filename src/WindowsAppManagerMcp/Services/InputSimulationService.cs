@@ -30,6 +30,7 @@ public class InputSimulationService : IInputSimulationService
     private readonly INativeHitTestWrapper? _hitTest;
     private readonly INativeSystemInfoWrapper? _systemInfo;
     private readonly IClipboardOrigin? _clipboardOrigin;
+    private readonly IClipboardPasteGuard? _pasteGuard;
 
     /// <param name="monitorService">The monitors, for coordinate checks.</param>
     /// <param name="inputWrapper">The native input layer, for cursor reads; input itself goes through <paramref name="session"/>.</param>
@@ -42,6 +43,10 @@ public class InputSimulationService : IInputSimulationService
     /// foreground window, as with focus routing.
     /// </param>
     /// <param name="clipboardOrigin">Told about the batches that can copy, so get_clipboard knows the agent's copies.</param>
+    /// <param name="pasteGuard">
+    /// Checks the batches that paste, right before they are sent, so the agent pastes only what get_clipboard would return
+    /// (PasteNotAllowed). The server always passes it.
+    /// </param>
     public InputSimulationService(
         IMonitorService monitorService,
         INativeInputWrapper inputWrapper,
@@ -50,7 +55,8 @@ public class InputSimulationService : IInputSimulationService
         TimeSpan? gateTimeout = null,
         INativeHitTestWrapper? hitTest = null,
         INativeSystemInfoWrapper? systemInfo = null,
-        IClipboardOrigin? clipboardOrigin = null)
+        IClipboardOrigin? clipboardOrigin = null,
+        IClipboardPasteGuard? pasteGuard = null)
     {
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
@@ -60,6 +66,7 @@ public class InputSimulationService : IInputSimulationService
         _hitTest = hitTest;
         _systemInfo = systemInfo;
         _clipboardOrigin = clipboardOrigin;
+        _pasteGuard = pasteGuard;
     }
 
     public ClickResult Click(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
@@ -511,6 +518,13 @@ public class InputSimulationService : IInputSimulationService
                         inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
                     }
 
+                    // The SYN character pastes in an edit control, as Ctrl+V does
+                    if (PasteRefusal(inputs, approved) is { } pasteRefused)
+                    {
+                        return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
+                            $"{TypedSoFar(text, charactersTyped, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed), approved));
+                    }
+
                     var sent = _session.Send(inputs);
                     if (sent.PausedByUser)
                     {
@@ -656,6 +670,12 @@ public class InputSimulationService : IInputSimulationService
                     {
                         HeldModifiers = downNow.Names
                     }, approved));
+                }
+
+                // Right before the keys: a paste must not put the user's clipboard where the agent can read it
+                if (PasteRefusal(inputs, approved) is { } pasteRefused)
+                {
+                    return held.Apply(Finish(new SendKeysResult(false, keys, pasteRefused, InputErrorCode.PasteNotAllowed), approved));
                 }
 
                 var sent = Send(inputs, approved);
@@ -806,6 +826,12 @@ public class InputSimulationService : IInputSimulationService
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + buttonsNow, InputErrorCode.MouseInUse), approved));
                     }
 
+                    // A right click in a terminal pastes
+                    if (!leftButton && PasteRefusal(ClickInputs(leftButton, absolute), approved) is { } pasteRefused)
+                    {
+                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + pasteRefused, InputErrorCode.PasteNotAllowed), approved));
+                    }
+
                     var sent = SendClickInputs(leftButton, absolute, approved);
                     if (sent.PausedByUser)
                     {
@@ -843,18 +869,27 @@ public class InputSimulationService : IInputSimulationService
         clicksSent == 0 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
 
     /// <summary>A move to the checked point, the button down and up, in one SendInput call.</summary>
-    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute, InputGuardResult approved)
+    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute, InputGuardResult approved) =>
+        Send(ClickInputs(leftButton, absolute), approved);
+
+    private static InputEvent[] ClickInputs(bool leftButton, (int X, int Y) absolute)
     {
         var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
         var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
-
-        return Send(
+        return
         [
             InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y),
             InputEvent.Mouse(downFlag),
             InputEvent.Mouse(upFlag)
-        ], approved);
+        ];
     }
+
+    /// <summary>
+    /// Why <paramref name="batch"/> must not be sent because it pastes content get_clipboard would not return (see
+    /// <see cref="IClipboardPasteGuard"/>); null when it may be sent.
+    /// </summary>
+    private string? PasteRefusal(IReadOnlyList<InputEvent> batch, InputGuardResult approved) =>
+        _pasteGuard?.Check(batch, approved.Receiving);
 
     /// <summary>
     /// Sends a batch through the session. A batch that can copy (copy keys, a left-button press) is reported to the
@@ -863,7 +898,7 @@ public class InputSimulationService : IInputSimulationService
     /// </summary>
     private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, InputGuardResult approved)
     {
-        var copy = _clipboardOrigin?.BeforeInput(batch, approved.ReceivingWindow?.ProcessId ?? 0);
+        var copy = _clipboardOrigin?.BeforeInput(batch, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
         var sent = _session.Send(batch);
         if (copy != null && sent.Inserted > 0)
         {

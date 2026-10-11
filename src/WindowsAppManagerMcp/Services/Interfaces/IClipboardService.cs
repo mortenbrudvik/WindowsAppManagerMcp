@@ -46,4 +46,11 @@ public interface IClipboardService
 
     /// <summary>True when the user did not allow reading the content with <paramref name="sequenceNumber"/>.</summary>
     bool WasDeclined(uint sequenceNumber);
+
+    /// <summary>
+    /// Opens the one question about reading the user's clipboard that may be open at a time, server-wide: dispose it once
+    /// the user answered. Null while another call's question is open: several open questions would give a careless yes
+    /// several chances.
+    /// </summary>
+    IDisposable? TryOpenQuestion();
 }

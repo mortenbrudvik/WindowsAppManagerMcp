@@ -25,10 +25,12 @@ public static class AuditLogToolFilter
 {
     /// <summary>
     /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases), closes a
-    /// window, stops a process, starts a program, changes the windows or presets of a layout, or replaces the clipboard.
-    /// Read-only tools are never audited. The captures are left out: they are destructive only through overwrite:true
-    /// of an image file, and are observation, called too often for their lines to help. A contract test checks that every
-    /// other destructive tool, and every input tool, is here.
+    /// window, stops a process, starts a program, changes the windows or presets of a layout, or replaces the clipboard;
+    /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
+    /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
+    /// never audited. The captures are left out: they are destructive only through overwrite:true of an image file, and
+    /// are observation, called too often for their lines to help. A contract test checks that every other destructive
+    /// tool, and every input tool, is here.
     /// </summary>
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -40,8 +42,8 @@ public static class AuditLogToolFilter
         "launch_application", "launch_applications_batch", "launch_browser_with_debug",
         // Layouts: arrange (and launch) windows, replace or delete a preset
         "apply_layout", "save_layout", "delete_layout",
-        // Clipboard writes
-        "set_clipboard"
+        // Clipboard: the write, and the read that can return the user's clipboard
+        "set_clipboard", "get_clipboard"
     };
 
     /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>

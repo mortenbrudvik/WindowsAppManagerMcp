@@ -109,18 +109,19 @@ public class BrowserReadingTools
         return ToDto(result);
     }
 
-    [McpServerTool(Name = "launch_browser_with_debug", Title = "Launch Browser with Debug Port", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [McpServerTool(Name = "launch_browser_with_debug", Title = "Launch Browser with Debug Port", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Launch a browser with CDP (Chrome DevTools Protocol) debug port enabled. This enables richer content extraction via get_browser_content with the cdpPort parameter. Uses a separate user data directory by default to avoid conflicts with existing browser sessions." +
                  " The debug port has no authentication: any program on this computer can control that browser until it exits. Launch it only when CDP is needed, and close every window of that browser when done" +
-                 " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited.")]
+                 " (find_windows with its processId and includeCloaked=true, so windows on other virtual desktops are found too), then confirm with list_processes and includeWindowless=true that it has exited." +
+                 " InvalidArguments: a url that starts with '-' or '/' (the browser would read it as a command-line switch), or a userDataDir inside a browser's own 'User Data' folder (the user's real profile).")]
     public async Task<DebugBrowserLaunchResultDto> LaunchBrowserWithDebug(
         [Description("Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.")]
         DebugBrowser browser = DebugBrowser.Chrome,
-        [Description("URL to open (optional)")]
+        [Description("URL to open (optional). It must not start with '-' or '/', which the browser reads as a command-line switch.")]
         string? url = null,
         [Description("CDP debug port, 1-65535 (default: 9222). Use this port value with get_browser_content's cdpPort parameter.")]
         int port = 9222,
-        [Description("Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions.")]
+        [Description("Separate user data directory to avoid conflicts with existing sessions. If not specified, a new temporary directory is created automatically. Never pass the user's real browser profile: the open debug port would expose its signed-in sessions. A path inside a 'User Data' folder (where Chrome, Edge and Brave keep the user's profiles) is refused.")]
         string? userDataDir = null,
         CancellationToken cancellationToken = default)
     {
@@ -131,9 +132,79 @@ public class BrowserReadingTools
                 $"port must be a TCP port from 1 to 65535, but it is {port}. Nothing was launched.");
         }
 
+        if (DebugUrlRefusal(url) is { } badUrl)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badUrl);
+        }
+
+        if (DebugProfileRefusal(userDataDir) is { } badProfile)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, badProfile);
+        }
+
         var result = await _processService.LaunchBrowserWithDebugAsync(
             ToolEnum<DebugBrowser>.Name(browser), url, port, userDataDir, cancellationToken: cancellationToken).ConfigureAwait(false);
         return ToDto(result);
+    }
+
+    /// <summary>
+    /// Why launch_browser_with_debug refuses <paramref name="url"/>, or null. The url is a separate argument on the
+    /// browser's command line, and Chromium reads an argument that starts with '-' or (on Windows) '/', after trimming
+    /// white space, as a switch: an agent's url such as '--remote-allow-origins=*' or a switch that runs a command would
+    /// be a switch of the agent's choosing.
+    /// </summary>
+    public static string? DebugUrlRefusal(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var trimmed = url.Trim();
+        if (trimmed[0] is '-' or '/' || trimmed.Any(char.IsControl))
+        {
+            return "url must be a URL to open, but it starts with '-' or '/' (or holds a control character), which the browser " +
+                   "would read as a command-line switch. Nothing was launched. Pass a URL such as https://example.com/.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Why launch_browser_with_debug refuses <paramref name="userDataDir"/>, or null: a path inside a folder named
+    /// 'User Data' (also as its 8.3 short name), where Chrome, Edge, Brave and other Chromium browsers keep the user's
+    /// real profiles. The open debug port would hand that profile's signed-in sessions to any program on the computer.
+    /// A profile the user keeps elsewhere cannot be told apart.
+    /// </summary>
+    public static string? DebugProfileRefusal(string? userDataDir)
+    {
+        if (string.IsNullOrWhiteSpace(userDataDir))
+        {
+            return null;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(userDataDir.Trim());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return $"userDataDir is not a valid path ({ex.Message}). Nothing was launched. Leave it out to use a new temporary profile.";
+        }
+
+        var segments = fullPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
+            .Select(segment => segment.TrimEnd('.', ' '));
+        if (segments.Any(segment => string.Equals(segment, "User Data", StringComparison.OrdinalIgnoreCase) ||
+                                    (segment.StartsWith("USERDA~", StringComparison.OrdinalIgnoreCase) && segment.Length > 7 &&
+                                     segment[7..].All(char.IsAsciiDigit))))
+        {
+            return "userDataDir is inside a 'User Data' folder, where Chrome, Edge and Brave keep the user's real profiles. The " +
+                   "unauthenticated debug port would expose that profile's signed-in sessions to any program on this computer. " +
+                   "Nothing was launched. Leave userDataDir out to use a new temporary profile, or pass a separate folder.";
+        }
+
+        return null;
     }
 
     private static BrowserUrlResultDto ToDto(BrowserUrlResult result) => new(

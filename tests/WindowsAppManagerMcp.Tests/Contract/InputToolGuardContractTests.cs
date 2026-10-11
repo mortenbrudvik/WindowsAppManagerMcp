@@ -385,6 +385,7 @@ public class InputToolGuardContractTests
 
     [Theory]
     [InlineData("""{ "deltaY": 3 }""", "windowHandle")]
+    [InlineData("""{ "window": { "foreground": true }, "deltaY": 3 }""", "names no window")] // review MCP-S-3
     [InlineData("""{ "x": 400, "deltaY": 3, "windowHandle": 512 }""", "both x and y")]
     [InlineData("""{ "windowHandle": 512 }""", "not both 0")]
     [InlineData("""{ "windowHandle": 512, "deltaY": 101 }""", "between -100 and 100")]

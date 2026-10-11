@@ -166,14 +166,40 @@ public class ToolsetSelectionTests
         Served(selection).Should().Equal("look_tool");
     }
 
-    [Fact]
-    public void AnExcludedNameThatIsNoTool_IsIgnoredWithAWarning()
+    [Theory]
+    [InlineData("act_tool,kill_everything")]
+    [InlineData("act_tol")]
+    public void AnExcludedNameThatIsNoToolOrToolset_FailsClosed_ToTheAlwaysOnToolset(string exclude)
     {
-        var selection = Select(exclude: "act_tool,kill_everything");
+        // Review MCP-S-2: the user meant to remove something; a typo must not leave it served
+        var selection = Select(exclude: exclude);
 
-        selection.ExcludedTools.Should().Equal("act_tool");
-        selection.Warnings.Should().ContainSingle().Which.Should()
-            .Contain(ToolsetSelection.ExcludeToolsVariable).And.Contain("'kill_everything'");
+        selection.Enabled.Should().Equal("core");
+        selection.Source.Should().Be(ToolsetSelection.ExcludeToolsVariable);
+        Served(selection).Should().Equal("info_tool");
+        selection.Warnings.Should().Contain(w => w.Contains(ToolsetSelection.ExcludeToolsVariable) && w.Contains("is not a tool or toolset"));
+        selection.Warnings.Should().Contain(w => w.Contains("only the 'core' toolset is on"));
+    }
+
+    [Fact]
+    public void AnExcludedToolsetName_ExcludesEveryToolOfIt()
+    {
+        var selection = Select(exclude: "BASIC");
+
+        selection.Enabled.Should().Equal("core", "basic");
+        selection.ExcludedTools.Should().Equal("look_tool", "act_tool");
+        selection.Warnings.Should().BeEmpty();
+        Served(selection).Should().Equal("info_tool");
+    }
+
+    [Fact]
+    public void ExcludingTheAlwaysOnToolset_KeepsTheAlwaysServedTool()
+    {
+        var selection = Select(exclude: "core", catalog: WithInfoTool);
+
+        selection.ExcludedTools.Should().BeEmpty();
+        selection.Serves("info_tool", readOnlyHint: true).Should().BeTrue();
+        selection.Warnings.Should().ContainSingle().Which.Should().Contain("always served");
     }
 
     [Theory]

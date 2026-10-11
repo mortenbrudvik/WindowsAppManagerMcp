@@ -34,6 +34,21 @@ public sealed class ScrollClipboardRegistrationTests : IDisposable
     }
 
     [Fact]
+    public void TheInputService_GetsThePasteGuard_AndTheOriginReadsWindows()
+    {
+        // Without them the agent could paste the user's clipboard, or a copy the user makes in another window of the
+        // target's app would count as the agent's (review PRIVA-1, PRIVA-2)
+        var input = _provider.GetRequiredService<IInputSimulationService>();
+        var pasteGuard = _provider.GetRequiredService<IClipboardPasteGuard>();
+
+        Field(input, "_pasteGuard").Should().BeSameAs(pasteGuard);
+        pasteGuard.Should().BeOfType<ClipboardPasteGuard>();
+        Field(pasteGuard, "_origin").Should().BeSameAs(_provider.GetRequiredService<IClipboardOrigin>());
+        Field(pasteGuard, "_options").Should().BeSameAs(_provider.GetRequiredService<ClipboardOptions>());
+        Field(_provider.GetRequiredService<IClipboardOrigin>(), "_windows").Should().BeSameAs(_provider.GetRequiredService<INativeWindowWrapper>());
+    }
+
+    [Fact]
     public void TheClipboardService_UsesTheSameOrigin_AndTheUsersSetting()
     {
         var clipboard = _provider.GetRequiredService<IClipboardService>();

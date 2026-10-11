@@ -75,13 +75,14 @@ public class ToolAnnotationContractTests
     {
         // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything (scroll:
         // the wheel over a combo box, slider or number box changes its value), the launches (any program with any arguments,
-        // a shell command included), the captures (overwrite:true replaces the image file at outputPath) and set_clipboard
-        // (it replaces what the user copied)
+        // a shell command included; launch_browser_with_debug opens an unauthenticated debug port on a profile directory
+        // the agent chooses), the captures (overwrite:true replaces the image file at outputPath) and set_clipboard (it
+        // replaces what the user copied)
         string[] destructive =
         [
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
             "click", "right_click", "double_click", "scroll", "type_text", "send_keys",
-            "launch_application", "launch_applications_batch",
+            "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
             "set_clipboard"
         ];

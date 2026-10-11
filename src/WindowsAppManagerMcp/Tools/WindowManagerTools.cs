@@ -243,7 +243,9 @@ public class WindowManagerTools
     private const string ForceDescription =
         "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host " +
         "(the terminal, editor or chat app this server was started from). Default false: such windows are refused " +
-        "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.";
+        "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP " +
+        "client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined " +
+        "when they do not confirm).";
 
     private const string WaitDescription =
         "How long to wait for the window to close, in milliseconds (0-30000, default 2000). 0 only sends the close message " +
@@ -267,7 +269,9 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "close_window", Title = "Close Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. " + StatusDescription + " " +
-                 "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, " +
+                 "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true; " +
+                 "then, when the client can ask the user, the user is asked first (ConfirmationDeclined, or HandleMismatch when the " +
+                 "window changed hands meanwhile). It " +
                  "refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), " +
                  "and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) " +
                  "and NotResponding when the app's message queue is full (it is hung). " +
@@ -281,6 +285,7 @@ public class WindowManagerTools
         bool force = false,
         [Description(WaitDescription)]
         int waitMs = DefaultCloseWaitMs,
+        McpServer? server = null,
         CancellationToken cancellationToken = default)
     {
         if (WaitRefusal(waitMs, nameof(waitMs)) is { } invalid)
@@ -302,12 +307,46 @@ public class WindowManagerTools
         // Only the close message is sent inside the input gate; the wait for the window runs outside it, so a slow app or a
         // prompt does not hold up every input and window call for up to waitMs
         var shownBefore = waitMs == 0 ? EmptyHandles : _closeVerifier.ShownWindows([hwnd]);
+
+        // force overrides the protection of the desktop shell and the agent's own host only with the user's yes when the
+        // client can ask: the window is first closed without force, and only a ProtectedWindow refusal asks the user
+        var askBeforeForce = force && UserConfirmation.CanAsk(server);
         WindowCloseResult sent;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             // The window the selector named must still be that window: it may have changed while the call waited
             WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
-            sent = _windowService.CloseWindow(hwnd, force);
+            sent = _windowService.CloseWindow(hwnd, force && !askBeforeForce);
+        }
+
+        if (askBeforeForce && !sent.Success && sent.ErrorCode == ProtectedWindow)
+        {
+            // Asked outside the gate: a waiting user must not hold up every input and window call
+            var asked = _windowService.GetWindowInfo(hwnd);
+            var why = ProtectionReason(sent.Error);
+            var answer = await UserConfirmation.AskAsync(server!, ForceQuestion(hwnd, asked, why),
+                "Close this protected window", _answerTimeout, cancellationToken).ConfigureAwait(false);
+            if (!answer.Confirmed)
+            {
+                return new CloseWindowResult(false,
+                    Error: $"{answer.Reason} {why} force closes it only with the user's yes. Nothing was closed. Ask the user how " +
+                           "to continue.",
+                    ErrorCode: nameof(ConfirmationDeclined), Handle: reported);
+            }
+
+            InputGateToolFilter.ThrowIfPaused(_session);
+            using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+            {
+                WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+
+                // The user agreed to close that window of that process; a handle reused meanwhile is not closed
+                if (HandleMismatchRefusal(reported, new Dictionary<nint, int?> { [hwnd] = asked?.ProcessId }) is { } mismatch)
+                {
+                    return new CloseWindowResult(false, Error: mismatch.Error, ErrorCode: mismatch.ErrorCode, Handle: reported);
+                }
+
+                sent = _windowService.CloseWindow(hwnd, force: true);
+            }
         }
 
         if (!sent.Success)
@@ -331,7 +370,7 @@ public class WindowManagerTools
                  "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent " +
                  "for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt " +
                  "is never answered: ask the user which button to choose, and do not answer it yourself. " +
-                 "More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each " +
+                 "More than 3 windows, or force=true on a protected window, need a confirmation:when the MCP client can ask the user (elicitation), the user is asked, with each " +
                  "window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise " +
                  "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
                  "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
@@ -367,10 +406,16 @@ public class WindowManagerTools
         // fails alone
         var items = ResolveItems(windows, nameof(windows), "a handle or a window", w => w.Handle, w => w.Window, requireNamedWindow: true);
 
+        // force overrides the protection of the desktop shell and the agent's own host only with the user's yes when the
+        // client can ask, whatever the number of windows: the user is asked when a window is protected now, and force is
+        // passed on only when the user was asked (or cannot be)
+        var canAsk = UserConfirmation.CanAsk(server);
+        var forceOverrides = force && canAsk && items.Any(t =>
+            t.Refusal == null && _windowService.CheckClose(t.Handle, force: false) is { ErrorCode: ProtectedWindow });
         Dictionary<nint, int?>? confirmedOwners = null;
-        if (windows.Length > MaxCloseBatchWithoutConfirm)
+        if (windows.Length > MaxCloseBatchWithoutConfirm || forceOverrides)
         {
-            if (UserConfirmation.CanAsk(server))
+            if (canAsk)
             {
                 // Ask the user, not the model, and before the input gate: a waiting user must not hold up every input call
                 var targets = items.Where(t => t.Refusal == null).Select(t => (t.Handle, Window: _windowService.GetWindowInfo(t.Handle)))
@@ -410,7 +455,8 @@ public class WindowManagerTools
                 ItemRecheck(i, t.Handle, windows[i].Window)).ToList();
             var handles = items.Where((_, i) => refusals[i] == null).Select(t => t.Handle).ToList();
 
-            results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+            var effectiveForce = force && (!canAsk || confirmedOwners != null);
+            results = await _windowService.CloseWindowsBatchAsync(handles, effectiveForce, delayBetweenMs, cancellationToken).ConfigureAwait(false);
         }
 
         // The wait runs outside the gate, for every window at once
@@ -995,6 +1041,28 @@ public class WindowManagerTools
 
             return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r))));
         }
+    }
+
+    /// <summary>
+    /// The question close_window asks before force overrides a window's protection: the window, why it is protected, and
+    /// what closing it does.
+    /// </summary>
+    private static string ForceQuestion(nint handle, WindowInfo? window, string protection)
+    {
+        var line = window is { } w
+            ? $"{UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
+            : $"window {handle} (no longer exists)";
+        return "The AI agent asks to close a protected window with force: the desktop shell (closing it can open the Shut Down " +
+               "dialog) or the window of the terminal, editor or chat app the agent runs in (closing it can end the agent's " +
+               $"session and lose unsaved work).\n{line}\n{protection}\nAllow it?";
+    }
+
+    /// <summary>Why the close guard protects a window: its ProtectedWindow error without the advice to the agent.</summary>
+    private static string ProtectionReason(string? error)
+    {
+        var text = error ?? "The window is protected.";
+        var advice = text.IndexOf(" Nothing was sent.", StringComparison.Ordinal);
+        return advice < 0 ? text : text[..advice];
     }
 
     /// <summary>The question close_windows_batch asks the user: every window, with its title, process and PID.</summary>

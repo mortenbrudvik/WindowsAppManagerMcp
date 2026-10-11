@@ -65,6 +65,20 @@ public partial class ServerInstructionsTests
     }
 
     [Fact]
+    public void TheActRule_NamesEveryInputTool_AndTheWindowSelector()
+    {
+        // Review MCP-S-4: the rule must not read as a closed list that leaves out an input tool such as scroll
+        var act = Lines.Single(line => line.StartsWith("- Act:", StringComparison.Ordinal));
+
+        foreach (var tool in InputGateToolFilter.InputTools)
+        {
+            act.Should().MatchRegex($@"\b{tool}\b", "the windowHandle rule covers {0} too", tool);
+        }
+
+        act.Should().Contain("window selector");
+    }
+
+    [Fact]
     public void TheInstructions_DoNotTeachTheAltF4Chord()
     {
         ServerIdentity.Instructions.Should().NotContainAny("{F4}", "Alt+F4");

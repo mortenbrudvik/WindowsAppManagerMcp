@@ -122,6 +122,54 @@ public sealed class ClipboardToolContractTests
     }
 
     [Fact]
+    public async Task WhileTheUserIsAsked_AnotherReadDoesNotAskAgain()
+    {
+        // Arrange - one question at a time (review PRIVA-3): parallel calls must not stack questions, of which one careless
+        // yes would read the clipboard
+        _clipboard.UserCopies("a shared link");
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<ElicitResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = new McpClientOptions
+        {
+            Handlers = new McpClientHandlers
+            {
+                ElicitationHandler = async (request, _) =>
+                {
+                    lock (_questions)
+                    {
+                        _questions.Add(request!.Message);
+                    }
+
+                    asked.TrySetResult();
+                    return await answer.Task.ConfigureAwait(false);
+                }
+            }
+        };
+        var service = new ClipboardService(_clipboard, _origin, new ClipboardOptions(false), copyWait: TimeSpan.FromMilliseconds(100));
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddToolErrorReporting().WithServerTools(new ClipboardTools(service)), clientOptions: options);
+        var first = server.CallToolAsync("get_clipboard", new Dictionary<string, object?>());
+        await asked.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Act
+        var second = await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>());
+
+        // Assert - refused without a question; the first call still gets the user's answer
+        second.IsError.Should().BeTrue();
+        Payload(second).GetProperty("errorCode").GetString().Should().Be(nameof(ClipboardErrorCode.ConfirmationDeclined));
+        Payload(second).GetProperty("error").GetString().Should().Contain("already waiting");
+        answer.SetResult(Answer("accept", confirm: true));
+        Payload(await first).GetProperty("text").GetString().Should().Be("a shared link");
+        _questions.Should().ContainSingle();
+
+        // And once it is answered, a new question can be asked
+        _clipboard.UserCopies("another link");
+        Payload(await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>())).GetProperty("text").GetString()
+            .Should().Be("another link");
+        _questions.Should().HaveCount(2);
+    }
+
+    [Fact]
     public async Task CopyKeysThatCopiedNothing_AreNothingCopied_WithoutAQuestion()
     {
         // The agent meant its own copy: the user's clipboard is not asked about

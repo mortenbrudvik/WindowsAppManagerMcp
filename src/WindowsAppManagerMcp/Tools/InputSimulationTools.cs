@@ -95,7 +95,8 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote)]
+    [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." +
+                 " In a terminal (console, Windows Terminal, PuTTY) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
     public ClickResult RightClick(
         [Description(XDescription)]
         int x,
@@ -195,12 +196,6 @@ public class InputSimulationTools
                 "Pass both x and y, or neither (then the wheel turns at the centre of windowHandle's client area). Nothing was scrolled.");
         }
 
-        if (!x.HasValue && !windowHandle.HasValue && window == null)
-        {
-            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "Pass windowHandle or window (the wheel turns at the centre of its client area), or x and y. Nothing was scrolled.");
-        }
-
         const int Max = InputSimulationService.MaxScrollNotches;
         if ((deltaY == 0 && deltaX == 0) || deltaY is < -Max or > Max || deltaX is < -Max or > Max)
         {
@@ -209,7 +204,16 @@ public class InputSimulationTools
                 $"and not both 0 (got deltaY {deltaY}, deltaX {deltaX}). Nothing was scrolled.");
         }
 
-        return _inputService.Scroll(x, y, deltaY, deltaX, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        // Without a point the wheel turns at the centre of a named window; a bare {"foreground": true} names none
+        var target = Target(windowHandle, window, allowHostTarget);
+        if (!x.HasValue && !target.HasWindow)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "Pass windowHandle or a window selector that names a window (the wheel turns at the centre of its client area), or " +
+                "x and y. {\"foreground\": true} alone names no window here. Nothing was scrolled.");
+        }
+
+        return _inputService.Scroll(x, y, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -241,7 +245,8 @@ public class InputSimulationTools
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
                  " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
-                 " The user's pause hotkey chord is refused (PauseChordNotAllowed).")]
+                 " The user's pause hotkey chord is refused (PauseChordNotAllowed)." +
+                 " A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed).")]
     public Task<SendKeysResult> SendKeys(
         [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
         string keys,

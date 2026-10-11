@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -95,13 +96,29 @@ public static class UserConfirmation
     public const int MaxQuotedLength = 80;
 
     /// <summary>
+    /// The single quote and the characters that look like it: left and right single quotation marks, the low-9 and
+    /// reversed-9 ones, prime, modifier-letter apostrophe and turned comma, grave and acute accents, and the fullwidth
+    /// apostrophe.
+    /// </summary>
+    private static readonly HashSet<char> QuoteLookAlikes =
+        ['\'', '\u2018', '\u2019', '\u201A', '\u201B', '\u2032', '\u02BC', '\u02BB', '`', '\u00B4', '\uFF07'];
+
+    /// <summary>
     /// Text another app chose, such as a window title, as a question shows it: in single quotes, on one line (each
-    /// control character, line breaks and tabs included, becomes a space) and at most <see cref="MaxQuotedLength"/>
-    /// characters, cut with an ellipsis. An app's title must not be able to rewrite the question the user answers.
+    /// control character and line or paragraph separator, line breaks and tabs included, becomes a space), without
+    /// format characters (the bidirectional overrides and isolates that reorder what follows, zero-width characters), with
+    /// each single quote or look-alike inside it shown as a double quote (so the title cannot close the quotes and
+    /// append a fake process and PID), and at most <see cref="MaxQuotedLength"/> characters, cut with an ellipsis. An
+    /// app's title must not be able to rewrite the question the user answers.
     /// </summary>
     public static string Quote(string? text)
     {
-        var line = new string((text ?? string.Empty).Select(c => char.IsControl(c) ? ' ' : c).ToArray());
+        var line = new string((text ?? string.Empty)
+            .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.Format)
+            .Select(c => char.IsControl(c) || CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
+                ? ' '
+                : QuoteLookAlikes.Contains(c) ? '"' : c)
+            .ToArray());
         if (line.Length > MaxQuotedLength)
         {
             line = line[..(MaxQuotedLength - 1)].TrimEnd() + "…";

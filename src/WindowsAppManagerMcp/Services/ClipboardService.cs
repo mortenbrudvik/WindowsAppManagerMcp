@@ -27,6 +27,7 @@ public sealed class ClipboardService : IClipboardService
     private readonly TimeSpan _copyWait;
     private readonly object _declinedLock = new();
     private uint? _declined;
+    private int _questionOpen;
 
     /// <param name="clipboard">The clipboard.</param>
     /// <param name="origin">Which content the agent put there.</param>
@@ -146,6 +147,12 @@ public sealed class ClipboardService : IClipboardService
             return Failed(format, ClipboardErrorCode.ClipboardFailed, $"The clipboard's {Name(format)} could not be read: {error}");
         }
 
+        if (consent != null && origin == ClipboardContentOrigin.User)
+        {
+            // The agent has now seen this content with the user's yes, so it may paste it too (the paste guard)
+            _origin.UserAllowed(snapshot.SequenceNumber);
+        }
+
         return format switch
         {
             ClipboardFormat.Html => HtmlResult(snapshot, maxLength, origin),
@@ -189,6 +196,23 @@ public sealed class ClipboardService : IClipboardService
         lock (_declinedLock)
         {
             return sequenceNumber != 0 && _declined == sequenceNumber;
+        }
+    }
+
+    public IDisposable? TryOpenQuestion() =>
+        Interlocked.CompareExchange(ref _questionOpen, 1, 0) == 0 ? new OpenQuestion(this) : null;
+
+    /// <summary>The open question; disposing it (once) lets the next call ask.</summary>
+    private sealed class OpenQuestion(ClipboardService owner) : IDisposable
+    {
+        private int _closed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0)
+            {
+                Volatile.Write(ref owner._questionOpen, 0);
+            }
         }
     }
 

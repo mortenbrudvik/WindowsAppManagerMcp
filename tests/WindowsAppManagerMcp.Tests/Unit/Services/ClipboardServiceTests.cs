@@ -213,6 +213,22 @@ public class ClipboardServiceTests
     }
 
     [Fact]
+    public async Task ContentReadWithTheUsersConsent_MayBePastedToo_ButNotContentReadWithout()
+    {
+        // The agent has seen it with the user's yes, so the paste guard lets it be pasted (review PRIVA-1)
+        _clipboard.UserCopies("a shared link");
+        var sut = CreateSut();
+        var allowed = sut.SequenceNumber();
+
+        (await ReadAsync(sut, consent: new ClipboardConsent(allowed))).Success.Should().BeTrue();
+        _origin.IsUserAllowed(allowed).Should().BeTrue();
+
+        _clipboard.UserCopies("hunter2");
+        (await ReadAsync(sut)).Success.Should().BeFalse();
+        _origin.IsUserAllowed(sut.SequenceNumber()).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ContentThatReplacedWhatTheUserAgreedTo_IsNotReturned()
     {
         // Arrange - the user said yes to what was there; something else was copied while they answered

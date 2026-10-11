@@ -367,5 +367,13 @@ public enum InputErrorCode
     /// The window a selector named no longer matches it once the call holds the input gate: it changed (another document
     /// or tab, another title), or it closed and its handle was reused, while the call waited. Nothing was sent.
     /// </summary>
-    HandleMismatch = 43
+    HandleMismatch = 43,
+
+    /// <summary>
+    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
+    /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
+    /// private, or clipboard history; or the clipboard could not be checked. A paste followed by a read would disclose it.
+    /// Nothing (more) was sent.
+    /// </summary>
+    PasteNotAllowed = 44
 }
