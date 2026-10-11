@@ -23,7 +23,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 54 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 55 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -66,7 +66,15 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 4. Wait
 
-There is no sleep tool, and you do not need one. `launch_application` with `waitForWindow: true` waits for the window (`waitTimeoutMs`). After any other action, check the state you expect with a read (`find_windows`, `get_foreground_window`, `get_ui_elements`, `get_focused_element`) and repeat that read a few times if the app is still updating, instead of assuming a delay was long enough.
+There is no sleep tool, and you do not need one. Wait on the server with `wait_for_window` instead of guessing a delay or calling `find_windows` again and again; `launch_application` with `waitForWindow: true` already waits for a launch's window (`waitTimeoutMs`).
+
+- **A dialog or window your action opens:** before the action, read the matching windows (`find_windows`), then call `wait_for_window` with the selector and their handles as `excludeHandles`, so the window that was already there does not count and a dialog that opened before the wait started still does (`newOnly` would miss it). An untitled dialog needs `className` (`#32770`) or `includeUntitled`.
+- **A window that should close:** `condition: "gone"` (after `close_window` reports `stillOpen`, or after a button that closes a dialog). A `warning` means the selector matched nothing to begin with: check it.
+- **A window that should come to the front or on screen:** `condition: "foreground"` or `"visible"`.
+- **A save or navigation:** `condition: "title_changed"` with the window's `handle` and the title you read before acting as `previousTitle`, or `exists` with `{"handle": ..., "titleContains": "report.txt"}` for a title you know.
+- **Right after a launch:** `condition: "input_idle"` is best effort (Windows reports it once per process, never for console programs); read the controls with `get_ui_elements` before you type.
+
+The condition must hold for `stableMs` (300 by default, which skips splash screens). A result with `satisfied: true` and no `window` means several windows match: pick one from `candidates` by handle. A timeout is an error (`WaitTimedOut`, with `timedOut: true` and the window as last seen): do not go on as if the window were there; look at what is on screen, wait again, or ask the user. For changes inside a window (a control appearing, a field's value), re-read with `get_ui_elements` or `get_focused_element`.
 
 ### 5. Verify
 
@@ -106,7 +114,8 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 **Close results** (`close_window`, `close_windows_batch`, `close_application`):
 
 - `PromptShown`: a close reached the window, but the app shows a prompt (`prompt`: title, text, buttons); nothing was answered. Ask the user which button to press, then answer it (an `inWindowDialog` is inside the window: use `get_ui_elements` on its handle).
-- `StillOpen`: the window did not close within the wait and shows no prompt: check it, wait longer, or ask the user before `kill_process`.
+- `StillOpen`: the window did not close within the wait and shows no prompt: check it, wait longer (`wait_for_window` with `condition: "gone"`), or ask the user before `kill_process`.
+- `WaitTimedOut`: `wait_for_window`'s condition did not hold within `timeoutMs`; `window` is what was last seen (still open, not in front, old title). Look at the screen before you wait again; never act as if the window were there.
 - `notSent` (a batch item's or `close_application` window's `status`): that window got no close message; its `errorCode` says why (`ProtectedWindow`, `TargetDeniedByPolicy`, `AccessDenied`, `HandleMismatch`, ...). The other windows were still closed.
 - `close_application` closes only the windows on the current virtual desktop: `otherDesktopWindows` lists the app's windows on other desktops, which stay open, so `status: "closed"` does not mean the app has ended; `exited` and `runningProcessIds` say whether its processes did.
 
@@ -184,9 +193,9 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (54)
+## Available Tools (55)
 
-### Window Discovery (5 tools)
+### Window Discovery (6 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -195,6 +204,7 @@ Use this skill when the user asks to:
 | `get_foreground_window` | Get focused window | (none) |
 | `get_owned_windows` | Dialogs and popups a window owns; which one blocks it | handle, includeHidden |
 | `get_window_info` | One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI | window (or handle), detail |
+| `wait_for_window` | Wait until a window exists, is gone, in front, visible, retitled or input-idle | window, condition, excludeHandles, timeoutMs |
 
 Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector with the filters of `find_windows` (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processId`, `className`, `foreground`, `index`, ...). It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`).
 
@@ -395,7 +405,7 @@ Each workflow is the loop: locate, activate and verify, act, verify.
 Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`, `+{HOME}` select to start. `send_keys` modifiers: `^` Ctrl, `%` Alt, `+` Shift; special keys go in braces (`{F1}`, `{DELETE}`).
 
 ### Launch and Position an App
-1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle` (its `window` says which process owns it). If it is null, find the window with `find_windows` (`processName` or `titleContains`) instead of launching again
+1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle` (its `window` says which process owns it). If it is null, wait for the window with `wait_for_window` (`processName` or `titleContains`) instead of launching again
 2. **Act:** `snap_window` or `set_window_bounds` with the handle (and `monitorIndex` from `get_monitors` for another monitor)
 3. **Verify:** check `bounds` (the visible frame) and `state` in the result
 

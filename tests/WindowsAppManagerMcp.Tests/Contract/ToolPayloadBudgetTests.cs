@@ -43,6 +43,7 @@ public class ToolPayloadBudgetTests
         ["get_foreground_window"] = 100, // 58
         ["get_owned_windows"] = 150, // 76: one Save As dialog
         ["get_window_info"] = 150, // 86: detail full, by a window selector (roadmap M2.4)
+        ["wait_for_window"] = 150, // 95: the Save As dialog that appeared (roadmap M3.7)
 
         // Window Control
         ["move_window"] = 100, // 43: handle (roadmap M2.4), bounds, outerBounds, state, monitorIndex (roadmap M2.3)

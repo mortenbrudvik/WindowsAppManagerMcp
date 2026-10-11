@@ -37,6 +37,27 @@ public interface IWindowWaitService
         Func<WindowCandidate, bool> isOwner,
         WindowWaitOptions options,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Waits until a window condition holds (roadmap M3.7, wait_for_window), polling every 100 ms (every 250 ms after the
+    /// first 2 seconds), at most <see cref="WindowConditionRequest.TimeoutMs"/> (clamped to 60 seconds). The selector is
+    /// resolved on every poll with the rules of <see cref="IWindowService.ResolveWindow"/> (the listing's rules, so
+    /// includeUntitled or className finds an untitled dialog), minus <see cref="WindowConditionRequest.ExcludeHandles"/>
+    /// and, with <see cref="WindowConditionRequest.NewOnly"/>, minus the windows open at the start; the selector's index
+    /// then picks one of what is left. The condition must hold for <see cref="WindowConditionRequest.StableMs"/>.
+    /// </summary>
+    /// <remarks>
+    /// Ends early, unsatisfied, when the condition can no longer be met: a selector that cannot be used (InvalidArguments),
+    /// a window.handle that is no window for any condition but gone (InvalidHandle), the window of title_changed closing
+    /// (InvalidHandle) or not resolving to one window at the start (its resolution's errorCode, with candidates), and
+    /// input_idle finding several windows (AmbiguousWindow). Only reads windows; the one wait on an application,
+    /// WaitForInputIdle, is bounded to 250 ms per poll. Progress (elapsed of total ms) is reported about once a second.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    Task<WindowConditionResult> WaitForConditionAsync(
+        WindowConditionRequest request,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>The top-level windows before a launch: each handle with its title, and the foreground window.</summary>

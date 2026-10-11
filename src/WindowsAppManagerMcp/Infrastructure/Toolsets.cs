@@ -95,12 +95,12 @@ public static class Toolsets
                 "paused, resuming it with the user's consent, releasing stuck keys.",
                 ["get_server_info", "get_control_status", "resume_input", "release_all_input"]),
             new("windows", OnByDefault: true,
-                "Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches.",
+                "Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches.",
                 [
                     "find_windows", "get_all_windows", "get_foreground_window", "focus_window", "move_window", "resize_window",
                     "set_window_bounds", "set_window_state", "snap_window", "move_window_to_monitor", "close_window",
                     "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch", "close_windows_batch",
-                    "get_owned_windows", "get_window_info"
+                    "get_owned_windows", "get_window_info", "wait_for_window"
                 ]),
             new("monitors", OnByDefault: true,
                 "The monitors: bounds, work areas, scale factors.",

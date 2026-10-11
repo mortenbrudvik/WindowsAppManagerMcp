@@ -132,7 +132,13 @@ public enum WindowErrorCode
     /// More than one window matches the call's window selector, and it has no index. Nothing was done; the error lists up
     /// to 5 candidates (handle, title, process and class) so the caller can name one exactly.
     /// </summary>
-    AmbiguousWindow = 36
+    AmbiguousWindow = 36,
+
+    /// <summary>
+    /// wait_for_window (roadmap M3.7): the condition was not met within timeoutMs. The result still says what was last
+    /// seen (satisfied false, timedOut true, the window as last seen).
+    /// </summary>
+    WaitTimedOut = 37
 }
 
 /// <summary>
