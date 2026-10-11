@@ -2172,8 +2172,8 @@ The largest typical results, measured in October 2026:
 
 | Tool | Typical result | Tokens | Budget |
 |------|----------------|-------:|-------:|
-| `capture_with_elements` | Metadata of 120 elements (the image is budgeted separately) | 6,052 | 9,500 |
-| `get_ui_elements` | 120 elements at the default depth | 5,397 | 8,500 |
+| `capture_with_elements` | Metadata of 120 elements, each with its ref (the image is budgeted separately) | 6,544 | 9,500 |
+| `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |

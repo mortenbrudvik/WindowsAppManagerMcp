@@ -77,6 +77,24 @@ public class DependencyInjectionTests : IDisposable
         browserReadingService.Should().NotBeNull();
     }
 
+    [Fact]
+    public void TheElementRegistryAndSearch_AreSingletons_BuiltWithTheProductionConstructor()
+    {
+        // Resolving constructs them only: neither UI Automation engine starts a client before its first read
+        var registry = _serviceProvider.GetRequiredService<IElementRegistry>();
+        var search = _serviceProvider.GetRequiredService<IElementSearchService>();
+
+        registry.Should().BeOfType<ElementRegistry>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementRegistry>());
+        search.Should().BeOfType<ElementSearchService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementSearchService>());
+        registry.Count.Should().Be(0);
+
+        // The production constructor numbers windows from a random start in eight million (the test-only one takes it)
+        var production = typeof(ElementRegistry).GetConstructors()
+            .Single(c => c.GetParameters().Length == 3);
+        production.GetParameters().Select(p => p.ParameterType).Should()
+            .Equal(typeof(IUiaTree), typeof(IUiaWorker), typeof(INativeWindowWrapper));
+    }
+
     #endregion
 
     #region T7.3.2: INativeWindowWrapper Singleton

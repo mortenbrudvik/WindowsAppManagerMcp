@@ -80,6 +80,10 @@ public static class ServiceRegistration
         // (roadmap M3.3); it remembers the windows it warmed up
         services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
             sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>()));
+        // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
+        // the provider evaluating its criteria, and the tools that act on a ref resolve it here
+        services.AddSingleton<IElementRegistry, ElementRegistry>();
+        services.AddSingleton<IElementSearchService, ElementSearchService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

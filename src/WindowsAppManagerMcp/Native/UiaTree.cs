@@ -221,6 +221,40 @@ public sealed class UiaTree : IUiaTree
     }
 
     /// <inheritdoc />
+    public UiaElement ReadElement(IUiaNode node)
+    {
+        var element = Unwrap(node);
+
+        // GetUpdatedCache always asks the provider: an element that is gone throws ElementNotAvailableException
+        return Translate(() => ToElement(element.GetUpdatedCache(WalkRequest(TreeScope.Element))));
+    }
+
+    /// <inheritdoc />
+    public UiaPoint? GetClickablePoint(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        return Translate<UiaPoint?>(() =>
+            element.TryGetClickablePoint(out var point) && double.IsFinite(point.X) && double.IsFinite(point.Y)
+                ? new UiaPoint((int)Math.Round(point.X), (int)Math.Round(point.Y))
+                : null);
+    }
+
+    /// <inheritdoc />
+    public UiaNodeDescription ReadDescription(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        return Translate(() =>
+        {
+            var current = element.Current;
+            return new UiaNodeDescription(
+                HelpText: current.HelpText,
+                AccessKey: current.AccessKey,
+                AcceleratorKey: current.AcceleratorKey,
+                LocalizedControlType: current.LocalizedControlType);
+        });
+    }
+
+    /// <inheritdoc />
     public string? ReadValue(IUiaNode node)
     {
         var element = Unwrap(node);
@@ -452,12 +486,22 @@ public sealed class UiaTree : IUiaTree
         UiaProperty.IsEnabled => AutomationElement.IsEnabledProperty,
         UiaProperty.IsOffscreen => AutomationElement.IsOffscreenProperty,
         UiaProperty.IsKeyboardFocusable => AutomationElement.IsKeyboardFocusableProperty,
+        UiaProperty.RuntimeId => AutomationElement.RuntimeIdProperty,
         _ => throw new ArgumentOutOfRangeException(nameof(property), property, "Not a property a condition can compare.")
     };
 
-    /// <summary>A condition value as the managed client compares it: a control type name becomes its ControlType.</summary>
+    /// <summary>
+    /// A condition value as the managed client compares it: a control type name becomes its ControlType, a runtime id an
+    /// int array.
+    /// </summary>
     private static object PropertyValue(UiaProperty property, object value)
     {
+        if (property == UiaProperty.RuntimeId)
+        {
+            // The managed client compares a runtime id given as an int array
+            return ((IReadOnlyList<int>)value).ToArray();
+        }
+
         if (property != UiaProperty.ControlType)
         {
             return value;

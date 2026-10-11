@@ -5,19 +5,19 @@ namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>
 /// The compact shapes of get_ui_elements' result (roadmap M3.1): format=flat lists every element once, and format=text
-/// writes one line per element, for example <c>Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]</c>.
+/// writes one line per element, for example <c>w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]</c>.
 /// </summary>
 /// <remarks>
-/// <para>A text line is: the control type; the name in single quotes (a quote or backslash inside is escaped with a
-/// backslash, control characters become spaces, and a name longer than <see cref="MaxNameLength"/> characters is cut
-/// with an ellipsis), left out when the element has none; <c>aid=</c> and the automation id (quoted the same way when it
-/// holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as another token), when it has one; <c>fw=</c>
-/// and the UI framework where it changes (<see cref="UIElementInfo.FrameworkId"/>, roadmap M3.3), quoted the same way;
-/// <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any;
-/// then the flags that are set, <c>[disabled]</c> and <c>[offscreen]</c>. Each level below the window's children is
-/// indented by two more spaces.</para>
-/// <para>Element refs (roadmap M3.4) are to go in front of the control type (<c>w1e12 Button 'Save' ...</c>), so the line
-/// starts with the type until then.</para>
+/// <para>A text line is: the element's ref (roadmap M3.4) when it has one; the control type; the name in single quotes (a
+/// quote or backslash inside is escaped with a backslash, control characters become spaces, and a name longer than
+/// <see cref="MaxNameLength"/> characters is cut with an ellipsis), left out when the element has none; <c>aid=</c> and the
+/// automation id (quoted the same way when it holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as
+/// another token), when it has one; <c>fw=</c> and the UI framework where it changes (<see cref="UIElementInfo.FrameworkId"/>,
+/// roadmap M3.3), quoted the same way; <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any; then the
+/// flags that are set, <c>[disabled]</c> and <c>[offscreen]</c>. Each level below the window's children is indented by two
+/// more spaces.</para>
+/// <para>A ref has no space and is a 'w', digits, an 'e' and digits, which no control type name is: a line without one
+/// starts with the type.</para>
 /// </remarks>
 public static class UIElementTextFormat
 {
@@ -49,7 +49,13 @@ public static class UIElementTextFormat
     /// <summary>One element's line, without indentation.</summary>
     public static string Line(UIElementInfo element)
     {
-        var line = new StringBuilder(element.ControlType);
+        var line = new StringBuilder();
+        if (!string.IsNullOrEmpty(element.Ref))
+        {
+            line.Append(element.Ref).Append(' ');
+        }
+
+        line.Append(element.ControlType);
         if (!string.IsNullOrEmpty(element.Name))
         {
             line.Append(' ').Append(Quote(element.Name, MaxNameLength));

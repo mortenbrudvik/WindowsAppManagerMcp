@@ -59,7 +59,7 @@ public class UIElementService : IUIElementService
     public const int ProgressInterval = 100;
 
     /// <summary>How long the hung-window check waits for the window to answer a message.</summary>
-    public const uint RespondTimeoutMs = 500;
+    public const uint RespondTimeoutMs = UiaTargets.RespondTimeoutMs;
 
     /// <summary>
     /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
@@ -71,6 +71,7 @@ public class UIElementService : IUIElementService
     private readonly IUiaWorker _worker;
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
+    private readonly IElementRegistry? _registry;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
@@ -80,12 +81,19 @@ public class UIElementService : IUIElementService
     /// checked first.</param>
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
-    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null, IAccessibilityWarmup? warmup = null)
+    /// <param name="registry">Gives every returned element its ref (roadmap M3.4). Without it the elements have none.</param>
+    public UIElementService(
+        IUiaTree tree,
+        IUiaWorker worker,
+        INativeWindowWrapper? windows = null,
+        IAccessibilityWarmup? warmup = null,
+        IElementRegistry? registry = null)
     {
         _tree = tree;
         _worker = worker;
         _windows = windows;
         _warmup = warmup;
+        _registry = registry;
     }
 
     /// <inheritdoc />
@@ -177,54 +185,8 @@ public class UIElementService : IUIElementService
         }
     }
 
-    /// <summary>
-    /// Why the window must not be read, or null when it responds (or cannot be checked): Windows reports its thread
-    /// hung (IsHungAppWindow), or it does not answer a no-op message within <see cref="RespondTimeoutMs"/>
-    /// (SendMessageTimeout WM_NULL with SMTO_ABORTIFHUNG). A handle that is no window is left to the UI Automation
-    /// lookup, which reports WindowNotFound.
-    /// </summary>
-    private string? NotRespondingReason(nint windowHandle)
-    {
-        if (_windows == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            if (!_windows.IsWindow(windowHandle))
-            {
-                return null;
-            }
-
-            if (_windows.IsHungAppWindow(windowHandle))
-            {
-                return "The window is not responding (Windows reports it hung), so its UI elements were not read: every UI " +
-                       "Automation call to it would block until it recovers. Wait, then check it again with find_windows or " +
-                       "get_window_info (isResponding).";
-            }
-
-            // Null: the message could not be sent (the window is gone, or a more privileged one); the read decides
-            if (_windows.RespondsWithin(windowHandle, RespondTimeoutMs) == false)
-            {
-                // It may have closed meanwhile; then the lookup below reports that
-                if (!_windows.IsWindow(windowHandle))
-                {
-                    return null;
-                }
-
-                return $"The window did not answer a message within {RespondTimeoutMs} ms, so its UI elements were not read: " +
-                       "the application is busy or hung. Wait, then try again.";
-            }
-
-            return null;
-        }
-        catch (Exception)
-        {
-            // The check is a courtesy: the walk's own deadline still bounds the read
-            return null;
-        }
-    }
+    /// <summary>Why the window must not be read, or null when it responds (see <see cref="UiaTargets.NotRespondingReason"/>).</summary>
+    private string? NotRespondingReason(nint windowHandle) => UiaTargets.NotRespondingReason(_windows, windowHandle);
 
     /// <summary>
     /// The walk of one call, once it has started: the caller reads its partial tree when the worker abandons it.
@@ -248,28 +210,14 @@ public class UIElementService : IUIElementService
         }
     }
 
-    /// <summary>
-    /// The process of the app that the window shows, or 0 when it is not known. For a UWP frame window
-    /// that is the app's own process, not the ApplicationFrameHost that owns the frames of every UWP app.
-    /// </summary>
-    private int TargetProcessId(nint windowHandle)
-    {
-        try
-        {
-            return _windows == null ? 0 : (int)UwpFrames.AppProcessId(_windows, windowHandle);
-        }
-        catch (Exception)
-        {
-            // Only the stuck-read count depends on it
-            return 0;
-        }
-    }
+    /// <summary>The process a stuck read of the window is counted against (see <see cref="UiaTargets.TargetProcessId"/>).</summary>
+    private int TargetProcessId(nint windowHandle) => UiaTargets.TargetProcessId(_windows, windowHandle);
 
     /// <summary>
     /// Validates the controlTypes filter. Returns an error message for unknown names, or null with
     /// the canonical names in <paramref name="controlTypes"/> (null when the filter is not set).
     /// </summary>
-    private static string? ParseControlTypes(string[]? names, out HashSet<string>? controlTypes)
+    internal static string? ParseControlTypes(IReadOnlyList<string>? names, out HashSet<string>? controlTypes)
     {
         controlTypes = null;
         var requested = names?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
@@ -342,7 +290,9 @@ public class UIElementService : IUIElementService
                 windowHandle, filter?.AccessibilityWarmupBudget ?? AccessibilityWarmup.MaxWait, cancellationToken);
 
             var (windowTitle, windowFramework) = TryReadWindow(window);
-            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, progress, cancellationToken);
+            var refs = _registry == null ? null : new WalkRefs(_registry, windowHandle, _registry.NextGeneration());
+            var walk = new Walk(
+                _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
@@ -443,13 +393,14 @@ public class UIElementService : IUIElementService
         HashSet<string>? controlTypes,
         string? windowTitle,
         string? windowFramework,
+        WalkRefs? refs,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
         private readonly object _gate = new();
 
         /// <summary>The window: its children are the elements of level 1.</summary>
-        private readonly WalkNode _root = new(null, Included: false);
+        private readonly WalkNode _root = new(null, Included: false, Ref: null, IndexPath: []);
 
         /// <summary>The elements whose children are still to be read, in breadth-first order, with their level's number.</summary>
         private readonly Queue<(WalkNode Parent, IUiaNode Node, int Level)> _pending = new();
@@ -639,8 +590,9 @@ public class UIElementService : IUIElementService
                 return;
             }
 
-            foreach (var child in children)
+            for (var index = 0; index < children.Count; index++)
             {
+                var child = children[index];
                 if (_capReached)
                 {
                     _leftUnread = true;
@@ -654,7 +606,7 @@ public class UIElementService : IUIElementService
                     return;
                 }
 
-                Visit(child, level, parent);
+                Visit(child, level, parent, [.. parent.IndexPath, index]);
             }
         }
 
@@ -692,7 +644,7 @@ public class UIElementService : IUIElementService
         /// Adds <paramref name="candidate"/> to <paramref name="parent"/>'s list unless it is offscreen (visibleOnly) or
         /// cannot be read, and queues it for its children while the levels go on.
         /// </summary>
-        private void Visit(Candidate candidate, int level, WalkNode parent)
+        private void Visit(Candidate candidate, int level, WalkNode parent, int[] indexPath)
         {
             UiaNodeProperties properties;
             bool included;
@@ -725,7 +677,9 @@ public class UIElementService : IUIElementService
                 return;
             }
 
-            var node = new WalkNode(properties, included);
+            // Registered outside the walk's lock: the registry has its own, and makes no UI Automation call
+            var elementRef = included ? refs?.Register(tree, candidate, properties, indexPath) : null;
+            var node = new WalkNode(properties, included, elementRef, indexPath);
             lock (_gate)
             {
                 parent.Children.Add(node);
@@ -768,13 +722,15 @@ public class UIElementService : IUIElementService
                 output.Add(Element(
                     properties,
                     children,
-                    framework != null && !string.Equals(framework, enclosingFramework, StringComparison.Ordinal) ? framework : null));
+                    framework != null && !string.Equals(framework, enclosingFramework, StringComparison.Ordinal) ? framework : null,
+                    node.Ref));
             }
 
             return output;
         }
 
-        private static UIElementInfo Element(UiaNodeProperties properties, List<UIElementInfo> children, string? frameworkId) =>
+        private static UIElementInfo Element(
+            UiaNodeProperties properties, List<UIElementInfo> children, string? frameworkId, string? elementRef) =>
             new(
                 Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
                 ControlType: properties.ControlType,
@@ -783,7 +739,8 @@ public class UIElementService : IUIElementService
                 IsEnabled: properties.IsEnabled,
                 IsOffscreen: properties.IsOffscreen,
                 Children: children.Count > 0 ? children : null,
-                FrameworkId: frameworkId);
+                FrameworkId: frameworkId,
+                Ref: elementRef);
 
         /// <summary>
         /// Reports every <see cref="ProgressInterval"/> elements read. Never once the walk is asked to stop: the caller
@@ -873,13 +830,40 @@ public class UIElementService : IUIElementService
             return _timedOut || _capReached;
         }
 
-        /// <summary>A child to visit: its node, and its properties when they came with it.</summary>
-        private sealed record Candidate(IUiaNode Node, UiaElement? Cached);
-
-        /// <summary>An element read during the walk, returned or not, with the elements read inside it.</summary>
-        private sealed record WalkNode(UiaNodeProperties? Properties, bool Included)
+        /// <summary>
+        /// An element read during the walk, returned or not, with the elements read inside it, its ref when it is
+        /// returned, and its index path (its index among its parent's children at each level below the window).
+        /// </summary>
+        private sealed record WalkNode(UiaNodeProperties? Properties, bool Included, string? Ref, int[] IndexPath)
         {
             public List<WalkNode> Children { get; } = [];
+        }
+    }
+
+    /// <summary>A child to visit: its node, and its properties when they came with it.</summary>
+    private sealed record Candidate(IUiaNode Node, UiaElement? Cached);
+
+    /// <summary>
+    /// Gives the elements a walk returns their refs (roadmap M3.4). An element fetched with its level brings its runtime id
+    /// and class along; one read on its own gets its runtime id from <see cref="IUiaTree.GetRuntimeId"/> (which the
+    /// engines answer from what they read when they found it) and is registered without a class.
+    /// </summary>
+    private sealed class WalkRefs(IElementRegistry registry, nint windowHandle, long generation)
+    {
+        public string? Register(IUiaTree tree, Candidate candidate, UiaNodeProperties properties, int[] indexPath)
+        {
+            try
+            {
+                var element = candidate.Cached ?? new UiaElement(
+                    candidate.Node, properties, ClassName: null, IsKeyboardFocusable: false, UiaPatterns.None,
+                    tree.GetRuntimeId(candidate.Node), ControlTypeId: null);
+                return registry.Register(windowHandle, element, new ElementOrigin(generation, IndexPath: indexPath));
+            }
+            catch (Exception)
+            {
+                // The element is still returned, without a ref
+                return null;
+            }
         }
     }
 

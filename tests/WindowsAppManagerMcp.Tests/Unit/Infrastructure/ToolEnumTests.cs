@@ -29,7 +29,8 @@ public class ToolEnumTests
         {
             typeof(WindowStateRequest), typeof(MonitorPositioning), typeof(SnapPosition), typeof(LayoutMatchBy),
             typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser), typeof(ClipboardFormat),
-            typeof(WindowSort), typeof(WindowDetail), typeof(UIElementFormat), typeof(WindowWaitCondition), typeof(LaunchWindowState)
+            typeof(WindowSort), typeof(WindowDetail), typeof(UIElementFormat), typeof(WindowWaitCondition), typeof(LaunchWindowState),
+            typeof(ElementNameMatch), typeof(ElementDetail)
         });
     }
 

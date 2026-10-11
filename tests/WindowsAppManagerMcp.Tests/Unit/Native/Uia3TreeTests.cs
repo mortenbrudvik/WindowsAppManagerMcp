@@ -338,6 +338,98 @@ public class Uia3TreeTests
 
     #endregion
 
+    #region Element reads for the registry and find_ui_elements (roadmap M3.4)
+
+    [Fact]
+    public void ReadElement_ReadsTheWalksPropertiesAndTheRuntimeIdInOneCallToTheProvider()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        var cached = Cached("Save", 50000, runtimeId: [42, 7], availablePatternProperties: UiaIds.IsInvokePatternAvailableProperty);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ClassNameProperty)).Returns("Button");
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Returns(cached.Object);
+
+        // Act
+        var read = sut.ReadElement(node);
+
+        // Assert - BuildUpdatedCache always asks the provider, so it tells a live element from a gone one
+        read.Properties.Name.Should().Be("Save");
+        read.ClassName.Should().Be("Button");
+        read.RuntimeId.Should().Equal(42, 7);
+        read.Patterns.Should().Be(UiaPatterns.Invoke);
+        element.Verify(e => e.BuildUpdatedCache(_requests[0].Object), Times.Once);
+    }
+
+    [Fact]
+    public void ReadElement_OfAnElementThatIsGone_ThrowsTheSeamsException()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>()))
+            .Throws(new COMException("Element not available", unchecked((int)0x80040201)));
+
+        // Act / Assert
+        FluentActions.Invoking(() => sut.ReadElement(node)).Should().Throw<UiaElementUnavailableException>();
+    }
+
+    [Fact]
+    public void GetClickablePoint_ReturnsThePointTheProviderGives()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        var point = new tagPOINT { x = -1200, y = 340 };
+        element.Setup(e => e.GetClickablePoint(out point)).Returns(1);
+
+        // Act / Assert
+        sut.GetClickablePoint(node).Should().Be(new UiaPoint(-1200, 340));
+    }
+
+    [Fact]
+    public void GetClickablePoint_WhenTheProviderHasNone_IsNull()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        var point = new tagPOINT();
+        element.Setup(e => e.GetClickablePoint(out point)).Returns(0);
+
+        // Act / Assert
+        sut.GetClickablePoint(node).Should().BeNull();
+    }
+
+    [Fact]
+    public void ReadDescription_ReadsHelpTextKeysAndLocalizedTypeInOneCall()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        var cached = new Mock<IUIAutomationElement>();
+        cached.Setup(e => e.GetCachedPropertyValue(It.IsAny<int>())).Returns(NotSupported);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.HelpTextProperty)).Returns("Saves the file");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.AccessKeyProperty)).Returns("Alt+S");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.AcceleratorKeyProperty)).Returns("Ctrl+S");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.LocalizedControlTypeProperty)).Returns("button");
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Returns(cached.Object);
+
+        // Act
+        var description = sut.ReadDescription(node);
+
+        // Assert
+        description.Should().Be(new UiaNodeDescription("Saves the file", "Alt+S", "Ctrl+S", "button"));
+        element.Verify(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>()), Times.Once);
+        element.Verify(e => e.GetCurrentPropertyValue(It.IsAny<int>()), Times.Never);
+    }
+
+    #endregion
+
     #region Search conditions
 
     [Fact]
@@ -384,6 +476,40 @@ public class Uia3TreeTests
         sut.FindAll(node, UiaScope.Children, UiaCondition.PropertyEquals(UiaProperty.ControlType, "AppBar"), CancellationToken.None);
 
         _automation.Verify(a => a.CreatePropertyCondition(UiaIds.ControlTypeProperty, 50040), Times.Once);
+    }
+
+    [Fact]
+    public void FindAll_ByRuntimeId_ComparesTheIdAsAnIntArray()
+    {
+        // Arrange - the element registry finds an element again by its runtime id (roadmap M3.4)
+        var sut = CreateSut();
+        var window = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, window);
+        window.Setup(e => e.FindAllBuildCache(It.IsAny<TreeScope>(), It.IsAny<IUIAutomationCondition>(), It.IsAny<IUIAutomationCacheRequest>()))
+            .Returns(ArrayOf().Object);
+
+        // Act
+        sut.FindAll(node, UiaScope.Descendants, UiaCondition.PropertyEquals(UiaProperty.RuntimeId, new List<int> { 42, 7 }), CancellationToken.None);
+
+        // Assert
+        _automation.Verify(a => a.CreatePropertyCondition(
+            UiaIds.RuntimeIdProperty, It.Is<object>(o => o is int[] && ((int[])o).SequenceEqual(new[] { 42, 7 }))), Times.Once);
+    }
+
+    [Fact]
+    public void Conditions_OnARuntimeId_TakeACopyOfANonEmptyList()
+    {
+        // Arrange
+        var id = new List<int> { 42, 7 };
+
+        // Act
+        var condition = (UiaPropertyCondition)UiaCondition.PropertyEquals(UiaProperty.RuntimeId, id);
+        id[1] = 8;
+
+        // Assert
+        ((int[])condition.Value).Should().Equal(42, 7);
+        FluentActions.Invoking(() => UiaCondition.PropertyEquals(UiaProperty.RuntimeId, new int[0])).Should().Throw<ArgumentException>();
+        FluentActions.Invoking(() => UiaCondition.PropertyEquals(UiaProperty.RuntimeId, "42.7")).Should().Throw<ArgumentException>();
     }
 
     [Fact]

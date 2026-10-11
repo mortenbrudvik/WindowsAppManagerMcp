@@ -90,6 +90,17 @@ public static class UiaPatternNames
     /// ExpandCollapse and RangeValue, in that order.</summary>
     public static IReadOnlyList<string> Actions(UiaPatterns patterns) =>
         ActionNames.Where(p => (patterns & p.Pattern) != 0).Select(p => p.Name).ToList();
+
+    /// <summary>
+    /// The patterns among <paramref name="patterns"/> by name, the action patterns first in the order of
+    /// <see cref="Actions"/>, then ScrollItem, Scroll, Window, Text, Grid, Table, ItemContainer and VirtualizedItem.
+    /// LegacyIAccessible is left out: the UIA3 engine reports it on nearly every element, so it says nothing.
+    /// </summary>
+    public static IReadOnlyList<string> All(UiaPatterns patterns) =>
+        Enum.GetValues<UiaPatterns>()
+            .Where(p => p is not (UiaPatterns.None or UiaPatterns.Actions or UiaPatterns.LegacyIAccessible) && (patterns & p) != 0)
+            .Select(p => p.ToString())
+            .ToList();
 }
 
 /// <summary>How far <see cref="IUiaTree.FindAll"/> searches from its root, in the control view.</summary>
@@ -133,7 +144,13 @@ public enum UiaProperty
     IsOffscreen,
 
     /// <summary>A bool.</summary>
-    IsKeyboardFocusable
+    IsKeyboardFocusable,
+
+    /// <summary>
+    /// A runtime id: an int array (an <c>IReadOnlyList&lt;int&gt;</c>), compared element by element (roadmap M3.4: the
+    /// element registry finds an element again by it).
+    /// </summary>
+    RuntimeId
 }
 
 /// <summary>
@@ -159,6 +176,7 @@ public abstract record UiaCondition
                 or UiaProperty.FrameworkId => value is string,
             UiaProperty.ProcessId => value is int,
             UiaProperty.IsEnabled or UiaProperty.IsOffscreen or UiaProperty.IsKeyboardFocusable => value is bool,
+            UiaProperty.RuntimeId => value is IReadOnlyList<int> { Count: > 0 },
             _ => false
         };
         if (!valid)
@@ -171,7 +189,10 @@ public abstract record UiaCondition
             throw new ArgumentException("Only string properties can be compared ignoring case.", nameof(ignoreCase));
         }
 
-        return new UiaPropertyCondition(property, value, ignoreCase);
+        // A runtime id is kept as an int array of its own: the caller's list cannot change under the condition, and both
+        // engines pass an int[] to UI Automation
+        return new UiaPropertyCondition(
+            property, value is IReadOnlyList<int> runtimeId ? runtimeId.ToArray() : value, ignoreCase);
     }
 
     /// <summary>Matches elements that match every condition.</summary>

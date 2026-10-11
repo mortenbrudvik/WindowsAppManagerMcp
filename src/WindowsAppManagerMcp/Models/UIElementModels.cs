@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
@@ -15,6 +17,9 @@ namespace WindowsAppManagerMcp.Models;
 /// Chrome, which is web content in a Chromium, Electron or WebView2 app), set only where it differs from that of the
 /// returned element it is inside, or, for an element listed directly under the window, from the result's
 /// <see cref="UIElementResult.FrameworkId"/> (roadmap M3.3). Null means the same framework as there.</param>
+/// <param name="Ref">The element's ref (roadmap M3.4), for example "w4120035e17": later calls name the element by it. The same
+/// element keeps its ref in every read of this server session, and a ref never names another element. Null when the
+/// element has no runtime id, or the walk ran without the element registry. Serialized first.</param>
 public record UIElementInfo(
     string? Name,
     string ControlType,
@@ -25,7 +30,8 @@ public record UIElementInfo(
     IReadOnlyList<UIElementInfo>? Children = null,
     int? Depth = null,
     int? Parent = null,
-    string? FrameworkId = null
+    string? FrameworkId = null,
+    [property: JsonPropertyOrder(-1)] string? Ref = null
 );
 
 /// <summary>
@@ -138,7 +144,20 @@ public enum UIElementErrorCode
     /// The window does not respond: Windows reports it hung, or it did not answer a message within 500 ms. Nothing
     /// was read, because a UI Automation read would block until it recovers (roadmap M3.1).
     /// </summary>
-    NotResponding = 10
+    NotResponding = 10,
+
+    /// <summary>
+    /// An element ref (roadmap M3.4) no longer names an element: the element is gone and could not be found again for
+    /// certain, its window closed, the ref expired from the registry, or this server session never issued it (refs are
+    /// not meant to survive a restart). Find the element again (find_ui_elements) and use the new ref.
+    /// </summary>
+    ElementStale = 11,
+
+    /// <summary>
+    /// An element ref's element is gone and several elements now fit its description, so the ref is not moved to any of
+    /// them: a ref never silently names a different element (roadmap M3.4). Find the element again with a narrower query.
+    /// </summary>
+    AmbiguousElement = 12
 }
 
 /// <summary>
@@ -152,6 +171,8 @@ public enum UIElementErrorCode
 /// <param name="Value">The element's value through the Value pattern, at most
 /// 200 characters. Null when it has none, and always null for password fields.</param>
 /// <param name="ValueTruncated">True when <paramref name="Value"/> was cut to 200 characters.</param>
+/// <param name="Ref">The element's ref (roadmap M3.4), as in <see cref="UIElementInfo.Ref"/>; null when the element has no
+/// runtime id or no window was found for it. Serialized first.</param>
 public record UIElementDetails(
     string? Name,
     string ControlType,
@@ -166,7 +187,8 @@ public record UIElementDetails(
     bool IsPassword,
     IReadOnlyList<string> Patterns,
     string? Value = null,
-    bool ValueTruncated = false
+    bool ValueTruncated = false,
+    [property: JsonPropertyOrder(-1)] string? Ref = null
 );
 
 /// <summary>

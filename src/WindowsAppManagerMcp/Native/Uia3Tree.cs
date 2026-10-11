@@ -180,6 +180,39 @@ public sealed class Uia3Tree : IUiaTree
     }
 
     /// <inheritdoc />
+    public UiaElement ReadElement(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        var client = Started();
+        return UiaComErrors.Run(() => ToElement(element.BuildUpdatedCache(client.WalkRequest)));
+    }
+
+    /// <inheritdoc />
+    public UiaPoint? GetClickablePoint(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        Started();
+        return UiaComErrors.Run<UiaPoint?>(() =>
+            element.GetClickablePoint(out var point) != 0 ? new UiaPoint(point.x, point.y) : null);
+    }
+
+    /// <inheritdoc />
+    public UiaNodeDescription ReadDescription(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        var client = Started();
+        return UiaComErrors.Run(() =>
+        {
+            var cached = element.BuildUpdatedCache(client.DescriptionRequest);
+            return new UiaNodeDescription(
+                HelpText: CachedString(cached, UiaIds.HelpTextProperty),
+                AccessKey: CachedString(cached, UiaIds.AccessKeyProperty),
+                AcceleratorKey: CachedString(cached, UiaIds.AcceleratorKeyProperty),
+                LocalizedControlType: CachedString(cached, UiaIds.LocalizedControlTypeProperty));
+        });
+    }
+
+    /// <inheritdoc />
     public string? ReadValue(IUiaNode node) => GetPattern<IUiaValuePattern>(node)?.Value;
 
     /// <inheritdoc />
@@ -458,12 +491,17 @@ public sealed class Uia3Tree : IUiaTree
         _ => throw new ArgumentException($"Unknown condition {condition.GetType().Name}.", nameof(condition))
     };
 
-    /// <summary>A condition value as the COM client compares it: a control type name becomes its id.</summary>
-    private static object PropertyValue(UiaProperty property, object value) =>
-        property == UiaProperty.ControlType
-            ? UiaControlTypes.GetId((string)value) ??
-              throw new ArgumentException($"'{value}' is not a control type name.", nameof(value))
-            : value;
+    /// <summary>
+    /// A condition value as the COM client compares it: a control type name becomes its id, and a runtime id an int array
+    /// (a SAFEARRAY of VT_I4, as GetRuntimeId returns it).
+    /// </summary>
+    private static object PropertyValue(UiaProperty property, object value) => property switch
+    {
+        UiaProperty.ControlType => UiaControlTypes.GetId((string)value) ??
+                                   throw new ArgumentException($"'{value}' is not a control type name.", nameof(value)),
+        UiaProperty.RuntimeId => ((IReadOnlyList<int>)value).ToArray(),
+        _ => value
+    };
 
     /// <summary>
     /// The wrapper of the pattern <paramref name="type"/> asks for, over the COM pattern object, or null when the object
@@ -527,6 +565,11 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.ClassNameProperty, UiaIds.FrameworkIdProperty, UiaIds.ProcessIdProperty,
                 UiaIds.NativeWindowHandleProperty, UiaIds.IsPasswordProperty
             ]);
+            DescriptionRequest = Request(
+            [
+                UiaIds.HelpTextProperty, UiaIds.AccessKeyProperty, UiaIds.AcceleratorKeyProperty,
+                UiaIds.LocalizedControlTypeProperty
+            ]);
         }
 
         public IUIAutomation2 Automation { get; }
@@ -548,6 +591,9 @@ public sealed class Uia3Tree : IUiaTree
 
         /// <summary>Class, framework, process, window handle and the password flag.</summary>
         public IUIAutomationCacheRequest IdentityRequest { get; }
+
+        /// <summary>Help text, access and accelerator keys and the localized control type.</summary>
+        public IUIAutomationCacheRequest DescriptionRequest { get; }
 
         private IUIAutomationCacheRequest Request(IEnumerable<int> properties)
         {

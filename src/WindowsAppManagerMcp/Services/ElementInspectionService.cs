@@ -9,11 +9,11 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="IUiaTree"/>, on an <see cref="IUiaWorker"/> thread with a hard deadline.
 /// </summary>
 /// <remarks>
-/// Elements are returned as snapshots. Once the element registry exists (M3.4), the results can
-/// also carry a ref that later calls can act on. A window that shows web content (Chromium, Electron, WebView2) is warmed
-/// up first (<see cref="IAccessibilityWarmup"/>, roadmap M3.3), within a third of the timeout: the foreground window for the
-/// focused element, the window at the point for the element at a point. Otherwise the first read of such a window finds
-/// only its frame, because its page's tree is built only once asked for.
+/// Elements are returned as snapshots, with a ref (roadmap M3.4) that later calls can name them by: registered under the
+/// top-level window the result reports, so the registry can find the element again in it. A window that shows web content
+/// (Chromium, Electron, WebView2) is warmed up first (<see cref="IAccessibilityWarmup"/>, roadmap M3.3), within a third of
+/// the timeout: the foreground window for the focused element, the window at the point for the element at a point.
+/// Otherwise the first read of such a window finds only its frame, because its page's tree is built only once asked for.
 /// </remarks>
 public class ElementInspectionService : IElementInspectionService
 {
@@ -32,16 +32,19 @@ public class ElementInspectionService : IElementInspectionService
     private readonly INativeWindowWrapper _windows;
     private readonly IMonitorService _monitors;
     private readonly IAccessibilityWarmup? _warmup;
+    private readonly IElementRegistry? _registry;
 
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
+    /// <param name="registry">Gives the element its ref (roadmap M3.4); without it the element has none.</param>
     public ElementInspectionService(
         IUiaTree tree,
         IUiaWorker worker,
         INativeHitTestWrapper hitTest,
         INativeWindowWrapper windows,
         IMonitorService monitors,
-        IAccessibilityWarmup? warmup = null)
+        IAccessibilityWarmup? warmup = null,
+        IElementRegistry? registry = null)
     {
         _tree = tree;
         _worker = worker;
@@ -49,6 +52,7 @@ public class ElementInspectionService : IElementInspectionService
         _windows = windows;
         _monitors = monitors;
         _warmup = warmup;
+        _registry = registry;
     }
 
     /// <inheritdoc />
@@ -81,13 +85,13 @@ public class ElementInspectionService : IElementInspectionService
                         with { AccessibilityWarmup = warmup };
                 }
 
-                var (details, identity) = ReadDetails(node);
+                var (details, identity, element) = ReadDetails(node);
                 var window = FindOwningWindow(node, identity);
                 var (processId, processName) = DescribeProcess(identity, window);
 
                 return new FocusedElementResult(
                     Success: true,
-                    Element: details,
+                    Element: details with { Ref = Register(window, element) },
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
@@ -146,7 +150,7 @@ public class ElementInspectionService : IElementInspectionService
                         with { AccessibilityWarmup = warmup };
                 }
 
-                var (details, identity) = ReadDetails(node);
+                var (details, identity, element) = ReadDetails(node);
                 var chain = ReadAncestors(node, ancestorCount);
 
                 // WindowFromPoint skips hidden windows and disabled child windows. It practically
@@ -159,7 +163,7 @@ public class ElementInspectionService : IElementInspectionService
                     Success: true,
                     X: x,
                     Y: y,
-                    Element: details,
+                    Element: details with { Ref = Register(window, element) },
                     Ancestors: chain,
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
@@ -255,7 +259,33 @@ public class ElementInspectionService : IElementInspectionService
         }
     }
 
-    private (UIElementDetails Details, UiaNodeIdentity Identity) ReadDetails(IUiaNode node)
+    /// <summary>
+    /// The element's ref under <paramref name="window"/>, or null without a window or a registry, or when the element has
+    /// no runtime id. Makes no UI Automation call.
+    /// </summary>
+    private string? Register(nint window, UiaElement? element)
+    {
+        if (_registry == null || window == nint.Zero || element == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return _registry.Register(window, element, new ElementOrigin(_registry.NextGeneration()));
+        }
+        catch (Exception)
+        {
+            // The element is returned without a ref
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The element's details, who provides it, and, for the registry, the element with its runtime id (null when it has
+    /// none, or the registry is not used).
+    /// </summary>
+    private (UIElementDetails Details, UiaNodeIdentity Identity, UiaElement? Element) ReadDetails(IUiaNode node)
     {
         var properties = _tree.Read(node);
         var identity = _tree.ReadIdentity(node);
@@ -282,7 +312,31 @@ public class ElementInspectionService : IElementInspectionService
             Value: value,
             ValueTruncated: truncated);
 
-        return (details, identity);
+        var element = _registry == null
+            ? null
+            : new UiaElement(
+                node,
+                properties,
+                identity.ClassName,
+                interaction.IsKeyboardFocusable,
+                interaction.ActionPatterns.Aggregate(UiaPatterns.None, (all, name) =>
+                    Enum.TryParse<UiaPatterns>(name, out var pattern) ? all | pattern : all),
+                TryReadRuntimeId(node),
+                ControlTypeId: null);
+        return (details, identity, element);
+    }
+
+    private IReadOnlyList<int>? TryReadRuntimeId(IUiaNode node)
+    {
+        try
+        {
+            return _tree.GetRuntimeId(node);
+        }
+        catch (Exception)
+        {
+            // Without a runtime id the element has no ref
+            return null;
+        }
     }
 
     private string? TryReadValue(IUiaNode node)
@@ -299,7 +353,7 @@ public class ElementInspectionService : IElementInspectionService
     }
 
     /// <summary>Cuts a value to <see cref="MaxValueLength"/>, never inside a surrogate pair.</summary>
-    private static (string? Value, bool Truncated) Truncate(string? value)
+    internal static (string? Value, bool Truncated) Truncate(string? value)
     {
         if (value == null || value.Length <= MaxValueLength)
         {

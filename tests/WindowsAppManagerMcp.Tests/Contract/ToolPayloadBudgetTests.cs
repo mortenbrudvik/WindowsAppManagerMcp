@@ -71,10 +71,11 @@ public class ToolPayloadBudgetTests
         ["take_screenshot"] = 150, // 125
         ["capture_region"] = 150, // 112
         ["capture_window"] = 150, // 120
-        ["capture_with_elements"] = 9_500, // 6,052: the 120 elements, each with imageBounds and screenBounds
+        ["capture_with_elements"] = 9_500, // 6,544: the 120 elements, each with its ref, imageBounds and screenBounds
 
         // UI Automation
-        ["get_ui_elements"] = 8_500, // 5,397: 120 elements at the default depth (roadmap M6 aims for at most 4,000)
+        ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
+        ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
 

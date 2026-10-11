@@ -16,11 +16,14 @@ public static class UiaIds
     public const int ControlTypeProperty = 30003;
     public const int LocalizedControlTypeProperty = 30004;
     public const int NameProperty = 30005;
+    public const int AcceleratorKeyProperty = 30006;
+    public const int AccessKeyProperty = 30007;
     public const int HasKeyboardFocusProperty = 30008;
     public const int IsKeyboardFocusableProperty = 30009;
     public const int IsEnabledProperty = 30010;
     public const int AutomationIdProperty = 30011;
     public const int ClassNameProperty = 30012;
+    public const int HelpTextProperty = 30013;
     public const int IsPasswordProperty = 30019;
     public const int NativeWindowHandleProperty = 30020;
     public const int IsOffscreenProperty = 30022;
@@ -111,6 +114,7 @@ public static class UiaIds
         UiaProperty.IsEnabled => IsEnabledProperty,
         UiaProperty.IsOffscreen => IsOffscreenProperty,
         UiaProperty.IsKeyboardFocusable => IsKeyboardFocusableProperty,
+        UiaProperty.RuntimeId => RuntimeIdProperty,
         _ => throw new ArgumentOutOfRangeException(nameof(property), property, "Not a property a condition can compare.")
     };
 }
