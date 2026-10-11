@@ -76,7 +76,8 @@ public class WindowFinderTools
         return ToDto(window);
     }
 
-    private static WindowInfoDto ToDto(WindowInfo info) => new(
+    /// <summary>A window as the tools return it (the launch tools return the window they found this way too).</summary>
+    internal static WindowInfoDto ToDto(WindowInfo info) => new(
         Handle: info.Handle.ToInt64(),
         Title: info.Title,
         ProcessName: info.ProcessName,

@@ -45,6 +45,8 @@ public static class ServiceRegistration
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
         services.AddSingleton<IProcessService, ProcessService>();
+        // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
+        services.AddSingleton<IWindowWaitService, WindowWaitService>();
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();

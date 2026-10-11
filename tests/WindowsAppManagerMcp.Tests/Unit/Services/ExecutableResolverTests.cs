@@ -15,6 +15,7 @@ public class ExecutableResolverTests
     private readonly List<string> _probedPaths = [];
     private readonly Dictionary<string, List<string>> _appPaths = new(StringComparer.OrdinalIgnoreCase);
     private string? _pathVariable = $@"{SystemDir};{WindowsDir};C:\Tools;{VsCodeBin}";
+    private string? _pathExtVariable;
 
     private ExecutableResolver CreateSut() => new(
         fileExists: path =>
@@ -26,7 +27,8 @@ public class ExecutableResolverTests
         getAppPathCandidates: key => _appPaths.TryGetValue(key, out var values) ? values : [],
         windowsDirectory: WindowsDir,
         systemDirectory: SystemDir,
-        getCurrentDirectory: () => CurrentDir);
+        getCurrentDirectory: () => CurrentDir,
+        getPathExtVariable: () => _pathExtVariable);
 
     #region Bare Names - Search Order
 
@@ -99,10 +101,38 @@ public class ExecutableResolverTests
         // Act
         var result = CreateSut().Resolve("nonexistent-app", CurrentDir);
 
-        // Assert
+        // Assert - marked not found, so the launch refuses it instead of letting ShellExecute search the current directory
         result.FileName.Should().Be("nonexistent-app");
         result.Kind.Should().Be(LaunchTargetKind.Other);
         result.FoundOnlyInWorkingDirectory.Should().BeNull();
+        result.NotFound.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_BareNameFound_IsNotMarkedNotFound()
+    {
+        // Arrange
+        _files.Add(@"C:\Windows\System32\notepad.exe");
+
+        // Act
+        var result = CreateSut().Resolve("notepad", null);
+
+        // Assert
+        result.NotFound.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_BareNameOnlyInWorkingDirectory_IsNotMarkedNotFound()
+    {
+        // Arrange - the planted file gets its own error (ExecutableInWorkingDirectory)
+        _files.Add(@"C:\repo\build.exe");
+
+        // Act
+        var result = CreateSut().Resolve("build", null);
+
+        // Assert
+        result.NotFound.Should().BeFalse();
+        result.FoundOnlyInWorkingDirectory.Should().NotBeNull();
     }
 
     [Fact]
@@ -152,6 +182,70 @@ public class ExecutableResolverTests
 
         // Assert
         result.FileName.Should().Be(@"C:\Tools\tool.exe");
+    }
+
+    [Fact]
+    public void Resolve_BareNameWithoutExtension_FollowsPathExtOrder()
+    {
+        // Arrange - PATHEXT puts .CMD before .EXE
+        _pathExtVariable = ".CMD;.EXE";
+        _files.Add(@"C:\Tools\tool.cmd");
+        _files.Add(@"C:\Tools\tool.exe");
+
+        // Act
+        var result = CreateSut().Resolve("tool", null);
+
+        // Assert
+        result.FileName.Should().Be(@"C:\Tools\tool.cmd");
+        result.Kind.Should().Be(LaunchTargetKind.BatchFile);
+    }
+
+    [Fact]
+    public void Resolve_ScriptExtensionFromPathExt_IsFoundButNotANativeExecutable()
+    {
+        // Arrange - a script type the user registered in PATHEXT
+        _pathExtVariable = ".COM;.EXE;.BAT;.CMD;.VBS;.PY";
+        _files.Add(@"C:\Tools\report.py");
+
+        // Act
+        var result = CreateSut().Resolve("report", null);
+
+        // Assert - its arguments get the cmd metacharacter check, as for any target that is not a native .exe
+        result.FileName.Should().Be(@"C:\Tools\report.py");
+        result.Kind.Should().Be(LaunchTargetKind.Other);
+        result.NotFound.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("EXE;CMD;..\\x;.e/x;.;")]
+    public void Resolve_PathExtUnsetOrWithoutUsableEntries_UsesComExeBatCmd(string? pathExt)
+    {
+        // Arrange - entries without a leading dot, with path characters, or a lone dot are ignored
+        _pathExtVariable = pathExt;
+        _files.Add(@"C:\Tools\tool.bat");
+
+        // Act
+        var result = CreateSut().Resolve("tool", null);
+
+        // Assert
+        result.FileName.Should().Be(@"C:\Tools\tool.bat");
+    }
+
+    [Fact]
+    public void Resolve_PathExtEntries_AreUsedForThePlantedFileCheckToo()
+    {
+        // Arrange - only the working directory has the script
+        _pathExtVariable = ".EXE;.PS1";
+        _files.Add(@"D:\work\deploy.ps1");
+
+        // Act
+        var result = CreateSut().Resolve("deploy", @"D:\work");
+
+        // Assert
+        result.FoundOnlyInWorkingDirectory.Should().Be(@"D:\work\deploy.ps1");
     }
 
     [Fact]

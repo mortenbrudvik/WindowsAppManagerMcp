@@ -16,7 +16,7 @@ public class LaunchPlanningTests
 
     private ProcessService CreateSut() => new(
         TestDataFactory.CreateMockWindowService().Object,
-        new InputValidationService(),
+        new InputValidationService(ProtocolAllowlist.BuiltIn),
         _mockBrowserDetection.Object,
         _mockResolver.Object,
         new Mock<INativeProcessWrapper>(MockBehavior.Strict).Object);
@@ -266,6 +266,133 @@ public class LaunchPlanningTests
         plan.IsValid.Should().BeFalse();
         plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.ExecutableInWorkingDirectory));
         plan.ErrorMessage.Should().Contain(@"C:\repo\build.exe").And.Contain("full path");
+    }
+
+    [Fact]
+    public void PlanLaunch_BareNameFoundNowhere_IsRefused_InsteadOfLettingWindowsSearchTheCurrentDirectory()
+    {
+        // Arrange
+        _mockResolver
+            .Setup(r => r.Resolve(It.IsAny<string>(), It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget("not-installed-tool", LaunchTargetKind.Other, NotFound: true));
+
+        // Act
+        var plan = CreateSut().PlanLaunch("not-installed-tool");
+
+        // Assert
+        plan.IsValid.Should().BeFalse();
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.ExecutableNotFound));
+        plan.ErrorMessage.Should().Contain("not-installed-tool").And.Contain("full path");
+    }
+
+    [Fact]
+    public void PlanLaunch_WithoutWorkingDirectory_StartsInTheProgramsFolder_NotTheServersCurrentDirectory()
+    {
+        // Arrange
+        ResolveAs(@"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe", LaunchTargetKind.NativeExecutable);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("code");
+
+        // Assert
+        plan.StartInfo!.WorkingDirectory.Should().Be(@"C:\Users\me\AppData\Local\Programs\Microsoft VS Code");
+        _mockResolver.Verify(r => r.Resolve("code", null), Times.Once);
+    }
+
+    [Fact]
+    public void PlanLaunch_ADocumentWithoutWorkingDirectory_StartsInItsFolder()
+    {
+        // Arrange
+        ResolveAs(@"D:\Reports\q3.pdf", LaunchTargetKind.Other);
+
+        // Act
+        var plan = CreateSut().PlanLaunch(@"D:\Reports\q3.pdf");
+
+        // Assert
+        plan.StartInfo!.WorkingDirectory.Should().Be(@"D:\Reports");
+    }
+
+    [Fact]
+    public void PlanLaunch_AUriWithoutWorkingDirectory_StartsInTheUsersProfile()
+    {
+        // Arrange
+        ResolveAs("ms-settings:display", LaunchTargetKind.Other);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("ms-settings:display");
+
+        // Assert
+        plan.IsValid.Should().BeTrue(plan.ErrorMessage);
+        plan.StartInfo!.FileName.Should().Be("ms-settings:display");
+        plan.StartInfo.WorkingDirectory.Should().Be(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    }
+
+    [Fact]
+    public void PlanLaunch_KeepsTheResolvedTarget_ForTheWindowWait()
+    {
+        // Arrange
+        ResolveAs(@"C:\Windows\System32\calc.exe", LaunchTargetKind.NativeExecutable);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("calc");
+
+        // Assert
+        plan.Target.Should().Be(new ResolvedLaunchTarget(@"C:\Windows\System32\calc.exe", LaunchTargetKind.NativeExecutable));
+    }
+
+    /// <summary>
+    /// Binary planting regression on the real file system (roadmap M2.7): a notepad.exe planted in the working
+    /// directory, which is also the server's current directory, is never what gets started, and a program found only
+    /// there is refused. The files are empty and live in a temporary folder; nothing is started.
+    /// </summary>
+    [Fact]
+    public void PlanLaunch_RealFileSystem_ProgramsPlantedInTheWorkingDirectory_AreNeverStarted()
+    {
+        // Arrange
+        var plantDir = Path.Combine(Path.GetTempPath(), $"LaunchPlanningTests_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(plantDir);
+        var uniqueName = $"zz-planted-tool-{Guid.NewGuid():N}";
+        try
+        {
+            File.WriteAllBytes(Path.Combine(plantDir, "notepad.exe"), []);
+            File.WriteAllBytes(Path.Combine(plantDir, uniqueName + ".exe"), []);
+            var resolver = new ExecutableResolver(
+                File.Exists,
+                () => Environment.GetEnvironmentVariable("PATH"),
+                ExecutableResolver.ReadAppPathsFromRegistry,
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                Environment.SystemDirectory,
+                () => plantDir,
+                () => Environment.GetEnvironmentVariable("PATHEXT"));
+            var sut = new ProcessService(
+                TestDataFactory.CreateMockWindowService().Object,
+                new InputValidationService(ProtocolAllowlist.BuiltIn),
+                _mockBrowserDetection.Object,
+                resolver,
+                new Mock<INativeProcessWrapper>(MockBehavior.Strict).Object);
+
+            // Act
+            var inWorkingDirectory = sut.PlanLaunch("notepad", workingDirectory: plantDir);
+            var withoutWorkingDirectory = sut.PlanLaunch("notepad");
+            var plantedOnly = sut.PlanLaunch(uniqueName, workingDirectory: plantDir);
+
+            // Assert - the installed Notepad, by its absolute path
+            inWorkingDirectory.IsValid.Should().BeTrue(inWorkingDirectory.ErrorMessage);
+            inWorkingDirectory.StartInfo!.FileName.Should().NotStartWithEquivalentOf(plantDir).And.EndWithEquivalentOf(@"\notepad.exe");
+            Path.IsPathFullyQualified(inWorkingDirectory.StartInfo.FileName).Should().BeTrue();
+            inWorkingDirectory.StartInfo.WorkingDirectory.Should().Be(plantDir, "a working directory that was asked for is kept");
+
+            // Without a working directory, the program starts in its own folder, not in the current directory
+            withoutWorkingDirectory.StartInfo!.WorkingDirectory.Should()
+                .Be(Path.GetDirectoryName(withoutWorkingDirectory.StartInfo.FileName)).And.NotBe(plantDir);
+
+            plantedOnly.IsValid.Should().BeFalse();
+            plantedOnly.ErrorCode.Should().Be(nameof(LaunchErrorCode.ExecutableInWorkingDirectory));
+        }
+        finally
+        {
+            Directory.Delete(plantDir, recursive: true);
+        }
     }
 
     [Fact]

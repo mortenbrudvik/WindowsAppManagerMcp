@@ -119,7 +119,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | The UI Automation walk, before its `timeoutMs`; nothing is captured | Every 100 elements read |
 | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | The wait for UI Automation | - |
 | [launch_application](#launch_application), [launch_browser_with_debug](#launch_browser_with_debug) | Before the start, the launch; after it, the wait for the window (the program keeps running) | - |
-| [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for a window | After each application: `i of n` and whether it started |
+| [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for the windows | As each application is done (refused, started, or its window wait ended): `i of n` and its outcome |
 | [apply_layout](#apply_layout) | The placements not arranged yet, and a launch's wait for its window | After each placement: `i of n` and its outcome |
 | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch) | The windows not changed yet, and the pause between two windows | - |
 | [kill_process](#kill_process) | The wait for the process to exit; the close request or termination already sent stands | - |
@@ -1114,6 +1114,7 @@ Each item of `applications` contains:
 | executable | string | Yes | - | Path, app name, or protocol URI |
 | arguments | string[] | No | - | Command line arguments |
 | workingDirectory | string | No | - | Working directory |
+| expectWindow | object | No | - | The window to expect, as in [launch_application](#launch_application) |
 <!-- tools:end params:launch_applications_batch -->
 
 **Example:**
@@ -1145,7 +1146,7 @@ Each item of `applications` contains:
 }
 ```
 
-Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). An item that is null fails alone with `InvalidArguments` (its `executable` is `""`) and the others are still launched; a null `applications` array is a tool error with `InvalidArguments` and launches nothing. The applications are started one after another; with `waitForWindows`, each one's window is waited for (up to `waitTimeoutMs`) before the next starts, and the batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
+Each item is validated, resolved and started with the same rules as [launch_application](#launch_application), and can have its own `expectWindow`. Each result has the item's `launchStatus`, and with `waitForWindows` its `window` and `launcherExited`. A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). An item that is null fails alone with `InvalidArguments` (its `executable` is `""`) and the others are still launched; a null `applications` array is a tool error with `InvalidArguments` and launches nothing. The applications are started one after another, in order; with `waitForWindows`, their windows are then waited for all at once, up to `waitTimeoutMs` after the last start, and a new window is reported for one application only (two Notepads get two windows). The batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
 
 ---
 
@@ -2234,7 +2235,7 @@ Tools for simulating mouse and keyboard input. Use with `get_ui_elements` to fin
 
 > **Warning:** Pass `windowHandle` with the window you mean. Without it, keyboard input goes to whatever window is in the foreground and clicks to whatever window is at the point; the guard then only keeps the input off the agent's own host, elevated and denied windows. Close windows with [close_window](#close_window), not Alt+F4. See [Input safety](#input-safety).
 
-Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, `waitTimeoutMs` per launched application, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
+Input calls never interleave. If several input tools are called in parallel, each one finishes sending its input before the next one starts, so typed text is not mixed and a click is not split by another mouse move. The tools that can change which window is in front (the [Window Control](#window-control) tools, [focus_window](#focus_window), [close_window](#close_window), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and the other tools that start, stop, move or close something) also wait until an input call has finished, so a parallel call cannot bring another window to the front between the guard's check and the input. The order in which parallel calls run is not guaranteed, so make steps that depend on each other one call at a time. An input call waits at most 30 seconds for another call to finish, then gives up with `InputBusy` and sends nothing. A window-changing tool waits at most 30 seconds as well, then returns a tool error (`isError: true`) with `InputBusy` and does nothing; a pause during the wait returns `PausedByUser` at once. Each single wait is bounded, but a batch holds the gate for its whole length (its `delayBetweenMs` per window, up to 5 seconds per launched application's start plus one `waitTimeoutMs` for the windows of a launch batch, and up to 5 seconds for each application that does not answer), so long batches make the other calls wait.
 
 Every input call can be stopped. Cancelling the MCP request (`notifications/cancelled`) stops `type_text` between batches and ends the wait for another call; the request then gets no result. The user's [pause hotkey](#pause-hotkey) stops a running call between batches, and it returns `PausedByUser` with `charactersTyped`. Either way, no key or mouse button stays down: every batch sends its own key-ups and button-ups, and a batch that Windows inserts only partly (a desktop switch or input block in the middle of it) or that fails is followed at once by the up events of what went down.
 
@@ -2852,7 +2853,7 @@ Tools for launching applications and managing processes.
 
 ### launch_application
 
-Launch an application by path, name, or protocol URI.
+Launch an application by path, name, or protocol URI, and optionally wait for the window it opens, whichever process owns that window.
 
 <!-- tools:begin params:launch_application -->
 **Parameters:**
@@ -2863,6 +2864,7 @@ Launch an application by path, name, or protocol URI.
 | workingDirectory | string | No | - | Working directory for the app |
 | waitForWindow | boolean | No | false | Wait for window to appear |
 | waitTimeoutMs | integer | No | 5000 | How long to wait for the window, in ms (clamped to 0-30000) |
+| expectWindow | object | No | - | With `waitForWindow`: `processName` and/or `titleContains` of the window to expect, for Store apps, URIs and documents whose app the server cannot tell from what was started |
 <!-- tools:end params:launch_application -->
 
 **Example 1:** Launch by name
@@ -2917,22 +2919,72 @@ Launch an application by path, name, or protocol URI.
 }
 ```
 
-**Response:**
+**Example 5:** Open a Settings page, or a Store app, and wait for its window
+> "Open the display settings"
+
+```json
+{
+  "name": "launch_application",
+  "arguments": {
+    "executable": "ms-settings:display",
+    "waitForWindow": true,
+    "expectWindow": { "processName": "SystemSettings" }
+  }
+}
+```
+
+A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App` (the IDs are listed by the PowerShell command `Get-StartApps`).
+
+**Response** (`calc` handed off to the Calculator app: the window belongs to another process than `processId`, which has exited):
 ```json
 {
   "success": true,
   "processId": 15432,
-  "windowHandle": 2884384
+  "windowHandle": 2884384,
+  "launchStatus": "windowObserved",
+  "window": {
+    "handle": 2884384,
+    "title": "Calculator",
+    "processName": "CalculatorApp",
+    "processId": 16020,
+    "bounds": { "x": 120, "y": 80, "width": 336, "height": 545 },
+    "state": "normal",
+    "isVisible": true,
+    "monitorIndex": 0,
+    "className": "ApplicationFrameWindow",
+    "isCloaked": false,
+    "hostProcessName": "ApplicationFrameHost",
+    "hostProcessId": 9216
+  },
+  "launcherExited": true
 }
 ```
+
+**Launch status** (`launchStatus`): what the launch led to. `success` is `true` for every status: the launch was handed to Windows. Never launch again only because no window was found; that opens a second copy.
+
+| `launchStatus` | Meaning | `window` |
+|----------------|---------|----------|
+| `started` | A process was started; the call did not wait for a window | - |
+| `windowObserved` | A new window of the launch appeared and stayed: of the started process, a process it started, or the running app it handed off to (a browser, `calc` to Calculator, `wt` to Windows Terminal, `code` to VS Code) | The window |
+| `reusedExistingWindow` | No new window appeared, but a window of the app that was already open came to the front: single-instance apps reuse their window | That window |
+| `openedInTab` | No new window appeared, but a window of the app that was already open now shows the launched document (a new tab, in Windows 11 Notepad, Terminal, VS Code, Explorer or a browser) | That window |
+| `possibleHandoff` | Windows started no process: the request went to an app that was already running, or a packaged app was activated (`processId` is absent). With `waitForWindow`, no window of it was recognised | - |
+| `exitedWithoutWindow` | The started process exited, and no window of it or of an app it may have handed off to was recognised | - |
+| `timedOut` | The program is still running, but no window of it appeared within `waitTimeoutMs`; it may still be starting | - |
+| `awaitingUserConsent` | The start did not return within 5 seconds: Windows is most likely asking the user to approve the program (a UAC prompt). It starts only if the user approves; `processId` is absent | - |
+
+`warning` says what to do for the statuses without a window: look for the window with [find_windows](#find_windows), or launch with `expectWindow`. `launcherExited` (after a window wait) is `true` when the started process had exited by then, as launchers and single-instance stubs do after a handoff.
+
+**How the window is found** (with `waitForWindow`): the server records the open windows before the start and then, every 100 ms, looks for a new visible, titled, uncloaked app window that belongs to the launch: a window of the started process or of a process it started (checked by start time, so a reused process ID does not count), of a process with the same program path or name, of the app a launcher hands off to (`calc` to `CalculatorApp`, `wt`, `cmd`, `powershell` and `pwsh` to `WindowsTerminal`, `code` to `Code`, `ms-settings:` to `SystemSettings`, an `http` or `https` address to Edge, Chrome, Firefox, Brave, Opera, Vivaldi or Arc), or one that matches `expectWindow`. A UWP app's window is matched by the app's own process, not `ApplicationFrameHost`. The window must stay for 300 ms (a splash screen does not count), then the server waits up to a second for the app to be ready for input. While no new window is pending, a window of the app that was already open counts once it has come to the front, or its title shows the launched file, folder or host, for a second (`reusedExistingWindow`, `openedInTab`). `expectWindow` is needed when the server cannot tell the app from what was started: a Store app through `shell:AppsFolder`, a document opened by whatever app is registered for it, or another browser or URI scheme.
 
 **How the executable is resolved:**
 - **Absolute paths** may contain any character that is valid in a Windows path, including `(x86)`, `&`, `'`, `;`, `$` and `{GUID}`. Only `" < > | * ?` and control characters are rejected. Applications are started with ShellExecute, which does not pass the path through a shell.
 - **Bare names and relative paths** (`notepad`, `tools\app.exe`) must not contain shell metacharacters (`` & | ; < > $ ` " ' ( ) { } ``).
-- **Bare names** are looked up in the Windows directory, System32, the absolute entries of `PATH` and then App Paths (HKCU, HKLM). If the program is found there, its absolute path is what gets started, so a `notepad.exe` or `code.cmd` planted in a repository cannot shadow an installed program. `PATH` entries that point to folders the user can write to still count, as in any shell.
-- **Bare names found only in the current or working directory** are refused with `ExecutableInWorkingDirectory`. The server checks the server's current directory and `workingDirectory` for `<name>.com`, `.exe`, `.bat` and `.cmd`, or for the exact name when it has an extension. This also refuses documents and scripts named that way, such as `report.pdf` or `build.cmd` in the `workingDirectory` you passed. Pass the full path to open that file on purpose.
-- **Bare names found nowhere** are passed unchanged to Windows (ShellExecute), which does its own search. That search can include the server's current directory (and possibly the working directory), and other file types such as shortcuts (`.lnk`), which the check above does not look for. So an unresolved bare name can still start a file from those directories. Use a full path when the program might not be installed, especially when the current or working directory is a repository or download folder you do not trust.
-- **`file://` URIs** are converted to their local or UNC path and validated like a plain path. `http`, `https`, `mailto` and `tel` URIs are passed to their handler. Other protocols are blocked (`BlockedProtocol`, `UnknownProtocol`).
+- **Bare names** are looked up in the Windows directory, System32, the absolute entries of `PATH` and then App Paths (HKCU, HKLM). A name without an extension tries the `PATHEXT` extensions in order, as `cmd.exe` does (`.com`, `.exe`, `.bat`, `.cmd` when `PATHEXT` is not set). If the program is found there, its absolute path is what gets started, so a `notepad.exe` or `code.cmd` planted in a repository cannot shadow an installed program. `PATH` entries that are empty, `.` or relative are skipped; entries that point to folders the user can write to still count, as in any shell. App Paths come last on purpose: a per-user App Paths key could otherwise shadow the copies in System32.
+- **Bare names found only in the current or working directory** are refused with `ExecutableInWorkingDirectory`. The server checks the server's current directory and `workingDirectory` for the name with each extension above, or for the exact name when it has an extension. This also refuses documents and scripts named that way, such as `report.pdf` or `build.cmd` in the `workingDirectory` you passed. Pass the full path to open that file on purpose.
+- **Bare names found nowhere** are refused with `ExecutableNotFound`. They are never passed to Windows unresolved, because Windows' own search starts in the server's current directory and tries more file types (such as `.lnk` shortcuts). Pass the program's full path.
+- **Working directory:** without `workingDirectory`, the program starts in its own folder (a document in its folder, a URI in the user's profile folder), never in the server's current directory.
+- **URIs:** `file://` URIs are converted to their local or UNC path and validated like a plain path. `http`, `https`, `mailto`, `tel` and `ms-settings` (Settings pages, such as `ms-settings:display`) URIs are passed to their handler, and so is `shell:AppsFolder\<AppUserModelID>`, which starts a Store or packaged app; the rest of `shell:` is blocked. The user can allow more schemes (such as `vscode`, `ms-teams` or `spotify`) with the `WAM_ALLOWED_PROTOCOLS` environment variable of the server, a list separated by commas. `javascript`, `vbscript`, `data`, `mshta`, `cmd`, `powershell`, `pwsh`, `wscript`, `cscript`, `ms-msdt` and `search-ms` (and `search`) stay blocked even when listed there (`BlockedProtocol`); any other scheme is `UnknownProtocol`. A URI with a line break or another control character is `InvalidUri`.
 
 **How arguments are passed:**
 - Each array element is passed as exactly one argument, quoted with the standard Windows rules. Spaces, embedded quotes, trailing backslashes (`C:\My Folder\`) and empty strings are preserved. Do not add your own quotes.
@@ -2950,7 +3002,9 @@ Launch an application by path, name, or protocol URI.
 | `InvalidArgumentValue` | An element of `arguments` is null or contains a NUL character |
 | `UnsafeBatchArguments` | Argument would be interpreted by `cmd.exe` (see above) |
 | `ExecutableInWorkingDirectory` | Bare name found only in the current or working directory |
-| `ProcessStartFailed` / `LaunchException` | Windows failed to start the target |
+| `ExecutableNotFound` | Bare name not found in the Windows folder, System32, `PATH` or App Paths |
+| `ElevationCancelled` | The program needs administrator rights and the user declined the UAC prompt |
+| `LaunchException` | Windows failed to start the target (for example, a full path that does not exist) |
 
 ---
 
@@ -3674,7 +3728,7 @@ send_keys { "keys": "{ENTER}", "windowHandle": 12345 }
 
 ## Changes for existing clients
 
-These changes (roadmap M2.1, M2.2 and M2.10: honest results, typed parameters, annotations and confirmation by the user) change what some calls return. A client
+These changes (roadmap M2.1, M2.2, M2.6, M2.7 and M2.10: honest results, typed parameters, launch resolution, annotations and confirmation by the user) change what some calls return. A client
 that followed the documented contract keeps working; the list says what a client that relied on the old behavior
 sees now.
 
@@ -3729,6 +3783,22 @@ sees now.
 - **Input error codes.** A send_keys string with a syntax error (a `{` without its `}`) is `InvalidKeySpecification`
   instead of `UnknownKey` (still used for an unknown key name), and a mouse pointer that Windows does not move is
   `CursorPositionFailed` instead of `SendInputFailed`.
+- **Launches report the window they opened.** The launch tools add `launchStatus`, and after a window wait `window`
+  and `launcherExited` (see [launch_application](#launch_application)). `windowHandle` is now the window the launch
+  opened whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to, or a window
+  that was reused or got a new tab), where it used to be only a window of the started process; it is no longer an
+  untitled or splash window of it. When Windows starts no process (a URL or document handed to a running app), the
+  launch succeeds with `launchStatus: "possibleHandoff"` and no `processId`, where it used to fail with
+  `ProcessStartFailed`. A start that waits for a UAC prompt returns after 5 seconds with
+  `launchStatus: "awaitingUserConsent"` instead of blocking the call, and a declined prompt is `ElevationCancelled`.
+  launch_applications_batch starts every application first and then waits for all the windows together, so
+  `waitTimeoutMs` bounds the whole wait instead of each application's.
+- **Launch path hygiene.** A bare name that is not found in the Windows folder, System32, `PATH` or App Paths fails
+  with `ExecutableNotFound` instead of being passed to Windows, whose search includes the current directory. Without
+  `workingDirectory`, a program starts in its own folder instead of the server's current directory. `ms-settings:`
+  and `shell:AppsFolder\<AppUserModelID>` URIs are now allowed (they were `BlockedProtocol`), the user can allow more
+  schemes with `WAM_ALLOWED_PROTOCOLS`, and `ms-windows-store:` is `UnknownProtocol` (allowable) instead of
+  `BlockedProtocol`.
 
 ## Error Codes
 
@@ -3837,9 +3907,11 @@ table, it gives more detail.
 | `DestructiveChordNeedsTarget` | [send_keys](#send_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
 | `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | An element that was being read is no longer available |
 | `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | No element has keyboard focus, or there is no element at the point |
+| `ElevationCancelled` | [launch_application](#launch_application), launch_applications_batch | The program needs administrator rights and the user declined the UAC prompt; nothing was started. Ask the user before trying again |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
+| `ExecutableNotFound` | [launch_application](#launch_application), launch_applications_batch | A bare name was not found in the Windows folder, System32, `PATH` or App Paths; pass the full path (it is never handed to Windows unresolved) |
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
 | `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
@@ -3891,7 +3963,6 @@ table, it gives more detail.
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`; nothing was done |
 | `ProcessNotFound` | [kill_process](#kill_process) | No such process (it may have exited) |
-| `ProcessStartFailed` | [launch_application](#launch_application), launch_applications_batch | Windows did not start the target |
 | `ProcessTreeUnreadable` | [kill_process](#kill_process) | Force mode: the process list could not be read, or did not list the process, so the child processes a forced kill would also end could not be checked against the target policy and the agent's host; nothing was terminated |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window) | The window is part of the desktop shell or of the agent's own host, and `force` was not true; nothing was sent |

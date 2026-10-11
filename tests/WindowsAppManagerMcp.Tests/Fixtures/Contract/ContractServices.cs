@@ -175,13 +175,16 @@ public sealed class ContractServices : IDisposable
 
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(true, ProcessId: TypicalDesktop.NotepadProcessId, WindowHandle: (nint)TypicalDesktop.NotepadHandle));
+        // A launch that waited for its window found it: the launch tools return the whole window
+        Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) => TypicalLaunch(wait, notepad, TypicalDesktop.NotepadProcessId));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
-        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
-                apps.Select((_, i) => new LaunchResult(true, ProcessId: 20_000 + i, WindowHandle: (nint)(0x500000 + i))).ToList());
+        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool wait, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
+                apps.Select((_, i) => TypicalLaunch(wait, TypicalDesktop.Windows[i], 20_000 + i)).ToList());
         Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(true, 31_337, (nint)TypicalDesktop.BrowserHandle, 9222,
                 @"C:\Users\user\AppData\Local\Temp\WindowsAppManagerMcp\browser-9222", null, null));
@@ -252,6 +255,11 @@ public sealed class ContractServices : IDisposable
             Mock.Of<INativeWindowWrapper>());
     }
 
+    /// <summary>A launch that started a process and, when it waited, found the window.</summary>
+    private static LaunchResult TypicalLaunch(bool waited, WindowInfo window, int processId) => waited
+        ? new LaunchResult(true, ProcessId: processId, WindowHandle: window.Handle, Status: LaunchStatus.WindowObserved, Window: window, LauncherExited: false)
+        : new LaunchResult(true, ProcessId: processId, Status: LaunchStatus.Started);
+
     private static ClickResult Clicked(int x, int y, string type, WindowSummary receiving) =>
         new(true, x, y, type) { ReceivingWindow = receiving, ForegroundAfter = receiving, ActualX = x, ActualY = y };
 
@@ -292,9 +300,11 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));
-        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
-                apps.Select(_ => new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound")).ToList());
+        Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: nameof(LaunchErrorCode.ExecutableNotFound)));
+        Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
+                apps.Select(_ => new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: nameof(LaunchErrorCode.ExecutableNotFound))).ToList());
         Processes.Setup(p => p.LaunchBrowserWithDebugAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DebugBrowserLaunchResult(false, null, null, null, null, "Chrome is not installed", nameof(BrowserErrorCode.BrowserNotFound)));
 

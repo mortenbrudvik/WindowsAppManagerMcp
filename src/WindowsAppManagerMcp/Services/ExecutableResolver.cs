@@ -17,10 +17,19 @@ namespace WindowsAppManagerMcp.Services;
 /// PATH entries, then App Paths in HKCU and HKLM) and returns the absolute path, so the file that
 /// was checked is the file that runs. The result also tells the caller whether the target is a
 /// batch file, whose arguments cmd.exe will re-parse.
+/// <para>
+/// The order is ShellExecuteEx's documented one without the current directory, on purpose not App Paths
+/// first: a per-user App Paths key (HKCU, writable by any program of the user) would then shadow the
+/// copies in the Windows directory and System32. PATH is enumerated by hand (SearchPathW cannot leave
+/// the current directory out); empty, '.', relative and drive-relative entries are skipped. A bare name
+/// without an extension tries the PATHEXT extensions in order, as cmd.exe does. A bare name found in
+/// none of these places is reported as <see cref="ResolvedLaunchTarget.NotFound"/>, never passed on.
+/// </para>
 /// </remarks>
 public partial class ExecutableResolver : IExecutableResolver
 {
-    // Extensions tried for a bare name without an extension, in ShellExecute's order.
+    // Extensions tried for a bare name without an extension when PATHEXT is not set (or lists nothing usable),
+    // in ShellExecute's order. A path without an extension always uses these.
     private static readonly string[] ProgramExtensions = [".com", ".exe", ".bat", ".cmd"];
 
     private const string AppPathsKey = @"Software\Microsoft\Windows\CurrentVersion\App Paths";
@@ -31,6 +40,7 @@ public partial class ExecutableResolver : IExecutableResolver
     private readonly string _windowsDirectory;
     private readonly string _systemDirectory;
     private readonly Func<string> _getCurrentDirectory;
+    private readonly Func<string?> _getPathExtVariable;
 
     /// <summary>
     /// Creates a resolver that uses the real file system, PATH and registry.
@@ -42,20 +52,26 @@ public partial class ExecutableResolver : IExecutableResolver
             ReadAppPathsFromRegistry,
             Environment.GetFolderPath(Environment.SpecialFolder.Windows),
             Environment.SystemDirectory,
-            () => Environment.CurrentDirectory)
+            () => Environment.CurrentDirectory,
+            () => Environment.GetEnvironmentVariable("PATHEXT"))
     {
     }
 
     /// <summary>
     /// Creates a resolver with injectable environment access (used by tests).
     /// </summary>
+    /// <param name="getPathExtVariable">
+    /// Reads PATHEXT, the extensions tried for a bare name without one, in order. Null (or a value without usable
+    /// entries) means .com, .exe, .bat and .cmd.
+    /// </param>
     public ExecutableResolver(
         Func<string, bool> fileExists,
         Func<string?> getPathVariable,
         Func<string, IReadOnlyList<string>> getAppPathCandidates,
         string windowsDirectory,
         string systemDirectory,
-        Func<string> getCurrentDirectory)
+        Func<string> getCurrentDirectory,
+        Func<string?>? getPathExtVariable = null)
     {
         _fileExists = fileExists;
         _getPathVariable = getPathVariable;
@@ -63,6 +79,7 @@ public partial class ExecutableResolver : IExecutableResolver
         _windowsDirectory = windowsDirectory;
         _systemDirectory = systemDirectory;
         _getCurrentDirectory = getCurrentDirectory;
+        _getPathExtVariable = getPathExtVariable ?? (() => null);
     }
 
     public ResolvedLaunchTarget Resolve(string executable, string? workingDirectory)
@@ -178,15 +195,50 @@ public partial class ExecutableResolver : IExecutableResolver
             }
         }
 
-        return new ResolvedLaunchTarget(name, LaunchTargetKind.Other);
+        // Found nowhere: the caller must not hand the bare name to ShellExecute, whose own search starts in the
+        // current directory and tries more file types (.lnk, .pif) than the check above
+        return new ResolvedLaunchTarget(name, LaunchTargetKind.Other, NotFound: true);
     }
 
-    private static IReadOnlyList<string> GetCandidateFileNames(string name)
+    private IReadOnlyList<string> GetCandidateFileNames(string name)
     {
         return Path.HasExtension(name)
             ? [name]
-            : ProgramExtensions.Select(extension => name + extension).ToArray();
+            : GetBareNameExtensions().Select(extension => name + extension).ToArray();
     }
+
+    /// <summary>
+    /// The extensions tried for a bare name without one: the PATHEXT entries in their order (as cmd.exe tries them),
+    /// or .com, .exe, .bat and .cmd when PATHEXT is not set or has no usable entry. An entry is usable when it is a
+    /// dot followed by at least one character that is valid in a file name and is not a dot or a path separator.
+    /// </summary>
+    private IReadOnlyList<string> GetBareNameExtensions()
+    {
+        string? pathExt;
+        try
+        {
+            pathExt = _getPathExtVariable();
+        }
+        catch (Exception)
+        {
+            pathExt = null;
+        }
+
+        var extensions = (pathExt ?? string.Empty)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(IsUsableExtension)
+            .Select(extension => extension.ToLowerInvariant()) // PATHEXT is upper case; paths read better in lower case
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return extensions.Length > 0 ? extensions : ProgramExtensions;
+    }
+
+    private static bool IsUsableExtension(string extension) =>
+        extension.Length > 1 &&
+        extension[0] == '.' &&
+        extension.IndexOf('.', 1) < 0 &&
+        extension.IndexOfAny(['\\', '/', ':']) < 0 &&
+        extension.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
 
     private IEnumerable<string> GetSearchDirectories()
     {

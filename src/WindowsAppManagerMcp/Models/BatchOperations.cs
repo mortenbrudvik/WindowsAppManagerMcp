@@ -30,10 +30,12 @@ public record WindowStateChange(
     [ToolValues(typeof(WindowStateRequest))] string State
 );
 
+/// <summary>A launch_applications_batch item: what launch_application takes for one application.</summary>
 public record ApplicationLaunchRequest(
     string Executable,
     string[]? Arguments = null,
-    string? WorkingDirectory = null
+    string? WorkingDirectory = null,
+    LaunchWindowHint? ExpectWindow = null
 );
 
 public record WindowCloseRequest(long Handle);
@@ -62,6 +64,10 @@ public record BatchLaunchResult(
     IReadOnlyList<LaunchResultItem> Results
 );
 
+/// <summary>
+/// A launch_applications_batch result: as launch_application's, for one application. LaunchStatus, Window and
+/// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait).
+/// </summary>
 public record LaunchResultItem(
     string Executable,
     bool Success,
@@ -69,7 +75,10 @@ public record LaunchResultItem(
     long? WindowHandle = null,
     string? Error = null,
     string? Warning = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    string? LaunchStatus = null,
+    WindowsAppManagerMcp.Tools.WindowInfoDto? Window = null,
+    bool? LauncherExited = null
 );
 
 public record BoundsDto(int X, int Y, int Width, int Height);

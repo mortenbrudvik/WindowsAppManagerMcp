@@ -33,8 +33,13 @@ public enum LaunchTargetKind
 /// For a bare name that was not found in a trusted location: the path of a matching file in the
 /// current or working directory, which ShellExecute would otherwise run (binary planting).
 /// </param>
+/// <param name="NotFound">
+/// True for a bare name that was found in no trusted location (and not in the working directory either): Windows
+/// would search it on its own, the current directory included, so it must not be started.
+/// </param>
 public record ResolvedLaunchTarget(
     string FileName,
     LaunchTargetKind Kind,
-    string? FoundOnlyInWorkingDirectory = null
+    string? FoundOnlyInWorkingDirectory = null,
+    bool NotFound = false
 );

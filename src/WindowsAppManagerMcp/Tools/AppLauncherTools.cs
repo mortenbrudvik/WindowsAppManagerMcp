@@ -43,24 +43,30 @@ public class AppLauncherTools
     }
 
     [McpServerTool(Name = "launch_application", Title = "Launch Application", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Launch an application by executable path, name, or protocol URI. Returns process ID and optionally the window handle if waitForWindow is true.")]
+    [Description("Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, " +
+                 "shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. " +
+                 "With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, " +
+                 "code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab " +
+                 "(single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, " +
+                 "exitedWithoutWindow or timedOut. awaitingUserConsent means Windows is asking the user to approve the program (UAC). " +
+                 "Never launch again just because no window was found: look for it with find_windows.")]
     public async Task<LaunchResultDto> LaunchApplication(
-        [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com')")]
+        [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound")]
         string executable,
         [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.")]
         string[]? arguments = null,
-        [Description("Working directory for the application")]
+        [Description("Working directory for the application (default: the program's own folder)")]
         string? workingDirectory = null,
         [Description("Whether to wait for the application window to appear before returning (default: false)")]
         bool waitForWindow = false,
         [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
+        [Description("With waitForWindow: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it. A new window that matches every field set counts as the launch's window")]
+        LaunchWindowHint? expectWindow = null,
         CancellationToken cancellationToken = default)
     {
         var result = await _processService.LaunchApplicationAsync(
-            executable,
-            arguments,
-            workingDirectory,
+            new LaunchRequest(executable, arguments, workingDirectory, expectWindow),
             waitForWindow,
             BoundedWait(waitTimeoutMs),
             cancellationToken).ConfigureAwait(false);
@@ -71,7 +77,10 @@ public class AppLauncherTools
             WindowHandle: result.WindowHandle?.ToInt64(),
             Error: result.ErrorMessage,
             ErrorCode: result.ErrorCode,
-            Warning: result.Warning
+            Warning: result.Warning,
+            LaunchStatus: result.Status?.ToWireName(),
+            Window: result.Window is { } window ? WindowFinderTools.ToDto(window) : null,
+            LauncherExited: result.LauncherExited
         );
     }
 
@@ -199,13 +208,15 @@ public class AppLauncherTools
 
     [McpServerTool(Name = "launch_applications_batch", Title = "Launch Applications (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls. " +
+                 "Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, " +
+                 "and each result has its own launchStatus, window and errorCode. " +
                  "An item that is null fails alone with InvalidArguments; the others are still launched.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("Array of applications to launch with executable, optional arguments, and optional workingDirectory")]
+        [Description("Array of applications to launch with executable, optional arguments, optional workingDirectory and optional expectWindow")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
-        [Description("Maximum time in milliseconds to wait for each window (0-30000, default: 5000)")]
+        [Description("Maximum time in milliseconds to wait for the windows, all together (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
@@ -218,9 +229,12 @@ public class AppLauncherTools
 
         // A null item fails alone (roadmap M2.1); the others go to the service, in request order
         var requested = applications.Where(a => a != null).ToList();
-        var serviceApplications = requested.Select(a => (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
+        var serviceApplications = requested
+            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow))
+            .ToList();
 
-        // One application after another; the client gets "i of n" after each, and a cancelled call starts no more
+        // Started one after another, then the windows are waited for together; the client gets "i of n" as each one is
+        // done, and a cancelled call starts no more
         var results = await _processService.LaunchApplicationsBatchAsync(
             serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs), ToolProgress.ForServices(progress), cancellationToken)
             .ConfigureAwait(false);
@@ -232,7 +246,10 @@ public class AppLauncherTools
             WindowHandle: r.WindowHandle?.ToInt64(),
             Error: r.ErrorMessage,
             Warning: r.Warning,
-            ErrorCode: r.ErrorCode
+            ErrorCode: r.ErrorCode,
+            LaunchStatus: r.Status?.ToWireName(),
+            Window: r.Window is { } window ? WindowFinderTools.ToDto(window) : null,
+            LauncherExited: r.LauncherExited
         )).GetEnumerator();
         var items = new List<LaunchResultItem>(applications.Length);
         for (var i = 0; i < applications.Length; i++)
@@ -273,13 +290,21 @@ public record KillResultDto(
     string? Warning = null
 );
 
+/// <summary>
+/// launch_application's result. launchStatus says what the launch led to (see <see cref="LaunchStatus"/>); window is the
+/// window it found (with its real owner process, which can differ from processId), and windowHandle its handle;
+/// launcherExited says whether the started process had exited by the end of the window wait.
+/// </summary>
 public record LaunchResultDto(
     bool Success,
     int? ProcessId = null,
     long? WindowHandle = null,
     string? Error = null,
     string? ErrorCode = null,
-    string? Warning = null
+    string? Warning = null,
+    string? LaunchStatus = null,
+    WindowInfoDto? Window = null,
+    bool? LauncherExited = null
 );
 
 public record ProcessInfoDto(

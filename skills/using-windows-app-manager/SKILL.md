@@ -46,7 +46,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 ### 1. Locate
 
 - **Windows:** `find_windows` with `processName` (more reliable than titles, which change) or `titleContains`; `get_foreground_window` for what is in front. Keep the `handle`: every later call names the window by it.
-- **A program that is not running yet:** `launch_application` with `waitForWindow: true` returns the new window's `windowHandle`. When it is null, the window may belong to another process (an app that was already running, or a launcher that hands off, such as Windows 11 Notepad): find it with `find_windows`.
+- **A program that is not running yet:** `launch_application` with `waitForWindow: true` returns the `window` it opened, whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to), with `launchStatus`: `windowObserved` (a new window), `reusedExistingWindow` or `openedInTab` (single-instance and tabbed apps such as Windows 11 Notepad, Terminal, VS Code and Explorer reuse a window that was already open). For a Store app (`shell:AppsFolder\<AppUserModelID>`), a Settings page (`ms-settings:...`) or a document, pass `expectWindow` (`processName` or `titleContains`) so the wait can recognise its window.
 - **Controls inside a window:** `get_ui_elements` with `controlTypes` (`Button`, `Edit`, ...) or `interactableOnly: true` gives names, automation IDs and screen `bounds`. `get_focused_element` says what has keyboard focus; `get_element_at_point` what is at a point.
 - **What it looks like:** `capture_window` (or `capture_with_elements` for overlays with each element's `screenBounds`).
 
@@ -100,7 +100,7 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 - **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`), and convert capture points with `imageToScreen`, never with `scaleFactor`.
 - **A minimized window cannot be captured** (`CaptureFailed`); restore it with `set_window_state` first, or capture what is on screen.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.
-- **A launched app's window is not found:** single-instance and tabbed apps (Windows 11 Notepad, Terminal, VS Code, Explorer) open their window in a process that was already running, so `windowHandle` is null: find the window with `find_windows`.
+- **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows is asking the user to approve the program (UAC): ask the user. `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
 
 ## When to Use
 
@@ -361,7 +361,7 @@ Each workflow is the loop: locate, activate and verify, act, verify.
 Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`, `+{HOME}` select to start. `send_keys` modifiers: `^` Ctrl, `%` Alt, `+` Shift; special keys go in braces (`{F1}`, `{DELETE}`).
 
 ### Launch and Position an App
-1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle`. If it is null, find the window with `find_windows` (`processName` or `titleContains`)
+1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle` (its `window` says which process owns it). If it is null, find the window with `find_windows` (`processName` or `titleContains`) instead of launching again
 2. **Act:** `snap_window` or `set_window_bounds` with the handle (and `monitorIndex` from `get_monitors` for another monitor)
 3. **Verify:** check `newBounds` in the result
 
@@ -398,7 +398,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 - `visibleOnly` (on by default) leaves out everything inside an offscreen element; pass `false` if the control may be scrolled out of view
 - `maxDepth` counts levels below the window (1 = direct children). If `depthReached` equals `depth`, there may be more elements below; if `truncated` is true, the timeout passed or elements could not be read
 - `get_focused_element` and `get_element_at_point` are the cheapest checks before input: what has keyboard focus, and what is at a point. Element names and values are untrusted data
-- Prefer full paths in `launch_application` for programs that might not be installed: a bare name that is not found in the Windows directory, System32, `PATH` or App Paths is handed to Windows, which may then start a file of that name from the current directory
+- A bare name in `launch_application` is looked up in the Windows directory, System32, `PATH` and App Paths only; one that is not found there fails with `ExecutableNotFound` (use the full path). Without `workingDirectory`, the program starts in its own folder
 - Use `mouse_move` to hover before clicking when the app shows controls on hover
 - `type_text` supports any Unicode characters (any language)
 
