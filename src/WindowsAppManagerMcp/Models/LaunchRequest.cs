@@ -13,11 +13,16 @@ namespace WindowsAppManagerMcp.Models;
 /// A hint for the window wait: which window the launch opens when the server cannot tell from the process that was
 /// started (packaged apps, URIs and documents handed to an app that is already running).
 /// </param>
+/// <param name="ReuseExisting">
+/// Use a window of the app that is already open instead of starting the program (roadmap M3.13); see
+/// IProcessService.LaunchApplicationAsync for which window counts.
+/// </param>
 public sealed record LaunchRequest(
     string Executable,
     string[]? Arguments = null,
     string? WorkingDirectory = null,
-    LaunchWindowHint? ExpectWindow = null);
+    LaunchWindowHint? ExpectWindow = null,
+    bool ReuseExisting = false);
 
 /// <summary>
 /// The window a launch is expected to open, for the cases the server cannot work out on its own: a packaged app
@@ -71,7 +76,13 @@ public enum LaunchStatus
     /// The start did not return in time: Windows is most likely showing a consent or security prompt (UAC, SmartScreen,
     /// a security warning). It starts only if the user approves; a later decline is not reported.
     /// </summary>
-    AwaitingUserConsent
+    AwaitingUserConsent,
+
+    /// <summary>
+    /// reuseExisting found a window of the app already open (showing what the launch opens), so nothing was started
+    /// (roadmap M3.13).
+    /// </summary>
+    AlreadyOpen
 }
 
 public static class LaunchStatusNames
@@ -87,6 +98,7 @@ public static class LaunchStatusNames
         LaunchStatus.ExitedWithoutWindow => "exitedWithoutWindow",
         LaunchStatus.TimedOut => "timedOut",
         LaunchStatus.AwaitingUserConsent => "awaitingUserConsent",
+        LaunchStatus.AlreadyOpen => "alreadyOpen",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
     };
 }

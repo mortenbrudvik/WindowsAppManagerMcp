@@ -49,12 +49,30 @@ public sealed record AuditEntry(
 /// <param name="Process">The process name.</param>
 /// <param name="ProcessId">The process ID.</param>
 /// <param name="Executable">The program a launch was asked for: a program name or file path, or only a URL's scheme and host.</param>
+/// <param name="Placement">A launch's placement (roadmap M3.13): what was asked for and what it did.</param>
 public sealed record AuditTarget(
     long? Handle = null,
     string? Title = null,
     string? Process = null,
     int? ProcessId = null,
-    string? Executable = null);
+    string? Executable = null,
+    AuditPlacement? Placement = null);
+
+/// <summary>
+/// A launch's placement in an <see cref="AuditEntry"/> (roadmap M3.13): what the arguments asked for (snap and state only
+/// as valid canonical names) and what the result reports; what is unknown is left out.
+/// </summary>
+public sealed record AuditPlacement(
+    string? Snap = null,
+    int? MonitorIndex = null,
+    BoundsDto? Bounds = null,
+    string? State = null,
+    bool? Focus = null,
+    BoundsDto? FinalBounds = null,
+    string? FinalState = null,
+    bool? Focused = null,
+    bool? Reapplied = null,
+    string? ErrorCode = null);
 
 /// <summary>
 /// One item in an <see cref="AuditEntry"/>: a window or launch of a batch, a window close_application sent a close to,
@@ -72,6 +90,7 @@ public sealed record AuditTarget(
 /// <param name="ErrorCode">Why it failed.</param>
 /// <param name="Status">The item's status in the result, such as closed, promptShown, notSent, applied or notFound.</param>
 /// <param name="Launched">True for an apply_layout placement whose window was launched (launchMissing).</param>
+/// <param name="Placement">A launch batch item's placement (roadmap M3.13).</param>
 public sealed record AuditItem(
     long? Handle,
     string? Title,
@@ -81,7 +100,8 @@ public sealed record AuditItem(
     bool? Success,
     string? ErrorCode,
     string? Status = null,
-    bool? Launched = null);
+    bool? Launched = null,
+    AuditPlacement? Placement = null);
 
 /// <summary>The outcomes an <see cref="AuditEntry"/> records.</summary>
 public static class AuditOutcome

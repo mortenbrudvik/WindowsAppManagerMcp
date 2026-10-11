@@ -60,6 +60,7 @@ public sealed class ContractServices : IDisposable
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public Mock<IWindowWaitService> WindowWait { get; } = new();
+    public Mock<ILaunchPlacementService> Placement { get; } = new();
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
@@ -94,6 +95,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Windows.Object);
         services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(WindowWait.Object);
+        services.AddSingleton(Placement.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);

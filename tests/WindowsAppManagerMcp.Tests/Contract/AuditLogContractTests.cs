@@ -262,6 +262,80 @@ public class AuditLogContractTests
         line.GetProperty("target").GetProperty("executable").GetString().Should().Be("https://hooks.example.com");
     }
 
+    /// <summary>The placement service places every window at the left half and reports it in front (roadmap M3.13).</summary>
+    private static void PlacesAtTheLeftHalf(ContractServices services) =>
+        services.Placement.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .Returns<IReadOnlyList<(nint Handle, LaunchPlacementPlan Plan)>, CancellationToken>((placements, _) =>
+                Task.FromResult<IReadOnlyList<LaunchPlacementOutcome>>(placements.Select(p => new LaunchPlacementOutcome(p.Handle,
+                    TypicalDesktop.Notepad with { Handle = p.Handle, VisibleBounds = new WindowRect(0, 0, 960, 1040) },
+                    Focused: true, Reapplied: true)).ToList()));
+
+    [Fact]
+    public async Task ALaunchsPlacement_IsAudited_WithWhatWasAskedAndWhatItDid()
+    {
+        var (_, lines) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["reuseExisting"] = true,
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "Left-Half", ["monitorIndex"] = 0, ["focus"] = true }
+        }, PlacesAtTheLeftHalf);
+
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("reuseExisting").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("launchStatus").GetString().Should().Be("windowObserved");
+        var placement = line.GetProperty("target").GetProperty("placement");
+        placement.GetProperty("snap").GetString().Should().Be("left_half", "the canonical name, never the text as sent");
+        placement.GetProperty("monitorIndex").GetInt32().Should().Be(0);
+        placement.GetProperty("focus").GetBoolean().Should().BeTrue();
+        placement.GetProperty("finalBounds").GetProperty("width").GetInt32().Should().Be(960);
+        placement.GetProperty("finalState").GetString().Should().Be("normal");
+        placement.GetProperty("focused").GetBoolean().Should().BeTrue();
+        placement.GetProperty("reapplied").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ABatchItemsPlacement_IsAuditedWithTheItem_AndItsLaunchStatus()
+    {
+        var (_, lines) = await CallAsync("launch_applications_batch", new Dictionary<string, object?>
+        {
+            ["applications"] = new object?[]
+            {
+                new Dictionary<string, object?> { ["executable"] = "notepad" },
+                new Dictionary<string, object?>
+                {
+                    ["executable"] = "code",
+                    ["placement"] = new Dictionary<string, object?>
+                    {
+                        ["bounds"] = new Dictionary<string, object?> { ["x"] = 0, ["y"] = 0, ["width"] = 960, ["height"] = 1040 }
+                    }
+                }
+            }
+        }, PlacesAtTheLeftHalf);
+
+        var items = lines.Single().GetProperty("items").EnumerateArray().ToList();
+        items.Should().HaveCount(2);
+        items[0].TryGetProperty("placement", out _).Should().BeFalse();
+        items[0].GetProperty("status").GetString().Should().Be("windowObserved");
+        items[1].GetProperty("placement").GetProperty("bounds").GetProperty("height").GetInt32().Should().Be(1040);
+        items[1].GetProperty("placement").GetProperty("reapplied").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ARefusedPlacement_KeepsNoTextItWasGiven()
+    {
+        var (result, lines) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["placement"] = new Dictionary<string, object?> { ["state"] = "hunter2", ["snap"] = "left_half" }
+        });
+
+        result.IsError.Should().BeTrue();
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2");
+        line.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.InvalidState));
+        line.GetProperty("target").GetProperty("placement").GetProperty("snap").GetString().Should().Be("left_half");
+    }
+
     [Fact]
     public async Task ACallRefusedWhileInputIsPaused_IsAuditedAsAnError()
     {

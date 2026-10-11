@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace WindowsAppManagerMcp.Models;
 
 // Input models for batch operations. Each item names its window by handle or by a window selector (roadmap M2.4), not both.
@@ -40,7 +42,11 @@ public record ApplicationLaunchRequest(
     string Executable,
     string[]? Arguments = null,
     string? WorkingDirectory = null,
-    LaunchWindowHint? ExpectWindow = null
+    LaunchWindowHint? ExpectWindow = null,
+    [property: Description("Where to put the item's window once it is found, as launch_application's placement")]
+    LaunchPlacement? Placement = null,
+    [property: Description("Use an open window of the app instead of starting it, as launch_application's reuseExisting (default false)")]
+    bool ReuseExisting = false
 );
 
 /// <summary>A close_windows_batch item: the window to close.</summary>
@@ -85,7 +91,8 @@ public record BatchLaunchResult(
 
 /// <summary>
 /// A launch_applications_batch result: as launch_application's, for one application. LaunchStatus, Window and
-/// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait).
+/// LauncherExited are left out when the launch failed (and LauncherExited also without a window wait), and Placement
+/// without a placement or when the launch failed.
 /// </summary>
 public record LaunchResultItem(
     string Executable,
@@ -97,7 +104,8 @@ public record LaunchResultItem(
     string? ErrorCode = null,
     string? LaunchStatus = null,
     WindowsAppManagerMcp.Tools.WindowInfoDto? Window = null,
-    bool? LauncherExited = null
+    bool? LauncherExited = null,
+    WindowsAppManagerMcp.Tools.LaunchPlacementResultDto? Placement = null
 );
 
 public record BoundsDto(int X, int Y, int Width, int Height);
