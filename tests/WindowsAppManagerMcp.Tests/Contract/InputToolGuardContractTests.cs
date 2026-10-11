@@ -388,6 +388,8 @@ public class InputToolGuardContractTests
     [InlineData("""{ "x": 400, "deltaY": 3, "windowHandle": 512 }""", "both x and y")]
     [InlineData("""{ "windowHandle": 512 }""", "not both 0")]
     [InlineData("""{ "windowHandle": 512, "deltaY": 101 }""", "between -100 and 100")]
+    [InlineData("""{ "windowHandle": 512, "deltaY": -2147483648 }""", "between -100 and 100")] // no overflow
+    [InlineData("""{ "windowHandle": 512, "deltaX": -2147483648 }""", "between -100 and 100")]
     public async Task Scroll_InvalidArguments_AreAToolError_AndNothingIsSent(string arguments, string message)
     {
         await using var server = await StartServerAsync();

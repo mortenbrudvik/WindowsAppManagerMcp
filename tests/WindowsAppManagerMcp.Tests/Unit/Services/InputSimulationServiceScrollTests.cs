@@ -250,12 +250,44 @@ public class InputSimulationServiceScrollTests
         result.Error.Should().Contain("2 of 5 notches");
     }
 
+    [Fact]
+    public void Scroll_ThePointerConfinedElsewhere_IsCursorNotAtPoint_AndNoNotchIsSent()
+    {
+        // A game or remote session holds the pointer: the wheel would turn where it is held
+        _input.AfterSetCursorPos = (_, _) => _input.MovePointer(10, 10);
+
+        var result = CreateSut().Scroll(500, 300, 2, 0, NotepadTarget, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
+        result.Error.Should().StartWith("Nothing was scrolled.").And.Contain("(10, 10)");
+        _input.Batches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Scroll_APauseRightBeforeTheWheel_IsPausedByUser_AndNoNotchIsSent()
+    {
+        // The user pauses after the guard's last look at the point
+        _guard.Setup(g => g.RecheckMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputGuardResult>()))
+            .Returns((int _, int _, InputGuardResult approved) =>
+            {
+                _session.Pause(InputControlSources.Hotkey);
+                return approved;
+            });
+
+        var result = CreateSut().Scroll(500, 300, 2, 0, NotepadTarget, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PausedByUser);
+        _input.Batches.Should().BeEmpty();
+    }
+
     [Theory]
     [InlineData(100, null, 1, 0)] // only x
     [InlineData(null, null, 1, 0)] // no point and no target (below)
     [InlineData(100, 100, 0, 0)] // nothing to scroll
     [InlineData(100, 100, 101, 0)]
     [InlineData(100, 100, 0, -101)]
+    [InlineData(100, 100, int.MinValue, 0)] // no overflow
+    [InlineData(100, 100, 0, int.MinValue)]
     public void InvalidArguments_Throw_AndSendNothing(int? x, int? y, int deltaY, int deltaX)
     {
         var act = () => CreateSut().Scroll(x, y, deltaY, deltaX, InputTarget.None, false, default);
@@ -277,9 +309,21 @@ public class InputSimulationServiceScrollTests
         var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default);
 
         result.Success.Should().BeTrue(result.Error);
-        origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.CopyPending, "the app has not copied yet");
-        clipboard.UserCopies("the selection");
+        origin.IsCopyPending(clipboard.Sequence).Should().BeTrue("the app has not copied yet");
+        clipboard.AppCopies(Notepad.ProcessId, "the selection");
         origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public async Task SendKeys_ACopyByAnotherProcessThanTheWindowInFront_IsNotTheAgents()
+    {
+        var clipboard = new FakeClipboardWrapper();
+        var origin = NewOrigin(clipboard);
+
+        (await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default)).Success.Should().BeTrue();
+        clipboard.AppCopies(Terminal.ProcessId, "what the user copied in the terminal");
+
+        origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.NotFromAgent);
     }
 
     [Fact]
@@ -290,8 +334,10 @@ public class InputSimulationServiceScrollTests
         var origin = NewOrigin(clipboard);
 
         CreateSut(origin).Click(500, 300, InputTarget.Window(0x200), false, default).Success.Should().BeTrue();
+        clipboard.AppCopies(Notepad.ProcessId, "the selection");
 
-        origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.CopyPending);
+        origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.AgentInput, "the click went to Notepad, which copied");
+        origin.IsCopyPending(clipboard.Sequence).Should().BeFalse();
     }
 
     [Fact]
@@ -305,6 +351,7 @@ public class InputSimulationServiceScrollTests
         (await sut.SendKeysAsync("^v", InputTarget.Window(0x200), false, default)).Success.Should().BeTrue();
         sut.Scroll(500, 300, 1, 0, InputTarget.None, false, default).Success.Should().BeTrue();
         sut.RightClick(500, 300, InputTarget.None, false, default).Success.Should().BeTrue();
+        clipboard.AppCopies(Notepad.ProcessId, "copied by the app on its own");
 
         origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.NotFromAgent);
     }
@@ -319,6 +366,7 @@ public class InputSimulationServiceScrollTests
         var result = await CreateSut(origin).SendKeysAsync("^c", InputTarget.Window(0x200), false, default);
 
         result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        clipboard.AppCopies(Notepad.ProcessId, "copied by the app on its own");
         origin.Classify(clipboard.Sequence).Should().Be(ClipboardOriginKind.NotFromAgent);
     }
 

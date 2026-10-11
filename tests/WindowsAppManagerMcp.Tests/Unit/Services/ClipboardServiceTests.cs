@@ -9,6 +9,11 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class ClipboardServiceTests
 {
+    /// <summary>The process of the app the agent's input goes to.</summary>
+    private const int AppProcessId = 2001;
+
+    private const uint LeftDown = 0x0002, LeftUp = 0x0004;
+
     private readonly FakeClipboardWrapper _clipboard = new();
     private readonly ManualClock _clock = new();
     private readonly ClipboardOrigin _origin;
@@ -24,10 +29,15 @@ public class ClipboardServiceTests
     private Task<GetClipboardResult> ReadAsync(ClipboardService sut, ClipboardFormat format = ClipboardFormat.Text, int maxLength = 20_000,
         ClipboardConsent? consent = null) => sut.ReadAsync(format, maxLength, consent, CancellationToken.None);
 
+    private void CopyKeysSent() => _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"), AppProcessId)!);
+
+    private void ClickSent() => _origin.InputSent(_origin.BeforeInput(
+        [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp)], AppProcessId)!);
+
     private void AgentCopies(string text)
     {
-        _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"))!);
-        _clipboard.UserCopies(text);
+        CopyKeysSent();
+        _clipboard.AppCopies(AppProcessId, text);
     }
 
     #region The agent's content
@@ -70,13 +80,13 @@ public class ClipboardServiceTests
     {
         // Arrange - the app copies while the read waits
         var sut = CreateSut(copyWait: TimeSpan.FromSeconds(5));
-        _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"))!);
+        CopyKeysSent();
         var sequenceReads = 0;
         _clipboard.OnSequenceRead = () =>
         {
-            if (++sequenceReads == 3)
+            if (++sequenceReads == 6)
             {
-                _clipboard.UserCopies("copied late");
+                _clipboard.AppCopies(AppProcessId, "copied late");
             }
         };
 
@@ -90,11 +100,11 @@ public class ClipboardServiceTests
     }
 
     [Fact]
-    public async Task CopyKeysThatCopyNothing_AreClipboardNotFromAgent_AfterTheWait_AndNothingIsRead()
+    public async Task CopyKeysThatCopyNothing_AreNothingCopied_AfterTheWait_AndNothingIsRead()
     {
         // Arrange - nothing was selected: the clipboard keeps the user's content
         _clipboard.UserCopies("hunter2");
-        _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"))!);
+        CopyKeysSent();
         var sut = CreateSut(copyWait: TimeSpan.FromMilliseconds(100));
 
         // Act
@@ -102,10 +112,61 @@ public class ClipboardServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(ClipboardErrorCode.ClipboardNotFromAgent);
+        result.ErrorCode.Should().Be(ClipboardErrorCode.NothingCopied);
         result.Error.Should().Contain("did not change").And.Contain("Check the selection");
         result.Text.Should().BeNull();
         _clipboard.Reads.Should().Be(0, "the user's content is not even read");
+    }
+
+    [Fact]
+    public async Task CopyKeysThatCopyNothing_AfterAnEarlierCopy_AreNothingCopied_NotTheEarlierCopy()
+    {
+        // Arrange - the agent copied one line, then pressed Ctrl+C again with nothing selected
+        AgentCopies("the first line");
+        CopyKeysSent();
+        var sut = CreateSut(copyWait: TimeSpan.FromMilliseconds(100));
+
+        // Act
+        var result = await ReadAsync(sut);
+
+        // Assert - returning the first line would look like the second copy
+        result.ErrorCode.Should().Be(ClipboardErrorCode.NothingCopied);
+        result.Text.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TheAgentsCopy_IsStillReturned_AfterALaterClick()
+    {
+        // Arrange - the agent copies, then clicks the paste target: a click that copies nothing
+        AgentCopies("the selected log line");
+        ClickSent();
+        var sut = CreateSut(copyWait: TimeSpan.FromSeconds(5));
+
+        // Act
+        var started = DateTime.UtcNow;
+        var result = await ReadAsync(sut);
+
+        // Assert - no wait for a copy after a click, and no question about the agent's own copy
+        result.Success.Should().BeTrue(result.Error);
+        result.Text.Should().Be("the selected log line");
+        result.Origin.Should().Be(ClipboardContentOrigin.AgentInput);
+        (DateTime.UtcNow - started).Should().BeLessThan(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task AUserCopyAfterTheAgentsCopy_IsNotReturned()
+    {
+        // Arrange - inside the copy window, the user copies in another app
+        AgentCopies("the selected log line");
+        _clipboard.UserCopies("hunter2");
+
+        // Act
+        var result = await ReadAsync(CreateSut());
+
+        // Assert
+        result.ErrorCode.Should().Be(ClipboardErrorCode.ClipboardNotFromAgent);
+        result.Text.Should().BeNull();
+        _clipboard.Reads.Should().Be(0);
     }
 
     #endregion
@@ -194,8 +255,8 @@ public class ClipboardServiceTests
     public async Task ContentMarkedPrivate_IsNotReturned_WhenTheAgentsCopyKeysCopiedIt()
     {
         // The agent pressed Ctrl+C in a password manager
-        _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"))!);
-        _clipboard.UserCopies("hunter2", ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing);
+        CopyKeysSent();
+        _clipboard.AppCopies(AppProcessId, "hunter2", ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing);
 
         var result = await ReadAsync(CreateSut());
 
@@ -216,10 +277,83 @@ public class ClipboardServiceTests
         // Act
         var result = await ReadAsync(sut);
 
-        // Assert - the content read was not the server's, so it is the user's (and private): never returned
+        // Assert - the content read was not the server's, so it is the user's (and private): never returned, and its
+        // number was not set_clipboard's, so it was not even read
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(expected);
         result.Text.Should().BeNull();
+        _clipboard.LastPrivateContentSequence.Should().NotBe(0u, "set_clipboard's own text may be read");
+        _clipboard.LastReadPrivate.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false, ClipboardErrorCode.ClipboardNotFromAgent)]
+    [InlineData(true, ClipboardErrorCode.ClipboardPrivate)]
+    public async Task ContentWithSetClipboardsNumber_ThatIsNotItsText_IsNotTheServers(bool allowUserClipboard, ClipboardErrorCode expected)
+    {
+        // Arrange - another app replaced set_clipboard's text right before the server read the number it reports
+        var sut = CreateSut(allowUserClipboard);
+        sut.SetText("Meeting notes");
+        _clipboard.Text = "hunter2";
+
+        // Act
+        var result = await ReadAsync(sut);
+
+        // Assert - the private-content exemption holds only for the server's own text
+        result.ErrorCode.Should().Be(expected);
+        result.Text.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ContentWithSetClipboardsNumber_AndOtherFormats_IsNotTheServers()
+    {
+        var sut = CreateSut();
+        sut.SetText("Meeting notes");
+        _clipboard.Html = Encoding.UTF8.GetBytes("<b>hunter2</b>");
+
+        var result = await ReadAsync(sut, ClipboardFormat.Html);
+
+        result.ErrorCode.Should().Be(ClipboardErrorCode.ClipboardNotFromAgent, "set_clipboard puts only text there");
+        _clipboard.LastPrivateContentSequence.Should().Be(0u, "only text may be read as set_clipboard's");
+    }
+
+    [Fact]
+    public async Task SetClipboardsText_ReadAsHtml_IsFormatNotAvailable()
+    {
+        var sut = CreateSut();
+        sut.SetText("Meeting notes");
+
+        var result = await ReadAsync(sut, ClipboardFormat.Html);
+
+        result.ErrorCode.Should().Be(ClipboardErrorCode.FormatNotAvailable);
+        result.AvailableFormats.Should().Equal(ClipboardFormat.Text);
+    }
+
+    [Fact]
+    public async Task SetClipboardsText_CutToMaxLength_IsStillTheServers()
+    {
+        var sut = CreateSut();
+        sut.SetText("Meeting notes");
+
+        var result = await ReadAsync(sut, maxLength: 7);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Text.Should().Be("Meeting");
+        result.Origin.Should().Be(ClipboardContentOrigin.SetClipboard);
+    }
+
+    [Fact]
+    public void ADecline_IsRememberedForThatContentOnly()
+    {
+        var sut = CreateSut();
+
+        sut.UserDeclined(105);
+
+        sut.WasDeclined(105).Should().BeTrue();
+        sut.WasDeclined(106).Should().BeFalse("a new copy is new content");
+        sut.UserDeclined(0);
+        sut.WasDeclined(0).Should().BeFalse("0 cannot be told apart");
+        sut.WasDeclined(105).Should().BeFalse("only the last decline is kept");
     }
 
     #endregion

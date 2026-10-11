@@ -38,11 +38,22 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
 
     public uint GetSequenceNumber() => NativeMethods.Clipboard.GetClipboardSequenceNumber();
 
-    public ClipboardSnapshot Read(ClipboardFormat format, int maxCharacters, bool readPrivateContent)
+    public int GetOwnerProcessId()
+    {
+        var owner = NativeMethods.Clipboard.GetClipboardOwner();
+        if (owner == nint.Zero || NativeMethods.Clipboard.GetWindowThreadProcessId(owner, out var processId) == 0)
+        {
+            return 0;
+        }
+
+        return (int)processId;
+    }
+
+    public ClipboardSnapshot Read(ClipboardFormat format, int maxCharacters, uint privateContentSequence)
     {
         var limit = Math.Max(1, maxCharacters);
         return RunOnClipboardThread(
-            owner => ReadOpen(owner, format, limit, readPrivateContent),
+            owner => ReadOpen(owner, format, limit, privateContentSequence),
             notStarted: ClipboardSnapshot.NotOpened,
             timedOut: ClipboardSnapshot.NotOpened,
             ex => new ClipboardSnapshot(true, Error: $"{ex.GetType().Name}: {ex.Message}"));
@@ -129,7 +140,7 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
         return false;
     }
 
-    private static ClipboardSnapshot ReadOpen(nint owner, ClipboardFormat format, int maxCharacters, bool readPrivateContent)
+    private static ClipboardSnapshot ReadOpen(nint owner, ClipboardFormat format, int maxCharacters, uint privateContentSequence)
     {
         if (!Open(owner))
         {
@@ -147,8 +158,9 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
                 HasHtml: htmlFormat != 0 && NativeMethods.Clipboard.IsClipboardFormatAvailable(htmlFormat),
                 HasFiles: NativeMethods.Clipboard.IsClipboardFormatAvailable(NativeMethods.Clipboard.CF_HDROP));
 
-            // Private content is not even read into the server's memory unless it is the server's own
-            if (snapshot.IsPrivate && !readPrivateContent)
+            // Private content is not even read into the server's memory unless it is the server's own, by the number of
+            // the content that is open now (the clipboard may have changed since the caller looked)
+            if (snapshot.IsPrivate && (privateContentSequence == 0 || snapshot.SequenceNumber != privateContentSequence))
             {
                 return snapshot;
             }
@@ -360,7 +372,15 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
             NativeMethods.Clipboard.CloseClipboard();
         }
 
-        return new ClipboardWriteOutcome(true, true, NativeMethods.Clipboard.GetClipboardSequenceNumber(), excluded);
+        // The number is the server's only while its window still owns the clipboard after reading it: an application that
+        // replaced the text in between emptied the clipboard, which made its own window (or none) the owner
+        var sequenceNumber = NativeMethods.Clipboard.GetClipboardSequenceNumber();
+        if (NativeMethods.Clipboard.GetClipboardOwner() != owner)
+        {
+            sequenceNumber = 0;
+        }
+
+        return new ClipboardWriteOutcome(true, true, sequenceNumber, excluded);
     }
 
     /// <summary>Puts a DWORD in the named format on the open clipboard; false when that failed.</summary>

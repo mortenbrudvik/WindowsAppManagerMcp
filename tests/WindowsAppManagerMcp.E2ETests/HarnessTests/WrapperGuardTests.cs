@@ -642,17 +642,19 @@ public class WrapperGuardTests
         // The clipboard is the user's: a test must neither read what they copied nor replace it
         var inner = new Mock<INativeClipboardWrapper>(MockBehavior.Strict);
         inner.Setup(c => c.GetSequenceNumber()).Returns(7u);
+        inner.Setup(c => c.GetOwnerProcessId()).Returns(1234);
         IWrapperCallPolicy policy = inputTier
             ? FixtureOnly(new FakeDesktop { Foreground = FixtureWindow })
             : new ReadOnlyCallPolicy();
         var guarded = WrapperGuard.Create(inner.Object, policy);
 
-        var read = () => guarded.Read(ClipboardFormat.Text, 100, readPrivateContent: false);
+        var read = () => guarded.Read(ClipboardFormat.Text, 100, privateContentSequence: 0);
         var write = () => guarded.WriteText("x");
 
         read.Should().Throw<E2EGuardException>().WithMessage("*Read*");
         write.Should().Throw<E2EGuardException>().WithMessage("*WriteText*");
         guarded.GetSequenceNumber().Should().Be(7u, "the sequence number opens nothing");
+        guarded.GetOwnerProcessId().Should().Be(1234, "the owner opens nothing either");
     }
 
     [Fact]

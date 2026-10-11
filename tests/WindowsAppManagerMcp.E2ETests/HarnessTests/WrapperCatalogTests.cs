@@ -182,6 +182,7 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.GetGuiThreadInfo), WrapperCallKind.Read)]
     [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.AttachThreadInput), WrapperCallKind.ThreadInputAttach)]
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.GetSequenceNumber), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.GetOwnerProcessId), WrapperCallKind.Read)]
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.Read), WrapperCallKind.Clipboard)]
     [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.WriteText), WrapperCallKind.Clipboard)]
     [InlineData(typeof(INativeHitTestWrapper), nameof(INativeHitTestWrapper.GetClientAreaOnScreen), WrapperCallKind.Read)]

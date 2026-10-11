@@ -177,6 +177,8 @@ public static class WrapperCatalog
             {
                 // A counter that changes with the content; it does not open the clipboard
                 [nameof(INativeClipboardWrapper.GetSequenceNumber)] = WrapperMember.Read,
+                // The process of the clipboard's owner window; it does not open the clipboard either
+                [nameof(INativeClipboardWrapper.GetOwnerProcessId)] = WrapperMember.Read,
                 // The user's clipboard: refused in every tier
                 [nameof(INativeClipboardWrapper.Read)] = WrapperMember.Clipboard,
                 [nameof(INativeClipboardWrapper.WriteText)] = WrapperMember.Clipboard

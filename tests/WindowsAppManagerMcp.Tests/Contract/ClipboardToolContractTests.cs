@@ -99,6 +99,45 @@ public sealed class ClipboardToolContractTests
     }
 
     [Fact]
+    public async Task AfterADecline_TheUserIsNotAskedAgain_AboutTheSameContent()
+    {
+        // Arrange - the user said no; an agent that asks again and again must not wear them down into a yes
+        _clipboard.UserCopies("hunter2");
+        await using var server = await StartAsync(_ => Answer("decline"));
+        (await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>())).IsError.Should().BeTrue();
+
+        // Act
+        var again = await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>());
+
+        // Assert - refused without a question; a new copy is new content and may be asked about
+        again.IsError.Should().BeTrue();
+        Payload(again).GetProperty("errorCode").GetString().Should().Be(nameof(ClipboardErrorCode.ConfirmationDeclined));
+        Payload(again).GetProperty("error").GetString().Should().Contain("not asked again");
+        _questions.Should().ContainSingle();
+        _clipboard.Reads.Should().Be(0);
+
+        _clipboard.UserCopies("a shared link");
+        await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>());
+        _questions.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task CopyKeysThatCopiedNothing_AreNothingCopied_WithoutAQuestion()
+    {
+        // The agent meant its own copy: the user's clipboard is not asked about
+        _clipboard.UserCopies("hunter2");
+        _origin.InputSent(_origin.BeforeInput(SendKeysParser.Parse("^c"), 2001)!);
+        await using var server = await StartAsync(_ => Answer("accept", confirm: true));
+
+        var result = await server.CallToolAsync("get_clipboard", new Dictionary<string, object?>());
+
+        result.IsError.Should().BeTrue();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ClipboardErrorCode.NothingCopied));
+        _questions.Should().BeEmpty();
+        _clipboard.Reads.Should().Be(0);
+    }
+
+    [Fact]
     public async Task WhatWasCopiedWhileTheUserAnswered_IsNotRead()
     {
         // Arrange - the user says yes to the link; a password manager copies before the read

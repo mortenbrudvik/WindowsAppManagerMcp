@@ -25,6 +25,8 @@ public sealed class ClipboardService : IClipboardService
     private readonly IClipboardOrigin _origin;
     private readonly ClipboardOptions _options;
     private readonly TimeSpan _copyWait;
+    private readonly object _declinedLock = new();
+    private uint? _declined;
 
     /// <param name="clipboard">The clipboard.</param>
     /// <param name="origin">Which content the agent put there.</param>
@@ -59,30 +61,47 @@ public sealed class ClipboardService : IClipboardService
         var userAllowed = _options.AllowUserClipboard || consent != null;
 
         // Right after the agent's copy keys the application may not have copied yet
-        var kind = _origin.Classify(_clipboard.GetSequenceNumber());
+        var sequenceNumber = _clipboard.GetSequenceNumber();
         var waited = TimeSpan.Zero;
-        while (kind == ClipboardOriginKind.CopyPending && waited < _copyWait)
+        while (_origin.IsCopyPending(sequenceNumber) && waited < _copyWait)
         {
             await Task.Delay(CopyPoll, cancellationToken).ConfigureAwait(false);
             waited += CopyPoll;
-            kind = _origin.Classify(_clipboard.GetSequenceNumber());
+            sequenceNumber = _clipboard.GetSequenceNumber();
         }
 
+        // The agent meant its own copy: what was there before is not it, whoever put it there
+        if (_origin.IsCopyPending(sequenceNumber))
+        {
+            return Failed(format, ClipboardErrorCode.NothingCopied,
+                $"The copy keys were sent, but the clipboard did not change within {_copyWait.TotalSeconds:0.#} s: nothing may have " +
+                "been selected, or the application did not copy. Nothing was read. Check the selection and copy again.");
+        }
+
+        var kind = _origin.Classify(sequenceNumber);
         if (!IsAgents(kind) && !userAllowed)
         {
-            return NotFromAgent(format, kind);
+            return NotFromAgent(format);
         }
 
-        // Content marked private is read only when it is the text set_clipboard put there (which carries those markers)
-        var snapshot = _clipboard.Read(format, maxLength, readPrivateContent: kind == ClipboardOriginKind.SetClipboard);
+        // Content marked private is read only when it is the text set_clipboard put there (which carries those markers),
+        // and only while the clipboard still has that content's number
+        var privateContentSequence = kind == ClipboardOriginKind.SetClipboard && format == ClipboardFormat.Text ? sequenceNumber : 0;
+        var snapshot = _clipboard.Read(format, maxLength, privateContentSequence);
         if (!snapshot.Opened)
         {
             return Failed(format, ClipboardErrorCode.ClipboardBusy,
                 "Another application kept the clipboard open (or did not answer), so it could not be read. Try again in a moment.");
         }
 
-        // The number read while the clipboard was open belongs to the content read: decide on that one
+        // The number read while the clipboard was open belongs to the content read: decide on that one, and take content
+        // numbered as set_clipboard's as the server's only when it is the server's text (the number alone could be another
+        // application's that replaced the text right after set_clipboard)
         kind = _origin.Classify(snapshot.SequenceNumber);
+        if (kind == ClipboardOriginKind.SetClipboard && !IsServerContent(snapshot, format))
+        {
+            kind = ClipboardOriginKind.NotFromAgent;
+        }
         if (consent != null && snapshot.SequenceNumber != consent.SequenceNumber && !IsAgents(kind))
         {
             return Failed(format, ClipboardErrorCode.ClipboardNotFromAgent,
@@ -92,7 +111,7 @@ public sealed class ClipboardService : IClipboardService
 
         if (!IsAgents(kind) && !userAllowed)
         {
-            return NotFromAgent(format, kind);
+            return NotFromAgent(format);
         }
 
         if (snapshot.IsPrivate && kind != ClipboardOriginKind.SetClipboard)
@@ -153,22 +172,44 @@ public sealed class ClipboardService : IClipboardService
                 ErrorCode: ClipboardErrorCode.ClipboardFailed);
         }
 
-        _origin.ServerWrote(outcome.SequenceNumber);
+        _origin.ServerWrote(outcome.SequenceNumber, text);
         return new SetClipboardResult(true, text.Length, ExcludedFromHistory: outcome.ExcludedFromHistory);
     }
+
+    public void UserDeclined(uint sequenceNumber)
+    {
+        lock (_declinedLock)
+        {
+            _declined = sequenceNumber == 0 ? null : sequenceNumber;
+        }
+    }
+
+    public bool WasDeclined(uint sequenceNumber)
+    {
+        lock (_declinedLock)
+        {
+            return sequenceNumber != 0 && _declined == sequenceNumber;
+        }
+    }
+
+    /// <summary>
+    /// True when the content read can be set_clipboard's: it holds no HTML or files (set_clipboard puts only text there),
+    /// and text read as text is the server's text.
+    /// </summary>
+    private bool IsServerContent(ClipboardSnapshot snapshot, ClipboardFormat format) =>
+        !snapshot.HasHtml && !snapshot.HasFiles &&
+        (format != ClipboardFormat.Text || !snapshot.HasText || _origin.IsServerText(snapshot.Text, snapshot.TextLength));
 
     private static bool IsAgents(ClipboardOriginKind kind) =>
         kind is ClipboardOriginKind.SetClipboard or ClipboardOriginKind.AgentInput;
 
-    private GetClipboardResult NotFromAgent(ClipboardFormat format, ClipboardOriginKind kind) => Failed(format,
+    private static GetClipboardResult NotFromAgent(ClipboardFormat format) => Failed(format,
         ClipboardErrorCode.ClipboardNotFromAgent,
-        kind == ClipboardOriginKind.CopyPending
-            ? $"The copy keys or click were sent, but the clipboard did not change within {_copyWait.TotalSeconds:0.#} s: nothing may " +
-              "have been selected, or the application did not copy. Nothing was read. Check the selection and copy again."
-            : "The clipboard holds content the agent did not put there: the user or another application copied it. It is not " +
-              "returned without the user's consent, because it can be a password or other private text. To read text from an " +
-              "application, select it and copy it with send_keys '^c' (with windowHandle), then call get_clipboard: a change of " +
-              "the clipboard within 5 s of the agent's copy keys or click counts as the agent's. Otherwise ask the user.");
+        "The clipboard holds content the agent did not put there: the user or another application copied it. It is not " +
+        "returned without the user's consent, because it can be a password or other private text. To read text from an " +
+        "application, select it and copy it with send_keys '^c' (with windowHandle), then call get_clipboard: the first copy " +
+        "the application the keys went to makes within 5 s (2 s after a click) counts as the agent's. A copy written by a " +
+        "helper process of that application (as in apps built on WebView2) does not count. Otherwise ask the user.");
 
     private static GetClipboardResult Failed(ClipboardFormat format, ClipboardErrorCode code, string error) =>
         new(false, format, Error: error, ErrorCode: code);

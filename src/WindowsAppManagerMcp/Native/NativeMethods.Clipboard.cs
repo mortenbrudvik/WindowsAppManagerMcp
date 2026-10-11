@@ -57,6 +57,14 @@ internal static partial class NativeMethods
         [LibraryImport("user32.dll")]
         public static partial uint GetClipboardSequenceNumber();
 
+        /// <summary>The window that owns the clipboard (the one that emptied it last); zero when there is none.</summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial nint GetClipboardOwner();
+
+        /// <summary>The thread and process of the clipboard owner window (it sends the window no message).</summary>
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
+
         /// <summary>Creates the server's own message-only window that owns the clipboard while the server sets it.</summary>
         [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
         public static partial nint CreateWindowExW(

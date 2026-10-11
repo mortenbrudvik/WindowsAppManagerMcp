@@ -48,7 +48,10 @@ public sealed record ClipboardSnapshot(
 /// <summary>What setting the clipboard did.</summary>
 /// <param name="Opened">False when the clipboard could not be opened; nothing was changed.</param>
 /// <param name="Success">True when the text is on the clipboard.</param>
-/// <param name="SequenceNumber">GetClipboardSequenceNumber right after the clipboard was closed again.</param>
+/// <param name="SequenceNumber">
+/// GetClipboardSequenceNumber right after the clipboard was closed again, while the server's window still owned it; 0
+/// when another application had already replaced the text, so the number is not the server's.
+/// </param>
 /// <param name="ExcludedFromHistory">True when the formats that keep the text out of clipboard history are on it too.</param>
 /// <param name="Error">Why the text is not on the clipboard (with the Win32 error); null on success.</param>
 public sealed record ClipboardWriteOutcome(bool Opened, bool Success, uint SequenceNumber = 0, bool ExcludedFromHistory = false, string? Error = null);
@@ -68,12 +71,26 @@ public interface INativeClipboardWrapper
     uint GetSequenceNumber();
 
     /// <summary>
+    /// The process of the window that owns the clipboard (GetClipboardOwner): the application that last emptied it to put
+    /// its copy there. 0 when the clipboard has no owner (an application emptied it without a window) or it cannot be
+    /// read. It does not open the clipboard.
+    /// </summary>
+    int GetOwnerProcessId();
+
+    /// <summary>
     /// Opens the clipboard and reads its sequence number, its privacy markers and which formats it holds. Then, unless
-    /// a privacy marker is on it and <paramref name="readPrivateContent"/> is false, reads the content of
-    /// <paramref name="format"/>: at most <paramref name="maxCharacters"/> characters of text, the "HTML Format" data up to
+    /// a privacy marker is on it and its sequence number (read while it is open) is not
+    /// <paramref name="privateContentSequence"/>, reads the content of <paramref name="format"/>: at most
+    /// <paramref name="maxCharacters"/> characters of text, the "HTML Format" data up to
     /// <see cref="ClipboardSnapshot.MaxHtmlBytes"/>, or at most <paramref name="maxCharacters"/> paths.
     /// </summary>
-    ClipboardSnapshot Read(ClipboardFormat format, int maxCharacters, bool readPrivateContent);
+    /// <param name="format">The format to read.</param>
+    /// <param name="maxCharacters">The most characters (text) or paths (files) read.</param>
+    /// <param name="privateContentSequence">
+    /// The sequence number of the one content with privacy markers that may be read (the text set_clipboard put there);
+    /// 0: none.
+    /// </param>
+    ClipboardSnapshot Read(ClipboardFormat format, int maxCharacters, uint privateContentSequence);
 
     /// <summary>
     /// Replaces the clipboard's content with <paramref name="text"/> (CF_UNICODETEXT) plus the formats that keep it out of

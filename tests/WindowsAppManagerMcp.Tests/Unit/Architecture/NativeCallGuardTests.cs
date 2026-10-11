@@ -559,6 +559,7 @@ public class NativeCallGuardTests
         string[] clipboardApis =
         [
             "OpenClipboard", "CloseClipboard", "EmptyClipboard", "SetClipboardData", "GetClipboardData", "GetClipboardSequenceNumber",
+            "GetClipboardOwner",
             "IsClipboardFormatAvailable", "RegisterClipboardFormatW", "EnumClipboardFormats", "GlobalAlloc", "GlobalLock",
             "DragQueryFileW", "OleSetClipboard", "OleGetClipboard"
         ];

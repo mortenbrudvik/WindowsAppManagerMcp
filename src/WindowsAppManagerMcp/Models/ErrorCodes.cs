@@ -441,5 +441,11 @@ public enum ClipboardErrorCode
     ConfirmationDeclined = 6,
 
     /// <summary>get_clipboard: the format is not text, html or files.</summary>
-    InvalidFormat = 7
+    InvalidFormat = 7,
+
+    /// <summary>
+    /// get_clipboard: the agent's copy keys were sent moments ago, but the clipboard did not change within a second
+    /// (nothing selected, or the application did not copy). Nothing was read, and the user is not asked.
+    /// </summary>
+    NothingCopied = 8
 }

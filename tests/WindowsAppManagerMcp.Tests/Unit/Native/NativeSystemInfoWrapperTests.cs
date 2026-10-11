@@ -25,10 +25,14 @@ public class NativeSystemInfoWrapperTests
     }
 
     [Fact]
-    public void GetMouseWheelRouting_ReadsTheSetting()
+    public void GetMouseWheelRouting_ReadsTheSetting_OrNull()
     {
-        // Windows 10 and later have the setting (SPI_GETMOUSEWHEELROUTING); reading it changes nothing
-        _sut.GetMouseWheelRouting().Should().NotBeNull().And.BeDefined();
+        // Windows 10 and later have the setting (SPI_GETMOUSEWHEELROUTING); reading it changes nothing. A build or session
+        // without it reads null, which scroll treats as focus routing
+        if (_sut.GetMouseWheelRouting() is { } routing)
+        {
+            routing.Should().BeDefined();
+        }
     }
 
     [Fact]

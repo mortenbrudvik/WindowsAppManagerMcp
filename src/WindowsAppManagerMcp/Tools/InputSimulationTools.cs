@@ -153,7 +153,8 @@ public class InputSimulationTools
                  "from get_ui_elements). The pointer moves to the point and the notches are sent with it in one batch. Windows " +
                  "sends the wheel to the window under the pointer; when the user turned 'Scroll inactive windows' off it goes to " +
                  "the focused window, so scroll is then refused unless the window at the point is in front (WheelFollowsFocus): " +
-                 "call focus_window first. The wheel over a combo box, slider or number box changes its value, so point at the " +
+                 "call focus_window first; even then the wheel reaches the control with the keyboard focus, not the one at the " +
+                 "point, so click into the content first. The wheel over a combo box, slider or number box changes its value, so point at the " +
                  "content, not at such a control. To see whether the content moved, read it again (get_ui_elements, a capture)." +
                  " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." +
                  GuardNote)]
@@ -186,8 +187,8 @@ public class InputSimulationTools
                 "Pass windowHandle (the wheel turns at the centre of its client area), or x and y. Nothing was scrolled.");
         }
 
-        if ((deltaY == 0 && deltaX == 0) || Math.Abs(deltaY) > InputSimulationService.MaxScrollNotches ||
-            Math.Abs(deltaX) > InputSimulationService.MaxScrollNotches)
+        const int Max = InputSimulationService.MaxScrollNotches;
+        if ((deltaY == 0 && deltaX == 0) || deltaY is < -Max or > Max || deltaX is < -Max or > Max)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 $"deltaY and deltaX must be between -{InputSimulationService.MaxScrollNotches} and {InputSimulationService.MaxScrollNotches}, " +

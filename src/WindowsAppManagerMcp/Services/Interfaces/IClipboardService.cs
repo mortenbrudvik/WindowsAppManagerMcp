@@ -23,7 +23,7 @@ public interface IClipboardService
     /// <summary>
     /// Reads <paramref name="format"/>, cut to <paramref name="maxLength"/> characters (files: the paths' characters).
     /// When the agent's copy keys were sent moments ago and the clipboard has not changed yet, it waits up to a second
-    /// for the application to copy. Refuses (no content) with ClipboardNotFromAgent, ClipboardPrivate,
+    /// for the application to copy. Refuses (no content) with NothingCopied, ClipboardNotFromAgent, ClipboardPrivate,
     /// FormatNotAvailable, ClipboardBusy or ClipboardFailed.
     /// </summary>
     /// <param name="format">text, html or files.</param>
@@ -37,4 +37,13 @@ public interface IClipboardService
     /// the agent's. Fails with ClipboardBusy or ClipboardFailed.
     /// </summary>
     SetClipboardResult SetText(string text);
+
+    /// <summary>
+    /// The user did not allow reading the clipboard's content with <paramref name="sequenceNumber"/>: get_clipboard does
+    /// not ask about that content again (a new copy is new content, and may be asked about).
+    /// </summary>
+    void UserDeclined(uint sequenceNumber);
+
+    /// <summary>True when the user did not allow reading the content with <paramref name="sequenceNumber"/>.</summary>
+    bool WasDeclined(uint sequenceNumber);
 }

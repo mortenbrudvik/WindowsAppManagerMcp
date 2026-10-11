@@ -174,7 +174,8 @@ public class InputSimulationService : IInputSimulationService
             throw new ArgumentException("scroll needs both x and y, or neither and a target window.");
         }
 
-        if ((deltaY == 0 && deltaX == 0) || Math.Abs(deltaY) > MaxScrollNotches || Math.Abs(deltaX) > MaxScrollNotches)
+        if ((deltaY == 0 && deltaX == 0) || deltaY is < -MaxScrollNotches or > MaxScrollNotches ||
+            deltaX is < -MaxScrollNotches or > MaxScrollNotches)
         {
             throw new ArgumentOutOfRangeException(nameof(deltaY), $"scroll needs 1 to {MaxScrollNotches} notches in at least one direction.");
         }
@@ -324,7 +325,7 @@ public class InputSimulationService : IInputSimulationService
                 }
 
                 var batch = ScrollInputs(ToVirtualDesktopAbsolute(x, y, _monitorService.GetAllMonitors()), deltaY, deltaX);
-                var sent = Send(batch);
+                var sent = Send(batch, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
@@ -657,7 +658,7 @@ public class InputSimulationService : IInputSimulationService
                     }, approved));
                 }
 
-                var sent = Send(inputs);
+                var sent = Send(inputs, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage("Nothing was sent."), InputErrorCode.PausedByUser), approved));
@@ -805,7 +806,7 @@ public class InputSimulationService : IInputSimulationService
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + buttonsNow, InputErrorCode.MouseInUse), approved));
                     }
 
-                    var sent = SendClickInputs(leftButton, absolute);
+                    var sent = SendClickInputs(leftButton, absolute, approved);
                     if (sent.PausedByUser)
                     {
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage(sentSoFar.TrimEnd(' ', ':') + "."),
@@ -842,7 +843,7 @@ public class InputSimulationService : IInputSimulationService
         clicksSent == 0 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
 
     /// <summary>A move to the checked point, the button down and up, in one SendInput call.</summary>
-    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute)
+    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute, InputGuardResult approved)
     {
         var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
         var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
@@ -852,16 +853,17 @@ public class InputSimulationService : IInputSimulationService
             InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y),
             InputEvent.Mouse(downFlag),
             InputEvent.Mouse(upFlag)
-        ]);
+        ], approved);
     }
 
     /// <summary>
     /// Sends a batch through the session. A batch that can copy (copy keys, a left-button press) is reported to the
-    /// clipboard origin, so get_clipboard can tell the copy it makes from one the user makes.
+    /// clipboard origin with the process of the window it goes to, so get_clipboard can tell the copy that application
+    /// makes from one the user makes.
     /// </summary>
-    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch)
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, InputGuardResult approved)
     {
-        var copy = _clipboardOrigin?.BeforeInput(batch);
+        var copy = _clipboardOrigin?.BeforeInput(batch, approved.ReceivingWindow?.ProcessId ?? 0);
         var sent = _session.Send(batch);
         if (copy != null && sent.Inserted > 0)
         {
