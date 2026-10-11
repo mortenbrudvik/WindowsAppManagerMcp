@@ -10,6 +10,11 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="ProcessId">The ID of <paramref name="ProcessName"/>.</param>
 public sealed record WindowSummary(long Handle, string Title, string ProcessName, int ProcessId);
 
+/// <summary>Why a selector's window failed its recheck inside the input gate (<see cref="InputTarget.SelectorRecheck"/>).</summary>
+/// <param name="ErrorCode">The window tools' errorCode for it: HandleMismatch, or InvalidArguments.</param>
+/// <param name="Error">The message.</param>
+public sealed record SelectorRefusal(string ErrorCode, string Error);
+
 /// <summary>
 /// The window an input call is meant for (roadmap M1.5), or none. With a window the input guard brings it
 /// to the front (keys) or checks that the point is on it (mouse), and refuses to send input that would
@@ -30,6 +35,21 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 
     /// <summary>True when a target window was given (even an invalid one).</summary>
     public bool HasWindow => WindowHandle.HasValue;
+
+    /// <summary>
+    /// For a window a selector named (roadmap M2.4): checks that the window still matches the selector, and returns why
+    /// not (with the window tools' errorCode: HandleMismatch, or InvalidArguments when the selector's titleRegex timed out),
+    /// or null when it does. The selector is resolved before the call waits for the input gate (up to 30 s); the
+    /// input guard runs this inside the gate, before anything is sent, so input never reaches a window that stopped
+    /// matching while it waited, such as a tabbed editor switched to another document (HandleMismatch). Null for a
+    /// windowHandle, which names no title or process to check again.
+    /// </summary>
+    public Func<SelectorRefusal?>? SelectorRecheck { get; init; }
+
+    /// <summary>Two targets are equal when they name the same window with the same host rule; the recheck is not compared.</summary>
+    public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
+
+    public override int GetHashCode() => HashCode.Combine(WindowHandle, AllowHostTarget);
 }
 
 /// <summary>
@@ -176,9 +196,30 @@ public enum InputEventKind
 /// <param name="Flags">The raw MOUSEEVENTF_* or KEYEVENTF_* flags.</param>
 /// <param name="Dx">Mouse events: MOUSEINPUT.dx (with MOUSEEVENTF_ABSOLUTE, 0..65535 across the screen); otherwise 0.</param>
 /// <param name="Dy">Mouse events: MOUSEINPUT.dy; otherwise 0.</param>
-public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0)
+/// <param name="MouseData">
+/// Mouse events: MOUSEINPUT.mouseData, the wheel movement of a MOUSEEVENTF_WHEEL or MOUSEEVENTF_HWHEEL event
+/// (a multiple of WHEEL_DELTA, 120, as a two's-complement DWORD); otherwise 0.
+/// </param>
+public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0, uint MouseData = 0)
 {
+    /// <summary>One notch of the mouse wheel (WHEEL_DELTA).</summary>
+    public const int WheelDelta = 120;
+
     public static InputEvent Mouse(uint flags) => new(InputEventKind.Mouse, 0, flags);
+
+    /// <summary>
+    /// One vertical wheel event of <paramref name="delta"/> (MOUSEEVENTF_WHEEL): positive turns the wheel forward,
+    /// away from the user, which scrolls up; negative scrolls down. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent Wheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_WHEEL, MouseData: unchecked((uint)delta));
+
+    /// <summary>
+    /// One horizontal wheel event of <paramref name="delta"/> (MOUSEEVENTF_HWHEEL): positive tilts the wheel to the
+    /// right, which scrolls right; negative scrolls left. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent HorizontalWheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_HWHEEL, MouseData: unchecked((uint)delta));
 
     /// <summary>
     /// Moves the pointer to normalized absolute coordinates (0..65535) across the whole virtual desktop
@@ -312,5 +353,40 @@ public enum InputErrorCode
     /// at the point has captured the mouse, so the click or move could go to that window instead, or the capture
     /// could not be read, so where it would go is not known. Nothing (more) was sent.
     /// </summary>
-    MouseInUse = 40
+    MouseInUse = 40,
+
+    /// <summary>
+    /// Mouse input: Windows did not move the pointer to the point (SetCursorPos failed, for example because the
+    /// input desktop cannot be reached). Nothing was clicked. Not SendInputFailed, which means the input itself was
+    /// not accepted (roadmap M2.2).
+    /// </summary>
+    CursorPositionFailed = 41,
+
+    /// <summary>
+    /// scroll: Windows sends the wheel to the window with the keyboard focus, not to the window under the pointer
+    /// (the "Scroll inactive windows when I hover over them" setting is off, or its value cannot be read), and the
+    /// window at the point is not the foreground window, so the wheel would scroll another window. Nothing was sent.
+    /// </summary>
+    WheelFollowsFocus = 42,
+
+    /// <summary>
+    /// The window a selector named no longer matches it once the call holds the input gate: it changed (another document
+    /// or tab, another title), or it closed and its handle was reused, while the call waited. Nothing was sent.
+    /// </summary>
+    HandleMismatch = 43,
+
+    /// <summary>
+    /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
+    /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
+    /// private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes (copy
+    /// keys, or the ETX or CAN character, before the paste), or copy keys sent moments ago have not copied yet, so the
+    /// paste would paste a copy no check saw. A paste followed by a read would disclose it. Nothing (more) was sent.
+    /// </summary>
+    PasteNotAllowed = 44,
+
+    /// <summary>
+    /// The window selector could not be checked again once the call held the input gate because of the selector itself
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
+    /// </summary>
+    InvalidArguments = 45
 }

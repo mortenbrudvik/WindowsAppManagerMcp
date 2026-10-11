@@ -42,7 +42,7 @@ public class LayoutServiceTests : IDisposable
     #region T5.1: GetAllPresets Tests
 
     [Fact]
-    public void GetAllPresets_WithNoPresets_ReturnsEmptyList()
+    public async Task GetAllPresets_WithNoPresets_ReturnsEmptyList()
     {
         // Arrange
         var sut = CreateSut();
@@ -78,7 +78,7 @@ public class LayoutServiceTests : IDisposable
     #region T5.2: GetPreset Tests
 
     [Fact]
-    public void GetPreset_WhenNotExists_ReturnsNull()
+    public async Task GetPreset_WhenNotExists_ReturnsNull()
     {
         // Arrange
         var sut = CreateSut();
@@ -419,6 +419,57 @@ public class LayoutServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyPresetAsync_ReportsEachPlacementsOutcome()
+    {
+        // Arrange - the first placement's window is open, the second's is not
+        var testWindow = TestDataFactory.CreateWindowInfo(processName: "testapp");
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo> { testWindow });
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("progress-test", placements:
+        [
+            TestDataFactory.CreateWindowPlacement(processName: "testapp", order: 1),
+            TestDataFactory.CreateWindowPlacement(processName: "missing", order: 2)
+        ]));
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        await sut.ApplyPresetAsync("progress-test", progress: progress);
+
+        // Assert - "i of n" with what happened to each placement, in placement order
+        progress.Reports.Select(p => (p.Completed, p.Total)).Should().Equal((1, 2), (2, 2));
+        progress.Reports.Select(p => p.Message).Should().Equal(
+            "1 of 2: placement 1 (process 'testapp') was arranged",
+            "2 of 2: placement 2 (process 'missing') was not found");
+    }
+
+    [Fact]
+    public async Task ApplyPresetAsync_CancelledWhileALaunchWaitsForItsWindow_Throws()
+    {
+        // Arrange - the launched application's window never appears; the launch waits until the call is cancelled
+        _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
+                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string[]? _, string? _, bool _, int _, CancellationToken token) =>
+            {
+                await Task.Delay(System.Threading.Timeout.Infinite, token);
+                return new LaunchResult(true);
+            });
+        var sut = CreateSut();
+        await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("cancel-test", placements:
+        [
+            TestDataFactory.CreateWindowPlacement(processName: "slow", launchCommand: "slow.exe")
+        ]));
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        // Act
+        var act = () => sut.ApplyPresetAsync("cancel-test", launchMissing: true, cancellationToken: call.Token);
+
+        // Assert - the launch got the call's token
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task ApplyPresetAsync_CallsSetWindowBounds_ForMatchedWindows()
     {
         // Arrange
@@ -544,12 +595,13 @@ public class LayoutServiceTests : IDisposable
         // Assert
         result.WindowsLaunched.Should().Be(1);
         _mockProcessService.Verify(
-            p => p.LaunchApplication(
+            p => p.LaunchApplicationAsync(
                 "launched.exe",
                 It.IsAny<string[]?>(),
                 It.IsAny<string?>(),
                 true,
-                5000),
+                5000,
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -578,12 +630,13 @@ public class LayoutServiceTests : IDisposable
         result.WindowsLaunched.Should().Be(0);
         result.WindowsNotFound.Should().Be(1);
         _mockProcessService.Verify(
-            p => p.LaunchApplication(
+            p => p.LaunchApplicationAsync(
                 It.IsAny<string>(),
                 It.IsAny<string[]?>(),
                 It.IsAny<string?>(),
                 It.IsAny<bool>(),
-                It.IsAny<int>()),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -597,7 +650,7 @@ public class LayoutServiceTests : IDisposable
         _mockWindowService.Setup(w => w.SetWindowBounds(hung.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(new WindowNotRespondingException(hung.Handle, "Window 1001 did not answer within 5 s."));
         _mockWindowService.Setup(w => w.SetWindowBounds(fine.Handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(true);
+            .Returns(WindowChangeResult.Done(fine.Handle));
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset(
             "hung-test",
@@ -608,7 +661,7 @@ public class LayoutServiceTests : IDisposable
             }));
 
         // Act
-        var result = await sut.ApplyPresetAsync("hung-test", matchBy: "process_only");
+        var result = await sut.ApplyPresetAsync("hung-test", matchBy: LayoutMatchBy.ProcessOnly);
 
         // Assert - not focused either: the focus step needs the window placed first
         result.Success.Should().BeFalse();
@@ -654,7 +707,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use process_only matching
-        var result = await sut.ApplyPresetAsync("process-only-test", matchBy: "process_only");
+        var result = await sut.ApplyPresetAsync("process-only-test", matchBy: LayoutMatchBy.ProcessOnly);
 
         // Assert - Should find and arrange the window despite title mismatch
         result.Success.Should().BeTrue();
@@ -701,7 +754,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use title_only matching
-        var result = await sut.ApplyPresetAsync("title-only-test", matchBy: "title_only");
+        var result = await sut.ApplyPresetAsync("title-only-test", matchBy: LayoutMatchBy.TitleOnly);
 
         // Assert - Should find and arrange the window despite process mismatch
         result.Success.Should().BeTrue();
@@ -758,7 +811,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act - Use process_and_title matching (default)
-        var result = await sut.ApplyPresetAsync("both-test", matchBy: "process_and_title");
+        var result = await sut.ApplyPresetAsync("both-test", matchBy: LayoutMatchBy.ProcessAndTitle);
 
         // Assert - Should only match the window that has BOTH conditions met
         result.Success.Should().BeTrue();
@@ -828,7 +881,7 @@ public class LayoutServiceTests : IDisposable
         await sut.SavePresetAsync(preset);
 
         // Act
-        var result = await sut.ApplyPresetAsync("multi-window-test", matchBy: "process_and_title");
+        var result = await sut.ApplyPresetAsync("multi-window-test", matchBy: LayoutMatchBy.ProcessAndTitle);
 
         // Assert - All three windows should be arranged
         result.Success.Should().BeTrue();
@@ -1145,7 +1198,8 @@ public class LayoutServiceTests : IDisposable
     {
         _mockWindowService.Setup(w => w.SetWindowBounds(
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(false);
+            .Returns((nint handle, int _, int _, int _, int _, bool _) =>
+                WindowChangeResult.Failed(handle, WindowErrorCode.AccessDenied, "Windows blocked the change"));
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("stuck-window",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "notepad")]));
@@ -1155,6 +1209,8 @@ public class LayoutServiceTests : IDisposable
         result.Success.Should().BeFalse();
         result.WindowsArranged.Should().Be(0);
         result.ErrorCode.Should().Be(nameof(LayoutErrorCode.ArrangeFailed));
+        result.Errors.Should().ContainSingle().Which.Should().Contain("AccessDenied: Windows blocked the change",
+            "the window change's own code and reason are named in the placement's error");
     }
 
     [Fact]
@@ -1222,9 +1278,10 @@ public class LayoutServiceTests : IDisposable
     public async Task ApplyPresetAsync_WhenLaunchFails_SetsLaunchFailed()
     {
         _mockWindowService.Setup(w => w.GetAllWindows(true)).Returns(new List<WindowInfo>());
-        _mockProcessService.Setup(p => p.LaunchApplication(
-                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new LaunchResult(Success: false, ErrorMessage: "Executable not found"));
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
+                It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LaunchResult(Success: false, ErrorMessage: "Executable not found"));
         var sut = CreateSut();
         await sut.SavePresetAsync(TestDataFactory.CreateLayoutPreset("launch-fail",
             placements: [TestDataFactory.CreateWindowPlacement(processName: "app", launchCommand: "app.exe")]));

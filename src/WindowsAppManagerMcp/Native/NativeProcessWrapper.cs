@@ -196,6 +196,54 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
     public nint GetConsoleWindow() => NativeMethods.Kernel32.GetConsoleWindow();
 
+    public IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>? GetProcessList() => _snapshot();
+
+    public string? GetProcessImagePath(int processId)
+    {
+        if (processId <= 0)
+        {
+            return null;
+        }
+
+        var handle = NativeMethods.Kernel32.OpenProcess(NativeEnums.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)processId);
+        if (handle == nint.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var buffer = new char[1024];
+            var size = (uint)buffer.Length;
+            return NativeMethods.Kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ref size)
+                ? new string(buffer, 0, (int)size)
+                : null;
+        }
+        finally
+        {
+            NativeMethods.Kernel32.CloseHandle(handle);
+        }
+    }
+
+    public bool? WaitForInputIdle(int processId, int milliseconds)
+    {
+        if (processId <= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return process.WaitForInputIdle(Math.Max(0, milliseconds));
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // Not running, no message loop (a console program), or access denied
+            return null;
+        }
+    }
+
     /// <summary>
     /// Walks the parent chain of <paramref name="processId"/>, nearest ancestor first.
     /// Stops at a parent that is no longer running, at a cycle, or at a parent that started after its
@@ -411,7 +459,21 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         public bool CloseMainWindow() => process.CloseMainWindow();
 
-        public bool WaitForExit(int milliseconds) => process.WaitForExit(milliseconds);
+        public async Task<bool> WaitForExitAsync(int milliseconds, CancellationToken cancellationToken)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(milliseconds);
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The timeout passed first
+                return process.HasExited;
+            }
+        }
 
         public void Kill(bool entireProcessTree) => process.Kill(entireProcessTree);
 

@@ -5,12 +5,41 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 public interface IProcessService
 {
-    LaunchResult LaunchApplication(
+    /// <summary>
+    /// Launches an application, and with <paramref name="waitForWindow"/> waits up to
+    /// <paramref name="waitTimeoutMs"/> for its window: <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>
+    /// without a window hint.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// Cancels the call: before the start nothing is started; during the wait for the window the started program keeps
+    /// running and the call throws <see cref="OperationCanceledException"/>.
+    /// </param>
+    Task<LaunchResult> LaunchApplicationAsync(
         string executable,
         string[]? arguments = null,
         string? workingDirectory = null,
         bool waitForWindow = false,
-        int waitTimeoutMs = 5000);
+        int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Launches an application (roadmap M2.6/M2.7). Bare names are resolved to an absolute path, never from the working
+    /// directory, and an unresolved one is refused (ExecutableNotFound); the working directory defaults to the program's
+    /// folder. The start is waited for at most <see cref="ProcessService.StartTimeout"/>; a longer one is reported as
+    /// <see cref="LaunchStatus.AwaitingUserConsent"/> (a UAC prompt). When Windows starts no process (the request went to
+    /// a running app), the launch still succeeds, with no process ID.
+    /// <para>
+    /// With <paramref name="waitForWindow"/>, waits up to <paramref name="waitTimeoutMs"/> (at most 60000) for the window
+    /// the launch opens, whichever process owns it (<see cref="IWindowWaitService"/>, <see cref="LaunchWindowOwner"/>),
+    /// and reports it in <see cref="LaunchResult.Window"/> with a <see cref="LaunchResult.Status"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="cancellationToken">As for the other overload.</param>
+    Task<LaunchResult> LaunchApplicationAsync(
+        LaunchRequest request,
+        bool waitForWindow,
+        int waitTimeoutMs,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Lists running processes, optionally filtered by name.
@@ -30,6 +59,15 @@ public interface IProcessService
     string? GetProcessPath(int processId);
 
     /// <summary>
+    /// The checks of <see cref="KillProcessAsync"/> without acting: the refusal it would return for this process
+    /// (except a missing confirm), or the process's name and, with <paramref name="forceKill"/>, the child processes it
+    /// would also end. Without <paramref name="forceKill"/>, a process without a main window is refused with
+    /// NoClosableWindow, as the graceful close would refuse it. kill_process uses it to ask the user before it enters the
+    /// input gate.
+    /// </summary>
+    KillTargetCheck CheckKillTarget(int processId, bool forceKill, int gracefulTimeoutMs, string? expectedProcessName = null);
+
+    /// <summary>
     /// Terminates a process by its ID.
     /// </summary>
     /// <param name="processId">The process ID to terminate.</param>
@@ -42,25 +80,42 @@ public interface IProcessService
     /// </param>
     /// <param name="gracefulTimeoutMs">Graceful mode: how long to wait for the process to exit (0-60000 ms).</param>
     /// <param name="expectedProcessName">Optional PID-reuse guard: the expected process name, with or without .exe.</param>
+    /// <param name="safeguards">The process the user confirmed, and what to call before the wait for the exit (see <see cref="KillSafeguards"/>).</param>
+    /// <param name="cancellationToken">
+    /// Cancels the wait for the process to exit; the close request or termination already sent stands, and the call
+    /// throws <see cref="OperationCanceledException"/>. Cancelled before anything was sent, nothing is done.
+    /// </param>
     /// <returns>Result stating whether a close was requested, whether termination was forced, and whether the process exited.</returns>
-    KillResult KillProcess(
+    Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = 5000,
-        string? expectedProcessName = null);
+        string? expectedProcessName = null,
+        KillSafeguards? safeguards = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Launches multiple applications in batch.
+    /// Launches multiple applications: each one is checked and started in order, as by
+    /// <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>; with <paramref name="waitForWindows"/>
+    /// the windows are then waited for together, against one deadline (<paramref name="waitTimeoutMs"/> after the last
+    /// start), and a new window is reported for one launch only.
     /// </summary>
-    /// <param name="applications">List of applications to launch with their arguments and working directories.</param>
-    /// <param name="waitForWindows">Whether to wait for each application window to appear.</param>
-    /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for each window.</param>
-    /// <returns>Results for each launch attempt.</returns>
-    IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
-        IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
+    /// <param name="applications">The applications to launch.</param>
+    /// <param name="waitForWindows">Whether to wait for each application's window.</param>
+    /// <param name="waitTimeoutMs">How long to wait for the windows, in milliseconds.</param>
+    /// <param name="progress">Receives "i of n" each time an application is done: refused, started, or its window wait ended. Optional.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the batch: no further application is started, the window waits end, and the call throws
+    /// <see cref="OperationCanceledException"/>.
+    /// </param>
+    /// <returns>A result for each application, in request order.</returns>
+    Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
+        IReadOnlyList<LaunchRequest> applications,
         bool waitForWindows = false,
-        int waitTimeoutMs = 5000);
+        int waitTimeoutMs = 5000,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Launches a browser with CDP (Chrome DevTools Protocol) debug port enabled.
@@ -71,14 +126,16 @@ public interface IProcessService
     /// <param name="userDataDir">Optional separate user data directory to avoid conflicts with existing sessions.</param>
     /// <param name="waitForWindow">Whether to wait for the browser window to appear.</param>
     /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for the window.</param>
+    /// <param name="cancellationToken">Cancels the call, as for <see cref="LaunchApplicationAsync"/>.</param>
     /// <returns>Result containing process ID, window handle, CDP port, and user data directory.</returns>
-    DebugBrowserLaunchResult LaunchBrowserWithDebug(
+    Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         string browser = "chrome",
         string? url = null,
         int port = 9222,
         string? userDataDir = null,
         bool waitForWindow = true,
-        int waitTimeoutMs = 10000);
+        int waitTimeoutMs = 10000,
+        CancellationToken cancellationToken = default);
 }
 
 public record ProcessInfo(

@@ -15,9 +15,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// take the gate themselves, around their checks and batches; read-only tools run without it.
 /// </summary>
 /// <remarks>
-/// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/> and <see cref="ControlTools"/>
-/// runs inside the gate, so a new tool is serialized until it is reviewed onto another list. A contract test
-/// checks that every tool the server serves is in exactly one of the four lists. A name the server does not
+/// A tool that is in none of <see cref="InputTools"/>, <see cref="ReadOnlyTools"/>, <see cref="ControlTools"/> and
+/// <see cref="SelfGatedTools"/> runs inside the gate, so a new tool is serialized until it is reviewed onto another
+/// list. A contract test checks that every tool the server serves is in exactly one of the five lists. A name the server does not
 /// serve passes straight through, so the SDK reports it as a protocol error at once: a call that runs nothing
 /// cannot change which window is in front.
 /// <para>
@@ -41,25 +41,43 @@ public static class InputGateToolFilter
     /// <summary>The input tools. They hold the gate themselves (InputSimulationService), not through this filter.</summary>
     public static IReadOnlySet<string> InputTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys"
+        "click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"
     };
 
     /// <summary>
-    /// Tools that can change which window is in front or at a point: they activate, move, resize, restore,
-    /// minimize or close windows, or start or stop processes (a new window can take the foreground, and closing
-    /// the window in front activates another). They run inside the gate.
+    /// Tools that can change which window is in front or at a point: they arrange windows or start processes (a new window
+    /// can take the foreground). They run inside the gate. set_clipboard runs inside it too: it changes no window, but it
+    /// replaces the user's clipboard, so it waits for a running input call (a paste) and is refused while the user has
+    /// paused input. The single-window tools and their batches take the gate themselves (<see cref="SelfGatedTools"/>).
     /// </summary>
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window", "close_window",
-        "close_windows_batch", "snap_window", "move_window_to_monitor", "set_windows_bounds_batch",
-        "snap_windows_batch", "set_windows_state_batch", "apply_layout", "launch_application",
-        "launch_applications_batch", "kill_process", "launch_browser_with_debug"
+        "apply_layout", "launch_application", "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
     };
 
     /// <summary>
-    /// Tools that only read windows, processes, monitors, the screen, UI Automation or a browser page, or
-    /// that write only layout files. They run without the gate.
+    /// Tools that change windows or stop processes like <see cref="WindowChangingTools"/>, but do work first that must not
+    /// hold the gate, and then take it themselves with <see cref="EnterAsync"/>, which waits, refuses and reports a pause
+    /// exactly as this filter does. kill_process and the close tools may ask the user to confirm (elicitation, roadmap
+    /// M2.10): the user may take minutes to answer, and every input and window call would wait for them. The close tools
+    /// (roadmap M2.5) also send their close messages inside the gate and release it before they wait for the windows to
+    /// close, and kill_process sends its close request or termination inside it and releases it before it waits for the
+    /// process to exit: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
+    /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
+    /// selector (roadmap M2.4) before they take the gate, and act inside it.
+    /// </summary>
+    public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "kill_process", "close_window", "close_windows_batch", "close_application",
+        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
+        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch"
+    };
+
+    /// <summary>
+    /// Tools that only read windows, processes, monitors, the screen, UI Automation, a browser page or the clipboard, or
+    /// that write only layout files. They run without the gate (get_clipboard may ask the user, which must never hold it).
+    /// capture_window and capture_with_elements with restoreIfMinimized take it themselves (<see cref="EnterAsync"/>) while
+    /// they restore a minimized window.
     /// </summary>
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -67,7 +85,7 @@ public static class InputGateToolFilter
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_control_status"
+        "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info"
     };
 
     /// <summary>
@@ -90,12 +108,65 @@ public static class InputGateToolFilter
     public static IMcpServerBuilder AddInputGateSerialization(this IMcpServerBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        return builder.AddCallToolFilter(Filter);
+        return builder.WithRequestFilters(filters => filters.AddCallToolFilter(Filter));
     }
 
     /// <summary>True when the tool runs inside the gate through this filter.</summary>
     public static bool RunsInsideTheGate(string? toolName) =>
-        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName) && !ControlTools.Contains(toolName));
+        toolName == null || (!InputTools.Contains(toolName) && !ReadOnlyTools.Contains(toolName) && !ControlTools.Contains(toolName) &&
+                             !SelfGatedTools.Contains(toolName));
+
+    /// <summary>
+    /// For the <see cref="SelfGatedTools"/>: refuses with a PausedByUser tool error while the user has paused input,
+    /// before the tool asks the user anything.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused.</exception>
+    public static void ThrowIfPaused(IInputSession? session)
+    {
+        if (session?.IsPaused == true)
+        {
+            throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+        }
+    }
+
+    /// <summary>
+    /// For the <see cref="SelfGatedTools"/>, after any question to the user: waits for the input gate as this filter
+    /// does and returns it, to be disposed when the tool is done. A pause before or during the wait, or just as the gate
+    /// is taken, is a PausedByUser tool error; a gate that is not free within <paramref name="timeout"/> (default
+    /// <see cref="GateWaitTimeout"/>) is InputBusy. Either way nothing has been done.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused, or the gate is busy.</exception>
+    public static async Task<IDisposable> EnterAsync(IInputSession? session, CancellationToken cancellationToken, TimeSpan? timeout = null)
+    {
+        ThrowIfPaused(session);
+        var wait = timeout ?? GateWaitTimeout;
+
+        IDisposable? gate;
+        using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session?.PauseToken ?? CancellationToken.None))
+        {
+            try
+            {
+                gate = await InputGate.TryEnterAsync(wait, waiting.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session!));
+            }
+        }
+
+        if (gate == null)
+        {
+            throw new ToolErrorException(nameof(InputErrorCode.InputBusy), BusyMessage(wait));
+        }
+
+        if (session?.IsPaused == true)
+        {
+            gate.Dispose();
+            throw new ToolErrorException(nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+        }
+
+        return gate;
+    }
 
     /// <summary>
     /// Call-tool filter: a tool that <see cref="RunsInsideTheGate"/> waits for the input gate and holds it
@@ -163,14 +234,18 @@ public static class InputGateToolFilter
         (name == null || !tools.TryGetPrimitive(name, out _));
 
     private static CallToolResult BusyResult(string? toolName, TimeSpan waited) =>
-        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(InputErrorCode.InputBusy),
-            $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
-            "did not start. Retry when your other calls have finished.");
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(InputErrorCode.InputBusy), BusyMessage(waited));
 
     private static CallToolResult PausedResult(string? toolName, IInputSession session) =>
-        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser),
-            $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
-            "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
-            "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
-            "or by confirming resume_input.");
+        ToolErrorReporting.CreateToolErrorResult(toolName ?? "(unknown)", nameof(WindowErrorCode.PausedByUser), PausedMessage(session));
+
+    private static string BusyMessage(TimeSpan waited) =>
+        $"Nothing was done: another input or window call held the input gate for {waited.TotalSeconds:0.#} s, so this call " +
+        "did not start. Retry when your other calls have finished.";
+
+    private static string PausedMessage(IInputSession session) =>
+        $"Nothing was done: input is paused, the user pressed the pause hotkey{(session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +
+        "While paused, tools that change windows or start or stop processes do nothing, like the input tools; tools that only read " +
+        "still work. Stop and ask the user how to continue. Do not try to resume input yourself: only the user can, with the hotkey " +
+        "or by confirming resume_input.";
 }

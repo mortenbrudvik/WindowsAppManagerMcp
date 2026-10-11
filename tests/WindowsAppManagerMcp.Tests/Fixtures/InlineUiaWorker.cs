@@ -1,8 +1,8 @@
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
 /// <summary>
-/// An <see cref="IUiaWorker"/> that runs the read on the calling thread, so service tests are
-/// deterministic. <see cref="UiaWorker"/> itself is tested in UiaWorkerTests.
+/// An <see cref="IUiaWorker"/> that runs the read on the calling thread and returns a completed task, so service
+/// tests are deterministic. <see cref="UiaWorker"/> itself is tested in UiaWorkerTests.
 /// </summary>
 public sealed class InlineUiaWorker : IUiaWorker
 {
@@ -14,12 +14,20 @@ public sealed class InlineUiaWorker : IUiaWorker
 
     public int LastTargetProcessId { get; private set; }
 
-    public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+    public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
     {
         Calls++;
         LastTargetProcessId = targetProcessId;
         LastToken = cancellationToken;
         LastGrace = grace;
-        return read(cancellationToken);
+        try
+        {
+            return Task.FromResult(read(cancellationToken));
+        }
+        catch (Exception ex)
+        {
+            // As the real worker: the read's exception comes out of the task, unchanged
+            return Task.FromException<T>(ex);
+        }
     }
 }

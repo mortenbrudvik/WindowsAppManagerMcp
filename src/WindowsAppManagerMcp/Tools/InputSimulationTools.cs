@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -30,7 +32,7 @@ public class InputSimulationTools
 
     internal const string AllowHostTargetDescription =
         "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only " +
-        "together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false";
+        "together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false";
 
     internal const string ReleaseHeldModifiersDescription =
         "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with " +
@@ -61,13 +63,17 @@ public class InputSimulationTools
         " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
 
     private readonly IInputSimulationService _inputService;
+    private readonly IWindowService? _windowService;
 
-    public InputSimulationTools(IInputSimulationService inputService)
+    /// <param name="inputService">The guarded input.</param>
+    /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
+    public InputSimulationTools(IInputSimulationService inputService, IWindowService? windowService = null)
     {
         _inputService = inputService;
+        _windowService = windowService;
     }
 
-    [McpServerTool(Name = "click")]
+    [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a left mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote +
                  " Mouse results also report actualX and actualY, the cursor position afterwards.")]
     public ClickResult Click(
@@ -77,17 +83,20 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.Click(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.Click(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "right_click")]
-    [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote)]
+    [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." +
+                 " In a terminal (console, Windows Terminal, PuTTY) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
     public ClickResult RightClick(
         [Description(XDescription)]
         int x,
@@ -95,16 +104,18 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.RightClick(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.RightClick(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "double_click")]
+    [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
     public ClickResult DoubleClick(
         [Description(XDescription)]
@@ -115,17 +126,19 @@ public class InputSimulationTools
         int delayMs = 50,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, allowHostTarget), releaseHeldModifiers,
+        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, window, allowHostTarget), releaseHeldModifiers,
             cancellationToken);
     }
 
-    [McpServerTool(Name = "mouse_move")]
+    [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
                  " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." + GuardNote)]
     public MouseMoveResult MouseMove(
@@ -135,16 +148,75 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.MoveMouse(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "type_text")]
+    [McpServerTool(Name = "scroll", Title = "Scroll", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Turn the mouse wheel over a window to scroll it: deltaY notches down (negative: up) and deltaX notches right " +
+                 "(negative: left); one notch usually scrolls 3 lines. Pass windowHandle. Without x and y the wheel turns at the " +
+                 "centre of that window's client area; to scroll one list or pane, pass a point inside it (the centre of its bounds " +
+                 "from get_ui_elements). The pointer moves to the point and the notches are sent with it in one batch. Windows " +
+                 "sends the wheel to the window under the pointer; when the user turned 'Scroll inactive windows' off it goes to " +
+                 "the focused window, so scroll is then refused unless the window at the point is in front (WheelFollowsFocus): " +
+                 "call focus_window first; even then the wheel reaches the control with the keyboard focus, not the one at the " +
+                 "point, so click into the content first. The wheel over a combo box, slider or number box changes its value, so point at the " +
+                 "content, not at such a control. To see whether the content moved, read it again (get_ui_elements, a capture)." +
+                 " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." +
+                 GuardNote)]
+    public ScrollResult Scroll(
+        [Description(MouseWindowHandleDescription)]
+        long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
+        [Description(XDescription + ", together with y. Default: the centre of windowHandle's client area")]
+        int? x = null,
+        [Description(YDescription + ", together with x. Default: the centre of windowHandle's client area")]
+        int? y = null,
+        [Description("Vertical wheel notches: positive scrolls down, negative scrolls up, at most 100 either way. Default: 0")]
+        int deltaY = 0,
+        [Description("Horizontal wheel notches: positive scrolls right, negative scrolls left, at most 100 either way. Default: 0")]
+        int deltaX = 0,
+        [Description(AllowHostTargetDescription)]
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (x.HasValue != y.HasValue)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "Pass both x and y, or neither (then the wheel turns at the centre of windowHandle's client area). Nothing was scrolled.");
+        }
+
+        const int Max = InputSimulationService.MaxScrollNotches;
+        if ((deltaY == 0 && deltaX == 0) || deltaY is < -Max or > Max || deltaX is < -Max or > Max)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"deltaY and deltaX must be between -{InputSimulationService.MaxScrollNotches} and {InputSimulationService.MaxScrollNotches}, " +
+                $"and not both 0 (got deltaY {deltaY}, deltaX {deltaX}). Nothing was scrolled.");
+        }
+
+        // Without a point the wheel turns at the centre of a named window; a bare {"foreground": true} names none
+        var target = Target(windowHandle, window, allowHostTarget);
+        if (!x.HasValue && !target.HasWindow)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "Pass windowHandle or a window selector that names a window (the wheel turns at the centre of its client area), or " +
+                "x and y. {\"foreground\": true} alone names no window here. Nothing was scrolled.");
+        }
+
+        return _inputService.Scroll(x, y, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+    }
+
+    [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Type text by simulating Unicode keyboard input. Works with any language/characters." + KeyboardTargetNote +
                  " The foreground window is checked again every 32 characters: if another window comes to the front, typing stops with " +
                  "TargetLostFocus and charactersTyped says how much was typed. Refused while a menu is open (TargetInMenuMode)." +
@@ -156,6 +228,8 @@ public class InputSimulationTools
         int delayMs = 0,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
@@ -163,29 +237,73 @@ public class InputSimulationTools
         CancellationToken cancellationToken = default)
     {
         delayMs = Math.Clamp(delayMs, 0, 100);
-        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    [McpServerTool(Name = "send_keys")]
+    [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home)." + KeyboardTargetNote +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
                  " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
-                 " The user's pause hotkey chord is refused (PauseChordNotAllowed).")]
+                 " The user's pause hotkey chord is refused (PauseChordNotAllowed)." +
+                 " A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed)." +
+                 " Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.")]
     public Task<SendKeysResult> SendKeys(
         [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
         string keys,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.SendKeysAsync(keys, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.SendKeysAsync(keys, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    private static InputTarget Target(long? windowHandle, bool allowHostTarget) =>
-        new(windowHandle.HasValue ? (nint)windowHandle.Value : null, allowHostTarget);
+    /// <summary>
+    /// The input's target: windowHandle, or the window selector resolved to one window (roadmap M2.4), before the input
+    /// service takes the input gate. The resolved window is passed exactly as a windowHandle would be, so the input guard,
+    /// the host guard and the target policy check it as they check any windowHandle.
+    /// </summary>
+    /// <remarks>
+    /// The guard's rules for a window the caller chose do not take a selector that chose nothing: a bare
+    /// <c>{"foreground": true}</c> is the implicit target (whatever is in front) under another name, so it is passed as no
+    /// windowHandle, and destructive chords and the host rule still apply to it as without windowHandle. allowHostTarget
+    /// lifts the host guard only for a window named by its handle (windowHandle or window.handle): a selector that finds
+    /// windows by name could resolve to the agent's own terminal without the caller ever seeing it. A selector's window is
+    /// checked against it again inside the input gate (<see cref="InputTarget.SelectorRecheck"/>), as the window tools do.
+    /// </remarks>
+    /// <exception cref="ToolErrorException">
+    /// Both were given, allowHostTarget came with a selector that names no handle, or the selector names no single window;
+    /// nothing is sent.
+    /// </exception>
+    private InputTarget Target(long? windowHandle, WindowSelector? window, bool allowHostTarget)
+    {
+        if (windowHandle == null && WindowTargeting.IsBareForeground(window))
+            return new InputTarget(null, allowHostTarget);
+
+        if (windowHandle == null && allowHostTarget && window is { Handle: null })
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "allowHostTarget lifts the guard on the agent's own terminal or chat window only for a window named by its handle " +
+                "(windowHandle, or window.handle), not for a selector that finds windows by name. Find the window with find_windows " +
+                "and pass its handle, only when the user explicitly asked for input there. Nothing was sent.");
+        }
+
+        var handle = WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle");
+        if (handle is not { } resolved || window == null || _windowService is not { } windows)
+            return new InputTarget(handle, allowHostTarget);
+
+        // The selector is checked again inside the gate, by the input guard, as the window tools check theirs
+        return new InputTarget(handle, allowHostTarget)
+        {
+            SelectorRecheck = () => WindowTargeting.Recheck(windows, window, resolved) is { } refusal
+                ? new SelectorRefusal(refusal.ErrorCode, refusal.Error)
+                : null
+        };
+    }
 }

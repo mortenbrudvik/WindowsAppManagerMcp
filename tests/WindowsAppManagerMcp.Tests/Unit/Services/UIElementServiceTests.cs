@@ -52,10 +52,10 @@ public class UIElementServiceTests
     #region Validation and window lookup
 
     [Fact]
-    public void GetUIElements_WithZeroHandle_ReturnsInvalidHandleWithoutReadingTheTree()
+    public async Task GetUIElements_WithZeroHandle_ReturnsInvalidHandleWithoutReadingTheTree()
     {
         // Act
-        var result = CreateSut().GetUIElements(nint.Zero);
+        var result = await CreateSut().GetUIElementsAsync(nint.Zero);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -67,14 +67,14 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
+    public async Task GetUIElements_WhenUiAutomationIsUnavailable_ReturnsAutomationUnavailable()
     {
         // Arrange
         BuildToolbarWindow();
         _tree.Available = false;
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -82,10 +82,10 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WithUnknownHandle_ReturnsWindowNotFound()
+    public async Task GetUIElements_WithUnknownHandle_ReturnsWindowNotFound()
     {
         // Act
-        var result = CreateSut().GetUIElements(new nint(999));
+        var result = await CreateSut().GetUIElementsAsync(new nint(999));
 
         // Assert
         result.Success.Should().BeFalse();
@@ -94,13 +94,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowVanishesDuringLookup_ReturnsWindowNotFound()
+    public async Task GetUIElements_WhenTheWindowVanishesDuringLookup_ReturnsWindowNotFound()
     {
         // Arrange
         _tree.FromHandleException = FakeUiaTree.Vanished("window");
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -108,13 +108,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenLookupFailsUnexpectedly_ReturnsOperationException()
+    public async Task GetUIElements_WhenLookupFailsUnexpectedly_ReturnsOperationException()
     {
         // Arrange
         _tree.FromHandleException = new InvalidOperationException("provider exploded");
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -126,14 +126,14 @@ public class UIElementServiceTests
     [InlineData("Buton")]
     [InlineData("Button,Textbox")]
     [InlineData("Btn, Edit")]
-    public void GetUIElements_WithUnknownControlType_ReturnsInvalidControlTypeListingTheValidNames(string controlTypes)
+    public async Task GetUIElements_WithUnknownControlType_ReturnsInvalidControlTypeListingTheValidNames(string controlTypes)
     {
         // Arrange
         BuildToolbarWindow();
         var filter = new UIElementFilter(ControlTypes: controlTypes.Split(',', StringSplitOptions.TrimEntries));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: filter);
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: filter);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -151,13 +151,13 @@ public class UIElementServiceTests
     [InlineData("button")]
     [InlineData("BUTTON")]
     [InlineData(" Button ")]
-    public void GetUIElements_ControlTypeFilter_IgnoresCaseAndSurroundingSpace(string controlType)
+    public async Task GetUIElements_ControlTypeFilter_IgnoresCaseAndSurroundingSpace(string controlType)
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: [controlType]));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: [controlType]));
 
         // Assert
         result.Success.Should().BeTrue();
@@ -168,13 +168,13 @@ public class UIElementServiceTests
     [InlineData("AppBar")]
     [InlineData("SemanticZoom")]
     [InlineData("Unknown")]
-    public void GetUIElements_AcceptsTheFallbackControlTypeNames(string controlType)
+    public async Task GetUIElements_AcceptsTheFallbackControlTypeNames(string controlType)
     {
         // Arrange
         Window(Node(controlType, "Special"), Node("Button", "Other"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: [controlType]));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: [controlType]));
 
         // Assert
         result.Success.Should().BeTrue();
@@ -186,13 +186,13 @@ public class UIElementServiceTests
     #region controlTypes: matches inside other containers are returned
 
     [Fact]
-    public void GetUIElements_ControlTypeFilter_ReturnsMatchesNestedInNonMatchingContainers()
+    public async Task GetUIElements_ControlTypeFilter_ReturnsMatchesNestedInNonMatchingContainers()
     {
         // Arrange - the reported bug: Buttons inside Pane/ToolBar/Group came back as []
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: ["Button", "Edit"]));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: ["Button", "Edit"]));
 
         // Assert - each match takes the place of its left-out containers, in tree order
         result.Success.Should().BeTrue();
@@ -201,13 +201,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_ControlTypeFilter_KeepsMatchesNestedUnderTheirNearestMatchingAncestor()
+    public async Task GetUIElements_ControlTypeFilter_KeepsMatchesNestedUnderTheirNearestMatchingAncestor()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: ["ToolBar", "Button"]));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: ["ToolBar", "Button"]));
 
         // Assert
         Shape(result.Elements).Should().Be("Tools(Save,Open),OK");
@@ -219,14 +219,14 @@ public class UIElementServiceTests
     [InlineData("Pane,Button")]
     [InlineData("Group,Edit")]
     [InlineData("Window")]
-    public void GetUIElements_TotalElementCount_CountsEachReturnedElementOnce(string? controlTypes)
+    public async Task GetUIElements_TotalElementCount_CountsEachReturnedElementOnce(string? controlTypes)
     {
         // Arrange
         BuildToolbarWindow();
         var filter = new UIElementFilter(ControlTypes: controlTypes?.Split(','));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: filter);
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: filter);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -234,13 +234,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WithoutFilters_ReturnsTheWholeTreeNested()
+    public async Task GetUIElements_WithoutFilters_ReturnsTheWholeTreeNested()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         Shape(result.Elements).Should().Be("Host(Tools(Save,Open)),Name,Footer(Box(OK))");
@@ -252,13 +252,13 @@ public class UIElementServiceTests
     #region maxDepth counts levels below the window
 
     [Fact]
-    public void GetUIElements_WithMaxDepthOne_ReturnsOnlyTheWindowsChildrenAndReadsNothingDeeper()
+    public async Task GetUIElements_WithMaxDepthOne_ReturnsOnlyTheWindowsChildrenAndReadsNothingDeeper()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: 1);
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 1);
 
         // Assert
         Shape(result.Elements).Should().Be("Host,Name,Footer");
@@ -268,13 +268,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WithMaxDepthTwo_ReturnsExactlyTwoLevels()
+    public async Task GetUIElements_WithMaxDepthTwo_ReturnsExactlyTwoLevels()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: 2);
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 2);
 
         // Assert
         Shape(result.Elements).Should().Be("Host(Tools),Name,Footer(Box)");
@@ -282,13 +282,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheTreeIsShallowerThanMaxDepth_ReportsTheDepthReached()
+    public async Task GetUIElements_WhenTheTreeIsShallowerThanMaxDepth_ReportsTheDepthReached()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: 10);
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 10);
 
         // Assert
         result.Depth.Should().Be(10);
@@ -300,13 +300,13 @@ public class UIElementServiceTests
     [InlineData(-5, 1)]
     [InlineData(15, 10)]
     [InlineData(100, 10)]
-    public void GetUIElements_ClampsMaxDepthToOneThroughTen(int requested, int applied)
+    public async Task GetUIElements_ClampsMaxDepthToOneThroughTen(int requested, int applied)
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: requested);
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: requested);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -314,13 +314,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_MaxDepthBoundsTheWalkEvenWhenFiltersLeaveContainersOut()
+    public async Task GetUIElements_MaxDepthBoundsTheWalkEvenWhenFiltersLeaveContainersOut()
     {
         // Arrange - the Buttons are at level 3
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: 2, filter: new UIElementFilter(ControlTypes: ["Button"]));
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 2, filter: new UIElementFilter(ControlTypes: ["Button"]));
 
         // Assert
         result.Success.Should().BeTrue();
@@ -333,7 +333,7 @@ public class UIElementServiceTests
     #region Size and interactable filters apply to each element only
 
     [Fact]
-    public void GetUIElements_MinWidth_LeavesOutANarrowContainerButReturnsItsWideChildren()
+    public async Task GetUIElements_MinWidth_LeavesOutANarrowContainerButReturnsItsWideChildren()
     {
         // Arrange - a narrow sidebar with a wide button inside
         Window(
@@ -342,14 +342,14 @@ public class UIElementServiceTests
                 new FakeUiaNode("Button", "Tiny") { Bounds = new UiaRect(0, 40, 4, 4) }));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(MinWidth: 20));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MinWidth: 20));
 
         // Assert
         Shape(result.Elements).Should().Be("Wide");
     }
 
     [Fact]
-    public void GetUIElements_MinHeight_ReturnsChildrenOfAContainerWithoutBounds()
+    public async Task GetUIElements_MinHeight_ReturnsChildrenOfAContainerWithoutBounds()
     {
         // Arrange - layout containers often report an empty rectangle
         Window(
@@ -357,14 +357,14 @@ public class UIElementServiceTests
                 new FakeUiaNode("Edit", "Field") { Bounds = new UiaRect(10, 10, 200, 24) }));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(MinHeight: 10));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MinHeight: 10));
 
         // Assert
         Shape(result.Elements).Should().Be("Field");
     }
 
     [Fact]
-    public void GetUIElements_InteractableOnly_KeepsEnabledFocusableOrActionableElementsAtAnyDepth()
+    public async Task GetUIElements_InteractableOnly_KeepsEnabledFocusableOrActionableElementsAtAnyDepth()
     {
         // Arrange
         Window(
@@ -377,7 +377,7 @@ public class UIElementServiceTests
                 new FakeUiaNode("CheckBox", "Option") { ActionPatterns = ["Toggle"] }));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(InteractableOnly: true));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(InteractableOnly: true));
 
         // Assert - Pane, Text and the disabled elements are left out; their qualifying children are not
         Shape(result.Elements).Should().Be("Go,Field,Option");
@@ -385,7 +385,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_InteractableOnly_ReadsFocusAndPatternsOnlyForCandidates()
+    public async Task GetUIElements_InteractableOnly_ReadsFocusAndPatternsOnlyForCandidates()
     {
         // Arrange
         Window(
@@ -394,7 +394,7 @@ public class UIElementServiceTests
             new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"] });
 
         // Act
-        CreateSut().GetUIElements(Handle, filter: new UIElementFilter(ControlTypes: ["Button"], InteractableOnly: true));
+        await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: ["Button"], InteractableOnly: true));
 
         // Assert - each extra read is a cross-process call per element; focus itself is never read
         _tree.Reads.Where(r => r.StartsWith("Interactable:")).Should().Equal("Interactable:Go");
@@ -402,13 +402,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WithoutInteractableOnly_DoesNotReadFocusOrPatterns()
+    public async Task GetUIElements_WithoutInteractableOnly_DoesNotReadFocusOrPatterns()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        CreateSut().GetUIElements(Handle);
+        await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         _tree.Reads.Should().OnlyContain(r => r.StartsWith("Read:"));
@@ -419,7 +419,7 @@ public class UIElementServiceTests
     #region visibleOnly prunes offscreen subtrees
 
     [Fact]
-    public void GetUIElements_VisibleOnly_LeavesOutAnOffscreenElementWithEverythingInsideIt()
+    public async Task GetUIElements_VisibleOnly_LeavesOutAnOffscreenElementWithEverythingInsideIt()
     {
         // Arrange
         Window(
@@ -427,7 +427,7 @@ public class UIElementServiceTests
             Node("Button", "Visible"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(VisibleOnly: true));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(VisibleOnly: true));
 
         // Assert
         Shape(result.Elements).Should().Be("Visible");
@@ -435,7 +435,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WithVisibleOnlyFalse_ReturnsOffscreenElements()
+    public async Task GetUIElements_WithVisibleOnlyFalse_ReturnsOffscreenElements()
     {
         // Arrange
         Window(
@@ -443,7 +443,7 @@ public class UIElementServiceTests
             Node("Button", "Visible"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(VisibleOnly: false));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(VisibleOnly: false));
 
         // Assert
         Shape(result.Elements).Should().Be("Scrolled away(Item),Visible");
@@ -455,7 +455,7 @@ public class UIElementServiceTests
     #region Bounds
 
     [Fact]
-    public void GetUIElements_ElementWithoutGeometry_HasNullBounds()
+    public async Task GetUIElements_ElementWithoutGeometry_HasNullBounds()
     {
         // Arrange
         Window(
@@ -464,7 +464,7 @@ public class UIElementServiceTests
             new FakeUiaNode("Button", "Somewhere") { Bounds = new UiaRect(-1920.5, 10.25, 80, 30) });
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Elements!.Select(e => e.Bounds).Should().Equal(null, null, new BoundsDto(-1921, 10, 81, 31));
@@ -475,7 +475,7 @@ public class UIElementServiceTests
     #region Failures while walking
 
     [Fact]
-    public void GetUIElements_WhenAnElementVanishes_SkipsItAndKeepsItsSiblings()
+    public async Task GetUIElements_WhenAnElementVanishes_SkipsItAndKeepsItsSiblings()
     {
         // Arrange
         Window(
@@ -484,7 +484,7 @@ public class UIElementServiceTests
             Node("Button", "C"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -495,7 +495,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenAProviderFails_SkipsTheElementLikeAVanishedOne()
+    public async Task GetUIElements_WhenAProviderFails_SkipsTheElementLikeAVanishedOne()
     {
         // Arrange
         Window(
@@ -503,7 +503,7 @@ public class UIElementServiceTests
             Node("Button", "Good"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         Shape(result.Elements).Should().Be("Good");
@@ -511,7 +511,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenAnElementsChildrenCannotBeRead_ReturnsTheElementAndMarksTheTreeTruncated()
+    public async Task GetUIElements_WhenAnElementsChildrenCannotBeRead_ReturnsTheElementAndMarksTheTreeTruncated()
     {
         // Arrange
         Window(
@@ -519,7 +519,7 @@ public class UIElementServiceTests
             Node("Button", "Next"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         Shape(result.Elements).Should().Be("Half,Next");
@@ -529,7 +529,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenInteractionPropertiesCannotBeRead_LeavesOutOnlyThatElement()
+    public async Task GetUIElements_WhenInteractionPropertiesCannotBeRead_LeavesOutOnlyThatElement()
     {
         // Arrange - a container whose provider fails a pattern query
         Window(
@@ -538,7 +538,7 @@ public class UIElementServiceTests
             new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(InteractableOnly: true));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(InteractableOnly: true));
 
         // Assert - the filters decide about the element itself, so its interactable children stay
         Shape(result.Elements).Should().Be("Inside,Good");
@@ -548,7 +548,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenAnElementVanishesWhileItsInteractionIsRead_SkipsItsSubtree()
+    public async Task GetUIElements_WhenAnElementVanishesWhileItsInteractionIsRead_SkipsItsSubtree()
     {
         // Arrange - the element is gone, and the elements inside it with it
         Window(
@@ -557,7 +557,7 @@ public class UIElementServiceTests
             new FakeUiaNode("Button", "Good") { ActionPatterns = ["Invoke"] });
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, filter: new UIElementFilter(InteractableOnly: true));
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(InteractableOnly: true));
 
         // Assert
         Shape(result.Elements).Should().Be("Good");
@@ -566,13 +566,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowsChildrenVanish_ReturnsElementAccessFailed()
+    public async Task GetUIElements_WhenTheWindowsChildrenVanish_ReturnsElementAccessFailed()
     {
         // Arrange
         Window().ChildrenException = FakeUiaTree.Vanished("window");
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert - an empty tree would look like a window without controls
         result.Success.Should().BeFalse();
@@ -581,13 +581,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowsChildrenCannotBeRead_ReturnsOperationException()
+    public async Task GetUIElements_WhenTheWindowsChildrenCannotBeRead_ReturnsOperationException()
     {
         // Arrange
         Window().ChildrenException = new System.Runtime.InteropServices.COMException("boom");
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -596,13 +596,13 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowsProviderTimesOut_ReturnsOperationTimedOut()
+    public async Task GetUIElements_WhenTheWindowsProviderTimesOut_ReturnsOperationTimedOut()
     {
         // Arrange
         Window().ChildrenException = new TimeoutException("provider timeout");
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -610,14 +610,14 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowTitleCannotBeRead_StillReturnsTheTree()
+    public async Task GetUIElements_WhenTheWindowTitleCannotBeRead_StillReturnsTheTree()
     {
         // Arrange
         var window = new FakeUiaNode("Window", "Title") { ReadException = FakeUiaTree.Vanished() }.With(Node("Button", "A"));
         _tree.WithWindow(Handle, window);
 
         // Act
-        var result = CreateSut().GetUIElements(Handle);
+        var result = await CreateSut().GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -630,7 +630,7 @@ public class UIElementServiceTests
     #region Timeouts return what was read
 
     [Fact]
-    public void GetUIElements_WhenTheTimeoutPassesDuringTheWalk_ReturnsThePartialTree()
+    public async Task GetUIElements_WhenTheTimeoutPassesDuringTheWalk_ReturnsThePartialTree()
     {
         // Arrange - the timeout fires while "B" is read
         using var cts = new CancellationTokenSource();
@@ -640,7 +640,7 @@ public class UIElementServiceTests
             Node("Button", "C"));
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, cancellationToken: cts.Token);
+        var result = await CreateSut().GetUIElementsAsync(Handle, cancellationToken: cts.Token);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -653,7 +653,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheTimeoutPassesBeforeAnyElementIsRead_ReturnsOperationTimedOut()
+    public async Task GetUIElements_WhenTheTimeoutPassesBeforeAnyElementIsRead_ReturnsOperationTimedOut()
     {
         // Arrange
         BuildToolbarWindow();
@@ -661,7 +661,7 @@ public class UIElementServiceTests
         cts.Cancel();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, cancellationToken: cts.Token);
+        var result = await CreateSut().GetUIElementsAsync(Handle, cancellationToken: cts.Token);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -671,7 +671,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheTimeoutPassesBeforeAnElementMatches_SaysHowManyWereRead()
+    public async Task GetUIElements_WhenTheTimeoutPassesBeforeAnElementMatches_SaysHowManyWereRead()
     {
         // Arrange - two elements are read, neither is a Button, then the timeout passes
         using var cts = new CancellationTokenSource();
@@ -681,7 +681,7 @@ public class UIElementServiceTests
             Node("Button", "C"));
 
         // Act
-        var result = CreateSut().GetUIElements(
+        var result = await CreateSut().GetUIElementsAsync(
             Handle, filter: new UIElementFilter(ControlTypes: ["Button"]), cancellationToken: cts.Token);
 
         // Assert - elements were read, so "before any element was read" would be wrong
@@ -691,14 +691,14 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_RunsTheWalkOnTheWorkerWithTheCallersTokenAndAGracePeriod()
+    public async Task GetUIElements_RunsTheWalkOnTheWorkerWithTheCallersTokenAndAGracePeriod()
     {
         // Arrange
         BuildToolbarWindow();
         using var cts = new CancellationTokenSource();
 
         // Act
-        CreateSut().GetUIElements(Handle, cancellationToken: cts.Token);
+        await CreateSut().GetUIElementsAsync(Handle, cancellationToken: cts.Token);
 
         // Assert - the grace lets a walk that stops at the timeout hand back its partial tree
         _worker.Calls.Should().Be(1);
@@ -707,7 +707,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_CountsTheWalkAgainstTheProcessThatOwnsTheWindow()
+    public async Task GetUIElements_CountsTheWalkAgainstTheProcessThatOwnsTheWindow()
     {
         // Arrange
         BuildToolbarWindow();
@@ -715,14 +715,14 @@ public class UIElementServiceTests
         windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(4242u);
 
         // Act
-        new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+        await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
 
         // Assert - a hung application then blocks only walks of its own windows
         _worker.LastTargetProcessId.Should().Be(4242);
     }
 
     [Fact]
-    public void GetUIElements_OfAUwpFrame_CountsTheWalkAgainstTheAppNotItsFrameHost()
+    public async Task GetUIElements_OfAUwpFrame_CountsTheWalkAgainstTheAppNotItsFrameHost()
     {
         // Arrange - ApplicationFrameHost owns the frame of every UWP app; the app runs in its CoreWindow's process
         BuildToolbarWindow();
@@ -736,14 +736,67 @@ public class UIElementServiceTests
             .Callback<nint, Func<nint, bool>>((_, callback) => callback(coreWindow));
 
         // Act
-        new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+        await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
 
         // Assert - a hung UWP app then blocks only walks of itself, not of every other UWP app
         _worker.LastTargetProcessId.Should().Be(7000);
     }
 
     [Fact]
-    public void GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
+    public async Task GetUIElements_OfAMinimizedWindow_ReportsWindowStateMinimized()
+    {
+        // Arrange - a minimized window's elements are offscreen, so visibleOnly leaves them all out (roadmap M2.9)
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+        windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert - sent by name, as the tool results serialize it
+        result.WindowState.Should().Be(WindowState.Minimized);
+        System.Text.Json.JsonSerializer.Serialize(result, ModelContextProtocol.McpJsonUtilities.DefaultOptions)
+            .Should().Contain("\"windowState\":\"Minimized\"");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAControlInAMaximizedWindow_ReportsTheTopLevelWindowsState()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var root = new nint(0x7000);
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+        windows.Setup(w => w.GetAncestor(Handle, WindowAncestor.Root)).Returns(root);
+        windows.Setup(w => w.IsZoomed(root)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.WindowState.Should().Be(WindowState.Maximized);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfANormalWindow_ReportsWindowStateNormal_AndOfNoWindowNone()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+
+        // Act
+        var normal = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+        var unknown = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        normal.WindowState.Should().Be(WindowState.Normal);
+        unknown.WindowState.Should().BeNull("without window reads the state is not known");
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
     {
         // Arrange
         BuildToolbarWindow();
@@ -751,7 +804,7 @@ public class UIElementServiceTests
         windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Throws(new InvalidOperationException("gone"));
 
         // Act
-        var result = new UIElementService(_tree, _worker, windows.Object).GetUIElements(Handle);
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -759,16 +812,16 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhileEarlierWalksOfTheApplicationAreStuck_ReturnsOperationTimedOut()
+    public async Task GetUIElements_WhileEarlierWalksOfTheApplicationAreStuck_ReturnsOperationTimedOut()
     {
         // Arrange - the worker refuses to start another read of the hung application
         BuildToolbarWindow();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new UiaReadRefusedException("UI Automation is not responding for the application (process 4242)."));
 
         // Act
-        var result = new UIElementService(_tree, worker.Object).GetUIElements(Handle);
+        var result = await new UIElementService(_tree, worker.Object).GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -777,17 +830,17 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenUiAutomationDoesNotAnswerByTheDeadline_ReturnsOperationTimedOut()
+    public async Task GetUIElements_WhenUiAutomationDoesNotAnswerByTheDeadline_ReturnsOperationTimedOut()
     {
         // Arrange - the worker gave up on a read stuck in a hung application
         BuildToolbarWindow();
         var worker = new Mock<IUiaWorker>();
-        worker.Setup(w => w.Run(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
-            .Throws(new TimeoutException("UI Automation did not answer in time."));
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, UIElementResult>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new TimeoutException("UI Automation did not answer in time."));
         var sut = new UIElementService(_tree, worker.Object);
 
         // Act
-        var result = sut.GetUIElements(Handle);
+        var result = await sut.GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -796,7 +849,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheProviderHangsMidWalk_ReturnsWhatWasReadBeforeIt()
+    public async Task GetUIElements_WhenTheProviderHangsMidWalk_ReturnsWhatWasReadBeforeIt()
     {
         // Arrange - B2's provider stops answering while the walk reads it; the worker abandons the walk
         using var worker = new AbandoningUiaWorker();
@@ -808,7 +861,7 @@ public class UIElementServiceTests
             Node("Button", "C"));
 
         // Act
-        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+        var result = await new UIElementService(_tree, worker).GetUIElementsAsync(Handle);
 
         // Assert - the elements read so far, the one being walked included, as after a cooperative timeout
         result.Success.Should().BeTrue(result.Error);
@@ -822,7 +875,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheAbandonedWalkGoesOnLater_TheReturnedTreeDoesNotChange()
+    public async Task GetUIElements_WhenTheAbandonedWalkGoesOnLater_TheReturnedTreeDoesNotChange()
     {
         // Arrange
         using var worker = new AbandoningUiaWorker();
@@ -832,7 +885,7 @@ public class UIElementServiceTests
                 new FakeUiaNode("Button", "B2") { OnRead = worker.Hang },
                 Node("Button", "B3")),
             Node("Button", "C"));
-        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+        var result = await new UIElementService(_tree, worker).GetUIElementsAsync(Handle);
 
         // Act - the provider answers again, and the abandoned walk reads the rest
         worker.ReleaseAndWait();
@@ -844,7 +897,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheProviderHangsInAFilteredOutElement_ReturnsItsMatchingChildrenInItsPlace()
+    public async Task GetUIElements_WhenTheProviderHangsInAFilteredOutElement_ReturnsItsMatchingChildrenInItsPlace()
     {
         // Arrange - the Pane is not returned (controlTypes), so the Buttons read inside it take its place
         using var worker = new AbandoningUiaWorker();
@@ -855,7 +908,7 @@ public class UIElementServiceTests
                 new FakeUiaNode("Button", "P2") { OnRead = worker.Hang }));
 
         // Act
-        var result = new UIElementService(_tree, worker).GetUIElements(
+        var result = await new UIElementService(_tree, worker).GetUIElementsAsync(
             Handle, filter: new UIElementFilter(ControlTypes: ["Button"]));
 
         // Assert
@@ -865,14 +918,14 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_WhenTheProviderHangsBeforeAnyElementMatches_ReturnsOperationTimedOut()
+    public async Task GetUIElements_WhenTheProviderHangsBeforeAnyElementMatches_ReturnsOperationTimedOut()
     {
         // Arrange
         using var worker = new AbandoningUiaWorker();
         Window(new FakeUiaNode("Button", "A") { OnRead = worker.Hang });
 
         // Act
-        var result = new UIElementService(_tree, worker).GetUIElements(Handle);
+        var result = await new UIElementService(_tree, worker).GetUIElementsAsync(Handle);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -905,7 +958,7 @@ public class UIElementServiceTests
             _thread?.Join(TimeSpan.FromSeconds(30));
         }
 
-        public T Run<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
         {
             _thread = new Thread(() =>
             {
@@ -922,7 +975,7 @@ public class UIElementServiceTests
             _thread.Start();
 
             _stuck.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue("the read reaches the hanging provider");
-            throw new TimeoutException("UI Automation did not answer in time. The application may not be responding.");
+            return Task.FromException<T>(new TimeoutException("UI Automation did not answer in time. The application may not be responding."));
         }
 
         public void Dispose()
@@ -935,16 +988,69 @@ public class UIElementServiceTests
 
     #endregion
 
+    #region Progress
+
+    [Fact]
+    public async Task GetUIElementsAsync_ReportsProgress_EveryHundredElementsRead()
+    {
+        // Arrange - 250 buttons
+        Window(Enumerable.Range(1, 250).Select(i => Node("Button", $"B{i}")).ToArray());
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, progress: progress);
+
+        // Assert - the size of the tree is not known in advance, so there is no total
+        result.TotalElementCount.Should().Be(250);
+        progress.Reports.Select(p => p.Completed).Should().Equal(UIElementService.ProgressInterval, 2 * UIElementService.ProgressInterval);
+        progress.Reports.Should().OnlyContain(p => p.Total == null);
+        progress.Reports[0].Message.Should().StartWith("Read 100 UI elements so far").And.EndWith("down to level 1 of 5");
+    }
+
+    [Fact]
+    public async Task GetUIElementsAsync_OnceTheWalkIsAskedToStop_ReportsNoMoreProgress()
+    {
+        // Arrange - the walk is asked to stop while the 200th element is read: the caller may already have its result,
+        // and a progress notification must not follow the result of the call
+        using var cts = new CancellationTokenSource();
+        Window(Enumerable.Range(1, 250)
+            .Select(i => i == 200 ? new FakeUiaNode("Button", $"B{i}") { OnRead = cts.Cancel } : Node("Button", $"B{i}"))
+            .ToArray());
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, progress: progress, cancellationToken: cts.Token);
+
+        // Assert
+        result.Truncated.Should().BeTrue();
+        progress.Reports.Select(p => p.Completed).Should().Equal(UIElementService.ProgressInterval);
+    }
+
+    [Fact]
+    public async Task GetUIElementsAsync_WithoutProgress_WalksTheSameTree()
+    {
+        // Arrange
+        Window(Enumerable.Range(1, 150).Select(i => Node("Button", $"B{i}")).ToArray());
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, progress: null);
+
+        // Assert
+        result.TotalElementCount.Should().Be(150);
+    }
+
+    #endregion
+
     #region Result
 
     [Fact]
-    public void GetUIElements_CompleteWalk_ReportsTheWindowAndNoTruncation()
+    public async Task GetUIElements_CompleteWalk_ReportsTheWindowAndNoTruncation()
     {
         // Arrange
         BuildToolbarWindow();
 
         // Act
-        var result = CreateSut().GetUIElements(Handle, maxDepth: 5);
+        var result = await CreateSut().GetUIElementsAsync(Handle, maxDepth: 5);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -959,7 +1065,7 @@ public class UIElementServiceTests
     }
 
     [Fact]
-    public void GetUIElements_CopiesTheElementProperties()
+    public async Task GetUIElements_CopiesTheElementProperties()
     {
         // Arrange
         Window(new FakeUiaNode("Button", "Save")
@@ -970,20 +1076,20 @@ public class UIElementServiceTests
         });
 
         // Act
-        var element = CreateSut().GetUIElements(Handle).Elements!.Single();
+        var element = (await CreateSut().GetUIElementsAsync(Handle)).Elements!.Single();
 
         // Assert
         element.Should().Be(new UIElementInfo("Save", "Button", "SaveBtn", new BoundsDto(10, 20, 80, 24), IsEnabled: false, IsOffscreen: false));
     }
 
     [Fact]
-    public void GetUIElements_EmptyNameAndAutomationId_AreNull()
+    public async Task GetUIElements_EmptyNameAndAutomationId_AreNull()
     {
         // Arrange
         Window(new FakeUiaNode("Pane", "") { AutomationId = "" });
 
         // Act
-        var element = CreateSut().GetUIElements(Handle).Elements!.Single();
+        var element = (await CreateSut().GetUIElementsAsync(Handle)).Elements!.Single();
 
         // Assert
         element.Name.Should().BeNull();

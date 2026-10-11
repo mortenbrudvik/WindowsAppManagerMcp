@@ -110,9 +110,10 @@ public class ToolResultSerializationTests
         // Arrange - the normal success path finds the browser window, so the handle is non-null.
         const string userDataDir = @"C:\Temp\browser-debug";
         var processService = new Mock<IProcessService>();
-        processService.Setup(s => s.LaunchBrowserWithDebug(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new DebugBrowserLaunchResult(
+        processService.Setup(s => s.LaunchBrowserWithDebugAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DebugBrowserLaunchResult(
                 Success: true,
                 ProcessId: 4321,
                 WindowHandle: new nint(5678),
@@ -142,7 +143,7 @@ public class ToolResultSerializationTests
     {
         // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
         var layoutService = new Mock<ILayoutService>();
-        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",
@@ -156,7 +157,7 @@ public class ToolResultSerializationTests
                         ErrorCode: nameof(WindowErrorCode.FocusFailed))
                 ]));
         await using var server = await InProcessMcpServer.StartAsync(
-            [], builder => builder.WithTools(new LayoutPresetTools(layoutService.Object)));
+            [], builder => builder.WithServerTools(new LayoutPresetTools(layoutService.Object)));
 
         // Act - goes through the SDK's own argument binding and result serialization
         var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });
@@ -171,6 +172,47 @@ public class ToolResultSerializationTests
         focus.GetProperty("foregroundProcess").GetString().Should().Be("WindowsTerminal");
         focus.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.FocusFailed));
         focus.GetProperty("error").GetString().Should().Contain("foreground lock");
+    }
+
+    [Fact]
+    public async Task ApplyLayout_ThroughMcpServer_ReturnsTheStatusAndEachPlacement_AsAnError_WhenPartial()
+    {
+        // Arrange - roadmap M2.8: one placement arranged, one not found, one skipped
+        var layoutService = new Mock<ILayoutService>();
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsArranged: 1,
+                WindowsNotFound: 1,
+                Errors: ["No open window matched placement 1 (process 'slack')", "Skipped placement 2 (no matcher): ..."],
+                ErrorCode: nameof(LayoutErrorCode.WindowNotFound),
+                Placements:
+                [
+                    new LayoutPlacementResult(0, LayoutPlacementStatus.Applied, new LayoutWindowRef(0x101, "Inbox - Mail - Google Chrome", "chrome")),
+                    new LayoutPlacementResult(1, LayoutPlacementStatus.NotFound, ErrorCode: nameof(LayoutErrorCode.WindowNotFound),
+                        Error: "No open window matched placement 1 (process 'slack')"),
+                    new LayoutPlacementResult(2, LayoutPlacementStatus.NotApplicable, ErrorCode: nameof(LayoutErrorCode.NoMatchCriterion),
+                        Error: "Skipped placement 2 (no matcher): ...")
+                ]));
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddToolErrorReporting().WithServerTools(new LayoutPresetTools(layoutService.Object)));
+
+        // Act
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });
+
+        // Assert - a partial apply is not a success, so the client sees isError
+        result.IsError.Should().BeTrue();
+        var json = JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("status").GetString().Should().Be("partial");
+        var placements = json.GetProperty("placements").EnumerateArray().ToList();
+        placements.Select(p => p.GetProperty("status").GetString()).Should().Equal("applied", "notFound", "notApplicable");
+        placements[0].GetProperty("window").GetProperty("handle").GetInt64().Should().Be(0x101);
+        placements[0].GetProperty("window").GetProperty("processName").GetString().Should().Be("chrome");
+        placements[0].TryGetProperty("errorCode", out _).Should().BeFalse("an applied placement has no error code");
+        placements[1].TryGetProperty("window", out _).Should().BeFalse();
+        placements[2].GetProperty("errorCode").GetString().Should().Be(nameof(LayoutErrorCode.NoMatchCriterion));
     }
 
     /// <summary>

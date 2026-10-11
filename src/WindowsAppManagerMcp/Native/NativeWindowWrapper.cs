@@ -60,9 +60,12 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return (rect.Left, rect.Top, rect.Right, rect.Bottom);
     }
 
-    public bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags)
+    public Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags)
     {
-        return NativeMethods.User32.SetWindowPos(hWnd, nint.Zero, x, y, width, height, flags);
+        // The error must be read here, right after the call: nothing else may run in between
+        return NativeMethods.User32.SetWindowPos(hWnd, nint.Zero, x, y, width, height, flags)
+            ? Win32CallResult.Ok
+            : Win32CallResult.Failure(Marshal.GetLastPInvokeError());
     }
 
     public bool ShowWindow(nint hWnd, int cmdShow)
@@ -155,8 +158,13 @@ public class NativeWindowWrapper : INativeWindowWrapper
 
     public bool IsCloaked(nint hWnd)
     {
+        return GetCloakReason(hWnd) != 0;
+    }
+
+    public int GetCloakReason(nint hWnd)
+    {
         var hr = NativeMethods.Dwmapi.DwmGetWindowAttribute(hWnd, NativeEnums.DWMWA_CLOAKED, out int cloaked, sizeof(int));
-        return hr == 0 && cloaked != 0;
+        return hr == 0 ? cloaked : 0;
     }
 
     public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd)

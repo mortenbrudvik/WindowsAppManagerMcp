@@ -81,7 +81,58 @@ public enum WindowErrorCode
     /// its window in the notification area. It was not activated, because keyboard input would then go to a
     /// window the user cannot see.
     /// </summary>
-    WindowHidden = 27
+    WindowHidden = 27,
+
+    // Codes added in M2 (honest results and typed parameters, roadmap M2.1, M2.2 and M2.10):
+
+    /// <summary>get_foreground_window: no window is in the foreground (windows are switching, or a UAC prompt or the lock screen is shown).</summary>
+    NoForegroundWindow = 28,
+
+    /// <summary>The window state is not one of the allowed values (minimize, maximize, restore and their aliases).</summary>
+    InvalidState = 29,
+
+    /// <summary>The positioning of move_window_to_monitor is not one of the allowed values.</summary>
+    InvalidPositioning = 30,
+
+    /// <summary>The user declined, dismissed or did not answer the confirmation question (elicitation). Nothing was done.</summary>
+    ConfirmationDeclined = 31,
+
+    /// <summary>
+    /// The window is not the one the call expected: after the user confirmed a close, its handle belongs to a different
+    /// process than the one the user was asked about (roadmap M2.10); or a window selector named a handle together with
+    /// what the window must be (processId, processName, a title or className), and the window no longer matches it, so
+    /// the handle was most likely reused by another window (roadmap M2.4). Nothing was sent to it.
+    /// </summary>
+    HandleMismatch = 32,
+
+    // Verified close (roadmap M2.5):
+
+    /// <summary>
+    /// The close message was sent, but the window was still open and visible when the wait ended, and no prompt was
+    /// found: the application is busy, slow or ignores the request.
+    /// </summary>
+    StillOpen = 33,
+
+    /// <summary>
+    /// The close message was sent, but the window waits for an answer to a prompt (a "Save changes?" dialog); the result
+    /// describes the prompt. Nothing was answered.
+    /// </summary>
+    PromptShown = 34,
+
+    // Window selectors (roadmap M2.4):
+
+    /// <summary>
+    /// No window matches the call's window selector (or its index is past the matches). Nothing was done. The listing
+    /// rules of find_windows apply: cloaked and untitled windows only with includeCloaked and includeUntitled, and
+    /// processName is the whole process name unless processNameContains is set.
+    /// </summary>
+    WindowNotFound = 35,
+
+    /// <summary>
+    /// More than one window matches the call's window selector, and it has no index. Nothing was done; the error lists up
+    /// to 5 candidates (handle, title, process and class) so the caller can name one exactly.
+    /// </summary>
+    AmbiguousWindow = 36
 }
 
 /// <summary>
@@ -119,7 +170,10 @@ public enum LaunchErrorCode
     /// <summary>Invalid path format.</summary>
     InvalidPath = 8,
 
-    /// <summary>Failed to start the process.</summary>
+    /// <summary>
+    /// Failed to start the process. No longer returned (roadmap M2.6): when ShellExecute starts no process, the request
+    /// went to a running app, and the launch succeeds with launchStatus possibleHandoff. Kept so the number is not reused.
+    /// </summary>
     ProcessStartFailed = 9,
 
     /// <summary>An exception occurred during launch.</summary>
@@ -141,7 +195,19 @@ public enum LaunchErrorCode
     /// A bare executable name was found only in the working directory. Bare names are never resolved
     /// from the working directory, to avoid running a planted program.
     /// </summary>
-    ExecutableInWorkingDirectory = 13
+    ExecutableInWorkingDirectory = 13,
+
+    /// <summary>
+    /// The user declined or cancelled a prompt Windows showed for the start, most likely a UAC prompt for a program that
+    /// needs administrator rights (Win32 error 1223, within the start timeout). Nothing was started.
+    /// </summary>
+    ElevationCancelled = 14,
+
+    /// <summary>
+    /// A bare name was not found in the Windows directory, System32, the absolute PATH entries or App Paths. It is not
+    /// passed to Windows unresolved, because Windows would also search the current directory.
+    /// </summary>
+    ExecutableNotFound = 15
 }
 
 /// <summary>
@@ -215,7 +281,19 @@ public enum ProcessErrorCode
     /// the child processes the forced kill would also end could not be checked against the target policy and the
     /// host guard. Nothing was terminated.
     /// </summary>
-    ProcessTreeUnreadable = 15
+    ProcessTreeUnreadable = 15,
+
+    /// <summary>
+    /// The MCP client can ask the user (elicitation), and the user declined, dismissed or did not answer the
+    /// confirmation question (roadmap M2.10). Nothing was done.
+    /// </summary>
+    ConfirmationDeclined = 16,
+
+    /// <summary>
+    /// forceKill after the user confirmed: the process gained a child process the user was not shown while the question
+    /// was open, so the forced kill would end a process nobody approved. Nothing was terminated.
+    /// </summary>
+    ProcessTreeChanged = 17
 }
 
 /// <summary>
@@ -251,7 +329,16 @@ public enum LayoutErrorCode
     WindowNotFound = 8,
 
     /// <summary>No windows matched the capture filters, so nothing was saved.</summary>
-    NoWindowsCaptured = 9
+    NoWindowsCaptured = 9,
+
+    /// <summary>apply_layout's matchBy is not one of the allowed values (roadmap M2.2). Nothing was arranged.</summary>
+    InvalidMatchBy = 10,
+
+    /// <summary>
+    /// A placement has no criterion apply_layout's matchBy can use (title_only without titleContains, process_only
+    /// without a process name, or neither), so it was skipped instead of matching every window (roadmap M2.8).
+    /// </summary>
+    NoMatchCriterion = 11
 }
 
 /// <summary>
@@ -289,14 +376,44 @@ public enum ScreenshotErrorCode
     /// <summary>The window handle is invalid or the window no longer exists.</summary>
     InvalidHandle = 9,
 
-    /// <summary>Windows could not capture the pixels (for example the window is minimized).</summary>
+    /// <summary>
+    /// Windows could not capture the pixels: PrintWindow and the window-DC copy both failed, the window is
+    /// larger than the pixel budget, or the window closed during the capture. The error has the reason.
+    /// </summary>
     CaptureFailed = 10,
 
     /// <summary>
     /// capture_window and capture_with_elements: the server's target policy (WAM_DENY_PROCESSES,
     /// WAM_ALLOW_PROCESSES) refuses the window's process (roadmap M1.12). Nothing was captured or read.
     /// </summary>
-    TargetDeniedByPolicy = 11
+    TargetDeniedByPolicy = 11,
+
+    // Capture health codes (roadmap M2.9):
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the window, or the top-level window it is part of, is minimized.
+    /// Windows does not draw it, so nothing was captured. Restore it first, or pass restoreIfMinimized.
+    /// </summary>
+    WindowMinimized = 12,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the window, or a parent of it, is hidden (no WS_VISIBLE). Nothing
+    /// was captured: a hidden window draws nothing the user can see. The same name as the focus_window code.
+    /// </summary>
+    WindowHidden = 13,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: DWM cloaks the window (it is on another virtual desktop, it is a
+    /// suspended Store app, or its app hid it this way), so its pixels are not drawn. Nothing was captured. The same
+    /// name as the focus_window code.
+    /// </summary>
+    Cloaked = 14,
+
+    /// <summary>capture_region: no part of the region is on the virtual screen (the area of all monitors). Nothing was captured.</summary>
+    RegionOffScreen = 15,
+
+    /// <summary>The pixels were captured, but the image could not be built, scaled or encoded (for example out of memory).</summary>
+    EncodeFailed = 16
 }
 
 /// <summary>
@@ -375,4 +492,48 @@ public enum BrowserErrorCode
 
     /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
     HtmlRequiresCdp = 38
+}
+
+/// <summary>
+/// Error codes for get_clipboard and set_clipboard (roadmap M2.16). A refused read returns no content at all.
+/// </summary>
+public enum ClipboardErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>
+    /// get_clipboard: the clipboard holds content the agent did not put there (the user or another app copied it), and
+    /// reading the user's clipboard is not allowed: WAM_ALLOW_USER_CLIPBOARD is off and the user was not asked, or the
+    /// clipboard changed while they were asked. Nothing was read.
+    /// </summary>
+    ClipboardNotFromAgent = 1,
+
+    /// <summary>
+    /// get_clipboard: the content is marked private (ExcludeClipboardContentFromMonitorProcessing,
+    /// CanIncludeInClipboardHistory = 0 or Clipboard Viewer Ignore), as password managers mark what they copy. It is
+    /// never returned, whoever copied it, unless it is the text set_clipboard put there.
+    /// </summary>
+    ClipboardPrivate = 2,
+
+    /// <summary>get_clipboard: the clipboard holds nothing in the format asked for; availableFormats lists what it holds.</summary>
+    FormatNotAvailable = 3,
+
+    /// <summary>Another application kept the clipboard open, or did not answer, so it could not be read or set.</summary>
+    ClipboardBusy = 4,
+
+    /// <summary>Windows refused to read or set the clipboard data; the error has the Win32 error.</summary>
+    ClipboardFailed = 5,
+
+    /// <summary>get_clipboard: the user was asked to let the agent read their clipboard and did not allow it. Nothing was read.</summary>
+    ConfirmationDeclined = 6,
+
+    /// <summary>get_clipboard: the format is not text, html or files.</summary>
+    InvalidFormat = 7,
+
+    /// <summary>
+    /// get_clipboard: the agent's copy keys were sent moments ago, but the clipboard did not change within a second
+    /// (nothing selected, or the application did not copy). Nothing was read, and the user is not asked.
+    /// </summary>
+    NothingCopied = 8
 }

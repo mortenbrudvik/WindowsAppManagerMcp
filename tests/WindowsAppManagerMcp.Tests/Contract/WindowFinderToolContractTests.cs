@@ -110,12 +110,166 @@ public class WindowFinderToolContractTests
         window.GetProperty("className").GetString().Should().Be("#32768");
     }
 
+    [Fact]
+    public async Task GetForegroundWindow_WithNoWindowInFront_IsAnErrorWithNoForegroundWindow_NotEmptyContent()
+    {
+        // Arrange - for a moment during a switch, or on the secure desktop, no window is in the foreground
+        _windowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync("get_foreground_window");
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var payload = ParsePayload(result);
+        payload.GetProperty("success").GetBoolean().Should().BeFalse();
+        payload.GetProperty("errorCode").GetString().Should().Be("NoForegroundWindow");
+        payload.GetProperty("error").GetString().Should().Contain("No window is in the foreground");
+    }
+
+    [Fact]
+    public async Task FindWindows_BindsTheSelectorFilters_SortAndLimit()
+    {
+        // Arrange
+        _windowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([]);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync("find_windows", new Dictionary<string, object?>
+        {
+            ["titleEquals"] = "Untitled - Notepad",
+            ["titleRegex"] = "^Untitled",
+            ["processName"] = "note",
+            ["processNameContains"] = true,
+            ["includeUntitled"] = true,
+            ["sort"] = "title",
+            ["limit"] = 3,
+        });
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        _windowService.Verify(w => w.FindWindows(It.Is<WindowQuery>(q =>
+            q.TitleEquals == "Untitled - Notepad" && q.TitleRegex == "^Untitled" && q.ProcessName == "note" && q.ProcessNameContains &&
+            q.IncludeUntitled && q.Sort == WindowSort.Title && q.Limit == 3)), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("sort", "newest", "sort order")]
+    [InlineData("limit", 0, "limit")]
+    [InlineData("titleRegex", "(unclosed", "titleRegex")]
+    public async Task FindWindows_AnInvalidSortLimitOrRegex_IsInvalidArguments(string argument, object value, string named)
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("find_windows", new Dictionary<string, object?> { [argument] = value });
+
+        result.IsError.Should().BeTrue();
+        var payload = ParsePayload(result);
+        payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        payload.GetProperty("error").GetString().Should().Contain(named);
+        _windowService.Verify(w => w.FindWindows(It.IsAny<WindowQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetWindowInfo_BindsTheWindowSelectorFromItsJsonNames()
+    {
+        // Arrange
+        var notepad = TestDataFactory.CreateWindowInfo(1001, "Untitled - Notepad", "notepad", 100) with { ClassName = "Notepad" };
+        _windowService.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>())).Returns(WindowResolution.Found(notepad));
+        _windowService.Setup(w => w.GetWindowInfo(notepad.Handle)).Returns(notepad);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync("get_window_info", new Dictionary<string, object?>
+        {
+            ["window"] = new Dictionary<string, object?>
+            {
+                ["processName"] = "notepad", ["titleContains"] = "Untitled", ["className"] = "Notepad", ["index"] = 0,
+                ["includeCloaked"] = true, ["processNameContains"] = false
+            },
+            ["detail"] = "compact",
+        });
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        var payload = ParsePayload(result);
+        payload.GetProperty("handle").GetInt64().Should().Be(1001);
+        payload.GetProperty("state").GetString().Should().Be("normal");
+        payload.TryGetProperty("bounds", out _).Should().BeFalse("compact leaves the bounds out");
+        _windowService.Verify(w => w.ResolveWindow(new WindowSelector
+        {
+            ProcessName = "notepad", TitleContains = "Untitled", ClassName = "Notepad", Index = 0, IncludeCloaked = true
+        }), Times.Once);
+    }
+
+    [Fact]
+    public async Task AWindowSelectorWithAnUnknownProperty_IsInvalidArguments_SoATypoNeverWidensTheMatch()
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("get_window_info", new Dictionary<string, object?>
+        {
+            ["window"] = new Dictionary<string, object?> { ["processName"] = "notepad", ["titleContain"] = "Untitled" }
+        });
+
+        result.IsError.Should().BeTrue();
+        ParsePayload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _windowService.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnAmbiguousSelector_IsAnError_ThatListsTheCandidates()
+    {
+        // Arrange
+        var chrome = Enumerable.Range(0, 2)
+            .Select(i => TestDataFactory.CreateWindowInfo(2001 + i, $"Tab {i} - Google Chrome", "chrome", 300) with { ClassName = "Chrome_WidgetWin_1" })
+            .ToList();
+        _windowService.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>()))
+            .Returns(WindowResolution.Failed("AmbiguousWindow", "2 windows match processName 'chrome'.", chrome));
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync("get_window_info", new Dictionary<string, object?>
+        {
+            ["window"] = new Dictionary<string, object?> { ["processName"] = "chrome" }
+        });
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var payload = ParsePayload(result);
+        payload.GetProperty("success").GetBoolean().Should().BeFalse();
+        payload.GetProperty("errorCode").GetString().Should().Be("AmbiguousWindow");
+        var candidates = payload.GetProperty("candidates").EnumerateArray().ToList();
+        candidates.Should().HaveCount(2);
+        candidates[0].GetProperty("handle").GetInt64().Should().Be(2001);
+        candidates[0].GetProperty("title").GetString().Should().Be("Tab 0 - Google Chrome");
+        candidates[0].GetProperty("processName").GetString().Should().Be("chrome");
+        candidates[0].GetProperty("processId").GetInt32().Should().Be(300);
+        candidates[0].GetProperty("className").GetString().Should().Be("Chrome_WidgetWin_1");
+    }
+
+    [Fact]
+    public async Task GetWindowInfo_WithHandleAndWindow_IsInvalidArguments()
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("get_window_info", new Dictionary<string, object?>
+        {
+            ["handle"] = 1001,
+            ["window"] = new Dictionary<string, object?> { ["processName"] = "notepad" }
+        });
+
+        result.IsError.Should().BeTrue();
+        ParsePayload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+    }
+
     private Task<InProcessMcpServer> StartServerAsync() =>
         InProcessMcpServer.StartAsync(
             [],
             builder => builder
                 .AddToolErrorReporting()
-                .WithTools(new WindowFinderTools(_windowService.Object)));
+                .WithServerTools(new WindowFinderTools(_windowService.Object)));
 
     private static JsonElement ParsePayload(CallToolResult result)
     {

@@ -1,4 +1,5 @@
 using System.Reflection;
+using ModelContextProtocol.Server;
 
 namespace WindowsAppManagerMcp;
 
@@ -11,6 +12,26 @@ namespace WindowsAppManagerMcp;
 public static class ServerVersion
 {
     public static string Current { get; } = FromAssembly(typeof(ServerVersion).Assembly);
+
+    /// <summary>The commit the server was built from (the build metadata of <see cref="Current"/>), or null.</summary>
+    public static string? GitSha => GitShaOf(Current);
+
+    /// <summary>The version of the MCP C# SDK (ModelContextProtocol) the server runs, without its commit.</summary>
+    public static string SdkVersion { get; } = WithoutBuildMetadata(FromAssembly(typeof(McpServer).Assembly));
+
+    /// <summary>The build metadata of a version ("1.13.0+abc" gives "abc"), or null when it has none.</summary>
+    public static string? GitShaOf(string version)
+    {
+        var plus = version.IndexOf('+', StringComparison.Ordinal);
+        return plus < 0 || plus == version.Length - 1 ? null : version[(plus + 1)..];
+    }
+
+    /// <summary>A version without its build metadata ("2.2.0+abc" gives "2.2.0").</summary>
+    public static string WithoutBuildMetadata(string version)
+    {
+        var plus = version.IndexOf('+', StringComparison.Ordinal);
+        return plus < 0 ? version : version[..plus];
+    }
 
     public static string FromAssembly(Assembly assembly) =>
         Resolve(

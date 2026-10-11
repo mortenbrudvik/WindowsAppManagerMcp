@@ -22,7 +22,7 @@ public class WindowManagerToolsTests
     #region MoveWindow Tests
 
     [Fact]
-    public void MoveWindow_WithInvalidHandle_ReturnsFailure()
+    public async Task MoveWindow_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -30,7 +30,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.MoveWindow(99999, 100, 100);
+        var result = await sut.MoveWindow(100, 100, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -39,18 +39,18 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void MoveWindow_WithValidHandle_CallsService()
+    public async Task MoveWindow_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(handleValue: 12345, x: 100, y: 200));
         var sut = CreateSut();
 
         // Act
-        var result = sut.MoveWindow(12345, 100, 200);
+        var result = await sut.MoveWindow(100, 200, handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -58,23 +58,23 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void MoveWindow_ReturnsNewBounds()
+    public async Task MoveWindow_ReturnsTheBoundsAfterwards()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 100, 200, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(handleValue: 12345, x: 100, y: 200, width: 800, height: 600));
         var sut = CreateSut();
 
         // Act
-        var result = sut.MoveWindow(12345, 100, 200);
+        var result = await sut.MoveWindow(100, 200, handle: 12345);
 
         // Assert
-        result.NewBounds.Should().NotBeNull();
-        result.NewBounds!.X.Should().Be(100);
-        result.NewBounds.Y.Should().Be(200);
+        result.Bounds.Should().NotBeNull();
+        result.Bounds!.X.Should().Be(100);
+        result.Bounds.Y.Should().Be(200);
     }
 
     #endregion
@@ -82,7 +82,7 @@ public class WindowManagerToolsTests
     #region ResizeWindow Tests
 
     [Fact]
-    public void ResizeWindow_WithInvalidHandle_ReturnsFailure()
+    public async Task ResizeWindow_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -90,7 +90,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.ResizeWindow(99999, 800, 600);
+        var result = await sut.ResizeWindow(800, 600, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -98,18 +98,18 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void ResizeWindow_WithValidHandle_CallsService()
+    public async Task ResizeWindow_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.ResizeWindow(handle, 1024, 768)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 1024, 768)).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(width: 1024, height: 768));
         var sut = CreateSut();
 
         // Act
-        var result = sut.ResizeWindow(12345, 1024, 768);
+        var result = await sut.ResizeWindow(1024, 768, handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -121,7 +121,7 @@ public class WindowManagerToolsTests
     #region SetWindowBounds Tests
 
     [Fact]
-    public void SetWindowBounds_WithInvalidHandle_ReturnsFailure()
+    public async Task SetWindowBounds_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -129,7 +129,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.SetWindowBounds(99999, 0, 0, 800, 600);
+        var result = await sut.SetWindowBounds(0, 0, 800, 600, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -137,26 +137,26 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void SetWindowBounds_WithValidHandle_CallsService()
+    public async Task SetWindowBounds_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SetWindowBounds(handle, 50, 50, 1000, 800, It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowFrame(handle, 50, 50, 1000, 800, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(x: 50, y: 50, width: 1000, height: 800));
         var sut = CreateSut();
 
         // Act
-        var result = sut.SetWindowBounds(12345, 50, 50, 1000, 800);
+        var result = await sut.SetWindowBounds(50, 50, 1000, 800, handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
-        result.NewBounds.Should().NotBeNull();
-        result.NewBounds!.X.Should().Be(50);
-        result.NewBounds.Y.Should().Be(50);
-        result.NewBounds.Width.Should().Be(1000);
-        result.NewBounds.Height.Should().Be(800);
+        result.Bounds.Should().NotBeNull();
+        result.Bounds!.X.Should().Be(50);
+        result.Bounds.Y.Should().Be(50);
+        result.Bounds.Width.Should().Be(1000);
+        result.Bounds.Height.Should().Be(800);
     }
 
     #endregion
@@ -164,7 +164,7 @@ public class WindowManagerToolsTests
     #region SetWindowState Tests
 
     [Fact]
-    public void SetWindowState_WithInvalidHandle_ReturnsFailure()
+    public async Task SetWindowState_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -172,53 +172,29 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.SetWindowState(99999, "minimize");
+        var result = await sut.SetWindowState(WindowStateRequest.Minimize, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
         result.Error.Should().Be("Invalid window handle");
     }
 
-    [Theory]
-    [InlineData("minimize", WindowState.Minimized)]
-    [InlineData("minimized", WindowState.Minimized)]
-    [InlineData("maximize", WindowState.Maximized)]
-    [InlineData("maximized", WindowState.Maximized)]
-    [InlineData("restore", WindowState.Normal)]
-    [InlineData("normal", WindowState.Normal)]
-    public void SetWindowState_ParsesStateStrings(string stateString, WindowState expectedState)
-    {
-        // Arrange
-        var handle = new nint(12345);
-        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SetWindowState(handle, expectedState)).Returns(true);
-        _mockWindowService.Setup(w => w.GetWindowInfo(handle))
-            .Returns(TestDataFactory.CreateWindowInfo(state: expectedState));
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.SetWindowState(12345, stateString);
-
-        // Assert
-        _mockWindowService.Verify(w => w.SetWindowState(handle, expectedState), Times.Once);
-    }
-
     [Fact]
-    public void SetWindowState_ReturnsNewState()
+    public async Task SetWindowState_ReturnsTheStateAfterwards()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SetWindowState(handle, WindowState.Maximized)).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowState(handle, WindowStateRequest.Maximize)).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo(state: WindowState.Maximized));
         var sut = CreateSut();
 
         // Act
-        var result = sut.SetWindowState(12345, "maximize");
+        var result = await sut.SetWindowState(WindowStateRequest.Maximize, handle: 12345);
 
         // Assert
-        result.NewState.Should().Be("maximized");
+        result.State.Should().Be("maximized");
     }
 
     #endregion
@@ -226,7 +202,7 @@ public class WindowManagerToolsTests
     #region FocusWindow Tests
 
     [Fact]
-    public void FocusWindow_WithInvalidHandle_ReturnsInvalidHandle()
+    public async Task FocusWindow_WithInvalidHandle_ReturnsInvalidHandle()
     {
         // Arrange
         _mockForegroundService.Setup(f => f.EnsureForeground(new nint(99999), It.IsAny<int>())).Returns(new FocusOutcome
@@ -239,7 +215,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.FocusWindow(99999);
+        var result = await sut.FocusWindow(handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -250,7 +226,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void FocusWindow_ReturnsTheVerifiedOutcome_WithSuccessForCompatibility()
+    public async Task FocusWindow_ReturnsTheVerifiedOutcome_WithSuccessForCompatibility()
     {
         // Arrange - a dialog of the window is in front
         var handle = new nint(12345);
@@ -268,7 +244,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.FocusWindow(12345);
+        var result = await sut.FocusWindow(handle: 12345);
 
         // Assert
         result.Should().BeEquivalentTo(new FocusResult(
@@ -284,7 +260,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void FocusWindow_WhenAMenuIsStillActive_ReportsInMenuMode()
+    public async Task FocusWindow_WhenAMenuIsStillActive_ReportsInMenuMode()
     {
         // Arrange - in front, but typed keys would pick menu items
         var handle = new nint(12345);
@@ -299,7 +275,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.FocusWindow(12345);
+        var result = await sut.FocusWindow(handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -312,7 +288,7 @@ public class WindowManagerToolsTests
     #region CloseWindow Tests
 
     [Fact]
-    public void CloseWindow_WithInvalidHandle_ReturnsFailure()
+    public async Task CloseWindow_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -320,7 +296,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(99999);
+        var result = await sut.CloseWindow(99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -328,7 +304,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void CloseWindow_WithValidHandle_CallsService()
+    public async Task CloseWindow_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
@@ -337,7 +313,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(12345);
+        var result = await sut.CloseWindow(12345, waitMs: 0);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -345,7 +321,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void CloseWindow_WhenServiceReturnsFalse_ReturnsFalse()
+    public async Task CloseWindow_WhenServiceReturnsFalse_ReturnsFalse()
     {
         // Arrange
         var handle = new nint(12345);
@@ -355,7 +331,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(12345);
+        var result = await sut.CloseWindow(12345, waitMs: 0);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -366,7 +342,7 @@ public class WindowManagerToolsTests
     #region SnapWindow Tests
 
     [Fact]
-    public void SnapWindow_WithInvalidHandle_ReturnsFailure()
+    public async Task SnapWindow_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -374,7 +350,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.SnapWindow(99999, "left_half");
+        var result = await sut.SnapWindow(SnapPosition.LeftHalf, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -382,67 +358,18 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void SnapWindow_WithInvalidPosition_ReturnsFailure()
+    public async Task SnapWindow_PassesMonitorIndex()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.SnapWindow(12345, "invalid_position");
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.Error.Should().Contain("Invalid snap position");
-        result.ErrorCode.Should().Be("InvalidSnapPosition");
-    }
-
-    [Theory]
-    [InlineData("left_half", SnapPosition.LeftHalf)]
-    [InlineData("right_half", SnapPosition.RightHalf)]
-    [InlineData("top_half", SnapPosition.TopHalf)]
-    [InlineData("bottom_half", SnapPosition.BottomHalf)]
-    [InlineData("top_left_quarter", SnapPosition.TopLeftQuarter)]
-    [InlineData("top_right_quarter", SnapPosition.TopRightQuarter)]
-    [InlineData("bottom_left_quarter", SnapPosition.BottomLeftQuarter)]
-    [InlineData("bottom_right_quarter", SnapPosition.BottomRightQuarter)]
-    [InlineData("left_third", SnapPosition.LeftThird)]
-    [InlineData("center_third", SnapPosition.CenterThird)]
-    [InlineData("right_third", SnapPosition.RightThird)]
-    [InlineData("left_two_thirds", SnapPosition.LeftTwoThirds)]
-    [InlineData("right_two_thirds", SnapPosition.RightTwoThirds)]
-    [InlineData("fullscreen", SnapPosition.Fullscreen)]
-    public void SnapWindow_ParsesPositionStrings(string positionString, SnapPosition expectedPosition)
-    {
-        // Arrange
-        var handle = new nint(12345);
-        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SnapWindow(handle, expectedPosition, null, It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
 
         // Act
-        sut.SnapWindow(12345, positionString);
-
-        // Assert
-        _mockWindowService.Verify(w => w.SnapWindow(handle, expectedPosition, null, It.IsAny<bool>()), Times.Once);
-    }
-
-    [Fact]
-    public void SnapWindow_PassesMonitorIndex()
-    {
-        // Arrange
-        var handle = new nint(12345);
-        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>())).Returns(true);
-        _mockWindowService.Setup(w => w.GetWindowInfo(handle))
-            .Returns(TestDataFactory.CreateWindowInfo());
-        var sut = CreateSut();
-
-        // Act
-        sut.SnapWindow(12345, "left_half", monitorIndex: 1);
+        await sut.SnapWindow(SnapPosition.LeftHalf, handle: 12345, monitorIndex: 1);
 
         // Assert
         _mockWindowService.Verify(w => w.SnapWindow(handle, SnapPosition.LeftHalf, 1, It.IsAny<bool>()), Times.Once);
@@ -453,7 +380,7 @@ public class WindowManagerToolsTests
     #region MoveWindowToMonitor Tests
 
     [Fact]
-    public void MoveWindowToMonitor_WithInvalidHandle_ReturnsFailure()
+    public async Task MoveWindowToMonitor_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -461,7 +388,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.MoveWindowToMonitor(99999, 1);
+        var result = await sut.MoveWindowToMonitor(1, handle: 99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -469,40 +396,162 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void MoveWindowToMonitor_WithValidHandle_CallsService()
+    public async Task MoveWindowToMonitor_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 1, "center", It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 1, MonitorPositioning.Center, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
 
         // Act
-        var result = sut.MoveWindowToMonitor(12345, 1);
+        var result = await sut.MoveWindowToMonitor(1, handle: 12345);
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 1, "center", It.IsAny<bool>()), Times.Once);
+        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 1, MonitorPositioning.Center, It.IsAny<bool>()), Times.Once);
     }
 
     [Fact]
-    public void MoveWindowToMonitor_PassesPositioning()
+    public async Task MoveWindowToMonitor_PassesPositioning()
     {
         // Arrange
         var handle = new nint(12345);
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
-        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 0, "maximize", It.IsAny<bool>())).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 0, MonitorPositioning.Maximize, It.IsAny<bool>())).Returns(WindowChangeResult.Done(handle));
         _mockWindowService.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo());
         var sut = CreateSut();
 
         // Act
-        sut.MoveWindowToMonitor(12345, 0, "maximize");
+        await sut.MoveWindowToMonitor(0, handle: 12345, positioning: MonitorPositioning.Maximize);
 
         // Assert
-        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 0, "maximize", It.IsAny<bool>()), Times.Once);
+        _mockWindowService.Verify(w => w.MoveWindowToMonitor(handle, 0, MonitorPositioning.Maximize, It.IsAny<bool>()), Times.Once);
+    }
+
+    #endregion
+
+    #region The window as it is afterwards (roadmap M2.3)
+
+    [Fact]
+    public async Task AGeometryResult_ReportsTheVisibleFrame_TheWindowRect_TheStateAndTheMonitor()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.SnapWindow(handle, SnapPosition.LeftHalf, null, true)).Returns(WindowChangeResult.Done(handle));
+        _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(
+            TestDataFactory.CreateWindowInfo(x: -7, y: 0, width: 974, height: 1047, monitorIndex: 1) with
+            {
+                VisibleBounds = new WindowRect(0, 0, 960, 1040)
+            });
+
+        // Act
+        var result = await CreateSut().SnapWindow(SnapPosition.LeftHalf, handle: 12345);
+
+        // Assert
+        result.Should().Be(new WindowOperationResult(
+            Success: true,
+            Bounds: new BoundsDto(0, 0, 960, 1040),
+            OuterBounds: new BoundsDto(-7, 0, 974, 1047),
+            State: "normal",
+            MonitorIndex: 1,
+            Handle: 12345));
+    }
+
+    [Fact]
+    public async Task AGeometryResult_WithoutAVisibleFrame_ReportsTheWindowRectAsBounds()
+    {
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindow(handle, 1, 2, true)).Returns(WindowChangeResult.Done(handle));
+        _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(TestDataFactory.CreateWindowInfo(x: 1, y: 2));
+
+        var result = await CreateSut().MoveWindow(1, 2, handle: 12345);
+
+        result.Bounds.Should().Be(new BoundsDto(1, 2, 800, 600));
+        result.OuterBounds.Should().Be(result.Bounds);
+    }
+
+    [Fact]
+    public async Task AMinimizedWindow_IsReportedWithoutBounds()
+    {
+        // Arrange - a minimized window's rect is its icon at -32000, which says nothing about where it will be
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowState(handle, WindowStateRequest.Minimize)).Returns(WindowChangeResult.Done(handle));
+        _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(
+            TestDataFactory.CreateWindowInfo(x: -32000, y: -32000, width: 160, height: 28, state: WindowState.Minimized));
+
+        // Act
+        var result = await CreateSut().SetWindowState(WindowStateRequest.Minimize, handle: 12345);
+
+        // Assert
+        result.State.Should().Be("minimized");
+        result.Bounds.Should().BeNull();
+        result.OuterBounds.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AFailedChange_StillReportsWhereTheWindowIs()
+    {
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, 1, MonitorPositioning.Center, true))
+            .Returns(WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed, "The window is on monitor 0, not on monitor 1"));
+        _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(TestDataFactory.CreateWindowInfo());
+
+        var result = await CreateSut().MoveWindowToMonitor(1, handle: 12345);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.MoveFailed));
+        result.MonitorIndex.Should().Be(0);
+        result.Bounds.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SetWindowBounds_PlacesTheVisibleFrame()
+    {
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.SetWindowFrame(handle, 0, 0, 960, 1040, true)).Returns(WindowChangeResult.Done(handle));
+
+        (await CreateSut().SetWindowBounds(0, 0, 960, 1040, handle: 12345)).Success.Should().BeTrue();
+
+        _mockWindowService.Verify(w => w.SetWindowBounds(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<int>(), It.IsAny<bool>()), Times.Never, "SetWindowBounds places the window rect, which layouts use");
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(250, 250)]
+    [InlineData(-1, 0)]
+    [InlineData(60_000, 5000)]
+    public async Task SettleMs_WaitsForTheWindowToStopMoving_ForAtMostFiveSeconds(int settleMs, int expectedMs)
+    {
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 640, 480)).Returns(WindowChangeResult.Done(handle));
+        _mockWindowService.Setup(w => w.GetWindowInfo(handle)).Returns(TestDataFactory.CreateWindowInfo());
+
+        await CreateSut().ResizeWindow(640, 480, handle: 12345, settleMs: settleMs);
+
+        _mockWindowService.Verify(w => w.WaitForSettledFrame(handle, TimeSpan.FromMilliseconds(expectedMs)), Times.Once);
+    }
+
+    [Fact]
+    public async Task AFailedChange_DoesNotWaitForTheWindowToSettle()
+    {
+        var handle = new nint(12345);
+        _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
+        _mockWindowService.Setup(w => w.ResizeWindow(handle, 640, 480))
+            .Returns(WindowChangeResult.Failed(handle, WindowErrorCode.AccessDenied, "blocked"));
+
+        await CreateSut().ResizeWindow(640, 480, handle: 12345, settleMs: 1000);
+
+        _mockWindowService.Verify(w => w.WaitForSettledFrame(It.IsAny<nint>(), It.IsAny<TimeSpan>()), Times.Never);
     }
 
     #endregion
@@ -516,7 +565,7 @@ public class WindowManagerToolsTests
     [InlineData("set_window_state")]
     [InlineData("snap_window")]
     [InlineData("move_window_to_monitor")]
-    public void AWindowThatDoesNotRespond_IsReportedAsNotResponding(string tool)
+    public async Task AWindowThatDoesNotRespond_IsReportedAsNotResponding(string tool)
     {
         // Arrange - the service gave up on the window at its deadline (WindowCallRunner)
         var handle = new nint(12345);
@@ -524,22 +573,22 @@ public class WindowManagerToolsTests
         _mockWindowService.Setup(w => w.IsValidWindow(handle)).Returns(true);
         _mockWindowService.Setup(w => w.MoveWindow(handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>())).Throws(notResponding);
         _mockWindowService.Setup(w => w.ResizeWindow(handle, It.IsAny<int>(), It.IsAny<int>())).Throws(notResponding);
-        _mockWindowService.Setup(w => w.SetWindowBounds(handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
+        _mockWindowService.Setup(w => w.SetWindowFrame(handle, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Throws(notResponding);
-        _mockWindowService.Setup(w => w.SetWindowState(handle, It.IsAny<WindowState>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.SetWindowState(handle, It.IsAny<WindowStateRequest>())).Throws(notResponding);
         _mockWindowService.Setup(w => w.SnapWindow(handle, It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>())).Throws(notResponding);
-        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>())).Throws(notResponding);
+        _mockWindowService.Setup(w => w.MoveWindowToMonitor(handle, It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>())).Throws(notResponding);
         var sut = CreateSut();
 
         // Act
         var result = tool switch
         {
-            "move_window" => sut.MoveWindow(12345, 0, 0),
-            "resize_window" => sut.ResizeWindow(12345, 640, 480),
-            "set_window_bounds" => sut.SetWindowBounds(12345, 0, 0, 640, 480),
-            "set_window_state" => sut.SetWindowState(12345, "minimize"),
-            "snap_window" => sut.SnapWindow(12345, "left_half"),
-            _ => sut.MoveWindowToMonitor(12345, 0)
+            "move_window" => await sut.MoveWindow(0, 0, handle: 12345),
+            "resize_window" => await sut.ResizeWindow(640, 480, handle: 12345),
+            "set_window_bounds" => await sut.SetWindowBounds(0, 0, 640, 480, handle: 12345),
+            "set_window_state" => await sut.SetWindowState(WindowStateRequest.Minimize, handle: 12345),
+            "snap_window" => await sut.SnapWindow(SnapPosition.LeftHalf, handle: 12345),
+            _ => await sut.MoveWindowToMonitor(0, handle: 12345)
         };
 
         // Assert

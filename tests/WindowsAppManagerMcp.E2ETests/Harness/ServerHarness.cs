@@ -109,7 +109,9 @@ public sealed class ServerHarness : IDisposable
         out IReadOnlyList<Type> guardedWrappers)
     {
         var services = new ServiceCollection();
-        services.AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(layoutsPath));
+        services.AddWindowsAppManagerServices(
+            () => LayoutStorageOptions.ForPath(layoutsPath),
+            () => AuditLogOptions.ForFolder(AuditFolderFor(layoutsPath)));
         AddWrappersTheServerCreatesItself(services);
 
         if (wrapperSubstitute != null)
@@ -137,6 +139,14 @@ public sealed class ServerHarness : IDisposable
         }
         return services;
     }
+
+    /// <summary>
+    /// The audit log folder of a harness (roadmap M2.17): inside its temporary <paramref name="layoutsPath"/>, which
+    /// <see cref="Dispose"/> deletes, so a test that calls an audited tool through the server never writes or prunes
+    /// the user's own audit folder (%LOCALAPPDATA% or WAM_AUDIT_PATH). Layout storage reads only the top-level
+    /// <c>*.json</c> files, so the subfolder is invisible to it.
+    /// </summary>
+    public static string AuditFolderFor(string layoutsPath) => Path.Combine(layoutsPath, AuditLogOptions.FolderName);
 
     /// <summary>
     /// Registers the native wrappers that services create themselves when the container has none:
@@ -174,8 +184,13 @@ public static class E2EProcess
 {
     private static readonly Lazy<string> DpiAwareness = new(() =>
     {
-        // What the server's Program.cs does first. It fails harmlessly when the awareness is already set.
-        E2ENative.SetProcessDpiAwareness(E2ENative.ProcessPerMonitorDpiAware);
+        // What the server's app manifest declares: per-monitor v2, or per-monitor where v2 is unknown. Each call fails
+        // harmlessly when the awareness is already set (the test host has no manifest of the server's).
+        if (!E2ENative.SetProcessDpiAwarenessContext(E2ENative.DpiAwarenessContextPerMonitorAwareV2))
+        {
+            E2ENative.SetProcessDpiAwareness(E2ENative.ProcessPerMonitorDpiAware);
+        }
+
         return E2ENative.CurrentDpiAwareness();
     });
 

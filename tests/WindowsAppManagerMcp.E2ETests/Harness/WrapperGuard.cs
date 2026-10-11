@@ -282,7 +282,9 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// The <see cref="DesktopTier.Input"/> policy: the server may act, but only on the fixture process.
 /// Keyboard input is sent only while a fixture window is in the foreground, mouse input only while the
 /// cursor is over a fixture window and, when the batch moves the pointer (a click carries an absolute move
-/// to its point), only when the move ends over a fixture window; window calls only when every window they name is a fixture window,
+/// to its point), only when the move ends over a fixture window; a mouse wheel batch only while a fixture window is
+/// also in the foreground, since Windows can send the wheel to the focus window instead of the one under the cursor;
+/// window calls only when every window they name is a fixture window,
 /// and process closes and kills only on the fixture process. The check runs before every SendInput
 /// batch, so a window that comes to the front mid-text stops the typing. No process may be started.
 /// Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
@@ -302,6 +304,9 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
 
     /// <summary>MOUSEEVENTF_VIRTUALDESK: the normalized coordinates span the whole virtual desktop.</summary>
     internal const uint MouseVirtualDeskFlag = 0x4000;
+
+    /// <summary>MOUSEEVENTF_WHEEL and MOUSEEVENTF_HWHEEL: a turn of the wheel, by <see cref="InputEvent.MouseData"/>.</summary>
+    internal const uint MouseWheelFlags = 0x0800 | 0x1000;
 
     private readonly IDesktopProbe _probe;
     private readonly int _fixtureProcessId;
@@ -354,6 +359,12 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
                     RefuseUnlessFixture(_probe.GetForegroundWindow(), "keyboard input: the foreground window") is { } keys)
                 {
                     return keys;
+                }
+                // The wheel goes to the focus window when "scroll inactive windows" is off, so both must be the fixture's
+                if (batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & MouseWheelFlags) != 0) &&
+                    RefuseUnlessFixture(_probe.GetForegroundWindow(), "mouse wheel input: the foreground window") is { } wheel)
+                {
+                    return wheel;
                 }
                 if (batch.Any(e => e.Kind == InputEventKind.Mouse))
                 {

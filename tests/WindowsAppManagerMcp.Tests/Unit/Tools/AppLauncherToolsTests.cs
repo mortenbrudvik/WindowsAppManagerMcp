@@ -19,125 +19,138 @@ public class AppLauncherToolsTests
 
     #region LaunchApplication Tests
 
+    /// <summary>The service returns <paramref name="result"/> for any launch request.</summary>
+    private void LaunchReturns(LaunchResult result) =>
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+
     [Fact]
-    public void LaunchApplication_CallsServiceWithAllParameters()
+    public async Task LaunchApplication_CallsServiceWithAllParameters()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplication(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>()))
-            .Returns(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
+        var hint = new LaunchWindowHint(ProcessName: "Notepad", TitleContains: "file.txt");
 
         // Act
-        sut.LaunchApplication(
+        await sut.LaunchApplication(
             executable: "notepad.exe",
             arguments: new[] { "file.txt" },
             workingDirectory: @"C:\Temp",
             waitForWindow: true,
-            waitTimeoutMs: 10000);
+            waitTimeoutMs: 10000,
+            expectWindow: hint);
 
         // Assert
-        _mockProcessService.Verify(p => p.LaunchApplication(
-            "notepad.exe",
-            new[] { "file.txt" },
-            @"C:\Temp",
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(
+            It.Is<LaunchRequest>(r => r.Executable == "notepad.exe" && r.Arguments!.SequenceEqual(new[] { "file.txt" }) &&
+                                      r.WorkingDirectory == @"C:\Temp" && r.ExpectWindow == hint),
             true,
-            10000), Times.Once);
+            10000,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchApplication_WithDefaults_UsesDefaultValues()
+    public async Task LaunchApplication_WithDefaults_UsesDefaultValues()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplication(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>()))
-            .Returns(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
 
         // Act
-        sut.LaunchApplication("notepad.exe");
+        await sut.LaunchApplication("notepad.exe");
 
         // Assert
-        _mockProcessService.Verify(p => p.LaunchApplication(
-            "notepad.exe",
-            null,
-            null,
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(
+            new LaunchRequest("notepad.exe", null, null, null),
             false,
-            5000), Times.Once);
+            5000,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void LaunchApplication_ReturnsSuccessResult()
+    public async Task LaunchApplication_ReturnsTheStatusAndTheWholeWindowItFound()
     {
-        // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplication(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>()))
-            .Returns(new LaunchResult(true, 1234, new nint(5678), null));
+        // Arrange - the window belongs to the process the launcher handed off to
+        var window = TestDataFactory.CreateWindowInfo(handleValue: 5678, title: "Calculator", processName: "CalculatorApp", processId: 4321) with
+        {
+            ClassName = "ApplicationFrameWindow",
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 900
+        };
+        LaunchReturns(new LaunchResult(true, 1234, window.Handle, Status: LaunchStatus.WindowObserved, Window: window, LauncherExited: true));
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true);
+        var result = await sut.LaunchApplication("calc", waitForWindow: true);
 
         // Assert
         result.Success.Should().BeTrue();
         result.ProcessId.Should().Be(1234);
         result.WindowHandle.Should().Be(5678);
+        result.LaunchStatus.Should().Be("windowObserved");
+        result.LauncherExited.Should().BeTrue();
+        result.Window!.Handle.Should().Be(5678);
+        result.Window.ProcessName.Should().Be("CalculatorApp");
+        result.Window.ProcessId.Should().Be(4321);
+        result.Window.HostProcessName.Should().Be("ApplicationFrameHost");
         result.Error.Should().BeNull();
     }
 
-    [Fact]
-    public void LaunchApplication_ReturnsFailureResult()
+    [Theory]
+    [InlineData(LaunchStatus.Started, "started")]
+    [InlineData(LaunchStatus.WindowObserved, "windowObserved")]
+    [InlineData(LaunchStatus.ReusedExistingWindow, "reusedExistingWindow")]
+    [InlineData(LaunchStatus.OpenedInTab, "openedInTab")]
+    [InlineData(LaunchStatus.PossibleHandoff, "possibleHandoff")]
+    [InlineData(LaunchStatus.ExitedWithoutWindow, "exitedWithoutWindow")]
+    [InlineData(LaunchStatus.TimedOut, "timedOut")]
+    [InlineData(LaunchStatus.AwaitingUserConsent, "awaitingUserConsent")]
+    public async Task LaunchApplication_ReportsEveryStatusByItsCamelCaseName(LaunchStatus status, string expected)
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplication(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>()))
-            .Returns(new LaunchResult(false, null, null, "File not found"));
+        LaunchReturns(new LaunchResult(true, Status: status));
+
+        // Act
+        var result = await CreateSut().LaunchApplication("notepad.exe");
+
+        // Assert
+        result.LaunchStatus.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_ReturnsFailureResult()
+    {
+        // Arrange
+        LaunchReturns(new LaunchResult(false, null, null, "File not found", nameof(LaunchErrorCode.ExecutableNotFound)));
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("nonexistent.exe");
+        var result = await sut.LaunchApplication("nonexistent.exe");
 
         // Assert
         result.Success.Should().BeFalse();
         result.ProcessId.Should().BeNull();
         result.WindowHandle.Should().BeNull();
+        result.Window.Should().BeNull();
+        result.LaunchStatus.Should().BeNull();
         result.Error.Should().Be("File not found");
+        result.ErrorCode.Should().Be("ExecutableNotFound");
     }
 
     [Fact]
-    public void LaunchApplication_WithNullWindowHandle_ReturnsNullHandle()
+    public async Task LaunchApplication_WithNullWindowHandle_ReturnsNullHandle()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplication(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>()))
-            .Returns(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe");
+        var result = await sut.LaunchApplication("notepad.exe");
 
         // Assert
         result.WindowHandle.Should().BeNull();
+        result.Window.Should().BeNull();
     }
 
     [Theory]
@@ -145,30 +158,62 @@ public class AppLauncherToolsTests
     [InlineData(30000, 30000)]
     [InlineData(int.MaxValue, 30000)] // the wait runs inside the input gate: an agent's value must not hold it for days
     [InlineData(-5, 0)]
-    public void LaunchApplication_WaitsForTheWindowAtMostMaxWaitTimeoutMs(int waitTimeoutMs, int expected)
+    public async Task LaunchApplication_WaitsForTheWindowAtMostMaxWaitTimeoutMs(int waitTimeoutMs, int expected)
     {
-        _mockProcessService.Setup(p => p.LaunchApplication(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.TimedOut));
         var sut = CreateSut();
 
-        sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: waitTimeoutMs);
+        await sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: waitTimeoutMs);
 
-        _mockProcessService.Verify(p => p.LaunchApplication("notepad.exe", null, null, true, expected), Times.Once);
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), true, expected, It.IsAny<CancellationToken>()), Times.Once);
         AppLauncherTools.MaxWaitTimeoutMs.Should().Be(30000);
     }
 
     [Fact]
-    public void LaunchApplicationsBatch_WaitsForEachWindowAtMostMaxWaitTimeoutMs()
+    public async Task LaunchApplicationsBatch_WaitsForEachWindowAtMostMaxWaitTimeoutMs()
     {
-        _mockProcessService.Setup(p => p.LaunchApplicationsBatch(
-                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), It.IsAny<bool>(), It.IsAny<int>()))
-            .Returns([new LaunchResult(true, 1234, null, null)]);
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new LaunchResult(true, 1234, null, null)]);
         var sut = CreateSut();
 
-        sut.LaunchApplicationsBatch([new ApplicationLaunchRequest("notepad.exe")], waitForWindows: true, waitTimeoutMs: int.MaxValue);
+        await sut.LaunchApplicationsBatch([new ApplicationLaunchRequest("notepad.exe")], waitForWindows: true, waitTimeoutMs: int.MaxValue);
 
-        _mockProcessService.Verify(p => p.LaunchApplicationsBatch(
-            It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), true, AppLauncherTools.MaxWaitTimeoutMs), Times.Once);
+        _mockProcessService.Verify(p => p.LaunchApplicationsBatchAsync(
+            It.IsAny<IReadOnlyList<LaunchRequest>>(), true, AppLauncherTools.MaxWaitTimeoutMs,
+            It.IsAny<IProgress<OperationProgress>?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_PassesEachItemsExpectWindow_AndReturnsEachItemsStatusAndWindow()
+    {
+        // Arrange
+        IReadOnlyList<LaunchRequest>? requested = null;
+        var window = TestDataFactory.CreateWindowInfo(handleValue: 777, title: "Settings", processName: "SystemSettings", processId: 55);
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) => requested = apps)
+            .ReturnsAsync([
+                new LaunchResult(true, null, window.Handle, Status: LaunchStatus.WindowObserved, Window: window),
+                new LaunchResult(true, 99, Status: LaunchStatus.TimedOut, LauncherExited: false)
+            ]);
+        var hint = new LaunchWindowHint(ProcessName: "SystemSettings");
+
+        // Act
+        var result = await CreateSut().LaunchApplicationsBatch(
+            [new ApplicationLaunchRequest("ms-settings:display", ExpectWindow: hint), new ApplicationLaunchRequest("notepad")], waitForWindows: true);
+
+        // Assert
+        requested!.Select(r => r.ExpectWindow).Should().Equal(hint, null);
+        result.Results[0].LaunchStatus.Should().Be("windowObserved");
+        result.Results[0].Window!.ProcessName.Should().Be("SystemSettings");
+        result.Results[0].WindowHandle.Should().Be(777);
+        result.Results[1].LaunchStatus.Should().Be("timedOut");
+        result.Results[1].LauncherExited.Should().BeFalse();
     }
 
     #endregion
@@ -330,52 +375,82 @@ public class AppLauncherToolsTests
 
     private void SetupKill(KillResult result)
     {
-        _mockProcessService.Setup(p => p.KillProcess(
+        _mockProcessService.Setup(p => p.KillProcessAsync(
             It.IsAny<int>(),
             It.IsAny<bool>(),
             It.IsAny<bool>(),
             It.IsAny<int>(),
-            It.IsAny<string?>()))
-            .Returns(result);
+            It.IsAny<string?>(), It.IsAny<KillSafeguards?>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
     }
 
     [Fact]
-    public void KillProcess_CallsServiceWithAllParameters()
+    public async Task KillProcess_CallsServiceWithAllParameters()
     {
         // Arrange
         SetupKill(new KillResult(true, 1234, "notepad"));
         var sut = CreateSut();
 
         // Act
-        sut.KillProcess(processId: 1234, confirm: true, forceKill: true, gracefulTimeoutMs: 2500, expectedProcessName: "notepad.exe");
+        await sut.KillProcess(processId: 1234, confirm: true, forceKill: true, gracefulTimeoutMs: 2500, expectedProcessName: "notepad.exe");
 
         // Assert
-        _mockProcessService.Verify(p => p.KillProcess(1234, true, true, 2500, "notepad.exe"), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, true, 2500, "notepad.exe", It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void KillProcess_WithDefaults_UsesDefaultForceKill()
+    public async Task KillProcess_WithDefaults_UsesDefaultForceKill()
     {
         // Arrange
         SetupKill(new KillResult(true, 1234, "notepad"));
         var sut = CreateSut();
 
         // Act
-        sut.KillProcess(processId: 1234, confirm: true);
+        await sut.KillProcess(processId: 1234, confirm: true);
 
         // Assert - graceful by default, 5 s timeout, no name guard
-        _mockProcessService.Verify(p => p.KillProcess(1234, true, false, 5000, null), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void KillProcess_ReturnsSuccessResult()
+    public async Task KillProcess_ReleasesTheInputGate_BeforeTheWaitForTheExit()
+    {
+        // Arrange - a graceful close waits up to 60 s for an app showing 'Save changes?': no input call must wait that long
+        var flow = InputGate.TagFlow();
+        bool? heldForTheClose = null;
+        bool? heldForTheWait = null;
+        KillSafeguards? passed = null;
+        _mockProcessService.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(),
+                It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, bool _, bool _, int _, string? _, KillSafeguards? safeguards, CancellationToken _) =>
+            {
+                passed = safeguards;
+                heldForTheClose = InputGate.IsHeldBy(flow);
+                safeguards?.BeforeWait?.Invoke();
+                heldForTheWait = InputGate.IsHeldBy(flow);
+            })
+            .ReturnsAsync(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
+
+        // Act - the model confirmed: the client cannot ask the user
+        var result = await CreateSut().KillProcess(processId: 1234, confirm: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        heldForTheClose.Should().BeTrue();
+        heldForTheWait.Should().BeFalse();
+        passed!.Confirmed.Should().BeNull("the user was not asked, so there is nothing they confirmed to pin");
+    }
+
+    [Fact]
+    public async Task KillProcess_ReturnsSuccessResult()
     {
         // Arrange
         SetupKill(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 1234, confirm: true);
+        var result = await sut.KillProcess(processId: 1234, confirm: true);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -389,14 +464,14 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void KillProcess_MapsForcedExitAndWarning()
+    public async Task KillProcess_MapsForcedExitAndWarning()
     {
         // Arrange
         SetupKill(new KillResult(true, 1234, "node", Forced: true, Exited: true, Warning: "Some child processes could not be terminated"));
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 1234, confirm: true, forceKill: true);
+        var result = await sut.KillProcess(processId: 1234, confirm: true, forceKill: true);
 
         // Assert
         result.Forced.Should().BeTrue();
@@ -406,7 +481,7 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void KillProcess_GracefulTimeout_MapsStillRunningResult()
+    public async Task KillProcess_GracefulTimeout_MapsStillRunningResult()
     {
         // Arrange
         SetupKill(new KillResult(
@@ -417,7 +492,7 @@ public class AppLauncherToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 1234, confirm: true);
+        var result = await sut.KillProcess(processId: 1234, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -428,14 +503,14 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void KillProcess_ReturnsFailureResult()
+    public async Task KillProcess_ReturnsFailureResult()
     {
         // Arrange
         SetupKill(new KillResult(false, 1234, null, "Process not found", "ProcessNotFound"));
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 1234, confirm: true);
+        var result = await sut.KillProcess(processId: 1234, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -446,14 +521,14 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void KillProcess_WithConfirmFalse_ReturnsConfirmationRequired()
+    public async Task KillProcess_WithConfirmFalse_ReturnsConfirmationRequired()
     {
         // Arrange
         SetupKill(new KillResult(false, 1234, null, "Confirmation required", "ConfirmationRequired"));
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 1234, confirm: false);
+        var result = await sut.KillProcess(processId: 1234, confirm: false);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -461,19 +536,35 @@ public class AppLauncherToolsTests
     }
 
     [Fact]
-    public void KillProcess_WithProtectedProcess_ReturnsProtectedProcess()
+    public async Task KillProcess_WithProtectedProcess_ReturnsProtectedProcess()
     {
         // Arrange
         SetupKill(new KillResult(false, 4, "System", "Cannot terminate protected system process", "ProtectedProcess"));
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(processId: 4, confirm: true);
+        var result = await sut.KillProcess(processId: 4, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
         result.ProcessName.Should().Be("System");
         result.ErrorCode.Should().Be("ProtectedProcess");
+    }
+
+    [Fact]
+    public async Task KillProcess_PassesTheCallsToken_SoTheClientCanCancelTheWaitForTheExit()
+    {
+        // Arrange
+        using var call = new CancellationTokenSource();
+        _mockProcessService.Setup(p => p.KillProcessAsync(
+                It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
+
+        // Act
+        await CreateSut().KillProcess(processId: 1234, confirm: true, cancellationToken: call.Token);
+
+        // Assert
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, It.IsAny<KillSafeguards?>(), call.Token), Times.Once);
     }
 
     #endregion

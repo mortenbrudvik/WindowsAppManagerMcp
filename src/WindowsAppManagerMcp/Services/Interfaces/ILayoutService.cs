@@ -41,9 +41,19 @@ public interface ILayoutService
         string[]? excludeProcesses = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Arranges the windows of a preset, placement by placement in order, launching missing applications when
+    /// <paramref name="launchMissing"/> is set.
+    /// </summary>
+    /// <param name="progress">Receives "i of n" with each placement's outcome. Optional.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the call between placements and during a launch's wait for its window; the placements already arranged
+    /// stay arranged, and the call throws <see cref="OperationCanceledException"/>.
+    /// </param>
     Task<LayoutApplyResult> ApplyPresetAsync(
         string name,
-        string matchBy = "process_and_title",
+        LayoutMatchBy matchBy = LayoutMatchBy.ProcessAndTitle,
         bool launchMissing = false,
+        IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }

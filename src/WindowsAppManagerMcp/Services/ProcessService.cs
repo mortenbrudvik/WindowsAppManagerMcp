@@ -22,6 +22,7 @@ public class ProcessService : IProcessService
     private readonly INativeProcessWrapper _processWrapper;
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
+    private readonly IWindowWaitService _windowWait;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -32,6 +33,10 @@ public class ProcessService : IProcessService
     /// processes, and a forced kill whose process tree contains one. The server always passes it; without
     /// it only this server and its live ancestors count as the host.
     /// </param>
+    /// <param name="windowWait">
+    /// Finds the window a launch opens (roadmap M2.6). The server always passes it; without it a wait reads the real
+    /// desktop through a <see cref="NativeWindowWrapper"/> created here (eagerly, so that the E2E reference walk sees it).
+    /// </param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -39,7 +44,8 @@ public class ProcessService : IProcessService
         IExecutableResolver? executableResolver = null,
         INativeProcessWrapper? processWrapper = null,
         ITargetPolicy? targetPolicy = null,
-        IHostGuard? hostGuard = null)
+        IHostGuard? hostGuard = null,
+        IWindowWaitService? windowWait = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -48,49 +54,300 @@ public class ProcessService : IProcessService
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
+        _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
     }
 
-    public LaunchResult LaunchApplication(
+    /// <summary>
+    /// How long a start may take before the launch reports <see cref="LaunchStatus.AwaitingUserConsent"/>: ShellExecute does
+    /// not return while Windows asks the user something (a UAC prompt for an elevated program, SmartScreen, a security
+    /// warning, an Open with dialog), which can take any time.
+    /// </summary>
+    public static readonly TimeSpan DefaultStartTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long a start may take (default <see cref="DefaultStartTimeout"/>); tests shorten it.</summary>
+    public TimeSpan StartTimeout { get; init; } = DefaultStartTimeout;
+
+    /// <summary>ERROR_CANCELLED: the user declined or cancelled a prompt of the start (most likely UAC).</summary>
+    private const int ErrorCancelled = 1223;
+
+    public Task<LaunchResult> LaunchApplicationAsync(
         string executable,
         string[]? arguments = null,
         string? workingDirectory = null,
         bool waitForWindow = false,
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default) =>
+        LaunchApplicationAsync(new LaunchRequest(executable, arguments, workingDirectory), waitForWindow, waitTimeoutMs, cancellationToken);
+
+    public async Task<LaunchResult> LaunchApplicationAsync(
+        LaunchRequest request,
+        bool waitForWindow,
+        int waitTimeoutMs,
+        CancellationToken cancellationToken = default)
     {
-        var plan = PlanLaunch(executable, arguments, workingDirectory);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
         if (!plan.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+            return Rejected(plan);
         }
 
-        var warning = plan.Warning;
+        // A call cancelled before the start starts nothing
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
+        if (launch.Outcome is { } ended)
+        {
+            return ended;
+        }
+
+        using (launch.Process)
+        {
+            // Cancelled while waiting for the window: the program was started and keeps running, and the call throws
+            if (!waitForWindow)
+            {
+                return StartedWithoutWait(launch);
+            }
+
+            var owner = OwnerOf(launch, request);
+            return await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static LaunchResult Rejected(LaunchPlan plan) =>
+        new(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+
+    /// <summary>
+    /// A launch whose start was requested: the started process (null when Windows started none), the windows before the
+    /// start (with a window wait) and when it was requested; or, when it ended there, its <see cref="Outcome"/>.
+    /// </summary>
+    private sealed record StartedLaunch(
+        LaunchPlan Plan, IProcessHandle? Process, WindowBaseline? Baseline, DateTime LaunchedAtUtc, LaunchResult? Outcome = null);
+
+    /// <summary>
+    /// Starts a planned launch. The start runs on a thread of its own and is waited for at most <see cref="StartTimeout"/>:
+    /// ShellExecute blocks while Windows asks the user to approve an elevated program, so a longer start is reported as
+    /// <see cref="LaunchStatus.AwaitingUserConsent"/> (the program starts later if the user approves; its handle is then
+    /// released). A declined prompt is <see cref="LaunchErrorCode.ElevationCancelled"/>, any other failure
+    /// <see cref="LaunchErrorCode.LaunchException"/>.
+    /// </summary>
+    private async Task<StartedLaunch> StartAsync(LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken)
+    {
+        var baseline = takeBaseline ? _windowWait.TakeBaseline() : null;
+        var launchedAt = DateTime.UtcNow;
+        // On a thread of its own, not the thread pool: a start that waits for the user's answer to a UAC prompt can take
+        // minutes, and a busy thread pool must not delay a start into looking like one
+        var start = Task.Factory.StartNew(
+            () => _processWrapper.StartProcess(plan.StartInfo!),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task finished;
+        using (var stopTimer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            finished = await Task.WhenAny(start, Task.Delay(StartTimeout, stopTimer.Token)).ConfigureAwait(false);
+            stopTimer.Cancel();
+        }
+
+        if (finished != start)
+        {
+            ReleaseWhenStarted(start);
+            cancellationToken.ThrowIfCancellationRequested();
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
+                Success: true,
+                Warning: CombineWarnings(plan.Warning,
+                    $"The start did not return within {StartTimeout.TotalSeconds:0.#} seconds: Windows is most likely showing a consent " +
+                    "or security prompt (UAC, SmartScreen, a security warning for a downloaded or network file, or 'How do you want to " +
+                    "open this file?'). Only the user may answer it: do not click or type into it. The program starts only if the user " +
+                    "approves, its process ID is not known, and a later decline is not reported. Ask the user to answer the prompt, then " +
+                    "look for its window with find_windows; do not launch it again."),
+                Status: LaunchStatus.AwaitingUserConsent));
+        }
 
         try
         {
-            using var process = _processWrapper.StartProcess(plan.StartInfo!);
-            if (process == null)
-            {
-                return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
-            }
-
-            nint? windowHandle = null;
-
-            if (waitForWindow)
-            {
-                windowHandle = WaitForMainWindow(process, waitTimeoutMs);
-            }
-
-            return new LaunchResult(
-                Success: true,
-                ProcessId: process.Id,
-                WindowHandle: windowHandle,
-                Warning: warning
-            );
+            return new StartedLaunch(plan, await start.ConfigureAwait(false), baseline, launchedAt);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+        {
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
+                ErrorMessage: "The user declined or cancelled a prompt Windows showed for the start (most likely a UAC prompt for a " +
+                              "program that needs administrator rights). Nothing was started. Ask the user before trying again.",
+                ErrorCode: nameof(LaunchErrorCode.ElevationCancelled), Warning: plan.Warning));
         }
         catch (Exception ex)
         {
-            return new LaunchResult(false, ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: warning);
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
+                ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: plan.Warning));
         }
+    }
+
+    /// <summary>A start that was not waited for: its process handle is released when it comes, and a failure is observed.</summary>
+    private static void ReleaseWhenStarted(Task<IProcessHandle?> start) =>
+        start.ContinueWith(
+            static t =>
+            {
+                if (t.Status == TaskStatus.RanToCompletion)
+                    t.Result?.Dispose();
+                else
+                    _ = t.Exception;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private static LaunchResult StartedWithoutWait(StartedLaunch launch) => launch.Process == null
+        ? new LaunchResult(
+            Success: true,
+            Warning: CombineWarnings(launch.Plan.Warning,
+                "Windows started no new process: the request went to an app that was already running, or a packaged app was " +
+                "activated, so processId is null. Find its window with find_windows, or launch with waitForWindow=true."),
+            Status: LaunchStatus.PossibleHandoff)
+        : new LaunchResult(Success: true, ProcessId: launch.Process.Id, Warning: launch.Plan.Warning, Status: LaunchStatus.Started);
+
+    /// <summary>
+    /// Waits for the window of a started launch (<see cref="IWindowWaitService"/>) and turns the outcome into the launch
+    /// result. When no window was found, a visible main window of the started process (which may be untitled) still counts.
+    /// </summary>
+    /// <param name="isOwner">Whether a window belongs to the launch: <paramref name="owner"/>'s match, narrowed in a batch.</param>
+    private async Task<LaunchResult> WaitForWindowAsync(
+        StartedLaunch launch,
+        LaunchRequest request,
+        LaunchWindowOwner owner,
+        Func<WindowCandidate, bool> isOwner,
+        int waitTimeoutMs,
+        Func<nint, bool>? tryClaim,
+        CancellationToken cancellationToken)
+    {
+        var target = launch.Plan.Target!;
+        var options = new WindowWaitOptions
+        {
+            TimeoutMs = waitTimeoutMs,
+            DocumentHints = DocumentHints(target, request.Arguments),
+            TryClaim = tryClaim
+        };
+
+        var wait = await _windowWait.WaitForNewWindowAsync(launch.Baseline!, isOwner, options, cancellationToken).ConfigureAwait(false);
+        var window = wait.Window;
+        var status = wait.Outcome switch
+        {
+            WindowWaitOutcome.NewWindow => LaunchStatus.WindowObserved,
+            WindowWaitOutcome.ReusedExistingWindow => LaunchStatus.ReusedExistingWindow,
+            WindowWaitOutcome.OpenedInTab => LaunchStatus.OpenedInTab,
+            _ => LaunchStatus.TimedOut
+        };
+
+        if (status == LaunchStatus.TimedOut && launch.Process != null && MainWindowOf(launch.Process) is { } mainWindow)
+        {
+            window = mainWindow;
+            status = LaunchStatus.WindowObserved;
+        }
+
+        bool? launcherExited = launch.Process == null ? null : HasExitedSafe(launch.Process);
+        if (status == LaunchStatus.TimedOut)
+        {
+            status = launch.Process == null ? LaunchStatus.PossibleHandoff
+                : launcherExited == true ? LaunchStatus.ExitedWithoutWindow
+                : LaunchStatus.TimedOut;
+        }
+
+        return new LaunchResult(
+            Success: true,
+            ProcessId: launch.Process?.Id,
+            WindowHandle: window?.Handle,
+            Warning: CombineWarnings(launch.Plan.Warning, NoWindowNote(status, waitTimeoutMs)),
+            Status: status,
+            Window: window,
+            LauncherExited: launcherExited);
+    }
+
+    private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
+        LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow);
+
+    /// <summary>
+    /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
+    /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
+    /// other's windows by name and path; the started process decides between them. Such a window is this launch's after
+    /// all once that other launch has its window and this launch's own process is gone (<paramref name="handedOff"/>): a
+    /// single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
+    /// Terminal launches) opens its window in that instance. The shared claim still gives each window to one launch.
+    /// </summary>
+    private static Func<WindowCandidate, bool> BatchOwner(
+        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, Func<bool> handedOff) =>
+        window => owner.Matches(window) &&
+                  (owner.StartedProcess(window.ProcessId) ||
+                   !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff())));
+
+    /// <summary>True when the launch started no process, or the process it started has exited.</summary>
+    private static bool LauncherGone(StartedLaunch launch) => launch.Process == null || HasExitedSafe(launch.Process);
+
+    /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
+    private WindowInfo? MainWindowOf(IProcessHandle process)
+    {
+        try
+        {
+            var handle = process.RefreshMainWindowHandle();
+            return handle != nint.Zero && _windowService.GetWindowInfo(handle) is { IsVisible: true } window ? window : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>What to do when the wait found no window; null when it found one.</summary>
+    private static string? NoWindowNote(LaunchStatus status, int waitTimeoutMs) => status switch
+    {
+        LaunchStatus.PossibleHandoff =>
+            "Windows started no new process (the request went to an app that was already running, or a packaged app was activated), " +
+            $"and no window of it was recognised within {waitTimeoutMs} ms. Look for it with find_windows, or launch with expectWindow " +
+            "(processName or titleContains) so the wait can recognise it. Do not launch it again.",
+        LaunchStatus.ExitedWithoutWindow =>
+            "The started process exited without a window of its own, and no window of an app it may have handed off to was " +
+            $"recognised within {waitTimeoutMs} ms. Look for it with find_windows, or launch with expectWindow (processName or " +
+            "titleContains). Do not launch it again.",
+        LaunchStatus.TimedOut =>
+            $"The program is running, but no window of it appeared within {waitTimeoutMs} ms: it may still be starting, or run " +
+            "without a window. Check with find_windows; do not launch it again.",
+        _ => null
+    };
+
+    /// <summary>
+    /// The texts that show a launched document or URL in an existing window's title: the file or folder names among the
+    /// arguments (and a document launched directly), and the host names of web addresses. Options (-x, --x) are skipped.
+    /// </summary>
+    public static IReadOnlyList<string> DocumentHints(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    {
+        var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
+        if (target.Kind == LaunchTargetKind.Other)
+            values.Add(target.FileName);
+
+        var hints = new List<string>();
+        foreach (var value in values)
+        {
+            string? hint = null;
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                hint = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+            }
+            else if (value.IndexOfAny(['\\', '/']) >= 0 || Path.HasExtension(value))
+            {
+                try
+                {
+                    hint = Path.GetFileName(value.TrimEnd('\\', '/'));
+                }
+                catch (ArgumentException)
+                {
+                    hint = null;
+                }
+            }
+
+            if (hint is { Length: >= 3 } && !hints.Contains(hint, StringComparer.OrdinalIgnoreCase))
+                hints.Add(hint);
+        }
+
+        return hints;
     }
 
     /// <summary>
@@ -143,8 +400,9 @@ public class ProcessService : IProcessService
             }
         }
 
-        var effectiveWorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory;
-        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, effectiveWorkingDirectory);
+        // The resolver checks the server's current directory itself; the working directory is checked when one was given
+        var requestedWorkingDirectory = workingDirValidation.SanitizedPath ?? (string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory);
+        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, requestedWorkingDirectory);
 
         if (target.FoundOnlyInWorkingDirectory != null)
         {
@@ -154,6 +412,16 @@ public class ProcessService : IProcessService
                 "never resolved from the working directory, to avoid running a planted program. Pass the full path " +
                 "if you intend to run that file.",
                 nameof(LaunchErrorCode.ExecutableInWorkingDirectory),
+                warning);
+        }
+
+        if (target.NotFound)
+        {
+            return LaunchPlan.Rejected(
+                $"'{executable}' was not found in the Windows directory, System32, the PATH entries or App Paths. A bare name " +
+                "is never passed to Windows unresolved, because Windows would also search the server's current directory. Pass " +
+                @"the program's full path, or a URI such as ms-settings: or shell:AppsFolder\<AppUserModelID> for a Store app.",
+                nameof(LaunchErrorCode.ExecutableNotFound),
                 warning);
         }
 
@@ -174,7 +442,7 @@ public class ProcessService : IProcessService
         {
             FileName = target.FileName,
             UseShellExecute = true,
-            WorkingDirectory = effectiveWorkingDirectory
+            WorkingDirectory = requestedWorkingDirectory ?? DefaultWorkingDirectory(target)
         };
 
         if (arguments?.Length > 0)
@@ -182,7 +450,30 @@ public class ProcessService : IProcessService
             startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
         }
 
-        return new LaunchPlan(startInfo, target.Kind, warning);
+        return new LaunchPlan(startInfo, target.Kind, warning, Target: target);
+    }
+
+    /// <summary>
+    /// The working directory of a launch that names none: the folder of the program or document, never the server's
+    /// current directory (a repository the agent works in, from which the program could load planted files). A URI gets
+    /// the user's profile folder, as the Run dialog would.
+    /// </summary>
+    private static string DefaultWorkingDirectory(ResolvedLaunchTarget target)
+    {
+        try
+        {
+            if (Path.IsPathFullyQualified(target.FileName) && Path.GetDirectoryName(target.FileName) is { Length: > 0 } folder)
+            {
+                return folder;
+            }
+        }
+        catch (ArgumentException)
+        {
+            // Not a path: a URI
+        }
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.IsNullOrEmpty(profile) ? Environment.SystemDirectory : profile;
     }
 
     private static bool ContainsCmdMetacharacters(string argument)
@@ -365,34 +656,139 @@ public class ProcessService : IProcessService
         "this server, an ancestor of it such as the terminal or editor hosting the agent, the process that shows " +
         "its console or the console server behind it (conhost or OpenConsole), or the app that was in front when the server started";
 
-    public IReadOnlyList<LaunchResult> LaunchApplicationsBatch(
-        IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
+    public async Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
+        IReadOnlyList<LaunchRequest> applications,
         bool waitForWindows = false,
-        int waitTimeoutMs = 5000)
+        int waitTimeoutMs = 5000,
+        IProgress<OperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
-        var results = new List<LaunchResult>();
+        ArgumentNullException.ThrowIfNull(applications);
 
-        foreach (var app in applications)
+        var results = new LaunchResult?[applications.Count];
+        var waiting = new List<(int Index, StartedLaunch Launch)>();
+        var finished = 0;
+        var reportLock = new object();
+
+        // "i of n" when an application is done: refused or started (without a wait), or its window wait ended. The waits
+        // end concurrently: counting and reporting under one lock keeps the reported values increasing
+        void Report(int index)
         {
-            var result = LaunchApplication(
-                app.Executable,
-                app.Arguments,
-                app.WorkingDirectory,
-                waitForWindows,
-                waitTimeoutMs);
-
-            results.Add(result);
+            lock (reportLock)
+            {
+                finished++;
+                progress?.Report(new OperationProgress(finished, applications.Count,
+                    $"{finished} of {applications.Count}: {applications[index].Executable} {DescribeLaunch(results[index]!)}"));
+            }
         }
 
-        return results;
+        try
+        {
+            // Start every application first, in order; a cancelled call starts no more
+            for (var i = 0; i < applications.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var request = applications[i];
+                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+                if (!plan.IsValid)
+                {
+                    results[i] = Rejected(plan);
+                    Report(i);
+                    continue;
+                }
+
+                var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
+                if (launch.Outcome is { } ended)
+                {
+                    results[i] = ended;
+                    Report(i);
+                }
+                else if (!waitForWindows)
+                {
+                    using (launch.Process)
+                    {
+                        results[i] = StartedWithoutWait(launch);
+                    }
+
+                    Report(i);
+                }
+                else
+                {
+                    waiting.Add((i, launch));
+                }
+            }
+
+            // Then wait for all the windows at once, against one deadline; a new window goes to one launch only. A window
+            // of a process that one launch started (or that process's child) is that launch's: the other launches' looser
+            // matches (same program name or path, handoff names, hint) leave it alone, whichever wait sees it first
+            var owners = waiting.Select(item => OwnerOf(item.Launch, applications[item.Index])).ToList();
+            var claimed = new HashSet<nint>();
+            var hasWindow = new bool[waiting.Count];
+            bool Claim(int position, nint handle)
+            {
+                lock (claimed)
+                {
+                    if (!claimed.Add(handle))
+                        return false;
+
+                    hasWindow[position] = true;
+                    return true;
+                }
+            }
+
+            bool HasWindow(int position)
+            {
+                lock (claimed)
+                {
+                    return hasWindow[position];
+                }
+            }
+
+            await Task.WhenAll(waiting.Select(async (item, position) =>
+            {
+                var owner = owners[position];
+                var others = owners.Select((other, index) => (Owner: other, HasWindow: (Func<bool>)(() => HasWindow(index))))
+                    .Where((_, index) => index != position).ToList();
+                results[item.Index] = await WaitForWindowAsync(
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, () => LauncherGone(item.Launch)), waitTimeoutMs,
+                    handle => Claim(position, handle), cancellationToken).ConfigureAwait(false);
+                Report(item.Index);
+            })).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var (_, launch) in waiting)
+            {
+                launch.Process?.Dispose();
+            }
+        }
+
+        return results!;
     }
 
-    public KillResult KillProcess(
+    private static string DescribeLaunch(LaunchResult result) => !result.Success
+        ? $"was not started ({result.ErrorCode})"
+        : result.Status switch
+        {
+            LaunchStatus.WindowObserved => "started, its window appeared",
+            LaunchStatus.ReusedExistingWindow => "started, it reused a window that was already open",
+            LaunchStatus.OpenedInTab => "started, it opened in a window that was already open",
+            LaunchStatus.PossibleHandoff => "was handed to an app that was already running",
+            LaunchStatus.ExitedWithoutWindow => "started, but it exited without a window",
+            LaunchStatus.TimedOut => "started, no window appeared in time",
+            LaunchStatus.AwaitingUserConsent => "is waiting for the user to answer a prompt (most likely UAC)",
+            _ => "started"
+        };
+
+    public async Task<KillResult> KillProcessAsync(
         int processId,
         bool confirm,
         bool forceKill = false,
         int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
-        string? expectedProcessName = null)
+        string? expectedProcessName = null,
+        KillSafeguards? safeguards = null,
+        CancellationToken cancellationToken = default)
     {
         // Safety check: require explicit confirmation
         if (!confirm)
@@ -404,33 +800,9 @@ public class ProcessService : IProcessService
                 ErrorCode: nameof(ProcessErrorCode.ConfirmationRequired));
         }
 
-        // Validate process ID
-        if (processId <= 0)
+        if (ArgumentRefusal(processId, gracefulTimeoutMs) is { } invalid)
         {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Invalid process ID. Must be a positive integer.",
-                ErrorCode: nameof(ProcessErrorCode.InvalidProcessId));
-        }
-
-        // Cannot kill self
-        if (processId == Environment.ProcessId)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Cannot terminate the current process.",
-                ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
-        }
-
-        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
-                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+            return invalid;
         }
 
         IProcessHandle? process;
@@ -461,103 +833,284 @@ public class ProcessService : IProcessService
                 return ProcessNotFound(processId);
             }
 
-            // Check if it's a protected system process
-            if (ProtectedProcesses.Contains(processName))
+            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused)
             {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
-                    ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+                return refused;
             }
 
-            // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
-            if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
+            if (safeguards?.Confirmed is { } confirmed && ConfirmedTargetRefusal(processId, processName, forceKill, confirmed, tree) is { } changed)
+            {
+                return changed;
+            }
+
+            // A call cancelled before anything is sent does nothing
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var beforeWait = safeguards?.BeforeWait;
+            return forceKill
+                ? await TerminateForcefullyAsync(process, processId, processName, beforeWait, cancellationToken).ConfigureAwait(false)
+                : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, beforeWait, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public KillTargetCheck CheckKillTarget(int processId, bool forceKill, int gracefulTimeoutMs, string? expectedProcessName = null)
+    {
+        if (ArgumentRefusal(processId, gracefulTimeoutMs) is { } invalid)
+        {
+            return KillTargetCheck.Refused(invalid);
+        }
+
+        IProcessHandle? process;
+        try
+        {
+            process = _processWrapper.OpenProcess(processId);
+        }
+        catch (Exception ex)
+        {
+            return KillTargetCheck.Refused(KillFailureFromException(ex, processId, processName: null));
+        }
+
+        if (process == null)
+        {
+            return KillTargetCheck.Refused(ProcessNotFound(processId));
+        }
+
+        using (process)
+        {
+            string processName;
+            try
+            {
+                processName = process.ProcessName;
+            }
+            catch (InvalidOperationException)
+            {
+                return KillTargetCheck.Refused(ProcessNotFound(processId));
+            }
+
+            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused)
+            {
+                return KillTargetCheck.Refused(refused);
+            }
+
+            // A graceful close needs a main window to ask; without one the kill would refuse after the user's yes.
+            // (A main window that a modal dialog disables is only found by the close request itself.)
+            if (!forceKill && !HasMainWindow(process))
+            {
+                return KillTargetCheck.Refused(NoClosableWindow(processId, processName));
+            }
+
+            // Read while the process is open, so the PID cannot have been reused yet
+            return new KillTargetCheck(null, processName, tree ?? [], _processWrapper.GetProcessStartTime(processId));
+        }
+    }
+
+    /// <summary>
+    /// Why the open process is not the one the user confirmed, or null: it started at another time than the confirmed one
+    /// (the PID was reused while the question was open), or, with <paramref name="forceKill"/>, its tree has a process the
+    /// user was not shown. The process is open, so its PID cannot be reused while this reads its start time.
+    /// </summary>
+    private KillResult? ConfirmedTargetRefusal(
+        int processId, string processName, bool forceKill, KillTargetCheck confirmed, IReadOnlyList<(int ProcessId, string ImageName)>? tree)
+    {
+        if (confirmed.StartTime is { } confirmedStart && _processWrapper.GetProcessStartTime(processId) is var start && start != confirmedStart)
+        {
+            var started = start is { } now ? $"at {now:u}" : "at a time that cannot be read";
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"PID {processId} now belongs to a '{processName}' process that started {started}, not the one the user " +
+                              $"confirmed (started at {confirmedStart:u}): that one exited and its PID was reused while the question was " +
+                              "open. Nothing was done; call list_processes to get the current PID.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
+        }
+
+        if (forceKill && tree != null)
+        {
+            var shown = confirmed.ChildProcesses.Select(c => c.ProcessId).ToHashSet();
+            var added = tree.Where(c => !shown.Contains(c.ProcessId)).ToList();
+            if (added.Count > 0)
+            {
+                var names = string.Join(", ", added.Take(10).Select(c => $"{c.ImageName} (PID {c.ProcessId})")) +
+                            (added.Count > 10 ? $" and {added.Count - 10} more" : string.Empty);
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill would also end {names}, which started under '{processName}' (PID {processId}) while the " +
+                                  "user was asked, so the user never saw them. Nothing was terminated. Call kill_process again to ask " +
+                                  "about the process tree as it is now.",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessTreeChanged));
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>True when the process has a main window, or when that cannot be read (the close request then finds out).</summary>
+    private static bool HasMainWindow(IProcessHandle process)
+    {
+        try
+        {
+            return process.RefreshMainWindowHandle() != nint.Zero;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return true;
+        }
+    }
+
+    private static KillResult NoClosableWindow(int processId, string processName) => new(
+        Success: false,
+        ProcessId: processId,
+        ProcessName: processName,
+        ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
+                      "(it may be windowless, running only in the notification area, or its window is blocked by a " +
+                      "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
+                      $"kill_process again with forceKill=true: {ForceKillConsequence}",
+        ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
+
+    /// <summary>The refusal of a process ID or timeout that is not valid, or null.</summary>
+    private static KillResult? ArgumentRefusal(int processId, int gracefulTimeoutMs)
+    {
+        // Validate process ID
+        if (processId <= 0)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Invalid process ID. Must be a positive integer.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidProcessId));
+        }
+
+        // Cannot kill self
+        if (processId == Environment.ProcessId)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Cannot terminate the current process.",
+                ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
+        }
+
+        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Why the open process must not be closed or terminated, or null: a protected system process, the target
+    /// policy, a PID that now belongs to another process than <paramref name="expectedProcessName"/>, the agent's
+    /// host, and with <paramref name="forceKill"/> a child process that is denied or belongs to the host (or a tree
+    /// that cannot be read). <paramref name="tree"/> is the process tree a forced kill would end, when it was read.
+    /// </summary>
+    private KillResult? TargetRefusal(
+        int processId, string processName, bool forceKill, string? expectedProcessName, out IReadOnlyList<(int ProcessId, string ImageName)>? tree)
+    {
+        tree = null;
+
+        // Check if it's a protected system process
+        if (ProtectedProcesses.Contains(processName))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
+                ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+        }
+
+        // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
+        if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
+                              "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
+                ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        }
+
+        // PID reuse guard: the process the agent saw in list_processes may have exited
+        if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
+                              "The process you meant may have exited and its PID been reused. Nothing was done; " +
+                              "call list_processes to get the current PID.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
+        }
+
+        // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
+        if (IsHostProcess(processId))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
+                              "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
+                ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+        }
+
+        // forceKill ends the whole process tree, so every process in it must pass the policy and the
+        // host check too. A graceful close asks only the process's own main window to close.
+        if (forceKill)
+        {
+            // Fails closed: the runtime's tree kill finds the children on its own, so an unread tree would
+            // still be ended, unchecked
+            if (_processWrapper.GetDescendantsOf(processId) is not { } descendants)
             {
                 return new KillResult(
                     Success: false,
                     ProcessId: processId,
                     ProcessName: processName,
-                    ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
-                                  "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
+                                  "could not be read, or did not list the process (it may just have exited), so they could not be " +
+                                  "checked against the target policy and the agent's host. Nothing was terminated. Try again, or close " +
+                                  "it without forceKill (only its main window is asked to close).",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
+            }
+
+            tree = descendants;
+            if (DeniedDescendant(descendants) is { } denied)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
+                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
                     ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
             }
 
-            // PID reuse guard: the process the agent saw in list_processes may have exited
-            if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
+            if (HostDescendant(descendants) is { } host)
             {
                 return new KillResult(
                     Success: false,
                     ProcessId: processId,
                     ProcessName: processName,
-                    ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
-                                  "The process you meant may have exited and its PID been reused. Nothing was done; " +
-                                  "call list_processes to get the current PID.",
-                    ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
-            }
-
-            // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
-            if (IsHostProcess(processId))
-            {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
-                                  "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{host.ImageName}' (PID {host.ProcessId}) belongs to the agent's host: {HostProcessKinds}. " +
+                                  "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
+                                  "forceKill (only its main window is asked to close), or ask the user.",
                     ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
             }
-
-            // forceKill ends the whole process tree, so every process in it must pass the policy and the
-            // host check too. A graceful close asks only the process's own main window to close.
-            if (forceKill)
-            {
-                // Fails closed: the runtime's tree kill finds the children on its own, so an unread tree would
-                // still be ended, unchecked
-                if (_processWrapper.GetDescendantsOf(processId) is not { } tree)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
-                                      "could not be read, or did not list the process (it may just have exited), so they could not be " +
-                                      "checked against the target policy and the agent's host. Nothing was terminated. Try again, or close " +
-                                      "it without forceKill (only its main window is asked to close).",
-                        ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
-                }
-
-                if (DeniedDescendant(tree) is { } denied)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
-                                      $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
-                                      "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
-                        ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
-                }
-
-                if (HostDescendant(tree) is { } host)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
-                                      $"'{host.ImageName}' (PID {host.ProcessId}) belongs to the agent's host: {HostProcessKinds}. " +
-                                      "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
-                                      "forceKill (only its main window is asked to close), or ask the user.",
-                        ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
-                }
-            }
-
-            return forceKill
-                ? TerminateForcefully(process, processId, processName)
-                : CloseGracefully(process, processId, processName, gracefulTimeoutMs);
         }
+
+        return null;
     }
 
     /// <summary>
@@ -605,7 +1158,8 @@ public class ProcessService : IProcessService
     /// Graceful mode: posts WM_CLOSE to the main window and waits. Never escalates to a forced kill;
     /// a process that cannot be closed or is still running is left alone and reported as such.
     /// </summary>
-    private static KillResult CloseGracefully(IProcessHandle process, int processId, string processName, int timeoutMs)
+    private static async Task<KillResult> CloseGracefullyAsync(
+        IProcessHandle process, int processId, string processName, int timeoutMs, Action? beforeWait, CancellationToken cancellationToken)
     {
         bool closeRequested;
         try
@@ -624,21 +1178,19 @@ public class ProcessService : IProcessService
                 return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
             }
 
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ProcessName: processName,
-                ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
-                              "(it may be windowless, running only in the notification area, or its window is blocked by a " +
-                              "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
-                              $"kill_process again with forceKill=true: {ForceKillConsequence}",
-                ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
+            return NoClosableWindow(processId, processName);
         }
 
+        beforeWait?.Invoke();
         bool exited;
         try
         {
-            exited = process.WaitForExit(timeoutMs);
+            exited = await process.WaitForExitAsync(timeoutMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The close request was sent; the process may still exit, or show a prompt
+            throw;
         }
         catch (Exception ex)
         {
@@ -666,7 +1218,8 @@ public class ProcessService : IProcessService
     /// <summary>
     /// Force mode: terminates the process and its child processes, then confirms that it exited.
     /// </summary>
-    private static KillResult TerminateForcefully(IProcessHandle process, int processId, string processName)
+    private static async Task<KillResult> TerminateForcefullyAsync(
+        IProcessHandle process, int processId, string processName, Action? beforeWait, CancellationToken cancellationToken)
     {
         AggregateException? treeFailures = null;
         try
@@ -696,10 +1249,16 @@ public class ProcessService : IProcessService
               (accessDenied ? " (access denied: they probably run elevated or as another user)" : "") +
               ": " + string.Join("; ", treeFailures.InnerExceptions.Select(e => e.Message));
 
+        beforeWait?.Invoke();
         bool exited;
         try
         {
-            exited = process.WaitForExit(ForceKillExitWaitMs);
+            exited = await process.WaitForExitAsync(ForceKillExitWaitMs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The termination was requested; only the confirmation that the process exited is not waited for
+            throw;
         }
         catch (Exception ex)
         {
@@ -817,38 +1376,6 @@ public class ProcessService : IProcessService
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
 
-    private nint? WaitForMainWindow(IProcessHandle process, int timeoutMs)
-    {
-        var stopwatch = Stopwatch.StartNew();
-
-        while (stopwatch.ElapsedMilliseconds < timeoutMs)
-        {
-            try
-            {
-                var mainWindowHandle = process.RefreshMainWindowHandle();
-                if (mainWindowHandle != nint.Zero)
-                {
-                    return mainWindowHandle;
-                }
-
-                // Also try to find windows belonging to this process
-                var windows = _windowService.FindWindows(processId: process.Id);
-                if (windows.Count > 0)
-                {
-                    return windows[0].Handle;
-                }
-
-                Thread.Sleep(100);
-            }
-            catch
-            {
-                break;
-            }
-        }
-
-        return null;
-    }
-
     // Browser executable paths for common browsers
     private static readonly Dictionary<string, string[]> BrowserPaths = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -874,13 +1401,14 @@ public class ProcessService : IProcessService
         "chrome", "edge", "brave"
     };
 
-    public DebugBrowserLaunchResult LaunchBrowserWithDebug(
+    public async Task<DebugBrowserLaunchResult> LaunchBrowserWithDebugAsync(
         string browser = "chrome",
         string? url = null,
         int port = 9222,
         string? userDataDir = null,
         bool waitForWindow = true,
-        int waitTimeoutMs = 10000)
+        int waitTimeoutMs = 10000,
+        CancellationToken cancellationToken = default)
     {
         // Validate browser type
         if (!SupportedBrowsers.Contains(browser))
@@ -930,12 +1458,13 @@ public class ProcessService : IProcessService
         try
         {
             // Launch browser
-            var launchResult = LaunchApplication(
+            var launchResult = await LaunchApplicationAsync(
                 browserPath,
                 arguments.ToArray(),
                 workingDirectory: null,
                 waitForWindow: waitForWindow,
-                waitTimeoutMs: waitTimeoutMs);
+                waitTimeoutMs: waitTimeoutMs,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
 
             if (!launchResult.Success)
             {
@@ -957,6 +1486,10 @@ public class ProcessService : IProcessService
                 UserDataDir: effectiveUserDataDir,
                 Error: null,
                 ErrorCode: null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

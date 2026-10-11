@@ -31,12 +31,14 @@ public class DependencyInjectionTests : IDisposable
     }
 
     /// <summary>
-    /// The registrations of Program.cs, without the stdio transport and with layouts in a temp folder.
+    /// The registrations of Program.cs, without the stdio transport and with layouts and the audit log in a temp folder.
     /// </summary>
     private ServiceCollection BuildServerServices()
     {
         var services = new ServiceCollection();
-        services.AddWindowsAppManagerServices(() => LayoutStorageOptions.ForPath(_testLayoutPath));
+        services.AddWindowsAppManagerServices(
+            () => LayoutStorageOptions.ForPath(_testLayoutPath),
+            () => AuditLogOptions.ForFolder(Path.Combine(_testLayoutPath, "audit")));
         services.AddMcpServer().AddWindowsAppManagerTools();
         return services;
     }
@@ -365,10 +367,49 @@ public class DependencyInjectionTests : IDisposable
         // Act
         var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-        // Assert - added first: the SDK runs the first filter added as the outermost (ServerFilterPipelineTests), so it
-        // also logs the input gate filter's wait and the calls that filter refuses while input is paused
-        options.Filters.CallToolFilters.Should().HaveCount(2);
-        options.Filters.CallToolFilters[0].Method.Should().BeSameAs(filter);
+        // Assert - added right after the audit log's: the SDK runs the first filter added as the outermost
+        // (ServerFilterPipelineTests), so it also logs the input gate filter's wait and the calls that filter refuses
+        // while input is paused
+        options.Filters.Request.CallToolFilters.Should().HaveCount(3);
+        options.Filters.Request.CallToolFilters[1].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheAuditLogFilter_AsTheOutermost()
+    {
+        // Outermost (roadmap M2.17): it records the result the agent gets, after the error filter turned an exception
+        // into an error result, and a call the input gate filter refused while input was paused
+        var filter = typeof(AuditLogToolFilter).GetMethod(nameof(AuditLogToolFilter.Filter));
+
+        var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+
+        options.Filters.Request.CallToolFilters[0].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerServices_ByDefault_WritesTheAuditLogWhereFromEnvironmentSays()
+    {
+        // Arrange - Program.cs's default. Creating the audit log touches no file, and only its folder is read here, so
+        // nothing is created under %LOCALAPPDATA%.
+        using var provider = new ServiceCollection().AddWindowsAppManagerServices().BuildServiceProvider();
+
+        // Act
+        var folder = provider.GetRequiredService<IAuditLog>().Folder;
+
+        // Assert
+        folder.Should().Be(AuditLogOptions.FromEnvironment().Folder);
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AuditLogOptions.FolderEnvironmentVariable)))
+        {
+            folder.Should().Be(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), LayoutStorageOptions.AppDataFolderName, "audit"));
+        }
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerServices_WithAuditLog_UsesIt()
+    {
+        _serviceProvider.GetRequiredService<IAuditLog>().Folder.Should().Be(Path.Combine(_testLayoutPath, "audit"));
+        _serviceProvider.GetRequiredService<IServerInfoService>().Should().NotBeNull();
     }
 
     [Fact]
@@ -379,7 +420,7 @@ public class DependencyInjectionTests : IDisposable
 
         var options = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value;
 
-        options.Filters.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
+        options.Filters.Request.CallToolFilters.Select(f => f.Method).Should().Contain(filter);
     }
 
     [Fact]

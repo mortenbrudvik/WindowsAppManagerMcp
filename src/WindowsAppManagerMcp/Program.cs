@@ -2,18 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Infrastructure;
-using WindowsAppManagerMcp.Native;
 
-// Set per-monitor DPI awareness for accurate window positioning on high-DPI displays
-try
-{
-    NativeMethods.Shcore.SetProcessDpiAwareness(PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE);
-}
-catch
-{
-    // Windows 8.1+ required for SetProcessDpiAwareness, ignore on older versions
-}
-
+// Per-monitor v2 DPI awareness comes from app.manifest, so every coordinate is a physical pixel. Setting it through
+// the API as well would fail with ACCESS_DENIED; ServerStartupLog logs the effective awareness instead.
 var builder = Host.CreateApplicationBuilder(args);
 
 // Configure logging to stderr (important for STDIO-based MCP servers)
@@ -31,18 +22,15 @@ builder.Logging.AddWindowsAppManagerLogLevels();
 // versioned plugin folder (LayoutStorageOptions.FromEnvironment).
 builder.Services.AddWindowsAppManagerServices();
 
-// Configure MCP Server
-builder.Services.AddMcpServer(options =>
-{
-    options.ServerInfo = new()
-    {
-        Name = "windows-app-manager",
-        Version = WindowsAppManagerMcp.ServerVersion.Current
-    };
-})
+// The toolsets, excluded tools and read-only mode the user chose (WAM_TOOLSETS, WAM_EXCLUDE_TOOLS, WAM_READ_ONLY),
+// read before the tool registrations; ServerStartupLog logs them and what they leave out
+var toolsets = ToolsetSelection.FromEnvironment();
+
+// Configure MCP Server: its name, version (with the commit) and the instructions every client gets
+builder.Services.AddMcpServer(ServerIdentity.Configure)
 .WithStdioServerTransport()
-// The tool error filter (ToolErrorReporting) and every tool
-.AddWindowsAppManagerTools();
+// The tool error filter (ToolErrorReporting), the input gate and the tools the toolsets serve
+.AddWindowsAppManagerTools(toolsets);
 
 var app = builder.Build();
 

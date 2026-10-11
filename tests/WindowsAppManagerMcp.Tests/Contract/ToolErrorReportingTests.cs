@@ -24,6 +24,9 @@ public class ToolErrorReportingTests
     private const string CodedErrorTool = "coded_error_tool";
     private const string BodyArgumentExceptionTool = "body_argument_exception_tool";
     private const string BodyJsonExceptionTool = "body_json_exception_tool";
+    private const string OutcomeTool = "outcome_tool";
+    private const string ListTool = "list_tool";
+    private const string BatchTool = "batch_tool";
 
     [Fact]
     public async Task ToolThatThrows_ReturnsErrorResultWithExceptionTypeAndMessage()
@@ -90,6 +93,91 @@ public class ToolErrorReportingTests
         // Assert
         result.IsError.Should().NotBe(true);
         result.Content.OfType<TextContentBlock>().Single().Text.Should().Contain("hello");
+    }
+
+    [Fact]
+    public async Task ToolThatReportsFailure_GoesOutWithIsError_AndItsBodyUnchanged()
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(OutcomeTool, new Dictionary<string, object?> { ["success"] = false });
+
+        // Assert - roadmap M2.1: a result that says success false is an error result, with the tool's own JSON body
+        result.IsError.Should().BeTrue();
+        var payload = ParsePayload(result);
+        payload.GetProperty("success").GetBoolean().Should().BeFalse();
+        payload.GetProperty("errorCode").GetString().Should().Be("InvalidHandle");
+        payload.GetProperty("newBounds").GetProperty("width").GetInt32().Should().Be(800);
+        payload.TryGetProperty("tool", out _).Should().BeFalse("the tool's own result is passed on, not replaced");
+    }
+
+    [Fact]
+    public async Task ToolThatReportsSuccess_HasNoIsError()
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync(OutcomeTool, new Dictionary<string, object?> { ["success"] = true });
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        ParsePayload(result).GetProperty("success").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ToolThatReturnsAListOrABatchSummary_HasNoIsError()
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act - an empty list, and items that failed, are data: only a top-level success false is a failed call
+        var list = await server.CallToolAsync(ListTool);
+        var batch = await server.CallToolAsync(BatchTool);
+
+        // Assert
+        list.IsError.Should().NotBe(true);
+        batch.IsError.Should().NotBe(true);
+    }
+
+    [Fact]
+    public async Task ToolThatReportsFailure_IsLoggedWithItsErrorCode()
+    {
+        // Arrange
+        await using var server = await StartServerAsync();
+
+        // Act
+        await server.CallToolAsync(OutcomeTool, new Dictionary<string, object?> { ["success"] = false });
+
+        // Assert
+        server.Logs.Entries.Should().Contain(e =>
+            e.Category == ToolErrorReporting.CallLoggerCategory && e.Message.Contains("isError InvalidHandle"));
+    }
+
+    [Theory]
+    [InlineData("""{"success":false,"errorCode":"X"}""", true)]
+    [InlineData("""{"success":true}""", false)]
+    [InlineData("""{"Success":false}""", false)]
+    [InlineData("""{"success":"false"}""", false)]
+    [InlineData("""[{"success":false}]""", false)]
+    [InlineData("""{"results":[{"success":false}]}""", false)]
+    [InlineData("not json", false)]
+    [InlineData("", false)]
+    public void ReportsFailure_IsTrueOnlyForATopLevelSuccessFalse(string text, bool expected)
+    {
+        var result = new CallToolResult { Content = [new TextContentBlock { Text = text }] };
+
+        ToolOutcome.ReportsFailure(result).Should().Be(expected);
+    }
+
+    [Fact]
+    public void WithIsError_KeepsAnIsErrorTheToolSetItself()
+    {
+        var result = new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = """{"success":true}""" }] };
+
+        ToolOutcome.WithIsError(result).IsError.Should().BeTrue();
     }
 
     [Fact]
@@ -285,7 +373,7 @@ public class ToolErrorReportingTests
         // Assert
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
-        options.Filters.CallToolFilters.Should().ContainSingle();
+        options.Filters.Request.CallToolFilters.Should().ContainSingle();
     }
 
     private static Task<InProcessMcpServer> StartServerAsync() =>
@@ -299,6 +387,9 @@ public class ToolErrorReportingTests
                 McpServerTool.Create(ThrowsWithCode, new McpServerToolCreateOptions { Name = CodedErrorTool }),
                 McpServerTool.Create(ThrowsArgumentException, new McpServerToolCreateOptions { Name = BodyArgumentExceptionTool }),
                 McpServerTool.Create(ThrowsJsonException, new McpServerToolCreateOptions { Name = BodyJsonExceptionTool }),
+                McpServerTool.Create(Outcome, new McpServerToolCreateOptions { Name = OutcomeTool }),
+                McpServerTool.Create(List, new McpServerToolCreateOptions { Name = ListTool }),
+                McpServerTool.Create(Batch, new McpServerToolCreateOptions { Name = BatchTool }),
             ],
             builder => builder.AddToolErrorReporting());
 
@@ -325,10 +416,20 @@ public class ToolErrorReportingTests
     private static int ThrowsJsonException() => JsonSerializer.Deserialize<int>("\"not a number\"");
 
     private static RequestContext<CallToolRequestParams> CreateRequest() =>
-        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall })
-        {
-            Params = new CallToolRequestParams { Name = "some_tool" }
-        };
+        new(new Mock<McpServer>().Object, new JsonRpcRequest { Method = RequestMethods.ToolsCall },
+            new CallToolRequestParams { Name = "some_tool" });
+
+    private static WindowOperationResultLike Outcome(bool success) =>
+        success
+            ? new WindowOperationResultLike(true, new BoundsDto(0, 0, 800, 600))
+            : new WindowOperationResultLike(false, new BoundsDto(0, 0, 800, 600), "Invalid window handle", "InvalidHandle");
+
+    private static IReadOnlyList<WindowOperationResultLike> List() => [];
+
+    private static BatchWindowResult Batch() =>
+        new(1, 0, 1, [new WindowResultItem(42, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle")]);
 
     public record HandleResult(nint? Handle);
+
+    public record WindowOperationResultLike(bool Success, BoundsDto? NewBounds, string? Error = null, string? ErrorCode = null);
 }

@@ -450,6 +450,15 @@ public sealed class InputTargetGuard : IInputTargetGuard
         return !appWindow;
     }
 
+    /// <summary>
+    /// The input error code of a selector recheck's refusal: the same name as the window tools' errorCode (HandleMismatch,
+    /// or InvalidArguments for a titleRegex that timed out); HandleMismatch for a code the input tools do not have.
+    /// </summary>
+    internal static InputErrorCode RecheckErrorCode(string errorCode) =>
+        errorCode != nameof(InputErrorCode.None) && Enum.GetNames<InputErrorCode>().Contains(errorCode, StringComparer.Ordinal)
+            ? Enum.Parse<InputErrorCode>(errorCode)
+            : InputErrorCode.HandleMismatch;
+
     /// <summary>The checks of an explicit target: a window; then probes, policy and host; then not disabled by a modal dialog.</summary>
     private InputGuardResult? TargetRefusal(InputTarget target, out nint handle, out nint root)
     {
@@ -458,6 +467,12 @@ public sealed class InputTargetGuard : IInputTargetGuard
         if (handle == nint.Zero || !_windows.IsWindow(handle))
         {
             return InvalidHandle(target, handle);
+        }
+
+        // A window a selector named must still match it: the selector was resolved before the call waited for the gate
+        if (target.SelectorRecheck?.Invoke() is { } changed)
+        {
+            return InputGuardResult.Refuse(RecheckErrorCode(changed.ErrorCode), changed.Error, target);
         }
 
         root = RootOf(handle);

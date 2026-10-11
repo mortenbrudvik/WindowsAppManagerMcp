@@ -25,6 +25,7 @@ public class WrapperCatalogTests
             typeof(ITcpPortOwnerResolver),
             typeof(INativeHitTestWrapper),
             typeof(INativeSecurityWrapper),
+            typeof(INativeSystemInfoWrapper),
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),
@@ -180,6 +181,12 @@ public class WrapperCatalogTests
     [InlineData(typeof(IProcessHandle), nameof(IDisposable.Dispose), WrapperCallKind.Read)]
     [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.GetGuiThreadInfo), WrapperCallKind.Read)]
     [InlineData(typeof(INativeThreadInputWrapper), nameof(INativeThreadInputWrapper.AttachThreadInput), WrapperCallKind.ThreadInputAttach)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.GetSequenceNumber), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.GetOwnerProcessId), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.Read), WrapperCallKind.Clipboard)]
+    [InlineData(typeof(INativeClipboardWrapper), nameof(INativeClipboardWrapper.WriteText), WrapperCallKind.Clipboard)]
+    [InlineData(typeof(INativeHitTestWrapper), nameof(INativeHitTestWrapper.GetClientAreaOnScreen), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeSystemInfoWrapper), nameof(INativeSystemInfoWrapper.GetMouseWheelRouting), WrapperCallKind.Read)]
     public void Find_ClassifiesTheMembersTheScenariosAndLaterWavesDependOn(Type type, string name, WrapperCallKind expected)
     {
         var method = AllMethods(type).Single(m => m.Name == name);

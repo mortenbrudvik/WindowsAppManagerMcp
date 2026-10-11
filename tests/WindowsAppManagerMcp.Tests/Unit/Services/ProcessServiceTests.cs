@@ -23,6 +23,10 @@ public class ProcessServiceTests
     private readonly Mock<IExecutableResolver> _mockResolver = new();
     private readonly Mock<INativeProcessWrapper> _mockProcessWrapper = new();
     private readonly Mock<IProcessHandle> _mockLaunchedProcess = new();
+    private readonly Mock<IWindowWaitService> _mockWindowWait = new();
+    private readonly List<string> _calls = [];
+    private readonly List<Func<WindowCandidate, bool>> _ownerPredicates = [];
+    private readonly List<WindowWaitOptions> _waitOptions = [];
     private ProcessStartInfo? _startedWith;
 
     public ProcessServiceTests()
@@ -47,9 +51,18 @@ public class ProcessServiceTests
         // The process seam records what would have been started and returns a fake process
         _mockLaunchedProcess.SetupGet(p => p.Id).Returns(LaunchedProcessId);
         _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
-            .Callback<ProcessStartInfo>(startInfo => _startedWith = startInfo)
+            .Callback<ProcessStartInfo>(startInfo =>
+            {
+                _startedWith = startInfo;
+                _calls.Add("start");
+            })
             .Returns(_mockLaunchedProcess.Object);
         _mockProcessWrapper.Setup(w => w.OpenProcess(It.IsAny<int>())).Returns((IProcessHandle?)null);
+
+        // The window wait (WindowWaitServiceTests covers it) records the order of the calls
+        _mockWindowWait.Setup(w => w.TakeBaseline())
+            .Callback(() => _calls.Add("baseline"))
+            .Returns(new WindowBaseline(new Dictionary<nint, string>(), nint.Zero));
     }
 
     private ProcessService CreateSut(IBrowserDetectionService? browserDetection = null) => new(
@@ -57,35 +70,54 @@ public class ProcessServiceTests
         _mockValidationService.Object,
         browserDetection ?? _mockBrowserDetection.Object,
         _mockResolver.Object,
-        _mockProcessWrapper.Object);
+        _mockProcessWrapper.Object,
+        windowWait: _mockWindowWait.Object);
 
     private void VerifyNothingStarted() =>
         _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Never);
 
     #region T4.1: LaunchApplication Tests
 
-    /// <summary>
-    /// T4.1.1: Test LaunchApplication with valid executable returns success.
-    /// </summary>
+    /// <summary>A window of another process than the started one: the app the launcher handed off to.</summary>
+    private static readonly WindowInfo HandedOffWindow =
+        TestDataFactory.CreateWindowInfo(handleValue: 0x5678, title: "Example - Browser", processName: "browser", processId: 7777);
+
+    /// <summary>The wait service finds <paramref name="window"/> with <paramref name="outcome"/>, after recording what it got.</summary>
+    private void WaitFinds(WindowWaitOutcome outcome, WindowInfo? window)
+    {
+        _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+                It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<WindowBaseline, Func<WindowCandidate, bool>, WindowWaitOptions, CancellationToken>((_, isOwner, options, _) =>
+            {
+                _ownerPredicates.Add(isOwner);
+                _waitOptions.Add(options);
+                _calls.Add("wait");
+            })
+            .ReturnsAsync(new WindowWaitResult(outcome, window, 300));
+    }
+
     [Fact]
-    public void LaunchApplication_WithValidExecutable_ReturnsSuccess()
+    public async Task LaunchApplication_WithValidExecutable_ReturnsSuccess()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: false);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", waitForWindow: false);
 
         // Assert
         result.Success.Should().BeTrue();
         result.ProcessId.Should().Be(LaunchedProcessId);
+        result.Status.Should().Be(LaunchStatus.Started);
         result.WindowHandle.Should().BeNull();
+        result.Window.Should().BeNull();
+        result.LauncherExited.Should().BeNull("there was no window wait");
         result.ErrorMessage.Should().BeNull();
         result.ErrorCode.Should().BeNull();
         _startedWith.Should().NotBeNull();
         _startedWith!.FileName.Should().Be("notepad.exe");
         _startedWith.UseShellExecute.Should().BeTrue();
-        _mockLaunchedProcess.Verify(p => p.RefreshMainWindowHandle(), Times.Never);
+        _mockWindowWait.VerifyNoOtherCalls();
         _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Once);
     }
 
@@ -93,7 +125,7 @@ public class ProcessServiceTests
     /// T4.1.2: Test LaunchApplication with invalid executable returns failure.
     /// </summary>
     [Fact]
-    public void LaunchApplication_WithInvalidExecutable_ReturnsFailure()
+    public async Task LaunchApplication_WithInvalidExecutable_ReturnsFailure()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -104,51 +136,510 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("nonexistent_app_xyz123.exe");
+        var result = await sut.LaunchApplicationAsync("nonexistent_app_xyz123.exe");
 
         // Assert
         result.Success.Should().BeFalse();
         result.ProcessId.Should().BeNull();
+        result.Status.Should().BeNull();
         result.ErrorMessage.Should().NotBeNullOrEmpty();
         result.ErrorCode.Should().NotBeNullOrEmpty();
         VerifyNothingStarted();
     }
 
     [Fact]
-    public void LaunchApplication_WithWaitForWindow_ReturnsWindowHandle()
+    public async Task LaunchApplication_WithWaitForWindow_TakesTheBaselineBeforeTheStart_AndReturnsTheWindowFound()
     {
-        // Arrange - the main window appears on the second poll
-        _mockLaunchedProcess.SetupSequence(p => p.RefreshMainWindowHandle())
-            .Returns(nint.Zero)
-            .Returns(new nint(0x1234));
-        var sut = CreateSut();
+        // Arrange - the launcher handed off: the window belongs to another process
+        WaitFinds(WindowWaitOutcome.NewWindow, HandedOffWindow);
+        _mockLaunchedProcess.SetupGet(p => p.HasExited).Returns(true);
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+        var result = await CreateSut().LaunchApplicationAsync("chrome.exe", ["https://example.com/"], waitForWindow: true, waitTimeoutMs: 8000);
 
         // Assert
+        _calls.Should().Equal("baseline", "start", "wait");
         result.Success.Should().BeTrue();
+        result.Status.Should().Be(LaunchStatus.WindowObserved);
         result.ProcessId.Should().Be(LaunchedProcessId);
-        result.WindowHandle.Should().Be(new nint(0x1234));
-        _mockLaunchedProcess.Verify(p => p.RefreshMainWindowHandle(), Times.Exactly(2));
+        result.WindowHandle.Should().Be(new nint(0x5678));
+        result.Window.Should().Be(HandedOffWindow);
+        result.LauncherExited.Should().BeTrue();
+        result.Warning.Should().BeNull();
+        _waitOptions.Single().TimeoutMs.Should().Be(8000);
+        _waitOptions.Single().TryClaim.Should().BeNull();
+        _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Once);
     }
 
     [Fact]
-    public void LaunchApplication_WithWaitForWindow_UsesWindowOfProcessWhenNoMainWindow()
+    public async Task LaunchApplication_TheWaitsOwnerCheck_AcceptsTheStartedProcessAndTheExpectedWindow()
     {
-        // Arrange - no main window, but the window service sees a window owned by the process
-        var window = TestDataFactory.CreateWindowInfo(handleValue: 0x5678, processId: LaunchedProcessId);
-        _mockWindowService.Setup(w => w.FindWindows(
-                It.IsAny<string?>(), It.IsAny<string?>(), LaunchedProcessId, It.IsAny<nint?>(), It.IsAny<bool>()))
-            .Returns([window]);
-        var sut = CreateSut();
+        // Arrange
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: 10000);
+        await CreateSut().LaunchApplicationAsync(
+            new LaunchRequest("app.exe", ExpectWindow: new LaunchWindowHint(TitleContains: "Report")), waitForWindow: true, waitTimeoutMs: 1000);
+
+        // Assert
+        var isOwner = _ownerPredicates.Single();
+        isOwner(new WindowCandidate(0x1, LaunchedProcessId, null, "Untitled")).Should().BeTrue();
+        isOwner(new WindowCandidate(0x2, 999, null, "Quarterly Report")).Should().BeTrue();
+        isOwner(new WindowCandidate(0x3, 999, null, "Something else")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LaunchApplication_GivesTheWaitTheDocumentsAndHostsOfTheArguments()
+    {
+        // Arrange
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationAsync("notepad.exe", [@"C:\Projects\README.md", "--flag", "https://www.example.com/page"],
+            waitForWindow: true, waitTimeoutMs: 1000);
+
+        // Assert
+        _waitOptions.Single().DocumentHints.Should().Equal("README.md", "example.com");
+    }
+
+    [Theory]
+    [InlineData(WindowWaitOutcome.ReusedExistingWindow, LaunchStatus.ReusedExistingWindow)]
+    [InlineData(WindowWaitOutcome.OpenedInTab, LaunchStatus.OpenedInTab)]
+    public async Task LaunchApplication_AnExistingWindowTheAppReused_IsReported(WindowWaitOutcome outcome, LaunchStatus expected)
+    {
+        // Arrange
+        WaitFinds(outcome, HandedOffWindow);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("notepad.exe", [@"C:\notes.txt"], waitForWindow: true);
 
         // Assert
         result.Success.Should().BeTrue();
-        result.WindowHandle.Should().Be(new nint(0x5678));
+        result.Status.Should().Be(expected);
+        result.Window.Should().Be(HandedOffWindow);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_NoWindowWhileTheProgramRuns_IsTimedOut_WithWhatToDo()
+    {
+        // Arrange
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 1500);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Status.Should().Be(LaunchStatus.TimedOut);
+        result.LauncherExited.Should().BeFalse();
+        result.Window.Should().BeNull();
+        result.Warning.Should().Contain("1500 ms").And.Contain("find_windows").And.Contain("do not launch it again");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_NoWindowAndTheProgramExited_IsExitedWithoutWindow()
+    {
+        // Arrange
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+        _mockLaunchedProcess.SetupGet(p => p.HasExited).Returns(true);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("launcher.exe", waitForWindow: true);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.ExitedWithoutWindow);
+        result.LauncherExited.Should().BeTrue();
+        result.Warning.Should().Contain("expectWindow");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AnUntitledMainWindowOfTheProgram_StillCounts()
+    {
+        // Arrange - the wait (which needs a title) found nothing, but the process has a visible main window
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+        var untitled = TestDataFactory.CreateWindowInfo(handleValue: 0x4444, title: "", processId: LaunchedProcessId);
+        _mockLaunchedProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(new nint(0x4444));
+        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(0x4444))).Returns(untitled);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("game.exe", waitForWindow: true);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.WindowObserved);
+        result.Window.Should().Be(untitled);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_WhenWindowsStartsNoProcess_IsAHandoff_NotAFailure()
+    {
+        // Arrange - ShellExecute handed the request to a running app without creating a process
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("https://example.com/");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.ProcessId.Should().BeNull();
+        result.Status.Should().Be(LaunchStatus.PossibleHandoff);
+        result.Warning.Should().Contain("processId is null");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AHandoffWithAWait_ReturnsTheWindowOfTheAppThatGotTheRequest()
+    {
+        // Arrange
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
+        WaitFinds(WindowWaitOutcome.NewWindow, HandedOffWindow);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("https://example.com/", waitForWindow: true);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.WindowObserved);
+        result.ProcessId.Should().BeNull();
+        result.Window.Should().Be(HandedOffWindow);
+        result.LauncherExited.Should().BeNull("no process was started");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AHandoffWithoutAWindow_IsPossibleHandoff()
+    {
+        // Arrange
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("mailto:someone@example.com", waitForWindow: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Status.Should().Be(LaunchStatus.PossibleHandoff);
+        result.Warning.Should().Contain("expectWindow");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AStartThatDoesNotReturn_IsAwaitingUserConsent_AndItsProcessIsReleasedLater()
+    {
+        // Arrange - ShellExecute blocks while Windows shows a UAC prompt
+        using var userAnswers = new ManualResetEventSlim();
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(() =>
+            {
+                userAnswers.Wait(TimeSpan.FromSeconds(10));
+                return _mockLaunchedProcess.Object;
+            });
+        var released = new TaskCompletionSource();
+        _mockLaunchedProcess.Setup(p => p.Dispose()).Callback(() => released.TrySetResult());
+        var sut = new ProcessService(_mockWindowService.Object, _mockValidationService.Object, _mockBrowserDetection.Object,
+            _mockResolver.Object, _mockProcessWrapper.Object, windowWait: _mockWindowWait.Object)
+        {
+            StartTimeout = TimeSpan.FromMilliseconds(100)
+        };
+
+        // Act
+        var result = await sut.LaunchApplicationAsync("setup.exe", waitForWindow: true);
+
+        // Assert - no window wait; the user approves afterwards and the late process handle is released
+        result.Success.Should().BeTrue();
+        result.Status.Should().Be(LaunchStatus.AwaitingUserConsent);
+        result.ProcessId.Should().BeNull();
+        result.Warning.Should().Contain("UAC").And.Contain("do not launch it again");
+        _mockWindowWait.Verify(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+            It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        userAnswers.Set();
+        (await Task.WhenAny(released.Task, Task.Delay(TimeSpan.FromSeconds(10)))).Should().Be(released.Task);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_TheUserDeclinesTheUacPrompt_IsElevationCancelled()
+    {
+        // Arrange
+        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Throws(new Win32Exception(1223, "The operation was canceled by the user."));
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("setup.exe");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ElevationCancelled));
+        result.ErrorMessage.Should().Contain("declined");
+    }
+
+    [Fact]
+    public async Task LaunchApplication_CancelledWhileWaitingForTheWindow_StopsWaitingAndThrows()
+    {
+        // Arrange - the wait runs until the call is cancelled
+        _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+                It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
+            .Returns<WindowBaseline, Func<WindowCandidate, bool>, WindowWaitOptions, CancellationToken>(async (_, _, _, token) =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                return new WindowWaitResult(WindowWaitOutcome.TimedOut, null, 0);
+            });
+        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 30000, cancellationToken: call.Token);
+
+        // Assert - the cancellation is reported as such, not as a LaunchException result; the program was started
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
+        _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_CancelledBeforeTheStart_StartsNothing()
+    {
+        // Arrange
+        using var call = new CancellationTokenSource();
+        call.Cancel();
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationAsync("notepad.exe", cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ReportsProgressAfterEachApplication()
+    {
+        // Arrange - the second application is refused by validation, the others start
+        _mockValidationService.Setup(v => v.ValidateExecutable("bad.exe"))
+            .Returns(new ExecutableValidationResult(false, Error: "not allowed", ErrorCode: "InvalidPath"));
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("notepad.exe"), new LaunchRequest("bad.exe"), new LaunchRequest("calc.exe")], progress: progress);
+
+        // Assert - "i of n" after every application, started or not
+        results.Select(r => r.Success).Should().Equal(true, false, true);
+        results.Select(r => r.Status).Should().Equal(LaunchStatus.Started, null, LaunchStatus.Started);
+        progress.Reports.Select(p => (p.Completed, p.Total)).Should().Equal((1, 3), (2, 3), (3, 3));
+        progress.Reports.Select(p => p.Message).Should().Equal(
+            "1 of 3: notepad.exe started",
+            "2 of 3: bad.exe was not started (InvalidPath)",
+            "3 of 3: calc.exe started");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_WithWaitForWindows_StartsEveryApplicationFirst_ThenWaitsForAllWindows()
+    {
+        // Arrange - the window of the first application appears; the second never shows one
+        _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+                It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<WindowBaseline, Func<WindowCandidate, bool>, WindowWaitOptions, CancellationToken>((_, _, options, _) =>
+            {
+                _waitOptions.Add(options);
+                _calls.Add("wait");
+            })
+            .Returns(() => Task.FromResult(_waitOptions.Count == 1
+                ? new WindowWaitResult(WindowWaitOutcome.NewWindow, HandedOffWindow, 400)
+                : new WindowWaitResult(WindowWaitOutcome.TimedOut, null, 150)));
+        var progress = new RecordingProgress<OperationProgress>();
+
+        // Act
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("notepad.exe"), new LaunchRequest("calc.exe")], waitForWindows: true, waitTimeoutMs: 150, progress: progress);
+
+        // Assert - both started before either wait; one deadline for both
+        _calls.Should().Equal("baseline", "start", "baseline", "start", "wait", "wait");
+        _waitOptions.Select(o => o.TimeoutMs).Should().Equal(150, 150);
+        results.Select(r => r.Status).Should().Equal(LaunchStatus.WindowObserved, LaunchStatus.TimedOut);
+        results[0].Window.Should().Be(HandedOffWindow);
+        progress.Reports.Select(p => p.Message).Should().Equal(
+            "1 of 2: notepad.exe started, its window appeared",
+            "2 of 2: calc.exe started, no window appeared in time");
+        _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ANewWindow_GoesToOneLaunchOnly()
+    {
+        // Arrange - two launches of the same program wait together
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest("notepad.exe"), new LaunchRequest("notepad.exe")], waitForWindows: true);
+
+        // Assert - they share one claim: the window the first one takes is no longer the second one's
+        _waitOptions.Should().HaveCount(2);
+        _waitOptions[0].TryClaim!(0x100).Should().BeTrue();
+        _waitOptions[1].TryClaim!(0x100).Should().BeFalse();
+        _waitOptions[1].TryClaim!(0x101).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Two launches of the same program match each other's windows by name and path. A window of the process one of them
+    /// started (or of its child) is that launch's, whichever wait sees it first: a wait that polls first must not take
+    /// the other launch's document window. A window neither started (a running instance both may hand off to) stays open
+    /// to both, and the shared claim gives it to one.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_SameProgramTwice_EachLaunchGetsOnlyTheWindowsOfTheProcessItStarted()
+    {
+        // Arrange - notepad a.txt starts 501, notepad b.txt starts 502; 600 is a child of 502; 700 is an older Notepad
+        const string notepad = @"C:\Windows\notepad.exe";
+        var launchedAt = DateTime.UtcNow;
+        var processList = new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [501] = (10, "notepad.exe"),
+            [502] = (10, "notepad.exe"),
+            [600] = (502, "notepad.exe"),
+            [700] = (10, "notepad.exe")
+        };
+        _mockResolver.Setup(r => r.Resolve("notepad", It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget(notepad, LaunchTargetKind.NativeExecutable));
+        _mockProcessWrapper.Setup(w => w.GetProcessList()).Returns(processList);
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns(notepad);
+        _mockProcessWrapper.Setup(w => w.GetProcessStartTime(It.IsAny<int>()))
+            .Returns<int>(id => id == 700 ? launchedAt.AddHours(-1) : launchedAt.AddSeconds(1));
+        var first = new Mock<IProcessHandle>();
+        first.SetupGet(p => p.Id).Returns(501);
+        var second = new Mock<IProcessHandle>();
+        second.SetupGet(p => p.Id).Returns(502);
+        _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(first.Object)
+            .Returns(second.Object);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync(
+            [
+                new LaunchRequest("notepad", ["a.txt"], ExpectWindow: new LaunchWindowHint(TitleContains: ".txt")),
+                new LaunchRequest("notepad", ["b.txt"])
+            ],
+            waitForWindows: true);
+
+        // Assert
+        _ownerPredicates.Should().HaveCount(2);
+        var (ownsA, ownsB) = (_ownerPredicates[0], _ownerPredicates[1]);
+        WindowCandidate Window(int processId, string title) => new(0x100 + processId, processId, null, title);
+
+        ownsA(Window(501, "a.txt - Notepad")).Should().BeTrue();
+        ownsA(Window(502, "b.txt - Notepad")).Should().BeFalse("502 is the other launch's process, even though the hint matches");
+        ownsA(Window(600, "b.txt - Notepad")).Should().BeFalse("600 is a child of the other launch's process");
+        ownsB(Window(502, "b.txt - Notepad")).Should().BeTrue();
+        ownsB(Window(600, "b.txt - Notepad")).Should().BeTrue();
+        ownsB(Window(501, "a.txt - Notepad")).Should().BeFalse("501 is the other launch's process");
+
+        // A running instance that neither launch started can be either launch's (the shared claim decides)
+        ownsA(Window(700, "Notepad")).Should().BeTrue();
+        ownsB(Window(700, "Notepad")).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A single-instance app (Code, Windows Terminal, an Electron app) started twice in one batch: the second launcher hands
+    /// its request to the instance the first launch started and exits, so its window belongs to the first launch's process.
+    /// Once the first launch has its window, and the second launcher is gone, the second launch may take that process's
+    /// next window; before that, or while the second launcher still runs, it may not.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_ALaunchThatHandedOffToAnEarlierItemsInstance_GetsItsWindow_OnceThatItemHasOne()
+    {
+        // Arrange - launch 1 starts 501, whose child 600 is the app's single instance; launch 2's 502 forwards to it and exits
+        const string app = @"C:\Apps\Code\Code.exe";
+        var launchedAt = DateTime.UtcNow;
+        _mockResolver.Setup(r => r.Resolve("code", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(app, LaunchTargetKind.NativeExecutable));
+        _mockProcessWrapper.Setup(w => w.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [501] = (10, "Code.exe"),
+            [502] = (10, "Code.exe"),
+            [600] = (501, "Code.exe")
+        });
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns(app);
+        _mockProcessWrapper.Setup(w => w.GetProcessStartTime(It.IsAny<int>())).Returns(launchedAt.AddSeconds(1));
+        var first = new Mock<IProcessHandle>();
+        first.SetupGet(p => p.Id).Returns(501);
+        var second = new Mock<IProcessHandle>();
+        second.SetupGet(p => p.Id).Returns(502);
+        var secondExited = false;
+        second.SetupGet(p => p.HasExited).Returns(() => secondExited);
+        _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(first.Object)
+            .Returns(second.Object);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest("code", ["a"]), new LaunchRequest("code", ["b"])], waitForWindows: true);
+
+        // Assert
+        var ownsB = _ownerPredicates[1];
+        var handedOffWindow = new WindowCandidate(0x700, 600, null, "b - Visual Studio Code");
+        ownsB(handedOffWindow).Should().BeFalse("launch 1 has no window yet: this one may be its own");
+
+        _waitOptions[0].TryClaim!(0x600).Should().BeTrue();
+        ownsB(handedOffWindow).Should().BeFalse("launch 2's own process still runs: its window may still come");
+
+        secondExited = true;
+        ownsB(handedOffWindow).Should().BeTrue("launch 1 has its window, and launch 2's launcher handed off and exited");
+        _ownerPredicates[0](handedOffWindow).Should().BeTrue("the shared claim still decides which launch gets a window");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ProgressValues_OnlyIncrease_WhenWaitsEndTogether()
+    {
+        // Arrange - every wait ends on a thread-pool thread at once
+        using var go = new ManualResetEventSlim();
+        _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+                It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.Run(() =>
+            {
+                go.Wait(TimeSpan.FromSeconds(10));
+                return new WindowWaitResult(WindowWaitOutcome.TimedOut, null, 100);
+            }));
+        var progress = new RecordingProgress<OperationProgress>();
+        var applications = Enumerable.Range(0, 16).Select(i => new LaunchRequest($"app{i}.exe")).ToList();
+
+        // Act
+        var batch = CreateSut().LaunchApplicationsBatchAsync(applications, waitForWindows: true, waitTimeoutMs: 100, progress: progress);
+        go.Set();
+        await batch;
+
+        // Assert
+        progress.Reports.Select(p => p.Completed).Should().Equal(Enumerable.Range(1, 16));
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ExpectWindowOfAnItem_IsUsedForItsWait()
+    {
+        // Arrange
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("ms-settings:display", ExpectWindow: new LaunchWindowHint(TitleContains: "Settings"))], waitForWindows: true);
+
+        // Assert
+        _ownerPredicates.Single()(new WindowCandidate(0x1, 999, null, "Settings")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_WhenCancelled_StartsNoFurtherApplication()
+    {
+        // Arrange - the call is cancelled once the first application has started
+        using var call = new CancellationTokenSource();
+        var progress = new CancellingProgress(call);
+
+        // Act
+        var act = () => CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("notepad.exe"), new LaunchRequest("calc.exe"), new LaunchRequest("mspaint.exe")],
+            progress: progress, cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
+    }
+
+    /// <summary>Cancels <paramref name="call"/> at the first progress report.</summary>
+    private sealed class CancellingProgress(CancellationTokenSource call) : IProgress<OperationProgress>
+    {
+        public void Report(OperationProgress value) => call.Cancel();
     }
 
     #endregion
@@ -156,7 +647,7 @@ public class ProcessServiceTests
     #region LaunchApplication Error Code Tests
 
     [Fact]
-    public void LaunchApplication_WhenValidationFails_ReturnsErrorCode()
+    public async Task LaunchApplication_WhenValidationFails_ReturnsErrorCode()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -164,7 +655,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("..\\..\\cmd.exe");
+        var result = await sut.LaunchApplicationAsync("..\\..\\cmd.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -174,7 +665,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
+    public async Task LaunchApplication_WhenWorkingDirValidationFails_ReturnsErrorCode()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateWorkingDirectory(It.IsAny<string?>()))
@@ -182,7 +673,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", workingDirectory: "invalid|path");
+        var result = await sut.LaunchApplicationAsync("notepad.exe", workingDirectory: "invalid|path");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -192,7 +683,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
+    public async Task LaunchApplication_WhenProcessStartThrows_ReturnsLaunchExceptionWithValidationWarnings()
     {
         // Arrange
         _mockValidationService.Setup(v => v.ValidateExecutable(It.IsAny<string>()))
@@ -204,7 +695,7 @@ public class ProcessServiceTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchApplication("app.exe");
+        var result = await sut.LaunchApplicationAsync("app.exe");
 
         // Assert
         result.Success.Should().BeFalse();
@@ -212,21 +703,6 @@ public class ProcessServiceTests
         result.ErrorCode.Should().Be(nameof(LaunchErrorCode.LaunchException));
         result.ErrorMessage.Should().Be("The system cannot find the file specified.");
         result.Warning.Should().Be("exe warning; dir warning");
-    }
-
-    [Fact]
-    public void LaunchApplication_WhenNoProcessIsStarted_ReturnsProcessStartFailed()
-    {
-        // Arrange - ShellExecute handed the request over without creating a process
-        _mockProcessWrapper.Setup(w => w.StartProcess(It.IsAny<ProcessStartInfo>())).Returns((IProcessHandle?)null);
-        var sut = CreateSut();
-
-        // Act
-        var result = sut.LaunchApplication("app.exe");
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ProcessStartFailed));
     }
 
     #endregion
@@ -440,13 +916,13 @@ public class ProcessServiceTests
     #region T4.5: KillProcess Tests
 
     [Fact]
-    public void KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
+    public async Task KillProcess_WithoutConfirmation_ReturnsConfirmationRequired()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(1234, confirm: false);
+        var result = await sut.KillProcessAsync(1234, confirm: false);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -455,13 +931,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithZeroProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(0, confirm: true);
+        var result = await sut.KillProcessAsync(0, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -469,13 +945,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
+    public async Task KillProcess_WithNegativeProcessId_ReturnsInvalidProcessId()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(-1, confirm: true);
+        var result = await sut.KillProcessAsync(-1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -483,14 +959,14 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
+    public async Task KillProcess_WithCurrentProcess_ReturnsCannotTerminateSelf()
     {
         // Arrange
         var sut = CreateSut();
         var currentPid = Environment.ProcessId;
 
         // Act
-        var result = sut.KillProcess(currentPid, confirm: true);
+        var result = await sut.KillProcessAsync(currentPid, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -499,13 +975,13 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
+    public async Task KillProcess_WithNonExistentProcess_ReturnsProcessNotFound()
     {
         // Arrange - the mocked process seam finds no process with this ID
         var sut = CreateSut();
 
         // Act
-        var result = sut.KillProcess(int.MaxValue - 1, confirm: true);
+        var result = await sut.KillProcessAsync(int.MaxValue - 1, confirm: true);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -561,7 +1037,7 @@ public class ProcessServiceTests
     // The mocked process seam records the start info instead of opening a browser or Notepad.
 
     [Fact]
-    public void LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
+    public async Task LaunchApplication_BrowserWithUrl_CallsBrowserDetectionService()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -571,7 +1047,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("chrome.exe", ["https://example.com"]);
+        var result = await sut.LaunchApplicationAsync("chrome.exe", ["https://example.com"]);
 
         // Assert - browser detection was consulted and the flag goes before the URL
         result.Success.Should().BeTrue();
@@ -582,7 +1058,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_NonBrowserWithUrl_DoesNotGetNewWindowFlag()
+    public async Task LaunchApplication_NonBrowserWithUrl_DoesNotGetNewWindowFlag()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -590,7 +1066,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("notepad.exe", ["https://example.com"]);
+        var result = await sut.LaunchApplicationAsync("notepad.exe", ["https://example.com"]);
 
         // Assert - checked for a browser, but no new window flag
         result.Success.Should().BeTrue();
@@ -600,7 +1076,7 @@ public class ProcessServiceTests
     }
 
     [Fact]
-    public void LaunchApplication_BrowserWithoutUrl_DoesNotGetNewWindowFlag()
+    public async Task LaunchApplication_BrowserWithoutUrl_DoesNotGetNewWindowFlag()
     {
         // Arrange
         var mockBrowserDetection = new Mock<IBrowserDetectionService>();
@@ -609,7 +1085,7 @@ public class ProcessServiceTests
         var sut = CreateSut(mockBrowserDetection.Object);
 
         // Act
-        var result = sut.LaunchApplication("chrome.exe", ["--incognito"]);
+        var result = await sut.LaunchApplicationAsync("chrome.exe", ["--incognito"]);
 
         // Assert - checked browser and URL, but no flag since no URL
         result.Success.Should().BeTrue();
@@ -624,13 +1100,13 @@ public class ProcessServiceTests
     #region LaunchBrowserWithDebug Tests
 
     [Fact]
-    public void LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
+    public async Task LaunchBrowserWithDebug_UnsupportedBrowser_ReturnsErrorWithoutTouchingProcesses()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.LaunchBrowserWithDebug("firefox");
+        var result = await sut.LaunchBrowserWithDebugAsync("firefox");
 
         // Assert
         result.Success.Should().BeFalse();

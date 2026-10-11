@@ -68,9 +68,11 @@ public class ErrorCodeReferenceTests
                 "CdpTimeout", // BrowserErrorCode.CdpTimeout passed on as an enum value
                 "PresetNotFound", // ToolErrorException with a LayoutErrorCode name
                 "None", // the success value of the browser, input and UI element results
+                "InvalidState", // [ToolEnum(nameof(WindowErrorCode.InvalidState), ...)] on an argument enum
+                "MoveFailed", // WindowErrorCode.MoveFailed passed to the window service's placement
             ]);
         codes.Should().NotContain(
-            ["MoveFailed", "UrlExtractionFailed", "InvalidCoordinates"],
+            ["UrlExtractionFailed", "InvalidCoordinates"],
             "these enum members are declared but nothing in src/ returns them");
     }
 

@@ -30,7 +30,7 @@ public class InputSimulationServiceSessionTests
         new(_monitors.Object, _input, _guard.Object, session ?? _session, gateTimeout);
 
     /// <summary>Every input path, as the tools call it.</summary>
-    public static TheoryData<string> InputPaths() => new() { "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys" };
+    public static TheoryData<string> InputPaths() => new() { "click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys" };
 
     private static async Task<(bool Success, InputErrorCode Code, string? Error, IReadOnlyList<string>? Held, IReadOnlyList<string>? Released)> Call(
         InputSimulationService sut, string path, bool releaseHeldModifiers = false, CancellationToken token = default)
@@ -49,6 +49,9 @@ public class InputSimulationServiceSessionTests
             case "mouse_move":
                 var move = sut.MoveMouse(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (move.Success, move.ErrorCode, move.Error, move.HeldModifiers, move.ReleasedModifiers);
+            case "scroll":
+                var scroll = sut.Scroll(100, 100, 3, 0, InputTarget.None, releaseHeldModifiers, token);
+                return (scroll.Success, scroll.ErrorCode, scroll.Error, scroll.HeldModifiers, scroll.ReleasedModifiers);
             case "type_text":
                 var typed = await sut.TypeTextAsync("hello", 0, InputTarget.None, releaseHeldModifiers, token);
                 return (typed.Success, typed.ErrorCode, typed.Error, typed.HeldModifiers, typed.ReleasedModifiers);
@@ -340,6 +343,7 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("click")]
     [InlineData("double_click")]
+    [InlineData("scroll")] // Ctrl turns the wheel into zoom
     public async Task Click_AModifierPressedBeforeThePress_IsModifiersHeld_AndNothingIsClicked(string path)
     {
         // Arrange - the user presses Ctrl after the guard checked the point: the click would be a Ctrl+click
@@ -436,7 +440,7 @@ public class InputSimulationServiceSessionTests
     #region Held mouse buttons
 
     /// <summary>The input paths that move the pointer or press a button.</summary>
-    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_move" };
+    public static TheoryData<string> MousePaths() => new() { "click", "right_click", "double_click", "mouse_move", "scroll" };
 
     [Theory]
     [MemberData(nameof(MousePaths))]
@@ -460,6 +464,7 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("click")]
     [InlineData("double_click")]
+    [InlineData("scroll")]
     public async Task Click_AMouseButtonPressedBeforeThePress_IsMouseInUse_AndNothingIsClicked(string path)
     {
         // Arrange - the user presses the right button after the guard checked the point
@@ -499,6 +504,7 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("mouse_move")]
     [InlineData("click")]
+    [InlineData("scroll")]
     public async Task APauseWhileThePointerIsPlacedAgain_IsPausedByUser_NotCursorNotAtPoint(string path)
     {
         // Arrange - after the move, the user moves the mouse away and pauses (through another server's hotkey,

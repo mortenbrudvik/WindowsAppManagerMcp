@@ -64,14 +64,14 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void CloseWindowsBatch_RefusesTheDeniedWindow_AndClosesTheOthers()
+    public async Task CloseWindowsBatch_RefusesTheDeniedWindow_AndClosesTheOthers()
     {
         // Arrange
         var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
 
         // Act
-        var results = CreateWindowService(Policy()).CloseWindowsBatch([notepad, keePass], force: false, delayBetweenMs: 0);
+        var results = await CreateWindowService(Policy()).CloseWindowsBatchAsync([notepad, keePass], force: false, delayBetweenMs: 0);
 
         // Assert
         results[0].Success.Should().BeTrue();
@@ -127,16 +127,16 @@ public class TargetPolicyEnforcementTests
     public static TheoryData<string> WindowChanges() =>
         new() { "move", "resize", "bounds", "minimize", "restore", "maximize", "snap", "monitor" };
 
-    private static bool Change(WindowService sut, nint handle, string change) => change switch
+    private static WindowChangeResult Change(WindowService sut, nint handle, string change) => change switch
     {
         "move" => sut.MoveWindow(handle, 10, 10),
         "resize" => sut.ResizeWindow(handle, 400, 300),
         "bounds" => sut.SetWindowBounds(handle, 10, 10, 400, 300),
-        "minimize" => sut.SetWindowState(handle, WindowState.Minimized),
-        "restore" => sut.SetWindowState(handle, WindowState.Normal),
-        "maximize" => sut.SetWindowState(handle, WindowState.Maximized),
+        "minimize" => sut.SetWindowState(handle, WindowStateRequest.Minimize),
+        "restore" => sut.SetWindowState(handle, WindowStateRequest.Restore),
+        "maximize" => sut.SetWindowState(handle, WindowStateRequest.Maximize),
         "snap" => sut.SnapWindow(handle, SnapPosition.LeftHalf, monitorIndex: 0),
-        _ => sut.MoveWindowToMonitor(handle, 0, "restore")
+        _ => sut.MoveWindowToMonitor(handle, 0, MonitorPositioning.Restore)
     };
 
     private void VerifyWindowUntouched()
@@ -158,7 +158,8 @@ public class TargetPolicyEnforcementTests
         var changed = Change(CreateWindowService(Policy()), keePass, change);
 
         // Assert
-        changed.Should().BeFalse();
+        changed.Success.Should().BeFalse();
+        changed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
         VerifyWindowUntouched();
     }
 
@@ -169,15 +170,15 @@ public class TargetPolicyEnforcementTests
         // Arrange
         var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
         _native.Setup(n => n.GetWindowRect(notepad)).Returns((0, 0, 800, 600));
-        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
-        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, notepad);
 
         // Act & Assert
-        Change(CreateWindowService(Policy()), notepad, change).Should().BeTrue();
+        Change(CreateWindowService(Policy()), notepad, change).Success.Should().BeTrue();
     }
 
     [Fact]
-    public void WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
+    public async Task WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
     {
         // Arrange
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
@@ -187,12 +188,12 @@ public class TargetPolicyEnforcementTests
         // Act
         var results = new[]
         {
-            tools.MoveWindow(keePass, 10, 10),
-            tools.ResizeWindow(keePass, 400, 300),
-            tools.SetWindowBounds(keePass, 10, 10, 400, 300),
-            tools.SetWindowState(keePass, "restore"),
-            tools.SnapWindow(keePass, "left_half"),
-            tools.MoveWindowToMonitor(keePass, 0)
+            await tools.MoveWindow(10, 10, handle: keePass),
+            await tools.ResizeWindow(400, 300, handle: keePass),
+            await tools.SetWindowBounds(10, 10, 400, 300, handle: keePass),
+            await tools.SetWindowState(WindowStateRequest.Restore, handle: keePass),
+            await tools.SnapWindow(SnapPosition.LeftHalf, handle: keePass),
+            await tools.MoveWindowToMonitor(0, handle: keePass)
         };
 
         // Assert
@@ -202,23 +203,23 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void WindowBatchTools_RefuseTheDeniedWindow_AndChangeTheOthers()
+    public async Task WindowBatchTools_RefuseTheDeniedWindow_AndChangeTheOthers()
     {
         // Arrange
         var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
         _native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((0, 0, 800, 600));
-        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
-        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, notepad);
         var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
 
         // Act
-        var bounds = tools.SetWindowsBoundsBatch(
-            [new WindowBoundsPlacement(notepad, 0, 0, 400, 300), new WindowBoundsPlacement(keePass, 0, 0, 400, 300)], delayBetweenMs: 0);
-        var snaps = tools.SnapWindowsBatch(
-            [new WindowSnapPlacement(keePass, "left_half", 0), new WindowSnapPlacement(notepad, "right_half", 0)], delayBetweenMs: 0);
-        var states = tools.SetWindowsStateBatch(
-            [new WindowStateChange(notepad, "maximize"), new WindowStateChange(keePass, "restore")], delayBetweenMs: 0);
+        var bounds = await tools.SetWindowsBoundsBatch(
+            [new WindowBoundsPlacement(0, 0, 400, 300, Handle: notepad), new WindowBoundsPlacement(0, 0, 400, 300, Handle: keePass)], delayBetweenMs: 0);
+        var snaps = await tools.SnapWindowsBatch(
+            [new WindowSnapPlacement("left_half", Handle: keePass, MonitorIndex: 0), new WindowSnapPlacement("right_half", Handle: notepad, MonitorIndex: 0)], delayBetweenMs: 0);
+        var states = await tools.SetWindowsStateBatch(
+            [new WindowStateChange("maximize", Handle: notepad), new WindowStateChange("restore", Handle: keePass)], delayBetweenMs: 0);
 
         // Assert
         foreach (var batch in new[] { bounds, snaps, states })
@@ -263,13 +264,13 @@ public class TargetPolicyEnforcementTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void KillProcess_DeniedProcess_IsRefused_EvenWithForceKill(bool forceKill)
+    public async Task KillProcess_DeniedProcess_IsRefused_EvenWithForceKill(bool forceKill)
     {
         // Arrange
         var (sut, process) = CreateProcessService("KeePass", Policy());
 
         // Act
-        var result = sut.KillProcess(KeePassPid, confirm: true, forceKill: forceKill);
+        var result = await sut.KillProcessAsync(KeePassPid, confirm: true, forceKill: forceKill);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -281,23 +282,23 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void KillProcess_AllowList_RefusesUnlistedProcesses()
+    public async Task KillProcess_AllowList_RefusesUnlistedProcesses()
     {
         var (sut, process) = CreateProcessService("notepad", Policy(allow: "mspaint"));
 
-        sut.KillProcess(KeePassPid, confirm: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        (await sut.KillProcessAsync(KeePassPid, confirm: true)).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
         process.Verify(p => p.CloseMainWindow(), Times.Never);
     }
 
     [Fact]
-    public void KillProcess_ForceKill_ADeniedChildProcess_RefusesTheWholeTree()
+    public async Task KillProcess_ForceKill_ADeniedChildProcess_RefusesTheWholeTree()
     {
         // Arrange - KeePass was started from a terminal; forceKill ends the terminal's whole tree
         var (sut, process) = CreateProcessService("cmd", Policy());
         _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe"), (5002, "KeePass.exe")]);
 
         // Act
-        var result = sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+        var result = await sut.KillProcessAsync(KeePassPid, confirm: true, forceKill: true);
 
         // Assert
         result.ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
@@ -306,38 +307,38 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void KillProcess_ForceKill_AllowList_EveryProcessOfTheTreeMustBeAllowed()
+    public async Task KillProcess_ForceKill_AllowList_EveryProcessOfTheTreeMustBeAllowed()
     {
         var (sut, process) = CreateProcessService("notepad", Policy(allow: "notepad"));
         _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5003, "mspaint.exe")]);
 
-        sut.KillProcess(KeePassPid, confirm: true, forceKill: true).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        (await sut.KillProcessAsync(KeePassPid, confirm: true, forceKill: true)).ErrorCode.Should().Be(nameof(ProcessErrorCode.TargetDeniedByPolicy));
         process.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
-    public void KillProcess_ForceKill_AllowedTree_IsKilled()
+    public async Task KillProcess_ForceKill_AllowedTree_IsKilled()
     {
         // Arrange
         var (sut, process) = CreateProcessService("cmd", Policy());
         _processWrapper.Setup(w => w.GetDescendantsOf(KeePassPid)).Returns([(5001, "conhost.exe")]);
         process.SetupGet(p => p.HasExited).Returns(true);
-        process.Setup(p => p.WaitForExit(It.IsAny<int>())).Returns(true);
+        process.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Act
-        sut.KillProcess(KeePassPid, confirm: true, forceKill: true);
+        await sut.KillProcessAsync(KeePassPid, confirm: true, forceKill: true);
 
         // Assert
         process.Verify(p => p.Kill(true), Times.Once);
     }
 
     [Fact]
-    public void KillProcess_WithoutForceKill_DoesNotReadTheTree()
+    public async Task KillProcess_WithoutForceKill_DoesNotReadTheTree()
     {
         // The graceful close asks only the process's main window to close; its children live on
         var (sut, _) = CreateProcessService("cmd", Policy());
 
-        sut.KillProcess(KeePassPid, confirm: true, forceKill: false);
+        await sut.KillProcessAsync(KeePassPid, confirm: true, forceKill: false);
 
         _processWrapper.Verify(w => w.GetDescendantsOf(It.IsAny<int>()), Times.Never);
     }
@@ -362,13 +363,13 @@ public class TargetPolicyEnforcementTests
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
 
     [Fact]
-    public void CaptureWindow_DeniedProcess_IsRefused_AndNothingIsCaptured()
+    public async Task CaptureWindow_DeniedProcess_IsRefused_AndNothingIsCaptured()
     {
         // Arrange
         var sut = CreateScreenshotTools(0x300, "KeePass");
 
         // Act
-        var result = sut.CaptureWindow(0x300);
+        var result = await sut.CaptureWindow(0x300);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -378,28 +379,49 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void CaptureWithElements_DeniedProcess_IsRefused_BeforeItsElementsAreRead()
+    public async Task CaptureWithElements_DeniedProcess_IsRefused_BeforeItsElementsAreRead()
     {
         // Arrange
         var sut = CreateScreenshotTools(0x300, "KeePass");
 
         // Act
-        var result = sut.CaptureWithElements(0x300);
+        var result = await sut.CaptureWithElements(0x300);
 
         // Assert
         result.IsError.Should().BeTrue();
         Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
-        _elements.Verify(e => e.GetUIElements(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<CancellationToken>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()), Times.Never);
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
             It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
     }
 
     [Fact]
-    public void CaptureWindow_AllowedProcess_IsCaptured()
+    public async Task CaptureWindow_AndCaptureWithElements_ByASelector_CheckThePolicyOnTheResolvedWindow()
+    {
+        // Arrange - the selector names KeePass, which the policy denies (roadmap M2.4: a selector never gets past it)
+        var sut = CreateScreenshotTools(0x300, "KeePass");
+        var keePass = new WindowSelector { ProcessName = "KeePass" };
+        _windows.Setup(w => w.ResolveWindow(keePass))
+            .Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(0x300, "KeePass window", "KeePass", 3001)));
+
+        // Act
+        var capture = await sut.CaptureWindow(window: keePass);
+        var annotated = await sut.CaptureWithElements(window: keePass);
+
+        // Assert
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_AllowedProcess_IsCaptured()
     {
         var sut = CreateScreenshotTools(0x200, "notepad");
 
-        sut.CaptureWindow(0x200);
+        await sut.CaptureWindow(0x200);
 
         _screenshots.Verify(s => s.CaptureWindow(new nint(0x200), true, It.IsAny<CaptureOptions>()), Times.Once);
     }

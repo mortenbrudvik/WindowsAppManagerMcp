@@ -90,7 +90,7 @@ public class LayoutServiceStorageTests : IDisposable
     }
 
     [Fact]
-    public void GetStorageError_CreatesFolderAndReturnsNull()
+    public async Task GetStorageError_CreatesFolderAndReturnsNull()
     {
         var sut = CreateSut(OptionsWith());
 
@@ -137,7 +137,7 @@ public class LayoutServiceStorageTests : IDisposable
     }
 
     [Fact]
-    public void RelativeFolder_ReportsStorageUnavailable()
+    public async Task RelativeFolder_ReportsStorageUnavailable()
     {
         var sut = CreateSut(new LayoutStorageOptions(@"relative\layouts", [], []));
 
@@ -256,7 +256,7 @@ public class LayoutServiceStorageTests : IDisposable
     }
 
     [Fact]
-    public void FirstUse_DoesNotOverwriteExistingPresetWithSampleName()
+    public async Task FirstUse_DoesNotOverwriteExistingPresetWithSampleName()
     {
         WritePreset(_layoutsPath, "work-setup.json",
             TestDataFactory.CreateLayoutPreset("work-setup", description: "Mine"));
@@ -339,7 +339,7 @@ public class LayoutServiceStorageTests : IDisposable
     }
 
     [Fact]
-    public void FirstUse_SkipsInvalidLegacyFiles()
+    public async Task FirstUse_SkipsInvalidLegacyFiles()
     {
         Directory.CreateDirectory(_legacyPath);
         File.WriteAllText(Path.Combine(_legacyPath, "broken.json"), "{ not json");
@@ -376,7 +376,7 @@ public class LayoutServiceStorageTests : IDisposable
     #region Changes made on disk after startup
 
     [Fact]
-    public void GetPreset_SeesPresetFileAddedAfterStartup()
+    public async Task GetPreset_SeesPresetFileAddedAfterStartup()
     {
         var sut = CreateSutWithPath(_layoutsPath);
         sut.GetAllPresets().Should().BeEmpty();

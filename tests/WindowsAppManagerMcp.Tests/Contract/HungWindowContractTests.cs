@@ -32,6 +32,7 @@ public sealed class HungWindowContractTests : IDisposable
 
     private readonly Mock<INativeWindowWrapper> _native = new();
     private readonly ManualResetEventSlim _hungAnswers = new();
+    private object _flow = new();
 
     public HungWindowContractTests()
     {
@@ -44,11 +45,11 @@ public sealed class HungWindowContractTests : IDisposable
 
         // The hung application stopped answering a moment ago, so Windows does not report it hung yet
         _native.Setup(n => n.SetWindowPos((nint)Hung, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(() => _hungAnswers.Wait(Long));
+            .Returns(() => _hungAnswers.Wait(Long) ? Win32CallResult.Ok : Win32CallResult.Failure(0));
         _native.Setup(n => n.ShowWindow((nint)Hung, It.IsAny<int>())).Returns(() => _hungAnswers.Wait(Long));
         _native.Setup(n => n.SetWindowPos((nint)Responsive, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(true);
-        _native.Setup(n => n.ShowWindow((nint)Responsive, It.IsAny<int>())).Returns(true);
+            .Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, (nint)Responsive);
     }
 
     public void Dispose()
@@ -73,11 +74,8 @@ public sealed class HungWindowContractTests : IDisposable
         payload.GetProperty("success").GetBoolean().Should().BeFalse();
         payload.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.NotResponding));
 
-        // The gate is free again: an input call can take it at once
-        using (var gate = InputGate.TryEnter(TimeSpan.FromSeconds(5), CancellationToken.None))
-        {
-            gate.Should().NotBeNull("the window tool released the input gate");
-        }
+        // The gate is free again (another test may hold it in parallel, so this test's calls are what is checked)
+        InputGate.IsHeldBy(_flow).Should().BeFalse("the window tool released the input gate");
     }
 
     [Fact]
@@ -130,6 +128,8 @@ public sealed class HungWindowContractTests : IDisposable
 
     private Task<InProcessMcpServer> StartServerAsync(TimeSpan? deadline = null)
     {
+        // The server's calls run under this test's tag: the gate check sees this test's calls only
+        _flow = InputGate.TagFlow();
         var runner = new WindowCallRunner(_native.Object, deadline ?? Deadline, maxStuckCallsPerProcess: 1, maxStuckCalls: 8);
         var windows = new WindowService(TestDataFactory.CreateMockMonitorService().Object, _native.Object, Mock.Of<IHostGuard>(),
             windowCalls: runner);
@@ -139,7 +139,7 @@ public sealed class HungWindowContractTests : IDisposable
                 // The server's filters, in the server's order (ServiceRegistration.AddWindowsAppManagerTools)
                 .AddToolErrorReporting()
                 .AddInputGateSerialization()
-                .WithTools(new WindowManagerTools(windows, Mock.Of<IForegroundService>())));
+                .WithServerTools(new WindowManagerTools(windows, Mock.Of<IForegroundService>())));
     }
 
     private static Dictionary<string, object?> Arguments(long handle, params (string Name, object Value)[] more)

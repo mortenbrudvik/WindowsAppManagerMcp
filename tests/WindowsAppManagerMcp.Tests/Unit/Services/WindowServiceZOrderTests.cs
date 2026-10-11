@@ -12,7 +12,8 @@ public class WindowServiceZOrderTests
     // Win32 values (NativeEnums is internal to the server assembly)
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
-    private const int SwRestore = 9;
+    private const uint SwpNoSize = 0x0001;
+    private const int SwRestore = 9, SwShowNoActivate = 4;
 
     private static readonly nint Window = 0x7000;
 
@@ -26,7 +27,7 @@ public class WindowServiceZOrderTests
         _native.Setup(n => n.GetWindowRect(Window)).Returns((100, 100, 900, 700));
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
             .Callback<nint, int, int, int, int, uint>((_, _, _, _, _, flags) => _setWindowPosFlags.Add(flags))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
         _monitors.Setup(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>()))
             .Returns(new MonitorRect(0, 0, 960, 1040));
     }
@@ -42,15 +43,15 @@ public class WindowServiceZOrderTests
         "move_window_to_monitor:restore",
     };
 
-    private bool Run(string operation, bool bringToFront) => operation switch
+    private bool Run(string operation, bool bringToFront) => (operation switch
     {
         "move_window" => CreateSut().MoveWindow(Window, 10, 20, bringToFront),
         "set_window_bounds" => CreateSut().SetWindowBounds(Window, 10, 20, 800, 600, bringToFront),
         "snap_window" => CreateSut().SnapWindow(Window, SnapPosition.LeftHalf, monitorIndex: 0, bringToFront),
-        "move_window_to_monitor" => CreateSut().MoveWindowToMonitor(Window, 0, "center", bringToFront),
-        "move_window_to_monitor:restore" => CreateSut().MoveWindowToMonitor(Window, 0, "restore", bringToFront),
+        "move_window_to_monitor" => CreateSut().MoveWindowToMonitor(Window, 0, MonitorPositioning.Center, bringToFront),
+        "move_window_to_monitor:restore" => CreateSut().MoveWindowToMonitor(Window, 0, MonitorPositioning.Restore, bringToFront),
         _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null)
-    };
+    }).Success;
 
     [Theory]
     [MemberData(nameof(Operations))]
@@ -78,7 +79,8 @@ public class WindowServiceZOrderTests
 
         // Assert
         result.Should().BeTrue();
-        _setWindowPosFlags.Should().ContainSingle().Which.Should().Be(SwpNoZOrder | SwpNoActivate);
+        // move_window adds SWP_NOSIZE (it keeps the size); nothing else changes the z-order or the activation
+        _setWindowPosFlags.Should().ContainSingle().Which.Should().Be(SwpNoZOrder | SwpNoActivate | (operation == "move_window" ? SwpNoSize : 0u));
         _native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
         _native.Verify(n => n.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
     }
@@ -89,7 +91,7 @@ public class WindowServiceZOrderTests
     {
         // Arrange
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(false);
+            .Returns(Win32CallResult.Failure(0));
 
         // Act
         var result = Run(operation, bringToFront: true);
@@ -99,18 +101,23 @@ public class WindowServiceZOrderTests
         _native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
     }
 
-    [Fact]
-    public void SetWindowBounds_OfAMinimizedWindow_RestoresItBeforePlacingIt()
+    [Theory]
+    [InlineData(WindowState.Minimized)]
+    [InlineData(WindowState.Maximized)]
+    public void SetWindowBounds_OfAMinimizedOrMaximizedWindow_RestoresItWithoutActivation_BeforePlacingIt(WindowState state)
     {
-        // Arrange - the restore is unchanged: SW_RESTORE (M2.3 makes geometry changes non-activating)
-        _native.Setup(n => n.IsIconic(Window)).Returns(true);
+        // Arrange - SW_RESTORE activated the window before roadmap M2.3; SW_SHOWNOACTIVATE does not
+        var current = TestDataFactory.SimulateShowStates(_native, Window, state);
 
         // Act
         var result = CreateSut().SetWindowBounds(Window, 10, 20, 800, 600, bringToFront: true);
 
         // Assert
-        result.Should().BeTrue();
-        _native.Verify(n => n.ShowWindow(Window, SwRestore), Times.Once);
+        result.Success.Should().BeTrue(result.Error);
+        current().Should().Be(WindowState.Normal);
+        _native.Verify(n => n.ShowWindow(Window, SwShowNoActivate), Times.Once);
+        _native.Verify(n => n.ShowWindow(Window, SwRestore), Times.Never);
         _native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
+        _native.Verify(n => n.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
     }
 }

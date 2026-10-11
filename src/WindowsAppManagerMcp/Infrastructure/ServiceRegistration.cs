@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
@@ -24,12 +25,19 @@ public static class ServiceRegistration
     /// <see cref="LayoutStorageOptions.FromEnvironment"/>: %LOCALAPPDATA%\WindowsAppManagerMcp\layouts or
     /// WAM_LAYOUTS_PATH, outside the versioned plugin folder. Tests pass a temporary folder.
     /// </param>
+    /// <param name="auditLog">
+    /// Creates the audit log's options when <see cref="IAuditLog"/> is first resolved (roadmap M2.17). Defaults to
+    /// <see cref="AuditLogOptions.FromEnvironment"/>: %LOCALAPPDATA%\WindowsAppManagerMcp\audit or WAM_AUDIT_PATH.
+    /// Nothing is written until an audited tool is called; tests that call one pass a temporary folder.
+    /// </param>
     public static IServiceCollection AddWindowsAppManagerServices(
         this IServiceCollection services,
-        Func<LayoutStorageOptions>? layoutStorage = null)
+        Func<LayoutStorageOptions>? layoutStorage = null,
+        Func<AuditLogOptions>? auditLog = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var createLayoutStorage = layoutStorage ?? LayoutStorageOptions.FromEnvironment;
+        var createAuditLog = auditLog ?? AuditLogOptions.FromEnvironment;
 
         // Services
         services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
@@ -41,10 +49,14 @@ public static class ServiceRegistration
         // so a window tool cannot hold the input gate until the application recovers
         services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
         services.AddSingleton<IWindowService, WindowService>();
+        // Verified close (roadmap M2.5): waits for closed windows and reads their prompts through UI Automation
+        services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();
         services.AddSingleton<IProcessService, ProcessService>();
+        // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
+        services.AddSingleton<IWindowWaitService, WindowWaitService>();
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
@@ -78,6 +90,35 @@ public static class ServiceRegistration
         services.AddSingleton<IHostGuard, HostGuard>();
         services.AddHostedService<HostGuardStartup>();
 
+        // The effective DPI awareness (from app.manifest), the foreground lock timeout and the session, for
+        // get_server_info and the log at start
+        services.AddSingleton<INativeSystemInfoWrapper, NativeSystemInfoWrapper>();
+        // Logs the versions, the DPI awareness, the toolsets, and the clipboard and URI scheme settings in force
+        services.AddHostedService(sp => new ServerStartupLog(
+            sp.GetRequiredService<INativeSystemInfoWrapper>(),
+            sp.GetService<ToolsetSelection>(),
+            sp.GetService<IOptions<McpServerOptions>>(),
+            sp.GetService<ILogger<ServerStartupLog>>(),
+            sp.GetService<ClipboardOptions>(),
+            ProtocolAllowlist.FromEnvironment()));
+        services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
+            sp.GetRequiredService<INativeSystemInfoWrapper>(),
+            sp.GetRequiredService<IProcessSecurityProbe>(),
+            sp.GetRequiredService<IMonitorService>(),
+            sp.GetRequiredService<IInputSafetyInfo>(),
+            sp.GetRequiredService<IInputSession>(),
+            sp.GetRequiredService<IPauseHotkey>(),
+            sp.GetRequiredService<ILayoutService>(),
+            sp.GetRequiredService<INativeWindowWrapper>(),
+            sp.GetService<ToolsetSelection>(), // registered by AddWindowsAppManagerTools
+            sp.GetRequiredService<IAuditLog>(),
+            sp.GetService<ClipboardOptions>(),
+            ProtocolAllowlist.FromEnvironment()));
+
+        // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
+        services.AddSingleton<IAuditLog>(sp => new AuditLog(
+            createAuditLog(), sp.GetRequiredService<INativeWindowWrapper>(), TimeProvider.System, sp.GetService<ILogger<AuditLog>>()));
+
         // The input guard (every input call, inside the input gate) and the target policy (input, close,
         // kill and window captures), both configured by the user in the server's environment
         services.AddSingleton<ITargetPolicy>(_ => new TargetPolicy(TargetPolicySettings.FromEnvironment()));
@@ -94,6 +135,17 @@ public static class ServiceRegistration
         services.AddSingleton<IInputSession, InputSession>();
         services.AddHostedService<InputSessionStartup>(); // starts the hotkey; releases held input when the server stops
 
+        // The clipboard (roadmap M2.16): get_clipboard returns only what the agent put there unless the user allows more
+        // (WAM_ALLOW_USER_CLIPBOARD, or a yes when asked); the input service tells the origin about the agent's copies
+        // (and the window they went to, which must be in front when the copy happens), and pastes only what
+        // get_clipboard would return (the paste guard)
+        services.AddSingleton<INativeClipboardWrapper, NativeClipboardWrapper>();
+        services.AddSingleton<IClipboardOrigin>(sp => new ClipboardOrigin(
+            sp.GetRequiredService<INativeClipboardWrapper>(), windows: sp.GetRequiredService<INativeWindowWrapper>()));
+        services.AddSingleton(_ => ClipboardOptions.FromEnvironment());
+        services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<IClipboardPasteGuard, ClipboardPasteGuard>();
+
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();
         services.AddSingleton<WindowManagerTools>();
@@ -105,6 +157,8 @@ public static class ServiceRegistration
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
+        services.AddSingleton<ServerInfoTools>();
+        services.AddSingleton<ClipboardTools>();
 
         return services;
     }
@@ -113,8 +167,9 @@ public static class ServiceRegistration
     /// The server's log levels: Warning and above for everything, plus the per-call lines of
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
     /// and the agent host that <see cref="HostGuard"/> records, the safety settings that
-    /// <see cref="InputSafetyStartup"/> reports once at start and the pause hotkey that
-    /// <see cref="InputSessionStartup"/> registers, at Information.
+    /// <see cref="InputSafetyStartup"/> reports once at start, the pause hotkey that
+    /// <see cref="InputSessionStartup"/> registers and the versions, DPI awareness and toolsets that
+    /// <see cref="ServerStartupLog"/> reports, at Information.
     /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
     public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
@@ -126,36 +181,54 @@ public static class ServiceRegistration
             .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information)
             .AddFilter(typeof(HostGuard).FullName, LogLevel.Information)
             .AddFilter(typeof(InputSafetyStartup).FullName, LogLevel.Information)
-            .AddFilter(typeof(InputSessionStartup).FullName, LogLevel.Information);
+            .AddFilter(typeof(InputSessionStartup).FullName, LogLevel.Information)
+            .AddFilter(typeof(ServerStartupLog).FullName, LogLevel.Information);
     }
 
     /// <summary>
-    /// Registers the tool error filter and every tool of the server with the MCP server.
+    /// Registers the call filters and the server's tools with the MCP server, and serves the ones
+    /// <paramref name="toolsets"/> chooses (roadmap M2.14).
     /// </summary>
-    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder)
+    /// <param name="builder">The MCP server builder.</param>
+    /// <param name="toolsets">
+    /// The toolsets, excluded tools and read-only mode; Program.cs reads them from the environment
+    /// (<see cref="ToolsetSelection.FromEnvironment()"/>). Null serves every tool (<see cref="ToolsetSelection.All"/>),
+    /// the whole surface the tests and the tools/list snapshot check.
+    /// </param>
+    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder, ToolsetSelection? toolsets = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // The SDK runs the first filter added as the outermost one (although the XML documentation of
-        // McpServerOptions.Filters says the last; ServerFilterPipelineTests pins the real order)
+        // The SDK runs the first call-tool filter added as the outermost one (ServerFilterPipelineTests pins the
+        // order; SDK 0.5's XML documentation said the opposite)
         return builder
+            // One audit log line per call of an input, close, kill, launch, layout or clipboard-writing tool (roadmap
+            // M2.17). Outermost, so it records the result the agent gets, including the error filter's error results
+            // and the calls the gate filter refuses while input is paused
+            .AddAuditLog()
             // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
-            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added first, so it is the
-            // outermost filter: its call log includes the wait for the gate and the calls the gate filter
+            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added before the gate filter, so
+            // it is outside it: its call log includes the wait for the gate and the calls the gate filter
             // refuses while input is paused
             .AddToolErrorReporting()
             // Tools that can change which window is in front run inside the input gate, so they cannot
             // change it between an input call's guard check and its input
             .AddInputGateSerialization()
-            .WithTools<WindowFinderTools>()
-            .WithTools<WindowManagerTools>()
-            .WithTools<MonitorInfoTools>()
-            .WithTools<AppLauncherTools>()
-            .WithTools<LayoutPresetTools>()
-            .WithTools<BrowserReadingTools>()
-            .WithTools<ScreenshotTools>()
-            .WithTools<UIElementTools>()
-            .WithTools<InputSimulationTools>()
-            .WithTools<InputControlTools>();
+            // WithTools<T>() with the server's argument binding and schemas: fixed-value parameters are enums whose
+            // values the input schema lists and that are bound strictly (ToolJson, roadmap M2.2)
+            .WithServerTools<WindowFinderTools>()
+            .WithServerTools<WindowManagerTools>()
+            .WithServerTools<MonitorInfoTools>()
+            .WithServerTools<AppLauncherTools>()
+            .WithServerTools<LayoutPresetTools>()
+            .WithServerTools<BrowserReadingTools>()
+            .WithServerTools<ScreenshotTools>()
+            .WithServerTools<UIElementTools>()
+            .WithServerTools<InputSimulationTools>()
+            .WithServerTools<InputControlTools>()
+            .WithServerTools<ServerInfoTools>()
+            .WithServerTools<ClipboardTools>()
+            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
+            .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
 }

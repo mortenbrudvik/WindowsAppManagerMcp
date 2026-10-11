@@ -55,6 +55,26 @@ public class WindowFinderToolsTests
     }
 
     [Fact]
+    public void FindWindows_ReportsTheVisibleFrame_BesideTheWindowRect()
+    {
+        // Arrange - the window rect has the invisible resize borders (7 px left, right and bottom); set_window_bounds
+        // takes the visible frame, so an agent that copies a rect must be able to copy that one
+        var window = TestDataFactory.CreateWindowInfo(0x100, x: 93, y: 100, width: 814, height: 607) with
+        {
+            VisibleBounds = new WindowRect(100, 100, 800, 600)
+        };
+        _mockWindowService.Setup(w => w.FindWindows(It.IsAny<WindowQuery>())).Returns([window, window with { Handle = 0x200, VisibleBounds = null }]);
+
+        // Act
+        var result = CreateSut().FindWindows();
+
+        // Assert
+        result[0].Bounds.Should().Be(new BoundsDto(93, 100, 814, 607));
+        result[0].VisibleBounds.Should().Be(new BoundsDto(100, 100, 800, 600));
+        result[1].VisibleBounds.Should().BeNull("DWM could not report it");
+    }
+
+    [Fact]
     public void FindWindows_ByDefault_AsksForVisibleUserFacingWindows()
     {
         // Arrange
@@ -236,7 +256,7 @@ public class WindowFinderToolsTests
     #region GetForegroundWindow Tests
 
     [Fact]
-    public void GetForegroundWindow_ReturnsNull_WhenNoForegroundWindow()
+    public void GetForegroundWindow_WhenNoWindowIsInTheForeground_IsANoForegroundWindowToolError()
     {
         // Arrange
         _mockWindowService.Setup(w => w.GetForegroundWindow())
@@ -244,10 +264,11 @@ public class WindowFinderToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.GetForegroundWindow();
+        var act = () => sut.GetForegroundWindow();
 
-        // Assert
-        result.Should().BeNull();
+        // Assert - roadmap M2.1: never a null result, which a client receives as empty content
+        act.Should().Throw<WindowsAppManagerMcp.Infrastructure.ToolErrorException>()
+            .Where(e => e.ErrorCode == nameof(WindowErrorCode.NoForegroundWindow) && e.Message.Contains("No window is in the foreground"));
     }
 
     [Fact]

@@ -70,6 +70,28 @@ public interface INativeProcessWrapper
     /// zero when it has none, for example when it was started with CREATE_NO_WINDOW.
     /// </summary>
     nint GetConsoleWindow();
+
+    // Launch-to-window resolution (roadmap M2.6). All of them only read or wait; none changes a process or window.
+
+    /// <summary>
+    /// Every running process with its parent's ID and image name (such as "chrome.exe"), from one process snapshot, or
+    /// null when the list cannot be read. A parent ID can name a process that has exited, or a later process that
+    /// reused its PID: check start times before trusting it.
+    /// </summary>
+    IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>? GetProcessList();
+
+    /// <summary>
+    /// The full path of a process's executable (QueryFullProcessImageNameW with PROCESS_QUERY_LIMITED_INFORMATION), or
+    /// null when it is not running or cannot be read.
+    /// </summary>
+    string? GetProcessImagePath(int processId);
+
+    /// <summary>
+    /// Waits up to <paramref name="milliseconds"/> for the process to finish starting and wait for user input
+    /// (WaitForInputIdle). True when it did, false on timeout, null when it has no message loop (a console program),
+    /// is not running or cannot be opened. Blocks the calling thread for at most the given time.
+    /// </summary>
+    bool? WaitForInputIdle(int processId, int milliseconds);
 }
 
 /// <summary>
@@ -96,8 +118,11 @@ public interface IProcessHandle : IDisposable
     /// </summary>
     bool CloseMainWindow();
 
-    /// <summary>Waits for the process to exit. Returns true if it exited within the timeout.</summary>
-    bool WaitForExit(int milliseconds);
+    /// <summary>
+    /// Waits, asynchronously, for the process to exit. True if it exited within <paramref name="milliseconds"/>.
+    /// </summary>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled first.</exception>
+    Task<bool> WaitForExitAsync(int milliseconds, CancellationToken cancellationToken);
 
     /// <summary>Terminates the process immediately, optionally with all of its descendants.</summary>
     void Kill(bool entireProcessTree);

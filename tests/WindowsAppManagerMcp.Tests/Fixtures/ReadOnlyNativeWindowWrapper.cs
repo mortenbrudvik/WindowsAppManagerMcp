@@ -56,6 +56,8 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public bool IsCloaked(nint hWnd) => inner.IsCloaked(hWnd);
 
+    public int GetCloakReason(nint hWnd) => inner.GetCloakReason(hWnd);
+
     public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd) => inner.GetExtendedFrameBounds(hWnd);
 
     public bool IsHungAppWindow(nint hWnd) => inner.IsHungAppWindow(hWnd);
@@ -64,7 +66,7 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     // Window changes: refused before anything reaches the wrapped instance
 
-    public bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags) =>
+    public Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags) =>
         throw Refused(nameof(SetWindowPos));
 
     public bool ShowWindow(nint hWnd, int cmdShow) => throw Refused(nameof(ShowWindow));

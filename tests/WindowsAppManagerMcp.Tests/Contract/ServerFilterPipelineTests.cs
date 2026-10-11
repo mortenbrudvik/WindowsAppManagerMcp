@@ -9,8 +9,9 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
 /// Contract: the server's call-tool pipeline as <see cref="ServiceRegistration.AddWindowsAppManagerTools"/> builds it.
-/// The tool error filter is the outermost filter, so its call log covers what the input gate filter does: a call
-/// the gate filter refuses while input is paused, and the wait for the gate. Runs a real MCP client and server
+/// The tool error filter runs outside the input gate filter (only the audit log's filter is further out), so its
+/// call log covers what the input gate filter does: a call the gate filter refuses while input is paused, and the
+/// wait for the gate. Runs a real MCP client and server
 /// in-process; the window tools the server registers are never run (they are refused while paused), and the only
 /// tool that runs is a fake.
 /// </summary>
@@ -22,14 +23,14 @@ public class ServerFilterPipelineTests
     [Fact]
     public async Task TheSdk_RunsTheFirstFilterAddedAsTheOutermost()
     {
-        // The order AddWindowsAppManagerTools relies on. The SDK's XML documentation of McpServerOptions.Filters says
-        // the opposite ("the last filter added will be the outermost"), so this pins what the SDK really does.
+        // The order AddWindowsAppManagerTools relies on. SDK 0.5's XML documentation of McpServerOptions.Filters said
+        // the opposite ("the last filter added will be the outermost"); 2.x documents this order. Pinned all the same.
         var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
         await using var server = await InProcessMcpServer.StartAsync(
             [McpServerTool.Create(() => order.Enqueue("tool"), new McpServerToolCreateOptions { Name = UnclassifiedTool })],
             builder => builder
-                .AddCallToolFilter(Recording("first", order))
-                .AddCallToolFilter(Recording("second", order)));
+                .WithRequestFilters(filters => filters.AddCallToolFilter(Recording("first", order)))
+                .WithRequestFilters(filters => filters.AddCallToolFilter(Recording("second", order))));
 
         await server.CallToolAsync(UnclassifiedTool);
 
@@ -45,11 +46,11 @@ public class ServerFilterPipelineTests
         await using var server = await StartServerAsync(session);
 
         // Act
-        var result = await server.CallToolAsync("focus_window", new Dictionary<string, object?> { ["handle"] = 4242 });
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work" });
 
         // Assert - the gate filter refused it without running it, and the error filter logged the outcome
         result.IsError.Should().BeTrue();
-        var lines = CallLines(server, "focus_window");
+        var lines = CallLines(server, "apply_layout");
         lines.Should().HaveCount(2);
         lines[0].Should().Contain("started");
         lines[1].Should().EndWith(": isError PausedByUser");

@@ -35,7 +35,14 @@ public enum WrapperCallKind
     /// window, but while it is registered the chord no longer reaches any other application, and the shared
     /// pause pauses the servers the user runs, so no E2E tier allows it.
     /// </summary>
-    GlobalHotkey
+    GlobalHotkey,
+
+    /// <summary>
+    /// Opens the clipboard to read or replace its content. The clipboard is the user's, shared with every app: a test
+    /// that read it could pull a password the user copied into the test output, and one that set it would replace what
+    /// the user copied. No E2E tier allows it; reading the sequence number, which opens nothing, is a read.
+    /// </summary>
+    Clipboard
 }
 
 /// <summary>
@@ -60,6 +67,8 @@ public sealed record WrapperMember(
     public static WrapperMember ThreadInputAttach { get; } = new(WrapperCallKind.ThreadInputAttach, [], []);
 
     public static WrapperMember GlobalHotkey { get; } = new(WrapperCallKind.GlobalHotkey, [], []);
+
+    public static WrapperMember Clipboard { get; } = new(WrapperCallKind.Clipboard, [], []);
 
     public static WrapperMember WindowAction(params string[] windowParameters) =>
         new(WrapperCallKind.WindowAction, windowParameters, []);
@@ -96,6 +105,7 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.GetWindowLongPtr)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsCloaked)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetCloakReason)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
@@ -148,14 +158,35 @@ public static class WrapperCatalog
                 [nameof(IUIAutomationWrapper.GetBrowserUrl)] = WrapperMember.Read,
                 [nameof(IUIAutomationWrapper.GetWindowTitle)] = WrapperMember.Read,
                 [nameof(IUIAutomationWrapper.GetBrowserContent)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read
+                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read,
+                // WindowPattern.Close: asks the window to close, like WM_CLOSE (close_application's fallback for a
+                // packaged app's frame), so it changes a window and must name a fixture window
+                [nameof(IUIAutomationWrapper.CloseWindow)] = WrapperMember.WindowAction("hwnd")
             },
             [typeof(IScreenCaptureWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(IScreenCaptureWrapper.CaptureScreenRegion)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.CaptureWindow)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.CaptureWindowFromScreen)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.GetVirtualScreenBounds)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read
+            },
+            [typeof(INativeSystemInfoWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeSystemInfoWrapper.GetDpiAwareness)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetForegroundLockTimeout)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read
+            },
+            [typeof(INativeClipboardWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // A counter that changes with the content; it does not open the clipboard
+                [nameof(INativeClipboardWrapper.GetSequenceNumber)] = WrapperMember.Read,
+                // The process of the clipboard's owner window; it does not open the clipboard either
+                [nameof(INativeClipboardWrapper.GetOwnerProcessId)] = WrapperMember.Read,
+                // The user's clipboard: refused in every tier
+                [nameof(INativeClipboardWrapper.Read)] = WrapperMember.Clipboard,
+                [nameof(INativeClipboardWrapper.WriteText)] = WrapperMember.Clipboard
             },
             [typeof(INativeMonitorWrapper)] = new Dictionary<string, WrapperMember>
             {
@@ -180,7 +211,11 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.GetAncestorsOf)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetDescendantsOf)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetProcessStartTime)] = WrapperMember.Read,
-                [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read
+                [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read,
+                // Launch-to-window resolution: a process snapshot, an image path, and a bounded wait that changes nothing
+                [nameof(INativeProcessWrapper.GetProcessList)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetProcessImagePath)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.WaitForInputIdle)] = WrapperMember.Read
             },
             [typeof(INativeThreadInputWrapper)] = new Dictionary<string, WrapperMember>
             {
@@ -193,7 +228,9 @@ public static class WrapperCatalog
             [typeof(INativeHitTestWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeHitTestWrapper.WindowFromPoint)] = WrapperMember.Read,
-                [nameof(INativeHitTestWrapper.GetRootWindow)] = WrapperMember.Read
+                [nameof(INativeHitTestWrapper.GetRootWindow)] = WrapperMember.Read,
+                // GetClientRect and MapWindowPoints: where scroll points by default
+                [nameof(INativeHitTestWrapper.GetClientAreaOnScreen)] = WrapperMember.Read
             },
             [typeof(INativeSecurityWrapper)] = new Dictionary<string, WrapperMember>
             {
@@ -219,7 +256,9 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.ReadInteraction)] = WrapperMember.Read,
                 [nameof(IUiaTree.IsInteractable)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
-                [nameof(IUiaTree.ReadValue)] = WrapperMember.Read
+                [nameof(IUiaTree.ReadValue)] = WrapperMember.Read,
+                // WindowPattern.Current.IsModal: a property read (verified close looks for an in-window prompt)
+                [nameof(IUiaTree.ReadIsModal)] = WrapperMember.Read
             },
             [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>
             {
@@ -227,7 +266,7 @@ public static class WrapperCatalog
                 ["get_" + nameof(IProcessHandle.ProcessName)] = WrapperMember.Read,
                 ["get_" + nameof(IProcessHandle.HasExited)] = WrapperMember.Read,
                 [nameof(IProcessHandle.RefreshMainWindowHandle)] = WrapperMember.Read,
-                [nameof(IProcessHandle.WaitForExit)] = WrapperMember.Read,
+                [nameof(IProcessHandle.WaitForExitAsync)] = WrapperMember.Read,
                 // Releases the handle the server holds; the process is not affected
                 [nameof(IDisposable.Dispose)] = WrapperMember.Read,
                 [nameof(IProcessHandle.CloseMainWindow)] = WrapperMember.ProcessAction,

@@ -30,6 +30,9 @@ public record UIElementInfo(
 /// <param name="Truncated">True when the tree is incomplete because the walk timed out or elements could
 /// not be read. <paramref name="TruncationReason"/> says which. The maxDepth limit does not set it.</param>
 /// <param name="TruncationReason">Why the tree is incomplete, or null when it is not.</param>
+/// <param name="WindowState">The state of the window's top-level window when the walk ended (roadmap M2.9): a
+/// Minimized window's elements are offscreen, so visibleOnly leaves them all out and the tree is empty. Null when the
+/// window could not be read.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -43,7 +46,8 @@ public record UIElementResult(
     int SkippedElementCount = 0,
     int DepthReached = 0,
     bool Truncated = false,
-    UIElementTruncationReason? TruncationReason = null
+    UIElementTruncationReason? TruncationReason = null,
+    WindowState? WindowState = null
 );
 
 /// <summary>

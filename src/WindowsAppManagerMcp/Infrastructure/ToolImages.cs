@@ -8,8 +8,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <summary>
 /// Builds the MCP result of a capture tool: an image content block the model can see, followed by a
 /// text block with the capture's metadata as JSON. This is the only place that creates image content,
-/// so an SDK change to <see cref="ImageContentBlock"/> (later SDK versions take the bytes instead of a
-/// base64 string) is made here and nowhere else.
+/// so an SDK change to <see cref="ImageContentBlock"/> is made here and nowhere else (SDK 2.x took the
+/// image bytes through <see cref="ImageContentBlock.FromBytes"/> where 0.5 took a base64 string).
 /// </summary>
 public static class ToolImages
 {
@@ -34,11 +34,8 @@ public static class ToolImages
         var content = new List<ContentBlock>(2);
         if (image != null)
         {
-            content.Add(new ImageContentBlock
-            {
-                Data = Convert.ToBase64String(image.Data),
-                MimeType = image.MimeType
-            });
+            // FromBytes takes the encoded image file itself; the SDK base64-encodes it when the result is sent
+            content.Add(ImageContentBlock.FromBytes(image.Data, image.MimeType));
         }
 
         content.Add(new TextContentBlock

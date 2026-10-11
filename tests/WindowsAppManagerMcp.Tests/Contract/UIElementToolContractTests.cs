@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Tools;
@@ -8,20 +9,97 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
 /// Contract: the UI Automation tools through the real MCP pipeline (argument binding, result
-/// serialization). get_ui_elements runs the real UIElementService over an in-memory tree; the
-/// element inspection service is mocked. No real window is read.
+/// serialization, progress notifications and the client's cancellation). get_ui_elements runs the real
+/// UIElementService over an in-memory tree; the element inspection service is mocked. No real window is read.
 /// </summary>
 public class UIElementToolContractTests
 {
     private static readonly nint Handle = 0x1234;
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly FakeUiaTree _tree = new();
     private readonly Mock<IElementInspectionService> _inspection = new();
 
-    private Task<InProcessMcpServer> StartServerAsync()
+    public static TheoryData<string?> Revisions => InProcessMcpServer.Revisions();
+
+    private Task<InProcessMcpServer> StartServerAsync(
+        string? revision = null,
+        TaskCompletionSource<RequestId>? requestId = null,
+        TaskCompletionSource? callEnded = null)
     {
         var tools = new UIElementTools(new UIElementService(_tree, new UiaWorker()), _inspection.Object);
-        return InProcessMcpServer.StartAsync([], builder => builder.WithTools(tools));
+        return InProcessMcpServer.StartAsync(
+            [],
+            builder => builder
+                .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, token) =>
+                {
+                    // The JSON-RPC id of the call, which a client names when it cancels the call
+                    requestId?.TrySetResult(request.JsonRpcRequest.Id);
+                    try
+                    {
+                        return await next(request, token);
+                    }
+                    finally
+                    {
+                        callEnded?.TrySetResult();
+                    }
+                }))
+                .WithTools(tools),
+            clientOptions: InProcessMcpServer.WithRevision(null, revision));
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task GetUIElements_WithAProgressToken_SendsProgressNotificationsDuringTheWalk(string? revision)
+    {
+        // Arrange - a window with 250 buttons
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(
+            Enumerable.Range(1, 250).Select(i => new FakeUiaNode("Button", $"B{i}")).ToArray()));
+        await using var server = await StartServerAsync(revision);
+        var progress = new RecordingProgress<ProgressNotificationValue>();
+
+        // Act - the SDK client sends a progress token with the call and routes the notifications to the progress
+        var result = await server.Client.CallToolAsync(
+            "get_ui_elements", new Dictionary<string, object?> { ["handle"] = (long)Handle }, progress);
+
+        // Assert - one notification per 100 elements read, sent in increasing order (MCP requires progress to increase)
+        // and before the result. They are checked where the server wrote them (see InProcessMcpServer.ProgressSent)
+        Json(result).GetProperty("totalElementCount").GetInt32().Should().Be(250);
+        var sent = server.WaitForProgressSent(2);
+        sent.Select(p => p.Progress).Should().Equal(100, 200);
+        sent.Should().OnlyContain(p => p.Total == null && p.Message!.Contains("UI elements so far"));
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task GetUIElements_CancelledByTheClient_StopsTheWalkOnTheServer(string? revision)
+    {
+        // Arrange - 200 elements that take 50 ms each: a ten-second walk
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(
+            Enumerable.Range(1, 200).Select(i => new FakeUiaNode("Button", $"B{i}") { OnRead = () => Thread.Sleep(50) }).ToArray()));
+        var requestId = new TaskCompletionSource<RequestId>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = await StartServerAsync(revision, requestId, callEnded);
+        using var clientGivesUp = new CancellationTokenSource();
+        var call = server.CallToolAsync("get_ui_elements",
+            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["timeoutMs"] = 30000 }, cancellationToken: clientGivesUp.Token);
+        var id = await requestId.Task.WaitAsync(Timeout);
+        SpinWait.SpinUntil(() => _tree.ReadNodes.Count >= 3, Timeout).Should().BeTrue();
+
+        // Act - the client cancels the call (notifications/cancelled with its id)
+        await server.Client.SendNotificationAsync(NotificationMethods.CancelledNotification,
+            new CancelledNotificationParams { RequestId = id, Reason = "the user cancelled" });
+
+        // Assert - the walk stopped long before its end, and the call ended without waiting for the timeout
+        await callEnded.Task.WaitAsync(Timeout);
+        var read = _tree.ReadNodes.Count;
+        read.Should().BeLessThan(200, "the request's token is linked with the walk's timeout");
+        await Task.Delay(200);
+        _tree.ReadNodes.Count.Should().BeLessThanOrEqualTo(read + 1, "the walk does not go on after the call ended");
+
+        await server.AssertNoResponseSentAsync(id);
+        clientGivesUp.Cancel();
+        await FluentActions.Awaiting(() => call).Should().ThrowAsync<Exception>("the cancelled call gets no result");
     }
 
     private static JsonElement Json(CallToolResult result)
@@ -82,8 +160,8 @@ public class UIElementToolContractTests
         var element = new UIElementDetails("Email", "Edit", "EmailBox", "TextBox", "WPF", new BoundsDto(-300, 10, 200, 24),
             IsEnabled: true, IsOffscreen: false, IsKeyboardFocusable: true, HasKeyboardFocus: false, IsPassword: false,
             Patterns: ["Value"], Value: "a@b.c");
-        _inspection.Setup(s => s.GetElementAtPoint(-250, 20, 3, TimeSpan.FromSeconds(5), It.IsAny<CancellationToken>()))
-            .Returns(new ElementAtPointResult(true, -250, 20, element,
+        _inspection.Setup(s => s.GetElementAtPointAsync(-250, 20, 3, TimeSpan.FromSeconds(5), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementAtPointResult(true, -250, 20, element,
                 [new UIElementAncestor("Form", "Pane", null, "FormPane", null)], 0x5000, "Sign in", 42, "app", 1.5));
         await using var server = await StartServerAsync();
 
@@ -107,8 +185,8 @@ public class UIElementToolContractTests
     public async Task GetFocusedElement_TakesNoRequiredArguments()
     {
         // Arrange
-        _inspection.Setup(s => s.GetFocusedElement(TimeSpan.FromSeconds(5), It.IsAny<CancellationToken>()))
-            .Returns(new FocusedElementResult(false, null, null, null, null, null, 0.5, "No element has keyboard focus.",
+        _inspection.Setup(s => s.GetFocusedElementAsync(TimeSpan.FromSeconds(5), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FocusedElementResult(false, null, null, null, null, null, 0.5, "No element has keyboard focus.",
                 UIElementErrorCode.ElementNotFound));
         await using var server = await StartServerAsync();
 

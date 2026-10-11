@@ -32,7 +32,7 @@ public class ScreenCaptureWrapperIntegrationTests
         // Assert
         result.Should().NotBeNull();
         result.Bgra.Should().NotBeEmpty();
-        result.Method.Should().Be("BitBlt");
+        result.Method.Should().Be("ScreenBitBlt");
     }
 
     #endregion

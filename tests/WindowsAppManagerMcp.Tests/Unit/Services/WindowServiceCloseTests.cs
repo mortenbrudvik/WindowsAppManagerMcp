@@ -553,7 +553,7 @@ public class WindowServiceCloseTests
     }
 
     [Fact]
-    public void CloseWindow_OtherPostMessageFailure_ReturnsCloseFailedWithTheWin32Error()
+    public void CloseWindow_FullMessageQueue_IsNotResponding()
     {
         // Arrange - the window's message queue is full (a hung app)
         var hung = AddWindow("Notepad");
@@ -564,8 +564,24 @@ public class WindowServiceCloseTests
         var result = CreateSut().CloseWindow(hung, force: false);
 
         // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.NotResponding);
+        result.Error.Should().Contain("Win32 error 1816").And.Contain("not responding").And.Contain("Nothing was closed");
+    }
+
+    [Fact]
+    public void CloseWindow_OtherPostMessageFailure_ReturnsCloseFailedWithTheWin32Error()
+    {
+        // Arrange - ERROR_NOT_ENOUGH_MEMORY
+        var window = AddWindow("Notepad");
+        _native.Setup(n => n.PostMessage(window, WmClose, nint.Zero, nint.Zero))
+            .Returns(Win32CallResult.Failure(8));
+
+        // Act
+        var result = CreateSut().CloseWindow(window, force: false);
+
+        // Assert
         result.ErrorCode.Should().Be(WindowErrorCode.CloseFailed);
-        result.Error.Should().Contain("Win32 error 1816");
+        result.Error.Should().Contain("Win32 error 8");
     }
 
     #endregion
@@ -573,7 +589,7 @@ public class WindowServiceCloseTests
     #region CloseWindowsBatch
 
     [Fact]
-    public void CloseWindowsBatch_RefusesTheProtectedWindows_AndClosesTheRest()
+    public async Task CloseWindowsBatch_RefusesTheProtectedWindows_AndClosesTheRest()
     {
         // Arrange - "close everything except the editor", built from a listing that included the shell
         var notepad = AddWindow("Notepad");
@@ -583,7 +599,7 @@ public class WindowServiceCloseTests
         _hostGuard.Setup(g => g.IsHostWindow(terminal)).Returns(true);
 
         // Act
-        var results = CreateSut().CloseWindowsBatch([notepad, desktop, terminal, paint], force: false, delayBetweenMs: 0);
+        var results = await CreateSut().CloseWindowsBatchAsync([notepad, desktop, terminal, paint], force: false, delayBetweenMs: 0);
 
         // Assert
         results.Select(r => r.Handle).Should().Equal(notepad, desktop, terminal, paint);
@@ -596,14 +612,14 @@ public class WindowServiceCloseTests
     }
 
     [Fact]
-    public void CloseWindowsBatch_WithForce_ClosesProtectedWindowsToo()
+    public async Task CloseWindowsBatch_WithForce_ClosesProtectedWindowsToo()
     {
         // Arrange
         var notepad = AddWindow("Notepad");
         var taskbar = AddWindow("Shell_TrayWnd");
 
         // Act
-        var results = CreateSut().CloseWindowsBatch([notepad, taskbar], force: true, delayBetweenMs: 0);
+        var results = await CreateSut().CloseWindowsBatchAsync([notepad, taskbar], force: true, delayBetweenMs: 0);
 
         // Assert
         results.Should().OnlyContain(r => r.Success);
@@ -612,7 +628,7 @@ public class WindowServiceCloseTests
     }
 
     [Fact]
-    public void CloseWindowsBatch_ReportsEachFailureWithItsCode()
+    public async Task CloseWindowsBatch_ReportsEachFailureWithItsCode()
     {
         // Arrange
         var gone = new nint(0x9999);
@@ -624,7 +640,7 @@ public class WindowServiceCloseTests
             .Throws(new InvalidOperationException("boom"));
 
         // Act
-        var results = CreateSut().CloseWindowsBatch([gone, elevated, throwing], force: false, delayBetweenMs: 0);
+        var results = await CreateSut().CloseWindowsBatchAsync([gone, elevated, throwing], force: false, delayBetweenMs: 0);
 
         // Assert
         results.Select(r => r.ErrorCode).Should().Equal(

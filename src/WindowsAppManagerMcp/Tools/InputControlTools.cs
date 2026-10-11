@@ -36,7 +36,7 @@ public class InputControlTools
         _answerTimeout = answerTimeout ?? DefaultAnswerTimeout;
     }
 
-    [McpServerTool(Name = "get_control_status")]
+    [McpServerTool(Name = "get_control_status", Title = "Get Input Control Status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Whether the user has paused the server's input with the pause hotkey (and how and since when), whether the pause hotkey " +
                  "is registered, and which keys or mouse buttons are held down. Reads only. While paused is true, every input tool " +
                  "(click, type_text, send_keys, ...) and every tool that changes windows or starts or stops processes return " +
@@ -87,7 +87,7 @@ public class InputControlTools
             message);
     }
 
-    [McpServerTool(Name = "resume_input")]
+    [McpServerTool(Name = "resume_input", Title = "Resume Input (Asks the User)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Resume the server's input after the user paused it with the pause hotkey, but only if the user confirms: the server asks " +
                  "the user directly through the MCP client (elicitation), and input resumes only when they answer yes. Call it only when " +
                  "the user has asked you to continue, and only once at a time. ResumeNeedsUser: this client cannot ask the user, so only " +
@@ -202,7 +202,7 @@ public class InputControlTools
         return new ResumeInputResult(true, WasPaused: true, ResumedBy: InputControlSources.ResumeInput);
     }
 
-    [McpServerTool(Name = "release_all_input")]
+    [McpServerTool(Name = "release_all_input", Title = "Release Stuck Keys and Buttons", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Release keys and mouse buttons that are stuck down: sends the up event of every key and button the server pressed and " +
                  "could not release (normally none; every input call releases its own). With releaseHeldModifiers: true it also " +
                  "releases every modifier key (Shift, Ctrl, Alt, Windows) that is down although the server did not press it; use that " +

@@ -132,7 +132,11 @@ public static class TestDataFactory
         mock.Setup(w => w.SetWindowBounds(
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Returns(true);
+            .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
+        mock.Setup(w => w.SetWindowState(It.IsAny<nint>(), It.IsAny<WindowStateRequest>()))
+            .Returns((nint handle, WindowStateRequest _) => WindowChangeResult.Done(handle));
+        mock.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, MonitorPositioning _, bool _) => WindowChangeResult.Done(handle));
 
         // GetWindowInfo returns the first matching window, or a default for any valid handle
         foreach (var window in testWindows)
@@ -169,13 +173,14 @@ public static class TestDataFactory
     {
         var mock = new Mock<IProcessService>();
 
-        mock.Setup(p => p.LaunchApplication(
+        mock.Setup(p => p.LaunchApplicationAsync(
                 It.IsAny<string>(),
                 It.IsAny<string[]?>(),
                 It.IsAny<string?>(),
                 It.IsAny<bool>(),
-                It.IsAny<int>()))
-            .Returns((string exe, string[]? args, string? dir, bool wait, int timeout) =>
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string exe, string[]? args, string? dir, bool wait, int timeout, CancellationToken _) =>
                 new LaunchResult(
                     Success: true,
                     ProcessId: 9999,
@@ -294,7 +299,7 @@ public static class TestDataFactory
         // Window manipulation - return true for valid handles
         mock.Setup(n => n.SetWindowPos(It.Is<nint>(h => h != nint.Zero),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
         mock.Setup(n => n.ShowWindow(It.Is<nint>(h => h != nint.Zero), It.IsAny<int>()))
             .Returns(true);
         mock.Setup(n => n.SetForegroundWindow(It.Is<nint>(h => h != nint.Zero)))
@@ -431,7 +436,7 @@ public static class TestDataFactory
             MonitorIndex: monitorIndex,
             ScaleFactor: scaleFactor,
             ByteSize: 4,
-            CaptureMethod: "BitBlt",
+            CaptureMethod: "ScreenBitBlt",
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen);
     }
 
@@ -512,7 +517,7 @@ public static class TestDataFactory
         mock.Setup(s => s.CaptureScreenRegion(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
             .Returns((int x, int y, int w, int h) =>
-                new CaptureResult(pixelData ?? new byte[w * h * 4], w, h, x, y, "BitBlt"));
+                new CaptureResult(pixelData ?? new byte[w * h * 4], w, h, x, y, "ScreenBitBlt"));
 
         // CaptureWindow - return pixel data with specified default dimensions
         var windowPixelData = pixelData ?? new byte[captureWidth * captureHeight * 4];
@@ -686,15 +691,58 @@ public static class TestDataFactory
             error: error,
             errorCode: errorCode);
 
-        mock.Setup(s => s.GetUIElements(
+        mock.Setup(s => s.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
                 It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(result);
+            .ReturnsAsync(result);
 
         return mock;
     }
 
     #endregion
+
+    /// <summary>
+    /// Makes ShowWindow on <paramref name="handle"/> change what IsIconic, IsZoomed and IsWindowVisible report, as
+    /// Windows does: SW_MINIMIZE minimizes (remembering whether the window was maximized), SW_MAXIMIZE maximizes, and
+    /// SW_RESTORE returns a minimized window to its previous state and makes any other window normal. SW_SHOWNOACTIVATE
+    /// is simulated like SW_RESTORE, so a window minimized from maximized needs it twice to become normal (the worst case
+    /// the geometry placements allow for). The window is visible. Returns the state as it is now, for assertions.
+    /// </summary>
+    public static Func<WindowState> SimulateShowStates(Mock<INativeWindowWrapper> native, nint handle, WindowState initial = WindowState.Normal)
+    {
+        var minimized = initial == WindowState.Minimized;
+        var maximized = initial == WindowState.Maximized;
+        var restoresToMaximized = false;
+
+        native.Setup(n => n.IsIconic(handle)).Returns(() => minimized);
+        native.Setup(n => n.IsZoomed(handle)).Returns(() => maximized);
+        native.Setup(n => n.IsWindowVisible(handle)).Returns(true);
+        native.Setup(n => n.ShowWindow(handle, It.IsAny<int>())).Returns((nint _, int command) =>
+        {
+            switch (command)
+            {
+                case 6: // SW_MINIMIZE
+                    restoresToMaximized = maximized || (minimized && restoresToMaximized);
+                    minimized = true;
+                    maximized = false;
+                    break;
+                case 3: // SW_MAXIMIZE
+                    minimized = false;
+                    maximized = true;
+                    break;
+                case 9: // SW_RESTORE
+                case 4: // SW_SHOWNOACTIVATE: restores like SW_RESTORE, without activating
+                    maximized = minimized && restoresToMaximized;
+                    minimized = false;
+                    break;
+            }
+
+            return true;
+        });
+
+        return () => minimized ? WindowState.Minimized : maximized ? WindowState.Maximized : WindowState.Normal;
+    }
 }

@@ -1,0 +1,231 @@
+using System.Reflection;
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
+using WindowsAppManagerMcp.Infrastructure;
+
+namespace WindowsAppManagerMcp.Tests.Contract;
+
+/// <summary>
+/// Contract: every tool the server serves, called the way an agent calls it, over MCP through the production tool
+/// and filter registrations, with mocked services (<see cref="ContractRun"/>). A typical call returns non-empty
+/// JSON content with success true and isError not set, and a capture returns an image block first. A failing call
+/// (the services report invalid handles, errors and empty lists) returns non-empty content and isError = !success
+/// (roadmap M2.1): no tool sends a failure with isError false, and none returns null, which a client receives as
+/// empty content.
+/// </summary>
+public class EveryToolContractTests
+{
+    private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, object?>> Arguments =
+        new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal)
+        {
+            ["find_windows"] = Args("""{ "processName": "notepad" }"""),
+            ["get_all_windows"] = Args("{}"),
+            ["get_foreground_window"] = Args("{}"),
+            ["move_window"] = Args("""{ "handle": 1706796, "x": 100, "y": 80 }"""),
+            ["resize_window"] = Args("""{ "handle": 1706796, "width": 1280, "height": 720 }"""),
+            ["set_window_bounds"] = Args("""{ "handle": 1706796, "x": 0, "y": 0, "width": 1280, "height": 1392 }"""),
+            ["set_window_state"] = Args("""{ "handle": 1706796, "state": "maximize" }"""),
+            ["focus_window"] = Args("""{ "handle": 1706796 }"""),
+            ["close_window"] = Args("""{ "handle": 1706796 }"""),
+            ["close_application"] = Args("""{ "processName": "notepad" }"""),
+            ["get_owned_windows"] = Args("""{ "handle": 1706796 }"""),
+            ["get_window_info"] = Args("""{ "window": { "processName": "notepad" }, "detail": "full" }"""),
+            ["snap_window"] = Args("""{ "handle": 1706796, "position": "left_half" }"""),
+            ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitorIndex": 1 }"""),
+            ["set_windows_bounds_batch"] = Args("""
+                { "placements": [
+                    { "handle": 1706796, "x": 0, "y": 0, "width": 1280, "height": 1392 },
+                    { "handle": 2821181, "x": 1280, "y": 0, "width": 1280, "height": 1392 } ] }
+                """),
+            ["snap_windows_batch"] = Args("""
+                { "placements": [ { "handle": 1706796, "position": "left_half" }, { "handle": 2821181, "position": "right_half" } ] }
+                """),
+            ["set_windows_state_batch"] = Args("""
+                { "changes": [ { "handle": 1706796, "state": "minimize" }, { "handle": 2821181, "state": "restore" } ] }
+                """),
+            ["close_windows_batch"] = Args("""{ "windows": [ { "handle": 1706796 }, { "handle": 2821181 } ] }"""),
+            ["launch_applications_batch"] = Args("""
+                { "applications": [ { "executable": "notepad" }, { "executable": "code", "arguments": ["."] } ], "waitForWindows": true }
+                """),
+            ["get_monitors"] = Args("{}"),
+            ["get_primary_monitor"] = Args("{}"),
+            ["list_screens"] = Args("{}"),
+            ["take_screenshot"] = Args("{}"),
+            ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
+            ["capture_window"] = Args("""{ "handle": 1706796 }"""),
+            ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["get_focused_element"] = Args("{}"),
+            ["get_element_at_point"] = Args("""{ "x": 560, "y": 110 }"""),
+            ["get_browser_url"] = Args("""{ "handle": 2821181 }"""),
+            ["get_active_browser_url"] = Args("{}"),
+            ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
+            ["launch_browser_with_debug"] = Args("""{ "url": "https://example.com/" }"""),
+            ["click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
+            ["right_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
+            ["double_click"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
+            ["mouse_move"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
+            ["type_text"] = Args("""{ "text": "Meeting notes for Monday", "windowHandle": 1706796 }"""),
+            ["send_keys"] = Args("""{ "keys": "^s", "windowHandle": 1706796 }"""),
+            ["scroll"] = Args("""{ "windowHandle": 1706796, "deltaY": 3 }"""),
+            ["get_clipboard"] = Args("{}"),
+            ["set_clipboard"] = Args("""{ "text": "Meeting notes for Monday" }"""),
+            ["get_control_status"] = Args("{}"),
+            ["resume_input"] = Args("{}"),
+            ["release_all_input"] = Args("{}"),
+            ["launch_application"] = Args("""{ "executable": "notepad", "waitForWindow": true }"""),
+            ["list_processes"] = Args("{}"),
+            ["kill_process"] = Args("""{ "processId": 10244, "confirm": true, "expectedProcessName": "notepad" }"""),
+            ["list_layouts"] = Args("{}"),
+            ["get_layout"] = Args("""{ "name": "layout-1" }"""),
+            ["save_layout"] = Args("""{ "name": "layout-1", "description": "Editor left, browser right" }"""),
+            ["apply_layout"] = Args("""{ "name": "layout-1" }"""),
+            ["delete_layout"] = Args("""{ "name": "layout-1" }"""),
+            ["get_server_info"] = Args("{}"),
+        };
+
+    /// <summary>The failing call of these tools fails differently than the mode's defaults.</summary>
+    private static readonly IReadOnlyDictionary<string, Action<ContractServices>> FailingArrange =
+        new Dictionary<string, Action<ContractServices>>(StringComparer.Ordinal)
+        {
+            // Paused, and the test client cannot ask the user (no elicitation): ResumeNeedsUser
+            ["resume_input"] = services => services.Session.Pause(InputControlSources.Hotkey)
+        };
+
+    /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>
+    private static readonly HashSet<string> NoFailingCall = new(StringComparer.Ordinal)
+    {
+        "release_all_input" // releases what the server holds through the fake input wrapper, which never fails
+    };
+
+    public static TheoryData<string> ServedTools()
+    {
+        var data = new TheoryData<string>();
+        foreach (var name in ServerToolCatalog.ServedToolNames.Order(StringComparer.Ordinal))
+        {
+            data.Add(name);
+        }
+
+        return data;
+    }
+
+    /// <summary>The typical (successful) call of a tool, shared with the payload budget tests.</summary>
+    public static Task<CallToolResult> TypicalCallAsync(string tool) =>
+        ContractRun.CallAsync(ContractMode.Typical, tool, ArgumentsFor(tool));
+
+    [Fact]
+    public void EveryServedTool_HasCallArguments()
+    {
+        Arguments.Keys.Should().BeEquivalentTo(ServerToolCatalog.ServedToolNames,
+            "every tool is called in the contract run; a new tool needs typical arguments here");
+    }
+
+    [Theory]
+    [MemberData(nameof(ServedTools))]
+    public async Task TypicalCall_ReturnsJsonContent_WithSuccessAndNoIsError(string tool)
+    {
+        // Act
+        var result = await TypicalCallAsync(tool);
+
+        // Assert
+        result.Content.Should().NotBeEmpty("'{0}' must return content; an empty result tells the agent nothing", tool);
+        var text = result.Content.OfType<TextContentBlock>().ToList();
+        text.Should().ContainSingle("'{0}' returns its result as one JSON text block", tool);
+        result.IsError.Should().NotBe(true, "the typical call of '{0}' succeeds: {1}", tool, text[0].Text);
+
+        using var json = JsonDocument.Parse(text[0].Text);
+        if (json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("success", out var success))
+        {
+            success.GetBoolean().Should().BeTrue("the typical call of '{0}' succeeds: {1}", tool, text[0].Text);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ServedTools))]
+    public async Task TypicalCall_OfACaptureTool_ReturnsTheImageFirst(string tool)
+    {
+        var isCapture = ServerToolCatalog.Tools[tool].GetCustomAttribute<ToolResultPayloadAttribute>() != null;
+
+        var result = await TypicalCallAsync(tool);
+
+        if (!isCapture)
+        {
+            result.Content.OfType<ImageContentBlock>().Should().BeEmpty("only the capture tools return images");
+            return;
+        }
+
+        result.Content.Should().HaveCount(2);
+        var image = result.Content[0].Should().BeOfType<ImageContentBlock>(
+            "the model must see the capture as an image, before its metadata").Subject;
+        image.MimeType.Should().StartWith("image/");
+        image.DecodedData.ToArray().Should().NotBeEmpty();
+        result.Content[1].Should().BeOfType<TextContentBlock>().Which.Text.Should().NotContain(
+            System.Text.Encoding.ASCII.GetString(image.Data.Span[..64]),
+            "the image is sent once, as image content");
+    }
+
+    [Theory]
+    [MemberData(nameof(ServedTools))]
+    public async Task FailingCall_ReportsIsErrorAsNotSuccess(string tool)
+    {
+        // Act
+        var result = await ContractRun.CallAsync(ContractMode.Failing, tool, ArgumentsFor(tool), FailingArrange.GetValueOrDefault(tool));
+
+        // Assert
+        result.Content.Should().NotBeEmpty("'{0}' must say why it failed", tool);
+        var text = result.Content.OfType<TextContentBlock>().Single().Text;
+        result.Content.OfType<ImageContentBlock>().Should().BeEmpty("a failed call has no image");
+
+        using var json = JsonDocument.Parse(text);
+        if (json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("success", out var successProperty))
+        {
+            // A list or a batch summary: an empty list or failed items are a result, not a failed call
+            result.IsError.Should().NotBe(true, "'{0}' returned data: {1}", tool, text);
+            return;
+        }
+
+        var success = successProperty.GetBoolean();
+        if (!NoFailingCall.Contains(tool))
+        {
+            success.Should().BeFalse("the failing call of '{0}' fails: {1}", tool, text);
+        }
+
+        (result.IsError == true).Should().Be(!success, "isError must be !success for '{0}': {1}", tool, text);
+    }
+
+    [Fact]
+    public async Task ParallelReadCalls_ThroughOneServer_AllSucceedWithTheSameResult()
+    {
+        // MCP clients run read-only tools in parallel; the SDK pipeline, the filters and the tool classes must keep
+        // concurrent calls apart (the services are mocks here, so this covers the server, not the native reads)
+        using var services = new ContractServices(ContractMode.Typical);
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddWindowsAppManagerTools(), configureServices: services.Register);
+        string[] tools = ["find_windows", "get_monitors", "list_processes", "get_ui_elements", "get_focused_element"];
+
+        var calls = Enumerable.Range(0, 50)
+            .Select(i => tools[i % tools.Length])
+            .Select(async tool => (Tool: tool, Result: await server.CallToolAsync(tool, ArgumentsFor(tool))))
+            .ToList();
+        var results = await Task.WhenAll(calls);
+
+        results.Should().OnlyContain(r => r.Result.IsError != true);
+        foreach (var group in results.GroupBy(r => r.Tool))
+        {
+            group.Select(r => r.Result.Content.OfType<TextContentBlock>().Single().Text).Distinct()
+                .Should().ContainSingle("every parallel call of '{0}' returns the same result", group.Key);
+        }
+    }
+
+    /// <summary>The arguments of a tool's typical call, shared with the audit log tests.</summary>
+    public static IReadOnlyDictionary<string, object?> ArgumentsFor(string tool) =>
+        Arguments.TryGetValue(tool, out var arguments)
+            ? arguments
+            : throw new KeyNotFoundException($"No contract-run arguments for '{tool}'. Add typical arguments to {nameof(EveryToolContractTests)}.{nameof(Arguments)}.");
+
+    private static IReadOnlyDictionary<string, object?> Args(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.Ordinal);
+    }
+}

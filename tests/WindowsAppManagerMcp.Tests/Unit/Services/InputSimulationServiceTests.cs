@@ -258,7 +258,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void Click_WhenSetCursorPosFails_ReturnsSendInputFailed()
+    public void Click_WhenSetCursorPosFails_ReturnsCursorPositionFailed()
     {
         // Arrange
         SetupSingleMonitor();
@@ -268,9 +268,10 @@ public class InputSimulationServiceTests
         // Act
         var result = sut.Click(500, 300);
 
-        // Assert
+        // Assert - roadmap M2.2: not SendInputFailed, which means the input itself was not accepted
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.ErrorCode.Should().Be(InputErrorCode.CursorPositionFailed);
+        result.Error.Should().Contain("Nothing was clicked");
         _sentEvents.Should().BeEmpty();
     }
 
@@ -430,7 +431,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void MoveMouse_WhenSetCursorPosFails_ReturnsSendInputFailed()
+    public void MoveMouse_WhenSetCursorPosFails_ReturnsCursorPositionFailed()
     {
         // Arrange
         SetupSingleMonitor();
@@ -442,7 +443,7 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.ErrorCode.Should().Be(InputErrorCode.CursorPositionFailed);
     }
 
     [Fact]
@@ -790,9 +791,9 @@ public class InputSimulationServiceTests
         // Act
         var result = await sut.SendKeysAsync("{ENTER");
 
-        // Assert
+        // Assert - a syntax error to fix, not a key name to change (roadmap M2.2)
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
+        result.ErrorCode.Should().Be(InputErrorCode.InvalidKeySpecification);
         result.Error.Should().Contain("Unclosed brace");
         VerifyNoInputSent();
     }
@@ -889,6 +890,110 @@ public class InputSimulationServiceTests
         var pressed = _sentEvents.Where(e => (e.Flags & KeyUp) == 0).Select(e => e.Code);
         var released = _sentEvents.Where(e => (e.Flags & KeyUp) != 0).Select(e => e.Code);
         released.Should().BeEquivalentTo(pressed);
+    }
+
+    #endregion
+
+    #region Paste (review PRIVA-1)
+
+    /// <summary>A paste guard that refuses every paste and records what it was asked about.</summary>
+    private sealed class RefusingPasteGuard : IClipboardPasteGuard
+    {
+        public List<(IReadOnlyList<InputEvent> Batch, nint Receiving)> Checked { get; } = [];
+
+        public string? Check(IReadOnlyList<InputEvent> batch, nint receivingWindow)
+        {
+            Checked.Add((batch.ToList(), receivingWindow));
+            return ClipboardOrigin.PasteTrigger(batch) != null || batch.Any(e => (e.Flags & RightDown) != 0 && e.Kind == InputEventKind.Mouse)
+                ? "The input pastes the clipboard, but the clipboard holds content the agent did not put there. Nothing was sent."
+                : null;
+        }
+    }
+
+    private InputSimulationService CreateSut(IClipboardPasteGuard pasteGuard) =>
+        new(_mockMonitorService.Object, _mockInputWrapper.Object, _guard.Object, new InputSession(_mockInputWrapper.Object),
+            pasteGuard: pasteGuard);
+
+    [Fact]
+    public async Task SendKeys_ThatPaste_AreCheckedRightBeforeTheyAreSent_AndRefusedWithPasteNotAllowed()
+    {
+        var pasteGuard = new RefusingPasteGuard();
+        var sut = CreateSut(pasteGuard);
+
+        var result = await sut.SendKeysAsync("^v");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.Error.Should().Contain("Nothing was sent");
+        result.ReceivingWindow.Should().NotBeNull("the result names the window the paste was meant for");
+        pasteGuard.Checked.Should().ContainSingle().Which.Receiving.Should().Be((nint)0x5150);
+        _mockInputWrapper.Verify(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendKeys_ThatDoNotPaste_AreSent()
+    {
+        var sut = CreateSut(new RefusingPasteGuard());
+
+        var result = await sut.SendKeysAsync("hello{ENTER}");
+
+        result.Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TypeText_StopsBeforeTheBatchWithTheSynCharacter()
+    {
+        // The SYN character (U+0016) pastes in an edit control, as Ctrl+V does; the batch before it was typed
+        var sut = CreateSut(new RefusingPasteGuard());
+        var text = new string('a', InputSimulationService.TypeTextBatchSize) + "\u0016b";
+
+        var result = await sut.TypeTextAsync(text);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.CharactersTyped.Should().Be(InputSimulationService.TypeTextBatchSize);
+        _sentEvents.Should().HaveCount(InputSimulationService.TypeTextBatchSize * 2);
+    }
+
+    [Fact]
+    public async Task TypeText_ThatCopiesInOneBatchAndPastesInALaterOne_IsRefusedBeforeAnythingIsTyped()
+    {
+        // ETX (U+0003) copies in an edit control as Ctrl+C does; the SYN that pastes it comes batches later, in the same call
+        var sut = CreateSut(new RefusingPasteGuard());
+        var text = "\u0003" + new string('a', InputSimulationService.TypeTextBatchSize * 2) + "\u0016";
+
+        var result = await sut.TypeTextAsync(text);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.Error.Should().Contain("separate calls").And.Contain("Nothing was typed");
+        result.CharactersTyped.Should().Be(0);
+        _sentEvents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RightClick_IsCheckedAsAPaste_AndRefusedWithoutAPress()
+    {
+        SetupSingleMonitor();
+        var pasteGuard = new RefusingPasteGuard();
+        var sut = CreateSut(pasteGuard);
+
+        var result = sut.RightClick(750, 400);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        _sentEvents.Should().NotContain(e => e.Kind == InputEventKind.Mouse && (e.Flags & RightDown) != 0);
+    }
+
+    [Fact]
+    public void LeftClick_IsNotCheckedAsAPaste()
+    {
+        SetupSingleMonitor();
+        var pasteGuard = new RefusingPasteGuard();
+        var sut = CreateSut(pasteGuard);
+
+        sut.Click(750, 400).Success.Should().BeTrue();
+        pasteGuard.Checked.Should().BeEmpty();
     }
 
     #endregion

@@ -13,14 +13,14 @@ public class UiaWorkerTests
     private const int OtherApp = 5151;
 
     [Fact]
-    public void Run_ReturnsTheReadsResult_FromABackgroundMtaThread()
+    public async Task RunAsync_ReturnsTheReadsResult_FromABackgroundMtaThread()
     {
         // Arrange
         var sut = new UiaWorker();
         var callerThread = Environment.CurrentManagedThreadId;
 
         // Act
-        var (threadId, isBackground, apartment) = sut.Run(
+        var (threadId, isBackground, apartment) = await sut.RunAsync(
             HungApp,
             _ => (Environment.CurrentManagedThreadId, Thread.CurrentThread.IsBackground, Thread.CurrentThread.GetApartmentState()),
             CancellationToken.None,
@@ -34,27 +34,60 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_RethrowsTheReadsExceptionUnchanged()
+    public async Task RunAsync_DoesNotBlockTheCaller_WhileTheReadRuns()
+    {
+        // Arrange - a read that runs until the test lets it return
+        var sut = new UiaWorker();
+        using var release = new ManualResetEventSlim();
+
+        // Act - the call returns at once with a task; no thread of the caller waits for the read
+        var read = sut.RunAsync(HungApp, _ => release.Wait(Long) ? "read" : "timed out", CancellationToken.None, TimeSpan.Zero);
+        var returnedBeforeTheRead = !read.IsCompleted;
+        release.Set();
+
+        // Assert
+        returnedBeforeTheRead.Should().BeTrue();
+        (await read.WaitAsync(Long)).Should().Be("read");
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenTheTokenIsCancelledAfterTheReadReturned_ReturnsTheResult()
+    {
+        // Arrange
+        var sut = new UiaWorker();
+        using var cancellation = new CancellationTokenSource();
+
+        // Act
+        var result = await sut.RunAsync(HungApp, _ => "read", cancellation.Token, TimeSpan.Zero);
+        cancellation.Cancel();
+
+        // Assert
+        result.Should().Be("read");
+        sut.StuckCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RunAsync_RethrowsTheReadsExceptionUnchanged()
     {
         // Arrange
         var sut = new UiaWorker();
 
         // Act
-        var act = () => sut.Run<int>(HungApp, _ => throw new UiaElementUnavailableException("gone"), CancellationToken.None, TimeSpan.Zero);
+        var act = () => sut.RunAsync<int>(HungApp, _ => throw new UiaElementUnavailableException("gone"), CancellationToken.None, TimeSpan.Zero);
 
         // Assert
-        act.Should().Throw<UiaElementUnavailableException>().WithMessage("gone");
+        await act.Should().ThrowAsync<UiaElementUnavailableException>().WithMessage("gone");
     }
 
     [Fact]
-    public void Run_WhenTheReadStopsAtTheDeadline_ReturnsItsPartialResult()
+    public async Task RunAsync_WhenTheReadStopsAtTheDeadline_ReturnsItsPartialResult()
     {
         // Arrange - the read polls the token, like the tree walk does
         var sut = new UiaWorker();
         using var deadline = new CancellationTokenSource(Short);
 
         // Act
-        var result = sut.Run(
+        var result = await sut.RunAsync(
             HungApp,
             token =>
             {
@@ -76,7 +109,7 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_WhenTheReadIsStuckPastTheDeadline_ThrowsTimeoutAndCountsTheReadUntilItReturns()
+    public async Task RunAsync_WhenTheReadIsStuckPastTheDeadline_ThrowsTimeoutAndCountsTheReadUntilItReturns()
     {
         // Arrange - a read blocked in a call that ignores the token
         var sut = new UiaWorker();
@@ -86,10 +119,10 @@ public class UiaWorkerTests
         try
         {
             // Act
-            var act = () => sut.Run(HungApp, _ => release.Wait(Long), deadline.Token, Short);
+            var act = () => sut.RunAsync(HungApp, _ => release.Wait(Long), deadline.Token, Short);
 
             // Assert
-            act.Should().Throw<TimeoutException>().WithMessage("*did not answer in time*");
+            (await act.Should().ThrowAsync<TimeoutException>()).WithMessage("*did not answer in time*");
             sut.StuckCalls.Should().Be(1);
             sut.StuckCallsFor(HungApp).Should().Be(1);
             sut.StuckCallsFor(OtherApp).Should().Be(0);
@@ -104,7 +137,7 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_WhileTooManyReadsOfTheTargetAreStuck_FailsAtOnceWithoutStartingTheRead()
+    public async Task RunAsync_WhileTooManyReadsOfTheTargetAreStuck_FailsAtOnceWithoutStartingTheRead()
     {
         // Arrange
         var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 4);
@@ -113,13 +146,13 @@ public class UiaWorkerTests
 
         try
         {
-            Stick(sut, HungApp, release);
+            await StickAsync(sut, HungApp, release);
 
             // Act
-            var act = () => sut.Run(HungApp, _ => started = true, CancellationToken.None, TimeSpan.Zero);
+            var act = () => sut.RunAsync(HungApp, _ => started = true, CancellationToken.None, TimeSpan.Zero);
 
             // Assert
-            act.Should().Throw<UiaReadRefusedException>().WithMessage($"*not responding for the application (process {HungApp})*");
+            (await act.Should().ThrowAsync<UiaReadRefusedException>()).WithMessage($"*not responding for the application (process {HungApp})*");
             started.Should().BeFalse();
         }
         finally
@@ -129,11 +162,11 @@ public class UiaWorkerTests
 
         // Once the stuck read returns, reads of the application run again
         SpinWait.SpinUntil(() => sut.StuckCalls == 0, Long).Should().BeTrue();
-        sut.Run(HungApp, _ => 42, CancellationToken.None, TimeSpan.Zero).Should().Be(42);
+        (await sut.RunAsync(HungApp, _ => 42, CancellationToken.None, TimeSpan.Zero)).Should().Be(42);
     }
 
     [Fact]
-    public void Run_WhileOneApplicationIsHung_StillReadsOtherApplications()
+    public async Task RunAsync_WhileOneApplicationIsHung_StillReadsOtherApplications()
     {
         // Arrange - the hung application has used up its own limit
         var sut = new UiaWorker(maxStuckCallsPerTarget: 2, maxStuckCalls: 4);
@@ -141,13 +174,13 @@ public class UiaWorkerTests
 
         try
         {
-            Stick(sut, HungApp, release);
-            Stick(sut, HungApp, release);
-            var hung = () => sut.Run(HungApp, _ => 1, CancellationToken.None, TimeSpan.Zero);
-            hung.Should().Throw<UiaReadRefusedException>();
+            await StickAsync(sut, HungApp, release);
+            await StickAsync(sut, HungApp, release);
+            var hung = () => sut.RunAsync(HungApp, _ => 1, CancellationToken.None, TimeSpan.Zero);
+            await hung.Should().ThrowAsync<UiaReadRefusedException>();
 
             // Act
-            var other = sut.Run(OtherApp, _ => "read", CancellationToken.None, TimeSpan.Zero);
+            var other = await sut.RunAsync(OtherApp, _ => "read", CancellationToken.None, TimeSpan.Zero);
 
             // Assert
             other.Should().Be("read");
@@ -162,7 +195,7 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_WhileTooManyReadsAreStuckOverall_FailsAtOnceForEveryTarget()
+    public async Task RunAsync_WhileTooManyReadsAreStuckOverall_FailsAtOnceForEveryTarget()
     {
         // Arrange - two hung applications fill the overall limit
         var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 2);
@@ -170,14 +203,14 @@ public class UiaWorkerTests
 
         try
         {
-            Stick(sut, HungApp, release);
-            Stick(sut, OtherApp, release);
+            await StickAsync(sut, HungApp, release);
+            await StickAsync(sut, OtherApp, release);
 
             // Act
-            var act = () => sut.Run(7, _ => 1, CancellationToken.None, TimeSpan.Zero);
+            var act = () => sut.RunAsync(7, _ => 1, CancellationToken.None, TimeSpan.Zero);
 
             // Assert
-            act.Should().Throw<UiaReadRefusedException>().WithMessage("*2 earlier reads in 2 applications*");
+            (await act.Should().ThrowAsync<UiaReadRefusedException>()).WithMessage("*2 earlier reads in 2 applications*");
         }
         finally
         {
@@ -188,7 +221,7 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_WithAnUnknownTarget_SharesOneCount()
+    public async Task RunAsync_WithAnUnknownTarget_SharesOneCount()
     {
         // Arrange
         var sut = new UiaWorker(maxStuckCallsPerTarget: 1, maxStuckCalls: 4);
@@ -196,14 +229,14 @@ public class UiaWorkerTests
 
         try
         {
-            Stick(sut, 0, release);
+            await StickAsync(sut, 0, release);
 
             // Act - a negative process ID is unknown too
-            var act = () => sut.Run(-1, _ => 1, CancellationToken.None, TimeSpan.Zero);
+            var act = () => sut.RunAsync(-1, _ => 1, CancellationToken.None, TimeSpan.Zero);
 
             // Assert
-            act.Should().Throw<UiaReadRefusedException>().WithMessage("*could not identify*");
-            sut.Run(HungApp, _ => 2, CancellationToken.None, TimeSpan.Zero).Should().Be(2);
+            (await act.Should().ThrowAsync<UiaReadRefusedException>()).WithMessage("*could not identify*");
+            (await sut.RunAsync(HungApp, _ => 2, CancellationToken.None, TimeSpan.Zero)).Should().Be(2);
         }
         finally
         {
@@ -214,13 +247,13 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_WithATokenThatIsNeverCancelled_WaitsForTheRead()
+    public async Task RunAsync_WithATokenThatIsNeverCancelled_WaitsForTheRead()
     {
         // Arrange
         var sut = new UiaWorker();
 
         // Act
-        var result = sut.Run(HungApp, _ =>
+        var result = await sut.RunAsync(HungApp, _ =>
         {
             Thread.Sleep(Short);
             return "done";
@@ -241,18 +274,18 @@ public class UiaWorkerTests
     }
 
     [Fact]
-    public void Run_RejectsANegativeGrace()
+    public async Task RunAsync_RejectsANegativeGrace()
     {
-        var act = () => new UiaWorker().Run(HungApp, _ => 1, CancellationToken.None, TimeSpan.FromMilliseconds(-1));
+        var act = () => new UiaWorker().RunAsync(HungApp, _ => 1, CancellationToken.None, TimeSpan.FromMilliseconds(-1));
 
-        act.Should().Throw<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
     /// <summary>Makes one read of <paramref name="target"/> miss its deadline and stay stuck until <paramref name="release"/> is set.</summary>
-    private static void Stick(UiaWorker sut, int target, ManualResetEventSlim release)
+    private static async Task StickAsync(UiaWorker sut, int target, ManualResetEventSlim release)
     {
         using var deadline = new CancellationTokenSource(Short);
-        var stuck = () => sut.Run(target, _ => release.Wait(Long), deadline.Token, Short);
-        stuck.Should().Throw<TimeoutException>().Which.Should().NotBeOfType<UiaReadRefusedException>();
+        var stuck = () => sut.RunAsync(target, _ => release.Wait(Long), deadline.Token, Short);
+        (await stuck.Should().ThrowAsync<TimeoutException>()).Which.Should().NotBeOfType<UiaReadRefusedException>();
     }
 }

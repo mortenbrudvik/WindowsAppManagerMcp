@@ -249,21 +249,33 @@ public class MonitorServiceSnapshotTests
         act.Should().Throw<InvalidOperationException>().WithMessage("No monitors found");
     }
 
-    [Theory]
-    [InlineData(1, 1920)]
-    [InlineData(5, 0)]
-    [InlineData(-1, 0)]
-    public void CalculateSnapBounds_UsesRequestedMonitorOrFallsBackToPrimary(int monitorIndex, int expectedX)
+    [Fact]
+    public void CalculateSnapBounds_UsesTheRequestedMonitor()
     {
         // Arrange
         var sut = new MonitorService(new FakeMonitorWrapper { Topology = _ => CreateTopology(2) }, new ManualTimeProvider());
 
         // Act
-        var result = sut.CalculateSnapBounds(monitorIndex, SnapPosition.LeftHalf);
+        var result = sut.CalculateSnapBounds(1, SnapPosition.LeftHalf);
 
         // Assert
-        result.X.Should().Be(expectedX);
+        result.X.Should().Be(1920);
         result.Width.Should().Be(960);
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(-1)]
+    public void CalculateSnapBounds_OfAMonitorThatDoesNotExist_Throws_InsteadOfFallingBackToThePrimary(int monitorIndex)
+    {
+        // Arrange - roadmap M2.2: the window would land on another monitor than the one asked for
+        var sut = new MonitorService(new FakeMonitorWrapper { Topology = _ => CreateTopology(2) }, new ManualTimeProvider());
+
+        // Act
+        var act = () => sut.CalculateSnapBounds(monitorIndex, SnapPosition.LeftHalf);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("monitorIndex");
     }
 
     #endregion

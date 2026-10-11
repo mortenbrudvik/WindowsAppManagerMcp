@@ -42,7 +42,8 @@ public static class SendKeysParser
     /// <paramref name="windowsModifier"/> also reads <c>#</c> as the Windows-key modifier; send_keys does
     /// not (there <c>#</c> is the character), only the destructive-chord settings do.
     /// </summary>
-    /// <exception cref="ArgumentException">A brace is not closed, or a key name is unknown.</exception>
+    /// <exception cref="KeySyntaxException">A brace is not closed (InvalidKeySpecification).</exception>
+    /// <exception cref="ArgumentException">A key name is unknown (UnknownKey).</exception>
     public static List<InputEvent> Parse(string keys, bool windowsModifier = false)
     {
         ArgumentNullException.ThrowIfNull(keys);
@@ -83,7 +84,7 @@ public static class SendKeysParser
                 var endBrace = keys.IndexOf('}', i + 1);
                 if (endBrace == -1)
                 {
-                    throw new ArgumentException($"Unclosed brace at position {i}");
+                    throw new KeySyntaxException($"Unclosed brace at position {i}");
                 }
 
                 var keyName = keys.Substring(i + 1, endBrace - i - 1).ToUpperInvariant();
@@ -133,14 +134,22 @@ public static class SendKeysParser
     /// the modifier keys themselves are not chords. Reads the events as they would arrive, so a modifier
     /// sent as its own key (<c>{ALT}</c>) is released again before the next key and holds nothing.
     /// </summary>
-    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events)
+    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events) =>
+        IndexedChords(events).Select(c => c.Chord).ToList();
+
+    /// <summary>
+    /// The chords of <see cref="Chords"/>, each with the index in <paramref name="events"/> of its key-down, so their
+    /// order against other events (a mouse button) can be told.
+    /// </summary>
+    public static IReadOnlyList<(KeyChord Chord, int Index)> IndexedChords(IReadOnlyList<InputEvent> events)
     {
         ArgumentNullException.ThrowIfNull(events);
 
-        var chords = new List<KeyChord>();
+        var chords = new List<(KeyChord, int)>();
         var held = KeyModifiers.None;
-        foreach (var e in events)
+        for (var i = 0; i < events.Count; i++)
         {
+            var e = events[i];
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
             if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) is var modifier && modifier != KeyModifiers.None)
             {
@@ -150,7 +159,7 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                chords.Add(Press(held, e));
+                chords.Add((Press(held, e), i));
             }
         }
 
@@ -321,3 +330,9 @@ public static class SendKeysParser
         return 0;
     }
 }
+
+/// <summary>
+/// The keys string is not valid SendKeys syntax, such as a brace that is not closed: a mistake the agent fixes in
+/// the string, reported as InvalidKeySpecification, unlike an unknown key name (UnknownKey).
+/// </summary>
+public sealed class KeySyntaxException(string message) : ArgumentException(message);

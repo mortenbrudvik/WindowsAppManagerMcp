@@ -1,13 +1,25 @@
+using System.Text.Json.Serialization;
 using WindowsAppManagerMcp.Models;
 
 namespace WindowsAppManagerMcp.Services;
 
-/// <summary>What a capture returns: the image, a file, both, or only the metadata.</summary>
+/// <summary>
+/// What a capture returns: the image, a file, both, or only the metadata. Also the capture tools' output argument
+/// (roadmap M2.2): an unknown value fails with InvalidOutputMode.
+/// </summary>
+[ToolEnum(nameof(ScreenshotErrorCode.InvalidOutputMode), "output", NullMeans = "image")]
 public enum CaptureOutputMode
 {
+    [JsonStringEnumMemberName("image")]
     Image,
+
+    [JsonStringEnumMemberName("file")]
     File,
+
+    [JsonStringEnumMemberName("both")]
     Both,
+
+    [JsonStringEnumMemberName("metadata")]
     Metadata
 }
 

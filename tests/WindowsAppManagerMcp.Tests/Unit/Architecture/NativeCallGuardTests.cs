@@ -21,7 +21,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// <see cref="WindowQueryNativeApis"/>, followed through their lambdas and helpers.</item>
 /// <item>Deny-lists that pin specific APIs to their wrapper: input, window changes, attaching thread
 /// input, registering hotkeys, the named events every server on the desktop shares (the pause and the
-/// chord marks), and starting or stopping processes.</item>
+/// chord marks), the clipboard, and starting or stopping processes.</item>
 /// </list>
 /// </summary>
 public class NativeCallGuardTests
@@ -57,7 +57,7 @@ public class NativeCallGuardTests
     private static readonly Type[] ActionWrappers =
     [
         typeof(NativeWindowWrapper), typeof(NativeInputWrapper), typeof(NativeProcessWrapper),
-        typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper)
+        typeof(NativeThreadInputWrapper), typeof(NativeHotkeyWrapper), typeof(NativeClipboardWrapper)
     ];
 
     /// <summary>
@@ -94,10 +94,10 @@ public class NativeCallGuardTests
         ["User32.IsWindow"] = "checks that a handle is a window",
         ["User32.GetSystemMetrics"] = "reads the virtual screen size",
         ["Gdi32.CreateCompatibleDC"] = "creates a memory DC in the server",
-        ["Gdi32.CreateCompatibleBitmap"] = "creates a bitmap in the server",
         ["Gdi32.SelectObject"] = "selects a bitmap into a memory DC of the server",
         ["Gdi32.BitBlt"] = "copies screen pixels into a memory DC of the server",
-        ["Gdi32.GetDIBits"] = "reads the copied pixels",
+        ["Gdi32.CreateDIBSection"] = "creates a bitmap in the server whose pixels the server reads directly",
+        ["Gdi32.GdiFlush"] = "runs the server thread's batched GDI drawing before the pixels are read",
         ["Gdi32.DeleteDC"] = "frees a memory DC of the server",
         ["Gdi32.DeleteObject"] = "frees a bitmap of the server",
 
@@ -118,6 +118,11 @@ public class NativeCallGuardTests
         ["User32.GetUserObjectInformationW"] = "reads the name of a desktop",
         ["Wtsapi32.WTSQuerySessionInformationW"] = "reads whether the server's session is locked or disconnected",
         ["Wtsapi32.WTSFreeMemory"] = "frees memory that WTSQuerySessionInformationW returned",
+
+        // The effective DPI awareness for get_server_info and the log at start (NativeSystemInfoWrapper)
+        ["User32.GetThreadDpiAwarenessContext"] = "reads the DPI awareness context of the calling thread",
+        ["User32.GetAwarenessFromDpiAwarenessContext"] = "reads the awareness of a context value",
+        ["User32.AreDpiAwarenessContextsEqual"] = "compares two context values",
     };
 
     /// <summary>
@@ -151,12 +156,16 @@ public class NativeCallGuardTests
     };
 
     /// <summary>
-    /// Reviewed calls outside the action wrappers that change something, keyed by (full name of the
-    /// calling type, "Class.Method").
+    /// Reviewed calls outside the action wrappers to APIs that can also change something, keyed by (full
+    /// name of the calling type, "Class.Method"): only that caller may make them, and only in the way the
+    /// reason says. The DPI awareness is no longer set through the API (app.manifest declares it).
     /// </summary>
     private static readonly Dictionary<(string Caller, string Api), string> SanctionedNativeCalls = new()
     {
-        [("Program", "Shcore.SetProcessDpiAwareness")] = "sets the DPI awareness of the server process itself, at startup",
+        [("WindowsAppManagerMcp.Native.NativeSystemInfoWrapper", "User32.SystemParametersInfoW")] =
+            "reads the foreground lock timeout (SPI_GETFOREGROUNDLOCKTIMEOUT) and the mouse wheel routing " +
+            "(SPI_GETMOUSEWHEELROUTING) and nothing else; a SET action would change a system setting " +
+            "(SystemParametersInfoActions_AreAllGetActions)",
     };
 
     /// <summary>
@@ -520,6 +529,65 @@ public class NativeCallGuardTests
         uses.Should().Contain(u => u.Owner == typeof(NativeHotkeyWrapper), "the scan must see the wrapper's own names");
         uses.Where(u => u.Owner != typeof(NativeHotkeyWrapper)).Select(u => u.Use).Should().BeEmpty(
             "the names of the objects every server on the desktop shares belong to NativeHotkeyWrapper");
+    }
+
+    [Fact]
+    public void ClipboardMethods_AreOnlyCalledByNativeClipboardWrapper()
+    {
+        // Arrange - the clipboard is the user's, shared with every app: reading it in a test could pull a password into
+        // the test log, and setting it replaces what the user copied. So every clipboard call (and the memory and owner
+        // window it needs) stays behind the seam the tests replace with a fake
+        var clipboardType = NativeMethodsType.GetNestedType("Clipboard", BindingFlags.NonPublic | BindingFlags.Public);
+        clipboardType.Should().NotBeNull();
+
+        // Act
+        var callers = FindCallers(callee => callee.DeclaringType == clipboardType);
+
+        // Assert
+        callers.Keys.Should().Contain(typeof(NativeClipboardWrapper),
+            "the scan must see the wrapper's own OpenClipboard and SetClipboardData calls");
+        callers[typeof(NativeClipboardWrapper)].Should().Contain(c => c.EndsWith("Clipboard.OpenClipboard"))
+            .And.Contain(c => c.EndsWith("Clipboard.SetClipboardData"));
+        Unexpected(callers, typeof(NativeClipboardWrapper), NativeMethodsType).Should().BeEmpty(
+            "reading and setting the clipboard must go through INativeClipboardWrapper so tests can fake it");
+    }
+
+    [Fact]
+    public void ClipboardApis_AreDeclaredOnlyInTheClipboardClass()
+    {
+        // Arrange - a clipboard API declared in User32 or Kernel32 would escape the rule above
+        string[] clipboardApis =
+        [
+            "OpenClipboard", "CloseClipboard", "EmptyClipboard", "SetClipboardData", "GetClipboardData", "GetClipboardSequenceNumber",
+            "GetClipboardOwner",
+            "IsClipboardFormatAvailable", "RegisterClipboardFormatW", "EnumClipboardFormats", "GlobalAlloc", "GlobalLock",
+            "DragQueryFileW", "OleSetClipboard", "OleGetClipboard"
+        ];
+
+        // Act
+        var declared = NativeMethodsType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+            .SelectMany(type => type.GetMethods(DeclaredMembers).Select(m => (Type: type.Name, m.Name)))
+            .Where(m => clipboardApis.Contains(m.Name))
+            .ToList();
+
+        // Assert
+        declared.Should().NotBeEmpty("the scan must see the clipboard class");
+        declared.Where(m => m.Type != "Clipboard").Select(m => $"{m.Type}.{m.Name}").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SystemParametersInfoActions_AreAllGetActions()
+    {
+        // The SPI_ constants the server declares are the only actions it can pass; a SET action would change a setting of
+        // the user's system
+        var actions = NativeMethodsType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+            .SelectMany(type => type.GetFields(DeclaredMembers))
+            .Where(f => f.Name.StartsWith("SPI_", StringComparison.Ordinal))
+            .Select(f => f.Name)
+            .ToList();
+
+        actions.Should().Contain(["SPI_GETFOREGROUNDLOCKTIMEOUT", "SPI_GETMOUSEWHEELROUTING"]);
+        actions.Should().OnlyContain(name => name.StartsWith("SPI_GET", StringComparison.Ordinal));
     }
 
     [Fact]

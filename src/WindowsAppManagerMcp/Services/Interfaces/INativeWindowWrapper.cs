@@ -50,8 +50,12 @@ public interface INativeWindowWrapper
     /// <summary>
     /// Sets the window position and size. The window also goes to the top of the Z order (HWND_TOP)
     /// unless <paramref name="flags"/> has SWP_NOZORDER, and it is activated unless they have SWP_NOACTIVATE.
+    /// When Windows refuses it, the result carries the Win32 error read right after the call:
+    /// ERROR_ACCESS_DENIED (5) when User Interface Privilege Isolation blocks changes to a window of a more
+    /// privileged process (an app running as administrator), ERROR_INVALID_WINDOW_HANDLE (1400) when the
+    /// window is gone.
     /// </summary>
-    bool SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
+    Win32CallResult SetWindowPos(nint hWnd, int x, int y, int width, int height, uint flags);
 
     /// <summary>
     /// Sets the show state of the specified window.
@@ -139,6 +143,13 @@ public interface INativeWindowWrapper
     /// nothing of it is on screen. Returns false when the attribute cannot be read.
     /// </summary>
     bool IsCloaked(nint hWnd);
+
+    /// <summary>
+    /// Why DWM cloaks the window (the DWMWA_CLOAKED value): 0 when it is not cloaked or the attribute cannot be read,
+    /// DWM_CLOAKED_APP (1) when its app cloaked it, DWM_CLOAKED_SHELL (2) when the shell did, as for a window on another
+    /// virtual desktop, DWM_CLOAKED_INHERITED (4) when it inherits its owner's cloak.
+    /// </summary>
+    int GetCloakReason(nint hWnd);
 
     /// <summary>
     /// Gets the visible frame of the window (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible

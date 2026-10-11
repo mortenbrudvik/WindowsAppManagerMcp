@@ -29,6 +29,9 @@ public class UIElementService : IUIElementService
     private const int MaxAllowedDepth = 10;
     private const int DefaultMaxDepth = 5;
 
+    /// <summary>A walk reports its progress after every this many elements read.</summary>
+    public const int ProgressInterval = 100;
+
     /// <summary>
     /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
     /// tree. A walk still stuck in a UI Automation call after that is abandoned.
@@ -55,10 +58,11 @@ public class UIElementService : IUIElementService
     public bool IsAvailable() => _tree.IsAvailable();
 
     /// <inheritdoc />
-    public UIElementResult GetUIElements(
+    public async Task<UIElementResult> GetUIElementsAsync(
         nint windowHandle,
         int maxDepth = DefaultMaxDepth,
         UIElementFilter? filter = null,
+        IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -79,28 +83,70 @@ public class UIElementService : IUIElementService
             return CreateErrorResult(windowHandle, stopwatch, invalidControlTypes, UIElementErrorCode.InvalidControlType);
         }
 
-        var progress = new WalkProgress();
+        var started = new WalkStarted();
+        UIElementResult result;
         try
         {
-            return _worker.Run(
+            result = await _worker.RunAsync(
                 TargetProcessId(windowHandle),
-                token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, progress, token),
+                token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, started, progress, token),
                 cancellationToken,
-                StopGrace);
+                StopGrace).ConfigureAwait(false);
         }
         catch (TimeoutException ex)
         {
             // The worker gave up on a read stuck in an application that does not answer. The walk thread is
             // still blocked in a UI Automation call; what it had read until then is returned all the same
-            return progress.Walk?.PartialResult(windowHandle, stopwatch) ??
-                   CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+            result = started.Walk?.PartialResult(windowHandle, stopwatch) ??
+                     CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+
+        return result with { WindowState = ReadWindowState(windowHandle) };
+    }
+
+    /// <summary>
+    /// The state of the window's top-level window: Minimized when it, or the window itself, is minimized (its elements
+    /// are offscreen), Maximized or Normal otherwise. Null without a window wrapper, or when the handle is no window.
+    /// These are reads Windows answers without the window's thread, so a hung application does not block them.
+    /// </summary>
+    private WindowState? ReadWindowState(nint windowHandle)
+    {
+        if (_windows == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!_windows.IsWindow(windowHandle))
+            {
+                return null;
+            }
+
+            var root = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
+            if (root == nint.Zero)
+            {
+                root = windowHandle;
+            }
+
+            if (_windows.IsIconic(root) || _windows.IsIconic(windowHandle))
+            {
+                return WindowState.Minimized;
+            }
+
+            return _windows.IsZoomed(root) ? WindowState.Maximized : WindowState.Normal;
+        }
+        catch (Exception)
+        {
+            // Only the reported state depends on it
+            return null;
         }
     }
 
     /// <summary>
     /// The walk of one call, once it has started: the caller reads its partial tree when the worker abandons it.
     /// </summary>
-    private sealed class WalkProgress
+    private sealed class WalkStarted
     {
         private Walk? _walk;
 
@@ -161,7 +207,8 @@ public class UIElementService : IUIElementService
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
         Stopwatch stopwatch,
-        WalkProgress progress,
+        WalkStarted started,
+        IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
         try
@@ -195,8 +242,8 @@ public class UIElementService : IUIElementService
             }
 
             var windowTitle = TryReadName(window);
-            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, cancellationToken);
-            progress.Walk = walk;
+            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, progress, cancellationToken);
+            started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
             // window without controls
@@ -281,6 +328,7 @@ public class UIElementService : IUIElementService
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
         string? windowTitle,
+        IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
         private readonly object _gate = new();
@@ -464,11 +512,15 @@ public class UIElementService : IUIElementService
             try
             {
                 properties = tree.Read(node);
+                int read, returned, depthReached;
                 lock (_gate)
                 {
-                    _readCount++;
-                    _depthReached = Math.Max(_depthReached, level);
+                    read = ++_readCount;
+                    _depthReached = depthReached = Math.Max(_depthReached, level);
+                    returned = _elementCount;
                 }
+
+                ReportProgress(read, returned, depthReached);
 
                 if (filter?.VisibleOnly == true && properties.IsOffscreen)
                 {
@@ -527,6 +579,23 @@ public class UIElementService : IUIElementService
                 IsEnabled: properties.IsEnabled,
                 IsOffscreen: properties.IsOffscreen,
                 Children: children.Count > 0 ? children : null);
+
+        /// <summary>
+        /// Reports every <see cref="ProgressInterval"/> elements read. Never once the walk is asked to stop: the caller
+        /// may have returned already, and a progress notification must not follow the call's result.
+        /// </summary>
+        private void ReportProgress(int read, int returned, int depthReached)
+        {
+            if (progress == null || read % ProgressInterval != 0 || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            progress.Report(new OperationProgress(
+                read,
+                Total: null,
+                $"Read {read} UI elements so far ({returned} returned), down to level {depthReached} of {maxDepth}"));
+        }
 
         private void Count(ref int counter)
         {

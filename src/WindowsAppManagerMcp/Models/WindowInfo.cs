@@ -16,6 +16,13 @@ public record WindowInfo(
     int MonitorIndex
 )
 {
+    /// <summary>
+    /// The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS): <see cref="Bounds"/> without the invisible resize borders that
+    /// GetWindowRect includes (about 7 px left, right and bottom at 100%), so a maximized window does not overhang its
+    /// monitor. Null when DWM cannot report it; the geometry tools then report Bounds.
+    /// </summary>
+    public WindowRect? VisibleBounds { get; init; }
+
     /// <summary>The window class name, for example "Notepad", "#32770" (dialog) or "Shell_TrayWnd" (taskbar).</summary>
     public string ClassName { get; init; } = string.Empty;
 

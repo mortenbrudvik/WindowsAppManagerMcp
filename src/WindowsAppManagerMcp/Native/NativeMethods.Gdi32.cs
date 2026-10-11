@@ -10,9 +10,6 @@ internal static partial class NativeMethods
         public static partial nint CreateCompatibleDC(nint hdc);
 
         [LibraryImport("gdi32.dll")]
-        public static partial nint CreateCompatibleBitmap(nint hdc, int nWidth, int nHeight);
-
-        [LibraryImport("gdi32.dll")]
         public static partial nint SelectObject(nint hdc, nint hObject);
 
         [LibraryImport("gdi32.dll")]
@@ -37,17 +34,15 @@ internal static partial class NativeMethods
         public static partial bool DeleteObject(nint hObject);
 
         [LibraryImport("gdi32.dll")]
-        public static partial int GetDIBits(
-            nint hdc,
-            nint hbmp,
-            uint uStartScan,
-            uint cScanLines,
-            nint lpvBits,
-            ref BITMAPINFO lpbmi,
-            uint uUsage);
-
-        [LibraryImport("gdi32.dll")]
         public static partial int GetObjectW(nint hObject, int nCount, nint lpObject);
+
+        /// <summary>
+        /// Executes the calling thread's batched GDI drawing, so the bits of a DIB section can be read directly
+        /// after BitBlt or PrintWindow drew into it.
+        /// </summary>
+        [LibraryImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool GdiFlush();
 
         [LibraryImport("gdi32.dll")]
         public static partial nint CreateDIBSection(

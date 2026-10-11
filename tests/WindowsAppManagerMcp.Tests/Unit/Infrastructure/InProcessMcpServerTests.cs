@@ -56,6 +56,26 @@ public class InProcessMcpServerTests
     }
 
     [Fact]
+    public async Task ResponsesTo_FindsTheServersAnswerToACall()
+    {
+        // The cancellation tests assert that this finds nothing for a cancelled call; it must find a real answer
+        var id = new TaskCompletionSource<RequestId>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = await InProcessMcpServer.StartAsync(
+            [McpServerTool.Create(Echo, new McpServerToolCreateOptions { Name = EchoTool })],
+            builder => builder.WithRequestFilters(filters => filters.AddCallToolFilter(next => (request, token) =>
+            {
+                id.TrySetResult(request.JsonRpcRequest.Id);
+                return next(request, token);
+            })));
+
+        await server.CallToolAsync(EchoTool, new Dictionary<string, object?> { ["text"] = "héllo — 😀" });
+
+        var answer = server.ResponsesTo(await id.Task).Should().ContainSingle().Subject;
+        System.Text.Json.JsonDocument.Parse(answer).RootElement.GetProperty("result").GetProperty("content")[0]
+            .GetProperty("text").GetString().Should().Be("héllo — 😀", "the recorded messages decode UTF-8 correctly");
+    }
+
+    [Fact]
     public async Task StartAsync_WhenStartUpFails_DisposesTheHost()
     {
         // Arrange - a hosted service that starts, then one that fails to start

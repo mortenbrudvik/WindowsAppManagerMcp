@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
 namespace WindowsAppManagerMcp.Tests.Unit.Tools;
@@ -126,7 +127,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "png", Quality = 95 };
 
         // Act
-        sut.TakeScreenshot(format: "png", quality: 95);
+        sut.TakeScreenshot(format: CaptureFormat.Png, quality: 95);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), expected), Times.Once);
@@ -150,7 +151,7 @@ public class ScreenshotToolsTests
         result.Content.Should().HaveCount(2);
         var imageBlock = result.Content[0].Should().BeOfType<ImageContentBlock>().Subject;
         imageBlock.MimeType.Should().Be("image/jpeg");
-        Convert.FromBase64String(imageBlock.Data).Should().Equal(image.Data);
+        imageBlock.DecodedData.ToArray().Should().Equal(image.Data);
         var json = Metadata(result);
         json.GetProperty("success").GetBoolean().Should().BeTrue();
         json.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(-2560);
@@ -190,7 +191,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.TakeScreenshot(output: "file");
+        var result = sut.TakeScreenshot(output: CaptureOutputMode.File);
 
         // Assert
         result.IsError.Should().BeFalse();
@@ -224,7 +225,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 90 };
 
         // Act
-        sut.CaptureRegion(0, 0, 400, 300, format: "jpeg", quality: 90);
+        sut.CaptureRegion(0, 0, 400, 300, format: CaptureFormat.Jpeg, quality: 90);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, expected), Times.Once);
@@ -248,33 +249,33 @@ public class ScreenshotToolsTests
     #region T9.3.6-T9.3.7: CaptureWindow Tests
 
     [Fact]
-    public void CaptureWindow_CallsServiceWithCorrectHandle()
+    public async Task CaptureWindow_CallsServiceWithCorrectHandle()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(handle: 12345);
+        await sut.CaptureWindow(handle: 12345);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), true, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WithIncludeFrameFalse_PassesCorrectFlag()
+    public async Task CaptureWindow_WithIncludeFrameFalse_PassesCorrectFlag()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(handle: 12345, includeFrame: false);
+        await sut.CaptureWindow(handle: 12345, includeFrame: false);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), false, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WithAllParameters_PassesAllCorrectly()
+    public async Task CaptureWindow_WithAllParameters_PassesAllCorrectly()
     {
         // Arrange
         var sut = CreateSut();
@@ -282,14 +283,14 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 50 };
 
         // Act
-        sut.CaptureWindow(handle: 99999, includeFrame: false, format: "jpeg", quality: 50);
+        await sut.CaptureWindow(handle: 99999, includeFrame: false, format: CaptureFormat.Jpeg, quality: 50);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(99999), false, expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WhenServiceReturnsError_ReturnsIsError()
+    public async Task CaptureWindow_WhenServiceReturnsError_ReturnsIsError()
     {
         // Arrange
         var failure = TestDataFactory.CreateScreenshotResult(success: false, error: "Invalid window handle",
@@ -299,7 +300,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWindow(handle: 0);
+        var result = await sut.CaptureWindow(handle: 0);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -311,33 +312,81 @@ public class ScreenshotToolsTests
     #region CaptureWithElements Tests
 
     [Fact]
-    public void CaptureWithElements_WithValidHandle_CallsServices()
+    public async Task CaptureWithElements_WhenTheClientCancels_StopsTheWalk_AndCapturesNothing()
+    {
+        // Arrange - the client cancels while the tree is read
+        using var call = new CancellationTokenSource();
+        var walkStopped = false;
+        _mockUIElementService.Setup(u => u.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((nint _, int _, UIElementFilter? _, IProgress<OperationProgress>? _, CancellationToken token) =>
+            {
+                call.Cancel();
+                walkStopped = token.IsCancellationRequested;
+            })
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]));
+        var sut = CreateSut();
+
+        // Act
+        var act = () => sut.CaptureWithElements(handle: 12345, cancellationToken: call.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        walkStopped.Should().BeTrue("the request's token is linked with the walk's timeout");
+        _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
+            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<bool>(),
+            It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWithElements_ForwardsTheWalksProgressToTheClient()
+    {
+        // Arrange
+        _mockUIElementService.Setup(u => u.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((nint _, int _, UIElementFilter? _, IProgress<OperationProgress>? progress, CancellationToken _) =>
+                progress!.Report(new OperationProgress(200, null, "Read 200 UI elements so far")))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]));
+        var client = new RecordingProgress<ProgressNotificationValue>();
+
+        // Act
+        await CreateSut().CaptureWithElements(handle: 12345, progress: client);
+
+        // Assert
+        client.Reports.Should().ContainSingle().Which.Progress.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task CaptureWithElements_WithValidHandle_CallsServices()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 12345);
+        var result = await sut.CaptureWithElements(handle: 12345);
 
         // Assert
         result.IsError.Should().BeFalse();
         result.Content.Select(c => c.Type).Should().Equal("image", "text");
         _mockWindowService.Verify(w => w.IsValidWindow(new nint(12345)), Times.Once);
-        _mockUIElementService.Verify(u => u.GetUIElements(
+        _mockUIElementService.Verify(u => u.GetUIElementsAsync(
             new nint(12345),
             It.IsAny<int>(),
             It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithInvalidWindow_ReturnsInvalidHandleWithoutWalkingTheTree()
+    public async Task CaptureWithElements_WithInvalidWindow_ReturnsInvalidHandleWithoutWalkingTheTree()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 0);
+        var result = await sut.CaptureWithElements(handle: 0);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -348,80 +397,84 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_OfAMinimizedWindow_ReturnsCaptureFailedWithoutWalkingTheTree()
+    public async Task CaptureWithElements_OfAMinimizedWindow_ReturnsWindowMinimizedWithoutWalkingTheTree()
     {
         // Arrange - every element of a minimized window is offscreen, and its pixels cannot be captured
-        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(4242)))
-            .Returns(TestDataFactory.CreateWindowInfo(handleValue: 4242, title: "Notepad", state: WindowState.Minimized));
+        _mockScreenshotService.Setup(s => s.CheckWindow(new nint(4242)))
+            .Returns(new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, ScreenshotService.MinimizedMessage));
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 4242);
+        var result = await sut.CaptureWithElements(handle: 4242);
 
         // Assert
         result.IsError.Should().BeTrue();
         var json = Metadata(result);
-        json.GetProperty("errorCode").GetString().Should().Be("CaptureFailed");
+        json.GetProperty("errorCode").GetString().Should().Be("WindowMinimized");
         json.GetProperty("error").GetString().Should().Contain("minimized").And.Contain("set_window_state");
         VerifyNoWalk();
     }
 
     [Fact]
-    public void CaptureWithElements_ForAnUntitledWindow_StillCaptures()
+    public async Task CaptureWithElements_ForAnUntitledWindow_StillCaptures()
     {
         // Arrange - popups and menus have no title, so GetWindowInfo reports nothing for them
         _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 4242);
+        var result = await sut.CaptureWithElements(handle: 4242);
 
-        // Assert
+        // Assert - the title then comes from the UI Automation walk
         result.IsError.Should().BeFalse();
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            new nint(4242), null, It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
+            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithUIElementFailure_PassesTheWalksErrorCodeOn()
+    public async Task CaptureWithElements_WithUIElementFailure_StillReturnsTheImage_WithTheWalksError()
     {
-        // Arrange
-        _mockUIElementService.Setup(u => u.GetUIElements(
+        // Arrange - the walk timed out before it found an element
+        _mockUIElementService.Setup(u => u.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
                 It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(TestDataFactory.CreateUIElementResult(
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(
                 success: false,
                 error: "Timeout",
                 errorCode: UIElementErrorCode.OperationTimedOut));
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 12345);
+        var result = await sut.CaptureWithElements(handle: 12345);
 
-        // Assert
-        result.IsError.Should().BeTrue();
+        // Assert - the pixels do not depend on the walk
+        result.IsError.Should().BeFalse();
+        result.Content.Select(c => c.Type).Should().Equal("image", "text");
         var json = Metadata(result);
-        json.GetProperty("errorCode").GetString().Should().Be("OperationTimedOut");
-        json.GetProperty("error").GetString().Should().Contain("UI elements");
+        json.GetProperty("success").GetBoolean().Should().BeTrue();
+        json.GetProperty("elementsErrorCode").GetString().Should().Be("OperationTimedOut");
+        json.GetProperty("elementsError").GetString().Should().Contain("Timeout");
+        json.GetProperty("truncated").GetBoolean().Should().BeTrue();
+        json.GetProperty("truncationReason").GetString().Should().Be("Timeout");
         json.GetProperty("windowTitle").GetString().Should().Be("Test Window");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+            new nint(12345), It.IsAny<string?>(), It.Is<IReadOnlyList<UIElementInfo>>(e => e.Count == 0),
+            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Once);
     }
 
     [Theory]
-    [InlineData("webp", null, "InvalidFormat")]
-    [InlineData("auto", 0, "InvalidImageSize")]
-    [InlineData("auto", -4, "InvalidImageSize")]
-    public void CaptureWithElements_WithInvalidOptions_DoesNotWalkTheTree(string format, int? maxWidth, string expectedCode)
+    [InlineData(0, "InvalidImageSize")]
+    [InlineData(-4, "InvalidImageSize")]
+    public async Task CaptureWithElements_WithInvalidOptions_DoesNotWalkTheTree(int? maxWidth, string expectedCode)
     {
-        // Arrange
+        // Arrange - an unknown format is refused before the tool runs (ToolArgumentContractTests)
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(12345, format: format, maxWidth: maxWidth);
+        var result = await sut.CaptureWithElements(12345, maxWidth: maxWidth);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -431,33 +484,34 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_WithDefaultParameters_UsesDefaults()
+    public async Task CaptureWithElements_WithDefaultParameters_UsesDefaults()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345);
+        await sut.CaptureWithElements(handle: 12345);
 
         // Assert
-        _mockUIElementService.Verify(u => u.GetUIElements(
+        _mockUIElementService.Verify(u => u.GetUIElementsAsync(
             It.IsAny<nint>(),
             5, // Default maxDepth
             It.Is<UIElementFilter?>(f => f != null && f.VisibleOnly == true && f.InteractableOnly == false),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithControlTypesFilter_ParsesCorrectly()
+    public async Task CaptureWithElements_WithControlTypesFilter_ParsesCorrectly()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345, controlTypes: "Button,Edit");
+        await sut.CaptureWithElements(handle: 12345, controlTypes: "Button,Edit");
 
         // Assert
-        _mockUIElementService.Verify(u => u.GetUIElements(
+        _mockUIElementService.Verify(u => u.GetUIElementsAsync(
             It.IsAny<nint>(),
             It.IsAny<int>(),
             It.Is<UIElementFilter?>(f =>
@@ -465,45 +519,48 @@ public class ScreenshotToolsTests
                 f.ControlTypes != null &&
                 f.ControlTypes.Contains("Button") &&
                 f.ControlTypes.Contains("Edit")),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithMaxDepth_PassesValue()
+    public async Task CaptureWithElements_WithMaxDepth_PassesValue()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345, maxDepth: 8);
+        await sut.CaptureWithElements(handle: 12345, maxDepth: 8);
 
         // Assert
-        _mockUIElementService.Verify(u => u.GetUIElements(
+        _mockUIElementService.Verify(u => u.GetUIElementsAsync(
             It.IsAny<nint>(),
             8,
             It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_WithInteractableOnly_PassesFilter()
+    public async Task CaptureWithElements_WithInteractableOnly_PassesFilter()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345, interactableOnly: true);
+        await sut.CaptureWithElements(handle: 12345, interactableOnly: true);
 
         // Assert
-        _mockUIElementService.Verify(u => u.GetUIElements(
+        _mockUIElementService.Verify(u => u.GetUIElementsAsync(
             It.IsAny<nint>(),
             It.IsAny<int>(),
             It.Is<UIElementFilter?>(f => f != null && f.InteractableOnly == true),
+            It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void CaptureWithElements_CallsScreenshotServiceWithElementsTitleAndDefaults()
+    public async Task CaptureWithElements_CallsScreenshotServiceWithElementsTitleAndDefaults()
     {
         // Arrange
         var windowInfo = TestDataFactory.CreateWindowInfo(title: "My Test Window");
@@ -511,7 +568,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWithElements(handle: 12345);
+        await sut.CaptureWithElements(handle: 12345);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
@@ -524,7 +581,7 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_WithFormatJpegAndHighlightOff_PassesThem()
+    public async Task CaptureWithElements_WithFormatJpegAndHighlightOff_PassesThem()
     {
         // Arrange
         var sut = CreateSut();
@@ -532,7 +589,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 70 };
 
         // Act
-        sut.CaptureWithElements(handle: 12345, format: "jpeg", quality: 70, highlightInteractable: false);
+        await sut.CaptureWithElements(handle: 12345, format: CaptureFormat.Jpeg, quality: 70, highlightInteractable: false);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
@@ -545,13 +602,13 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public void CaptureWithElements_MetadataListsTheElements()
+    public async Task CaptureWithElements_MetadataListsTheElements()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWithElements(handle: 12345);
+        var result = await sut.CaptureWithElements(handle: 12345);
 
         // Assert
         var elements = Metadata(result).GetProperty("elements");
@@ -564,10 +621,11 @@ public class ScreenshotToolsTests
     private void VerifyNoWalk()
     {
         _mockUIElementService.Verify(
-            u => u.GetUIElements(
+            u => u.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
                 It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(

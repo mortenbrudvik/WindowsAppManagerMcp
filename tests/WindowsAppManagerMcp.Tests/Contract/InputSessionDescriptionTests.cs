@@ -12,6 +12,7 @@ public class InputSessionDescriptionTests
     [InlineData("right_click")]
     [InlineData("double_click")]
     [InlineData("mouse_move")]
+    [InlineData("scroll")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
     public void InputToolDescription_SaysPausedByUserMeansStop(string toolName)
