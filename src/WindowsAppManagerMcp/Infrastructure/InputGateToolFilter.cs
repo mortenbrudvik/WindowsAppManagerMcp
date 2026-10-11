@@ -51,7 +51,7 @@ public static class InputGateToolFilter
     /// </summary>
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window", "close_window",
+        "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch",
         "snap_windows_batch", "set_windows_state_batch", "apply_layout", "launch_application",
         "launch_applications_batch", "launch_browser_with_debug"
@@ -62,11 +62,12 @@ public static class InputGateToolFilter
     /// to confirm (elicitation, roadmap M2.10). A question must never hold the gate: the user may take minutes to answer,
     /// and every input and window call would wait for them. So these tools run without this filter, ask first, and then
     /// take the gate themselves with <see cref="EnterAsync"/>, which waits, refuses and reports a pause exactly as this
-    /// filter does.
+    /// filter does. The close tools (roadmap M2.5) also send their close messages inside the gate and release it before they
+    /// wait for the windows to close: a slow app or a prompt must not hold up every input and window call for the whole wait.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "kill_process", "close_windows_batch"
+        "kill_process", "close_window", "close_windows_batch", "close_application"
     };
 
     /// <summary>
@@ -79,7 +80,7 @@ public static class InputGateToolFilter
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_control_status", "get_server_info"
+        "get_control_status", "get_server_info", "get_owned_windows"
     };
 
     /// <summary>

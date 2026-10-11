@@ -101,7 +101,21 @@ public enum WindowErrorCode
     /// The window changed after the user confirmed: its handle now belongs to a different process than the one the
     /// user was asked about. Nothing was sent to it.
     /// </summary>
-    HandleMismatch = 32
+    HandleMismatch = 32,
+
+    // Verified close (roadmap M2.5):
+
+    /// <summary>
+    /// The close message was sent, but the window was still open and visible when the wait ended, and no prompt was
+    /// found: the application is busy, slow or ignores the request.
+    /// </summary>
+    StillOpen = 33,
+
+    /// <summary>
+    /// The close message was sent, but the window waits for an answer to a prompt (a "Save changes?" dialog); the result
+    /// describes the prompt. Nothing was answered.
+    /// </summary>
+    PromptShown = 34
 }
 
 /// <summary>

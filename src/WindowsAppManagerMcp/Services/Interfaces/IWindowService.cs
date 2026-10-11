@@ -123,6 +123,39 @@ public interface IWindowService
     /// </summary>
     WindowCloseResult CloseWindow(nint handle, bool force);
 
+    /// <summary>
+    /// What <see cref="CloseWindow"/> would refuse, without sending anything: InvalidHandle, TargetDeniedByPolicy (force
+    /// does not override it) or, unless <paramref name="force"/>, ProtectedWindow. Null when the close can go ahead.
+    /// </summary>
+    WindowCloseResult? CheckClose(nint handle, bool force);
+
+    // Verified close (roadmap M2.5). These only read windows.
+
+    /// <summary>
+    /// The windows that <paramref name="handle"/> owns, directly or through other owned windows (GW_OWNER), in z-order:
+    /// its dialogs, popups and palettes. Hidden ones (IME and other helper windows) only with
+    /// <paramref name="includeHidden"/>. The enabled popup of a disabled owner is marked blocking. Empty when the handle
+    /// is not a window.
+    /// </summary>
+    IReadOnlyList<OwnedWindowInfo> GetOwnedWindows(nint handle, bool includeHidden = false);
+
+    /// <summary>
+    /// The prompt that keeps <paramref name="handle"/> from closing, found through Win32 alone: when the window (or the
+    /// owner of the dialog) is disabled, its enabled popup (GW_ENABLEDPOPUP) or a visible dialog box (#32770) it owns,
+    /// with the dialog's Static text and Button captions. A non-modal dialog of an enabled window (Find, a palette) is no
+    /// prompt. Null when there is none or the handle is not a window. Prompts drawn inside the window (a WinUI
+    /// ContentDialog) need UI Automation (<see cref="IWindowCloseVerifier"/>).
+    /// </summary>
+    ClosePrompt? FindBlockingDialog(nint handle);
+
+    /// <summary>
+    /// The application windows the user can switch to (the Alt-Tab set), in z-order: visible, not cloaked, top-level,
+    /// unowned (or WS_EX_APPWINDOW), not tool windows, not the desktop shell, not text-input or GDI+ helper windows (IME,
+    /// MSCTFIME UI, GDI+ Hook Window Class) and not the server's own. A UWP frame is reported under the app it hosts.
+    /// close_application closes exactly these windows of its target processes.
+    /// </summary>
+    IReadOnlyList<WindowInfo> GetApplicationWindows();
+
     // Batch operations. Each changes one window after another, with delayBetweenMs (clamped to 0-5000) between two
     // windows; the cancellation token ends the batch between windows and during that delay: the windows already
     // changed stay changed, and the call throws OperationCanceledException. Each window gets its own result, in order:

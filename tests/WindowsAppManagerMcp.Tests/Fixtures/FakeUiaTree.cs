@@ -119,6 +119,14 @@ public sealed class FakeUiaTree : IUiaTree
         return fake.Value;
     }
 
+    public bool? ReadIsModal(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"IsModal:{fake.Name}");
+        ThrowIfSet(fake.ReadException);
+        return fake.IsModal;
+    }
+
     private static void ThrowIfSet(Exception? exception)
     {
         if (exception != null)
@@ -163,6 +171,9 @@ public sealed class FakeUiaNode : IUiaNode
     public nint NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
     public string? Value { get; init; }
+
+    /// <summary>The Window pattern's IsModal, or null when the node has no Window pattern.</summary>
+    public bool? IsModal { get; init; }
 
     public Exception? ReadException { get; set; }
     public Exception? InteractionException { get; set; }

@@ -401,9 +401,60 @@
       }
     },
     {
+      "name": "close_application",
+      "title": "Close Application",
+      "description": "Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, runningProcessIds lists those that keep running, for example in the notification area), promptShown (errorCode PromptShown, promptDetected, and prompt with its handle, title, text and buttons. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.) or stillOpen (errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, InvalidArguments. More than 3 windows need a confirmation as close_windows_batch does (ConfirmationDeclined, ConfirmationRequired), and a window that changed hands meanwhile is not closed (HandleMismatch).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "description": "A window of the application (as integer); its process is closed",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "processId": {
+            "description": "The application's process ID",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "processName": {
+            "description": "The application's process name, with or without .exe (e.g. 'notepad'); matched exactly, ignoring case",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "timeoutMs": {
+            "description": "How long to wait for the windows to close and the processes to exit, in milliseconds (0-30000, default 5000). 0 only sends the close messages (status requested).",
+            "type": "integer",
+            "default": 5000
+          },
+          "confirm": {
+            "description": "Must be true to close more than 3 windows when the client cannot ask the user. Check the windows (find_windows) first.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "annotations": {
+        "title": "Close Application",
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
       "name": "close_window",
       "title": "Close Window",
-      "description": "Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows. Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator).",
+      "description": "Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and kind; kind inWindowDialog is drawn inside the window, so use the window's handle. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.); requested (waitMs 0: sent, not checked). success is true for closed, hidden and requested. Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) and NotResponding when the app's message queue is full (it is hung). InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -415,6 +466,11 @@
             "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.",
             "type": "boolean",
             "default": false
+          },
+          "waitMs": {
+            "description": "How long to wait for the window to close, in milliseconds (0-30000, default 2000). 0 only sends the close message (status requested). The wait ends early when the window closes or shows a prompt.",
+            "type": "integer",
+            "default": 2000
           }
         },
         "required": [
@@ -432,7 +488,7 @@
     {
       "name": "close_windows_batch",
       "title": "Close Windows (Batch)",
-      "description": "Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null fails alone with InvalidArguments.",
+      "description": "Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested). A prompt is never answered: ask the user which button to choose, and do not answer it yourself. More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null fails alone with InvalidArguments. InvalidArguments (the whole call): waitMs is outside 0-30000.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -465,6 +521,11 @@
             "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. Applies to every window in the batch.",
             "type": "boolean",
             "default": false
+          },
+          "waitMs": {
+            "description": "How long to wait for the windows to close after the last close message, in milliseconds (0-30000, default 2000); every window is waited for at the same time. 0 only sends the close messages (status requested).",
+            "type": "integer",
+            "default": 2000
           }
         },
         "required": [
@@ -937,6 +998,35 @@
       },
       "annotations": {
         "title": "List Monitors",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_owned_windows",
+      "title": "Get Owned Windows",
+      "description": "List the windows a window owns, directly or through its other owned windows, in z-order: its dialogs (Save As, message boxes, 'Save changes?' prompts), popups and palettes. Each has handle, title, className ('#32770' is a standard dialog, also isDialog), process, ownerHandle, bounds, state and isVisible; isBlocking: true marks the modal dialog that takes the window's input (the prompt close_window reports), and isBlocked says the window has one. Hidden helper windows (IME) only with includeHidden. Dialogs drawn inside the window (a WinUI ContentDialog) are not windows: use get_ui_elements. errorCode InvalidHandle: the handle is not a window.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "description": "Window handle (as integer) of the owner",
+            "type": "integer"
+          },
+          "includeHidden": {
+            "description": "Also list hidden owned windows, such as IME and other helper windows (default: false)",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      },
+      "annotations": {
+        "title": "Get Owned Windows",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,

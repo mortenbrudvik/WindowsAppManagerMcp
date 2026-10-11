@@ -65,6 +65,12 @@ public interface IUiaTree
     /// password field (<see cref="UiaNodeIdentity.IsPassword"/>).
     /// </summary>
     string? ReadValue(IUiaNode node);
+
+    /// <summary>
+    /// Whether the node is a modal window (its Window pattern's IsModal), such as a dialog drawn inside its app's window;
+    /// null when the node has no Window pattern. Only reads.
+    /// </summary>
+    bool? ReadIsModal(IUiaNode node);
 }
 
 /// <summary>An element of the UI Automation tree. Only the <see cref="IUiaTree"/> that returned it can read it.</summary>

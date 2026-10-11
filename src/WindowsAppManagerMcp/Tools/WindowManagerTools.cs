@@ -50,24 +50,31 @@ public class WindowManagerTools
     private readonly IInputSession? _session;
     private readonly TimeSpan _answerTimeout;
     private readonly TimeSpan? _gateWaitTimeout;
+    private readonly IWindowCloseVerifier _closeVerifier;
 
     /// <param name="windowService">Reads and changes windows.</param>
     /// <param name="foregroundService">Brings a window to the front (focus_window).</param>
-    /// <param name="session">The input session, whose pause close_windows_batch respects (it takes the input gate itself).</param>
-    /// <param name="answerTimeout">How long close_windows_batch waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
-    /// <param name="gateWaitTimeout">How long close_windows_batch waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    /// <param name="session">The input session, whose pause the close tools respect (they take the input gate themselves).</param>
+    /// <param name="answerTimeout">How long close_windows_batch and close_application wait for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
+    /// <param name="gateWaitTimeout">How long the close tools wait for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    /// <param name="closeVerifier">
+    /// Waits for closed windows and finds their prompts (roadmap M2.5); default a <see cref="WindowCloseVerifier"/> over
+    /// <paramref name="windowService"/> alone, which finds Win32 prompts only.
+    /// </param>
     public WindowManagerTools(
         IWindowService windowService,
         IForegroundService foregroundService,
         IInputSession? session = null,
         TimeSpan? answerTimeout = null,
-        TimeSpan? gateWaitTimeout = null)
+        TimeSpan? gateWaitTimeout = null,
+        IWindowCloseVerifier? closeVerifier = null)
     {
         _windowService = windowService;
         _foregroundService = foregroundService;
         _session = session;
         _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
         _gateWaitTimeout = gateWaitTimeout;
+        _closeVerifier = closeVerifier ?? new WindowCloseVerifier(windowService);
     }
 
     [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -171,46 +178,110 @@ public class WindowManagerTools
         return FocusResult.From(_foregroundService.EnsureForeground((nint)handle));
     }
 
-    /// <summary>close_windows_batch closes at most this many windows without confirm=true.</summary>
+    /// <summary>close_windows_batch and close_application close at most this many windows without confirm=true.</summary>
     public const int MaxCloseBatchWithoutConfirm = 3;
+
+    /// <summary>How long close_window and close_windows_batch wait for the windows to close by default (roadmap M2.5).</summary>
+    public const int DefaultCloseWaitMs = 2000;
+
+    /// <summary>The longest wait close_window, close_windows_batch and close_application accept.</summary>
+    public const int MaxCloseWaitMs = 30000;
+
+    /// <summary>How long close_application waits for its windows to close and its processes to exit by default.</summary>
+    public const int DefaultApplicationCloseTimeoutMs = 5000;
+
+    /// <summary>How long close_application waits at most for its processes to exit once their windows are gone.</summary>
+    private static readonly TimeSpan MaxExitWait = TimeSpan.FromSeconds(2);
 
     private const string ForceDescription =
         "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host " +
         "(the terminal, editor or chat app this server was started from). Default false: such windows are refused " +
         "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.";
 
+    private const string WaitDescription =
+        "How long to wait for the window to close, in milliseconds (0-30000, default 2000). 0 only sends the close message " +
+        "(status requested). The wait ends early when the window closes or shows a prompt.";
+
+    /// <summary>
+    /// What the agent must do about a prompt a close left open. Every PromptShown text and description carries it: not
+    /// every client loads the skill, and answering 'Save changes?' with No or Don't Save destroys the user's work.
+    /// </summary>
+    internal const string PromptAdvice =
+        "Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to " +
+        "choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.";
+
+    private const string StatusDescription =
+        "status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification " +
+        "area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is " +
+        "busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode " +
+        "PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and " +
+        "kind; kind inWindowDialog is drawn inside the window, so use the window's handle. " + PromptAdvice + "); requested " +
+        "(waitMs 0: sent, not checked). success is true for closed, hidden and requested.";
+
     [McpServerTool(Name = "close_window", Title = "Close Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows. " +
+    [Description("Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. " + StatusDescription + " " +
                  "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, " +
                  "refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), " +
-                 "and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator).")]
-    public WindowOperationResult CloseWindow(
+                 "and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) " +
+                 "and NotResponding when the app's message queue is full (it is hung). " +
+                 "InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.")]
+    public async Task<CloseWindowResult> CloseWindow(
         [Description("Window handle (as integer)")]
         long handle,
         [Description(ForceDescription)]
-        bool force = false)
+        bool force = false,
+        [Description(WaitDescription)]
+        int waitMs = DefaultCloseWaitMs,
+        CancellationToken cancellationToken = default)
     {
+        if (WaitRefusal(waitMs, nameof(waitMs)) is { } invalid)
+        {
+            return new CloseWindowResult(false, Error: invalid, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+        }
+
         var hwnd = (nint)handle;
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new WindowOperationResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle));
+            return new CloseWindowResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle));
         }
 
-        var result = _windowService.CloseWindow(hwnd, force);
-        return new WindowOperationResult(
-            Success: result.Success,
-            Error: result.Error,
-            ErrorCode: result.Success ? null : result.ErrorCode.ToString());
+        // Only the close message is sent inside the input gate; the wait for the window runs outside it, so a slow app or a
+        // prompt does not hold up every input and window call for up to waitMs
+        InputGateToolFilter.ThrowIfPaused(_session);
+        var shownBefore = waitMs == 0 ? EmptyHandles : _closeVerifier.ShownWindows([hwnd]);
+        WindowCloseResult sent;
+        using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
+        {
+            sent = _windowService.CloseWindow(hwnd, force);
+        }
+
+        if (!sent.Success)
+        {
+            return new CloseWindowResult(false, Error: sent.Error, ErrorCode: sent.ErrorCode.ToString());
+        }
+
+        if (waitMs == 0)
+        {
+            return new CloseWindowResult(true, CloseNames.Of(CloseStatus.Requested));
+        }
+
+        var observed = await _closeVerifier.WaitForCloseAsync([hwnd], shownBefore, TimeSpan.FromMilliseconds(waitMs), cancellationToken)
+            .ConfigureAwait(false);
+        var outcome = Outcome(observed[0], waitMs);
+        return new CloseWindowResult(outcome.Success, outcome.Status, outcome.Prompt, outcome.Error, outcome.ErrorCode);
     }
 
     [McpServerTool(Name = "close_windows_batch", Title = "Close Windows (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. " +
+    [Description("Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each " +
+                 "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested). A prompt " +
+                 "is never answered: ask the user which button to choose, and do not answer it yourself. " +
                  "More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each " +
                  "window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise " +
                  "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
                  "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
-                 "the other windows are still closed. An item that is null fails alone with InvalidArguments.")]
+                 "the other windows are still closed. An item that is null fails alone with InvalidArguments. InvalidArguments (the whole " +
+                 "call): waitMs is outside 0-30000.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
         [Description("Array of window handles to close")]
         WindowCloseRequest[] windows,
@@ -220,10 +291,17 @@ public class WindowManagerTools
         bool confirm = false,
         [Description(ForceDescription + " Applies to every window in the batch.")]
         bool force = false,
+        [Description("How long to wait for the windows to close after the last close message, in milliseconds (0-30000, default 2000); " +
+                     "every window is waited for at the same time. 0 only sends the close messages (status requested).")]
+        int waitMs = DefaultCloseWaitMs,
         McpServer? server = null,
         CancellationToken cancellationToken = default)
     {
         RequireItems(windows, nameof(windows));
+        if (WaitRefusal(waitMs, nameof(waitMs)) is { } invalid)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, invalid);
+        }
 
         // Nothing while the user has paused input, not even a question
         InputGateToolFilter.ThrowIfPaused(_session);
@@ -256,21 +334,374 @@ public class WindowManagerTools
             }
         }
 
-        using var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
+        // Which windows the user could see before the close: only those can be reported hidden
+        var shownBefore = waitMs == 0
+            ? EmptyHandles
+            : _closeVerifier.ShownWindows(windows.Where(w => w != null).Select(w => (nint)w.Handle).ToList());
 
-        // A window the user was asked about must still belong to the same process; a reused handle is not closed
-        var refusals = windows.Select((w, i) => w == null
-            ? NullItem(i, nameof(windows), "a handle")
-            : confirmedOwners == null ? null : HandleMismatchRefusal(w.Handle, confirmedOwners)).ToList();
-        var handles = windows.Where((_, i) => refusals[i] == null).Select(w => (nint)w.Handle).ToList();
+        List<WindowResultItem?> refusals;
+        IReadOnlyList<WindowCloseResult> results;
+        using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
+        {
+            // A window the user was asked about must still belong to the same process; a reused handle is not closed
+            refusals = windows.Select((w, i) => w == null
+                ? NullItem(i, nameof(windows), "a handle")
+                : confirmedOwners == null ? null : HandleMismatchRefusal(w.Handle, confirmedOwners)).ToList();
+            var handles = windows.Where((_, i) => refusals[i] == null).Select(w => (nint)w.Handle).ToList();
 
-        var results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+            results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+        }
 
-        return Summary(windows.Length, InOrder(refusals, results.Select(r => new WindowResultItem(
-            Handle: r.Handle.ToInt64(),
-            Success: r.Success,
-            Error: r.Error,
-            ErrorCode: r.Success ? null : r.ErrorCode.ToString()))));
+        // The wait runs outside the gate, for every window at once
+        var sent = results.Where(r => r.Success).Select(r => r.Handle).ToList();
+        var observed = waitMs == 0 || sent.Count == 0
+            ? new Dictionary<nint, CloseObservation>()
+            : (await _closeVerifier.WaitForCloseAsync(sent, shownBefore, TimeSpan.FromMilliseconds(waitMs), cancellationToken).ConfigureAwait(false))
+                .GroupBy(o => o.Handle).ToDictionary(g => g.Key, g => g.First());
+
+        return Summary(windows.Length, InOrder(refusals, results.Select(r =>
+        {
+            if (!r.Success)
+            {
+                return new WindowResultItem(r.Handle.ToInt64(), false, Error: r.Error, ErrorCode: r.ErrorCode.ToString());
+            }
+
+            if (!observed.TryGetValue(r.Handle, out var observation))
+            {
+                return new WindowResultItem(r.Handle.ToInt64(), true, Status: CloseNames.Of(CloseStatus.Requested));
+            }
+
+            var outcome = Outcome(observation, waitMs);
+            return new WindowResultItem(r.Handle.ToInt64(), outcome.Success, Error: outcome.Error, ErrorCode: outcome.ErrorCode,
+                Status: outcome.Status, Prompt: outcome.Prompt);
+        })));
+    }
+
+    [McpServerTool(Name = "close_application", Title = "Close Application", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, " +
+                 "not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask " +
+                 "to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its " +
+                 "windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed " +
+                 "through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; " +
+                 "a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File " +
+                 "Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, " +
+                 "runningProcessIds lists those that keep running, for example in the notification area), promptShown (errorCode " +
+                 "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + ") or stillOpen " +
+                 "(errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status " +
+                 "requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), " +
+                 "ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, " +
+                 "InvalidArguments. More than 3 windows need a confirmation as close_windows_batch does (ConfirmationDeclined, " +
+                 "ConfirmationRequired), and a window that changed hands meanwhile is not closed (HandleMismatch).")]
+    public async Task<CloseApplicationResult> CloseApplication(
+        [Description("A window of the application (as integer); its process is closed")]
+        long? handle = null,
+        [Description("The application's process ID")]
+        int? processId = null,
+        [Description("The application's process name, with or without .exe (e.g. 'notepad'); matched exactly, ignoring case")]
+        string? processName = null,
+        [Description("How long to wait for the windows to close and the processes to exit, in milliseconds (0-30000, default 5000). " +
+                     "0 only sends the close messages (status requested).")]
+        int timeoutMs = DefaultApplicationCloseTimeoutMs,
+        [Description("Must be true to close more than 3 windows when the client cannot ask the user. Check the windows (find_windows) first.")]
+        bool confirm = false,
+        McpServer? server = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (WaitRefusal(timeoutMs, nameof(timeoutMs)) is { } invalidWait)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, invalidWait);
+        }
+
+        var name = ApplicationName(handle, processId, processName);
+
+        // Nothing while the user has paused input, not even a question
+        InputGateToolFilter.ThrowIfPaused(_session);
+
+        var appWindows = _windowService.GetApplicationWindows();
+        var application = TargetApplication(handle, processId, name, appWindows);
+        var processIds = application.ProcessIds;
+        var targets = appWindows.Where(application.Includes).ToList();
+        if (targets.Count == 0)
+        {
+            return ApplicationRefusal(processIds, nameof(ProcessErrorCode.NoClosableWindow), application.NamesFrameHost
+                ? $"{Describe(handle, processId, name)} is ApplicationFrameHost, which hosts the frame windows of every packaged " +
+                  "(UWP) app, so closing it would close apps nobody named. Nothing was sent. Pass the handle of the one frame " +
+                  "window to close instead (find_windows reports it)."
+                : $"{Describe(handle, processId, name)} has no window the user can switch to (no visible, unowned window in Alt+Tab), " +
+                  "so there is nothing to close gracefully: it may run without windows or only in the notification area. Nothing was " +
+                  "sent. Check with find_windows or list_processes; kill_process ends a process without a window.");
+        }
+
+        // A close that would be refused is refused for the whole app before anything is asked or sent
+        foreach (var target in targets)
+        {
+            if (_windowService.CheckClose(target.Handle, force: false) is { ErrorCode: not InvalidHandle } refused)
+            {
+                return ApplicationRefusal(processIds, refused.ErrorCode.ToString(),
+                    $"{refused.Error} Nothing was closed: close_application closes all of an application's windows or none.");
+            }
+        }
+
+        Dictionary<nint, int?>? confirmedOwners = null;
+        if (targets.Count > MaxCloseBatchWithoutConfirm)
+        {
+            if (UserConfirmation.CanAsk(server))
+            {
+                var answer = await UserConfirmation.AskAsync(server!, ApplicationQuestion(targets), $"Close these {targets.Count} windows",
+                    _answerTimeout, cancellationToken).ConfigureAwait(false);
+                if (!answer.Confirmed)
+                {
+                    throw new ToolErrorException(nameof(ConfirmationDeclined),
+                        $"{answer.Reason} Nothing was closed. Ask the user how to continue.");
+                }
+
+                confirmedOwners = targets.ToDictionary(t => t.Handle, t => (int?)t.ProcessId);
+            }
+            else if (!confirm)
+            {
+                throw new ToolErrorException(
+                    nameof(ConfirmationRequired),
+                    $"close_application would close {targets.Count} windows; more than {MaxCloseBatchWithoutConfirm} require confirm=true. " +
+                    "Nothing was closed. Check the windows (find_windows) and call again with confirm=true.");
+            }
+        }
+
+        var items = new Dictionary<nint, ClosedWindowItem>();
+        var sent = new List<nint>();
+        using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
+        {
+            foreach (var target in targets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (confirmedOwners != null && HandleMismatchRefusal(target.Handle, confirmedOwners) is { } mismatch)
+                {
+                    items[target.Handle] = new ClosedWindowItem(target.Handle, target.Title, NotSent, mismatch.Error, mismatch.ErrorCode);
+                    continue;
+                }
+
+                // One window that fails does not stop the others: some may already have their close message, and the result
+                // must still say what became of each
+                WindowCloseResult result;
+                try
+                {
+                    result = await SendApplicationCloseAsync(target, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    result = WindowCloseResult.Failed(target.Handle, CloseFailed, $"The close could not be sent: {ex.Message}");
+                }
+
+                if (result.Success)
+                {
+                    sent.Add(target.Handle);
+                }
+                else
+                {
+                    items[target.Handle] = new ClosedWindowItem(target.Handle, target.Title, NotSent, result.Error, result.ErrorCode.ToString());
+                }
+            }
+        }
+
+        // The waits run outside the gate. Every target was shown (Alt+Tab has only visible, uncloaked windows), so one the
+        // app hid can be reported hidden
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        var observed = sent.Count == 0 || timeoutMs == 0
+            ? []
+            : await _closeVerifier.WaitForCloseAsync(sent, targets.Select(t => t.Handle).ToHashSet(), TimeSpan.FromMilliseconds(timeoutMs),
+                cancellationToken).ConfigureAwait(false);
+        foreach (var observation in observed)
+        {
+            var target = targets.First(t => t.Handle == observation.Handle);
+            var outcome = Outcome(observation, timeoutMs);
+            items[observation.Handle] = new ClosedWindowItem(target.Handle, target.Title, outcome.Status, outcome.Error, outcome.ErrorCode);
+        }
+
+        if (timeoutMs == 0)
+        {
+            foreach (var target in targets.Where(t => sent.Contains(t.Handle)))
+            {
+                items[target.Handle] = new ClosedWindowItem(target.Handle, target.Title, CloseNames.Of(CloseStatus.Requested));
+            }
+        }
+
+        var prompt = observed.Select(o => o.Prompt).FirstOrDefault(p => p != null);
+        var remaining = _windowService.GetApplicationWindows().Where(application.Includes)
+            .Select(w => new RemainingWindowDto(w.Handle.ToInt64(), w.Title, w.ProcessId, w.ProcessName)).ToList();
+        var windowItems = targets.Select(t => items[t.Handle]).ToList();
+        var pids = processIds.Order().ToList();
+
+        if (prompt != null)
+        {
+            return new CloseApplicationResult(false, CloseNames.Of(CloseStatus.PromptShown), pids, windowItems, remaining, true,
+                ClosePromptDto.From(prompt),
+                Error: $"The application did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice} " +
+                       "Then call close_application again if it is still open.",
+                ErrorCode: nameof(PromptShown));
+        }
+
+        if (timeoutMs == 0 && sent.Count > 0)
+        {
+            // Only sent, as asked: nothing was checked
+            return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Requested), pids, windowItems, remaining, false);
+        }
+
+        if (remaining.Count > 0)
+        {
+            return new CloseApplicationResult(false, CloseNames.Of(CloseStatus.StillOpen), pids, windowItems, remaining, false,
+                Error: $"{remaining.Count} window{(remaining.Count == 1 ? " is" : "s are")} still open after {timeoutMs} ms, without a " +
+                       "prompt (see windows for why: a close Windows refused, or an app that is busy or ignores it). Check them with " +
+                       "find_windows; kill_process ends an app that will not close.",
+                ErrorCode: nameof(StillOpen));
+        }
+
+        if (pids.Count == 0)
+        {
+            // A frame closed by its own handle: its app cannot be told, so there is no process to wait for
+            return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false);
+        }
+
+        var exitWait = TimeSpan.FromMilliseconds(timeoutMs) - waited.Elapsed;
+        var running = await _closeVerifier.WaitForProcessesToExitAsync(
+            pids, exitWait > MaxExitWait ? MaxExitWait : exitWait > TimeSpan.Zero ? exitWait : TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false,
+            Exited: running.Count == 0, RunningProcessIds: running.Count == 0 ? null : running);
+    }
+
+    /// <summary>
+    /// Sends close_application's close to one window: WM_CLOSE, or for a packaged app's frame that does not take it,
+    /// WindowPattern.Close. A WindowPattern.Close that did not return in time may still close the window, so it counts as
+    /// sent and the wait reports what became of it.
+    /// </summary>
+    private async Task<WindowCloseResult> SendApplicationCloseAsync(WindowInfo target, CancellationToken cancellationToken)
+    {
+        var result = _windowService.CloseWindow(target.Handle, force: false);
+        if (result.Success || result.ErrorCode != CloseFailed || !WindowClassification.IsApplicationFrameWindow(target.ClassName))
+        {
+            return result;
+        }
+
+        // A packaged app's frame that did not take the message (a full queue is NotResponding, not CloseFailed: a hung app
+        // would not answer UI Automation either), asked through its Window pattern instead
+        return await _closeVerifier.CloseWithUiAutomationAsync(target.Handle, cancellationToken).ConfigureAwait(false) is false
+            ? result
+            : WindowCloseResult.Sent(target.Handle);
+    }
+
+    /// <summary>The status of a window close_application did not send a close message to.</summary>
+    private const string NotSent = "notSent";
+
+    /// <summary>The success, status, prompt and error of a window after its close, as the close tools report it.</summary>
+    private static (bool Success, string Status, ClosePromptDto? Prompt, string? Error, string? ErrorCode) Outcome(CloseObservation observation, int waitMs) =>
+        observation.Status switch
+        {
+            CloseStatus.Closed or CloseStatus.Hidden or CloseStatus.Requested => (true, CloseNames.Of(observation.Status), null, null, null),
+            CloseStatus.PromptShown => (false, CloseNames.Of(CloseStatus.PromptShown), ClosePromptDto.From(observation.Prompt),
+                $"The window did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice}", nameof(PromptShown)),
+            _ => (false, CloseNames.Of(CloseStatus.StillOpen), null,
+                $"The close message was sent, but the window was still open after {waitMs} ms and shows no prompt: the app may be busy " +
+                "or slow, or ignore the request (a window that was already hidden or on another virtual desktop counts as open too). " +
+                "Check it with find_windows, or wait longer.", nameof(StillOpen))
+        };
+
+    /// <summary>No windows: the shown-before set of a close that is not waited for.</summary>
+    private static readonly IReadOnlySet<nint> EmptyHandles = new HashSet<nint>();
+
+    /// <summary>InvalidArguments text for a wait outside 0 to <see cref="MaxCloseWaitMs"/>, or null.</summary>
+    private static string? WaitRefusal(int waitMs, string name) =>
+        waitMs is >= 0 and <= MaxCloseWaitMs
+            ? null
+            : $"{name} must be between 0 and {MaxCloseWaitMs} milliseconds, but it is {waitMs}. Nothing was closed.";
+
+    /// <summary>
+    /// close_application's one target, checked: exactly one of handle, processId and processName, and the name without
+    /// ".exe". Returns the name (null unless processName was given).
+    /// </summary>
+    private static string? ApplicationName(long? handle, int? processId, string? processName)
+    {
+        var given = (handle.HasValue ? 1 : 0) + (processId.HasValue ? 1 : 0) + (processName != null ? 1 : 0);
+        if (given != 1)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"Pass exactly one of handle, processId and processName ({given} given). Nothing was closed.");
+        }
+
+        if (processId is <= 0)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"processId must be a positive process ID, but it is {processId}. Nothing was closed.");
+        }
+
+        if (processName == null)
+        {
+            return null;
+        }
+
+        var name = processName.Trim();
+        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            name = name[..^4];
+        }
+
+        return name.Length > 0
+            ? name
+            : throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, "processName is empty. Nothing was closed.");
+    }
+
+    /// <summary>
+    /// The application close_application closes: its processes, and which application windows belong to it. A packaged
+    /// app's frame whose app cannot be told (it is minimized or suspended, and its title is not unique) is reported under
+    /// ApplicationFrameHost, which hosts the frames of every packaged app: such a frame is closed only when its own handle
+    /// names it, and then alone, so one call never closes packaged apps nobody named.
+    /// </summary>
+    private TargetedApplication TargetApplication(long? handle, int? processId, string? name, IReadOnlyList<WindowInfo> appWindows)
+    {
+        if (handle is { } window)
+        {
+            // The handle's own process (for a UWP frame, the app's), whether or not the window itself is in Alt+Tab
+            var info = _windowService.GetWindowInfo((nint)window)
+                       ?? throw new ToolErrorException(nameof(InvalidHandle),
+                           $"{WindowService.InvalidHandleMessage}: {window} is no window. Nothing was closed.");
+            return IsUnattributedFrame(info)
+                ? new TargetedApplication([], w => w.Handle == info.Handle, NamesFrameHost: false)
+                : ForProcesses([info.ProcessId], namesFrameHost: false);
+        }
+
+        Func<WindowInfo, bool> named = processId is { } id
+            ? w => w.ProcessId == id
+            : w => string.Equals(w.ProcessName, name, StringComparison.OrdinalIgnoreCase);
+        var ids = processId is { } pid
+            ? new HashSet<int> { pid }
+            : appWindows.Where(w => named(w) && !IsUnattributedFrame(w)).Select(w => w.ProcessId).ToHashSet();
+        return ForProcesses(ids, appWindows.Any(w => named(w) && IsUnattributedFrame(w)));
+
+        static TargetedApplication ForProcesses(HashSet<int> ids, bool namesFrameHost) =>
+            new(ids, w => ids.Contains(w.ProcessId) && !IsUnattributedFrame(w), namesFrameHost);
+    }
+
+    /// <summary>A packaged app's frame whose app could not be told: it is reported under ApplicationFrameHost.</summary>
+    private static bool IsUnattributedFrame(WindowInfo window) =>
+        WindowClassification.IsApplicationFrameWindow(window.ClassName) && window.HostProcessId == null;
+
+    /// <param name="ProcessIds">The processes closed; empty for one frame closed by its own handle.</param>
+    /// <param name="Includes">Whether an application window belongs to the application.</param>
+    /// <param name="NamesFrameHost">The process named is ApplicationFrameHost: it has frames of packaged apps that cannot be told apart.</param>
+    private sealed record TargetedApplication(HashSet<int> ProcessIds, Func<WindowInfo, bool> Includes, bool NamesFrameHost);
+
+    private static string Describe(long? handle, int? processId, string? name) =>
+        handle is { } h ? $"The application of window {h}" : processId is { } id ? $"Process {id}" : $"No process named '{name}'";
+
+    private static CloseApplicationResult ApplicationRefusal(IEnumerable<int> processIds, string errorCode, string error) =>
+        new(false, null, processIds.Order().ToList(), [], [], false, Error: error, ErrorCode: errorCode);
+
+    /// <summary>The question close_application asks the user: the application's windows, with their titles, processes and PIDs.</summary>
+    private static string ApplicationQuestion(IReadOnlyList<WindowInfo> targets)
+    {
+        var apps = string.Join(", ", targets.Select(t => $"{t.ProcessName} (PID {t.ProcessId})").Distinct());
+        var lines = targets.Take(20).Select((w, i) =>
+            $"{i + 1}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId})");
+        var more = targets.Count > 20 ? $"\n... and {targets.Count - 20} more" : string.Empty;
+        return $"The AI agent asks to close {apps}: {targets.Count} windows. Each may ask to save your work, or close without asking.\n" +
+               string.Join("\n", lines) + more + "\nAllow it?";
     }
 
     [McpServerTool(Name = "snap_window", Title = "Snap Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]

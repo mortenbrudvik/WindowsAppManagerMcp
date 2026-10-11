@@ -553,7 +553,7 @@ public class WindowServiceCloseTests
     }
 
     [Fact]
-    public void CloseWindow_OtherPostMessageFailure_ReturnsCloseFailedWithTheWin32Error()
+    public void CloseWindow_FullMessageQueue_IsNotResponding()
     {
         // Arrange - the window's message queue is full (a hung app)
         var hung = AddWindow("Notepad");
@@ -564,8 +564,24 @@ public class WindowServiceCloseTests
         var result = CreateSut().CloseWindow(hung, force: false);
 
         // Assert
+        result.ErrorCode.Should().Be(WindowErrorCode.NotResponding);
+        result.Error.Should().Contain("Win32 error 1816").And.Contain("not responding").And.Contain("Nothing was closed");
+    }
+
+    [Fact]
+    public void CloseWindow_OtherPostMessageFailure_ReturnsCloseFailedWithTheWin32Error()
+    {
+        // Arrange - ERROR_NOT_ENOUGH_MEMORY
+        var window = AddWindow("Notepad");
+        _native.Setup(n => n.PostMessage(window, WmClose, nint.Zero, nint.Zero))
+            .Returns(Win32CallResult.Failure(8));
+
+        // Act
+        var result = CreateSut().CloseWindow(window, force: false);
+
+        // Assert
         result.ErrorCode.Should().Be(WindowErrorCode.CloseFailed);
-        result.Error.Should().Contain("Win32 error 1816");
+        result.Error.Should().Contain("Win32 error 8");
     }
 
     #endregion

@@ -49,6 +49,8 @@ public class InputGateToolFilterTests
     [Theory]
     [InlineData("kill_process")]
     [InlineData("close_windows_batch")]
+    [InlineData("close_application")]
+    [InlineData("close_window")] // sends inside the gate it takes itself, and waits for the window outside it (roadmap M2.5)
     public async Task AToolThatAsksTheUser_IsNotHeldInTheGateByTheFilter(string tool)
     {
         // Arrange - it takes the gate itself, after its question (UserConfirmationContractTests)
@@ -69,7 +71,7 @@ public class InputGateToolFilterTests
 
     [Theory]
     [InlineData("focus_window")]
-    [InlineData("close_window")]
+    [InlineData("move_window")]
     [InlineData("launch_application")]
     [InlineData("apply_layout")]
     [InlineData("set_window_state")]
@@ -143,7 +145,7 @@ public class InputGateToolFilterTests
     {
         var handler = InputGateToolFilter.Filter((_, _) => throw new InvalidOperationException("tool failed"));
 
-        var call = async () => await handler(CreateRequest("close_window"), CancellationToken.None);
+        var call = async () => await handler(CreateRequest("move_window"), CancellationToken.None);
 
         await call.Should().ThrowAsync<InvalidOperationException>();
         var next = Task.Run(() => InputGate.Enter().Dispose());
@@ -178,7 +180,7 @@ public class InputGateToolFilterTests
     [Theory]
     [InlineData("focus_window")]
     [InlineData("launch_application")]
-    [InlineData("close_window")]
+    [InlineData("snap_window")]
     [InlineData("move_window")]
     [InlineData("set_window_state")]
     [InlineData("a_tool_nobody_classified")] // fails safe

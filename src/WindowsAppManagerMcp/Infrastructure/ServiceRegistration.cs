@@ -41,6 +41,8 @@ public static class ServiceRegistration
         // so a window tool cannot hold the input gate until the application recovers
         services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
         services.AddSingleton<IWindowService, WindowService>();
+        // Verified close (roadmap M2.5): waits for closed windows and reads their prompts through UI Automation
+        services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();
         services.AddSingleton<IInputValidationService, InputValidationService>();
         services.AddSingleton<IBrowserDetectionService, BrowserDetectionService>();
         services.AddSingleton<IBrowserReadingService, BrowserReadingService>();

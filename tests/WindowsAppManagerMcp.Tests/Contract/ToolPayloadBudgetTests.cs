@@ -41,6 +41,7 @@ public class ToolPayloadBudgetTests
         ["find_windows"] = 1_500, // 989
         ["get_all_windows"] = 1_500, // 989
         ["get_foreground_window"] = 100, // 58
+        ["get_owned_windows"] = 150, // 76: one Save As dialog
 
         // Window Control
         ["move_window"] = 100, // 39: bounds, outerBounds, state, monitorIndex (roadmap M2.3)
@@ -48,7 +49,7 @@ public class ToolPayloadBudgetTests
         ["set_window_bounds"] = 100, // 39
         ["set_window_state"] = 100, // 39
         ["focus_window"] = 100, // 44
-        ["close_window"] = 100, // 4
+        ["close_window"] = 100, // 9: the status
         ["snap_window"] = 100, // 39
         ["move_window_to_monitor"] = 100, // 39
 
@@ -56,7 +57,7 @@ public class ToolPayloadBudgetTests
         ["set_windows_bounds_batch"] = 160, // 104
         ["snap_windows_batch"] = 160, // 104
         ["set_windows_state_batch"] = 160, // 104
-        ["close_windows_batch"] = 100, // 32
+        ["close_windows_batch"] = 100, // 41: each window with its status
         ["launch_applications_batch"] = 100, // 54
 
         // Monitor Info: 2 monitors
@@ -98,6 +99,7 @@ public class ToolPayloadBudgetTests
         ["launch_application"] = 100, // 15
         ["list_processes"] = 2_000, // 1,328: 40 processes
         ["kill_process"] = 100, // 28
+        ["close_application"] = 100, // 49: one Notepad window
 
         // Layout Presets: 5 presets of 6 placements
         ["list_layouts"] = 400, // 239

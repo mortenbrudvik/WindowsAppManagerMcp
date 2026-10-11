@@ -148,7 +148,10 @@ public static class WrapperCatalog
                 [nameof(IUIAutomationWrapper.GetBrowserUrl)] = WrapperMember.Read,
                 [nameof(IUIAutomationWrapper.GetWindowTitle)] = WrapperMember.Read,
                 [nameof(IUIAutomationWrapper.GetBrowserContent)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read
+                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read,
+                // WindowPattern.Close: asks the window to close, like WM_CLOSE (close_application's fallback for a
+                // packaged app's frame), so it changes a window and must name a fixture window
+                [nameof(IUIAutomationWrapper.CloseWindow)] = WrapperMember.WindowAction("hwnd")
             },
             [typeof(IScreenCaptureWrapper)] = new Dictionary<string, WrapperMember>
             {
@@ -225,7 +228,9 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.ReadInteraction)] = WrapperMember.Read,
                 [nameof(IUiaTree.IsInteractable)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
-                [nameof(IUiaTree.ReadValue)] = WrapperMember.Read
+                [nameof(IUiaTree.ReadValue)] = WrapperMember.Read,
+                // WindowPattern.Current.IsModal: a property read (verified close looks for an in-window prompt)
+                [nameof(IUiaTree.ReadIsModal)] = WrapperMember.Read
             },
             [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>
             {

@@ -194,6 +194,16 @@ public sealed class UiaTree : IUiaTree
                 : null);
     }
 
+    /// <inheritdoc />
+    public bool? ReadIsModal(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        return Translate<bool?>(() =>
+            element.TryGetCurrentPattern(WindowPattern.Pattern, out var pattern) && pattern is WindowPattern window
+                ? window.Current.IsModal
+                : null);
+    }
+
     private static string? TryGetLocalizedControlType(AutomationElement.AutomationElementInformation current)
     {
         try

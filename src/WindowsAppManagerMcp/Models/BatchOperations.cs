@@ -50,7 +50,8 @@ public record BatchWindowResult(
 /// One window of a batch. For the geometry batches (roadmap M2.3) the window as it is afterwards, failed or not (left out
 /// for an invalid handle): Bounds is its visible frame, OuterBounds its window rect with the invisible resize borders (the
 /// bounds find_windows reports), State normal, minimized or maximized, MonitorIndex its monitor. A minimized window has no
-/// bounds.
+/// bounds. Status and Prompt are close_windows_batch's (roadmap M2.5): what became of the window after its close message,
+/// and the prompt that keeps it open; the other batches leave them out.
 /// </summary>
 public record WindowResultItem(
     long Handle,
@@ -60,7 +61,9 @@ public record WindowResultItem(
     string? State = null,
     int? MonitorIndex = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    string? Status = null,
+    ClosePromptDto? Prompt = null
 );
 
 public record BatchLaunchResult(
