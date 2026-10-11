@@ -487,6 +487,9 @@ public class WindowManagerTools
         var application = TargetApplication(handle, processId, name, appWindows);
         var processIds = application.ProcessIds;
         var targets = appWindows.Where(application.Includes).ToList();
+
+        // The audit log records each window with its process, as it is before the close
+        AuditScope.NoteWindows(targets);
         if (targets.Count == 0)
         {
             return ApplicationRefusal(processIds, nameof(ProcessErrorCode.NoClosableWindow), application.NamesFrameHost

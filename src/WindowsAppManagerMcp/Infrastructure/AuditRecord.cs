@@ -21,8 +21,10 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// launch is kept as a path or as a URL's scheme and host (<see cref="RedactExecutable"/>), and any other value is
 /// recorded as its length (<c>&lt;name&gt;Length</c>) or count (<c>&lt;name&gt;Count</c>). So typed text, keys,
 /// clipboard text, URL paths and queries, working directories and command-line arguments never reach the file. Of the
-/// result, only the numbers and booleans at its top level, its errorCode, the receiving window and a batch's items are
-/// kept; never its text.
+/// result, only the numbers and booleans at its top level, its errorCode, the receiving window and its items (a batch's
+/// results, close_application's windows, apply_layout's placements: handle, title, process, a launch's program redacted,
+/// success, status and errorCode) are kept; never its text. A window a tool learns of only while it runs (a selector's,
+/// or close_application's) is named by the title and process the tool noted before acting on it (<see cref="AuditScope"/>).
 /// </remarks>
 public static class AuditRecord
 {
@@ -66,7 +68,7 @@ public static class AuditRecord
         ArgumentNullException.ThrowIfNull(outcome);
 
         var body = result == null ? null : ResultBody(result);
-        var items = Items(body, call.Windows) ?? RequestedWindows(call);
+        var items = Items(body, call) ?? RequestedWindows(call);
 
         return new AuditEntry(
             call.Started,
@@ -302,7 +304,7 @@ public static class AuditRecord
         var handles = WindowHandles(call.Arguments);
         if (handles.Count > 0)
         {
-            target = call.Windows.TryGetValue(handles[0], out var window) ? window : new AuditTarget(Handle: handles[0]);
+            target = Before(call, handles[0]) ?? new AuditTarget(Handle: handles[0]);
         }
         else if (ProcessIds(call.Arguments) is [var processId])
         {
@@ -319,7 +321,8 @@ public static class AuditRecord
         }
 
         // Completed from the result: the process a launch started and its window, a killed process's name, and the window a
-        // window selector resolved to (roadmap M2.4: the window tools report it as handle)
+        // window selector resolved to (roadmap M2.4: the window tools report it as handle), with the title and process the
+        // tool noted when it resolved it (AuditScope): a closed window cannot be read afterwards
         var resultHandle = Long(body, "windowHandle") ?? (handles.Count == 0 ? Long(body, "handle") : null);
         var resultProcessId = Int(body, "processId");
         var resultProcess = String(body, "processName");
@@ -328,7 +331,7 @@ public static class AuditRecord
             return null;
         }
 
-        target ??= new AuditTarget();
+        target ??= resultHandle is { } resolved && Before(call, resolved) is { } noted ? noted : new AuditTarget();
         return target with
         {
             Handle = target.Handle ?? resultHandle,
@@ -337,9 +340,23 @@ public static class AuditRecord
         };
     }
 
-    private static IReadOnlyList<AuditItem>? Items(JsonObject? body, IReadOnlyDictionary<long, AuditTarget> windows)
+    /// <summary>
+    /// The per-item arrays of the results: a batch's <c>results</c>, close_application's <c>windows</c> and apply_layout's
+    /// <c>placements</c>, in that order of preference.
+    /// </summary>
+    private static readonly string[] ItemArrays = ["results", "windows", "placements"];
+
+    /// <summary>
+    /// The items of the result's per-item array (<see cref="ItemArrays"/>): each window or launch with its outcome, and
+    /// the window's title and process as they were before the call. Null when the result has no such array, or an empty
+    /// one (a call refused before it listed anything: its target is recorded instead).
+    /// </summary>
+    private static IReadOnlyList<AuditItem>? Items(JsonObject? body, AuditCall call)
     {
-        if (body == null || !body.TryGetPropertyValue("results", out var node) || node is not JsonArray results)
+        var results = body == null
+            ? null
+            : ItemArrays.Select(name => body.TryGetPropertyValue(name, out var node) ? node as JsonArray : null).FirstOrDefault(a => a != null);
+        if (results is not { Count: > 0 })
         {
             return null;
         }
@@ -347,21 +364,39 @@ public static class AuditRecord
         return results.OfType<JsonObject>()
             .Select(item =>
             {
-                var handle = Long(item, "handle") ?? Long(item, "windowHandle");
-                var before = handle is { } h ? windows.GetValueOrDefault(h) : null;
-                var executable = String(item, ExecutableArgument);
+                // A launch batch item and an apply_layout placement name their window in a window object
+                var window = item.TryGetPropertyValue("window", out var node) ? node as JsonObject : null;
+                var handle = Long(item, "handle") ?? Long(item, "windowHandle") ?? (window == null ? null : Long(window, "handle"));
+                var before = handle is { } h ? Before(call, h) : null;
+                var title = before?.Title ?? String(item, "title") ?? (window == null ? null : String(window, "title"));
+                var executable = String(item, ExecutableArgument) ?? String(item, "launchCommand");
                 return new AuditItem(
                     handle,
-                    before?.Title,
-                    before?.Process,
-                    before?.ProcessId ?? Int(item, "processId"),
+                    title == null ? null : Cut(title, MaxTitleLength),
+                    before?.Process ?? String(item, "processName") ?? (window == null ? null : String(window, "processName")),
+                    before?.ProcessId ?? Int(item, "processId") ?? (window == null ? null : Int(window, "processId")),
                     executable == null ? null : RedactExecutable(executable),
-                    item.TryGetPropertyValue("success", out var success) && success?.GetValueKind() is JsonValueKind.True or JsonValueKind.False
-                        ? success.GetValue<bool>()
-                        : null,
-                    Identifier(item, "errorCode"));
+                    Bool(item, "success"),
+                    Identifier(item, "errorCode"),
+                    Identifier(item, "status"),
+                    Bool(item, "launched"));
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// The window <paramref name="handle"/> as it was before the tool acted on it: as Begin read it, else as the tool noted
+    /// it (<see cref="AuditScope"/>), else the handle Begin could not read. Null when neither knows it.
+    /// </summary>
+    private static AuditTarget? Before(AuditCall call, long handle)
+    {
+        call.Windows.TryGetValue(handle, out var read);
+        if (read is { Title: not null } or { Process: not null })
+        {
+            return read;
+        }
+
+        return call.ResolvedWindows.TryGetValue(handle, out var noted) ? noted : read;
     }
 
     /// <summary>
@@ -376,7 +411,7 @@ public static class AuditRecord
         }
 
         return WindowHandles(new Dictionary<string, JsonElement> { ["windows"] = windows })
-            .Select(handle => call.Windows.GetValueOrDefault(handle) is { } before
+            .Select(handle => Before(call, handle) is { } before
                 ? new AuditItem(handle, before.Title, before.Process, before.ProcessId, null, null, null)
                 : new AuditItem(handle, null, null, null, null, null, null))
             .ToList();
@@ -441,6 +476,11 @@ public static class AuditRecord
         node.TryGetPropertyValue(name, out var value) && value is JsonValue number && number.GetValueKind() == JsonValueKind.Number &&
         number.TryGetValue<long>(out var result)
             ? result
+            : null;
+
+    private static bool? Bool(JsonObject node, string name) =>
+        node.TryGetPropertyValue(name, out var value) && value?.GetValueKind() is JsonValueKind.True or JsonValueKind.False
+            ? value.GetValue<bool>()
             : null;
 
     private static int? Int(JsonObject node, string name) => Long(node, name) is { } value and >= int.MinValue and <= int.MaxValue ? (int)value : null;

@@ -17,8 +17,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <remarks>
 /// The filter does nothing when no <see cref="IAuditLog"/> is registered (tests that register their own services), and
 /// it never changes a call's result or fails it: the audit log swallows its own failures, and the filter swallows any
-/// failure of a log that does not. The line is written before the result goes back (one small append; it waits only
-/// while another server is appending to the same day's file, at most about half a second).
+/// failure of a log that does not. The line is normally written before the result goes back (one small append); the call
+/// waits for it at most <see cref="Services.AuditLog.MaxCallDelay"/>, so a slow or unreachable audit folder never holds
+/// up a call for longer.
 /// </remarks>
 public static class AuditLogToolFilter
 {
@@ -70,7 +71,11 @@ public static class AuditLogToolFilter
             CallToolResult result;
             try
             {
-                result = await next(request, cancellationToken).ConfigureAwait(false);
+                // The tool notes the windows it learns of while it runs (a selector's, close_application's) in this call's record
+                using (AuditScope.Enter(call))
+                {
+                    result = await next(request, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

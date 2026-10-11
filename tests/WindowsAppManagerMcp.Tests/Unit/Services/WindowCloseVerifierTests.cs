@@ -166,19 +166,20 @@ public class WindowCloseVerifierTests
     [Fact]
     public async Task TheWindowsStillOpen_AreLookedAtOnceMore_AllAtTheSameTime()
     {
-        // Arrange - every UI Automation read takes 400 ms; four windows one after another would take 1.6 s after the wait
+        // Arrange - every UI Automation read takes 400 ms, and the worker counts how many run at once: the reads, not a
+        // clock, show whether the four windows were looked at together
         var windows = Enumerable.Range(0, 4).Select(i => new nint(0x3000 + i)).ToList();
         windows.ForEach(w => OpenWindow(w));
-        var sut = new WindowCloseVerifier(_windows.Object, _tree, new SlowUiaWorker(TimeSpan.FromMilliseconds(400)),
+        var worker = new SlowUiaWorker(TimeSpan.FromMilliseconds(400));
+        var sut = new WindowCloseVerifier(_windows.Object, _tree, worker,
             pollInterval: TimeSpan.FromMilliseconds(5), promptCheckInterval: TimeSpan.FromMilliseconds(10));
 
         // Act
-        var waited = Stopwatch.StartNew();
         var result = await sut.WaitForCloseAsync(windows, windows.ToHashSet(), Short, CancellationToken.None);
 
         // Assert
         result.Select(r => r.Status).Should().AllBeEquivalentTo(CloseStatus.StillOpen);
-        waited.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(1200), "the final look runs for every window at once");
+        worker.MostAtOnce.Should().Be(windows.Count, "the final look runs for every window at once");
     }
 
     #endregion
@@ -349,12 +350,32 @@ public class WindowCloseVerifierTests
     #endregion
 
     /// <summary>A worker whose every read takes <paramref name="delay"/> before it runs, as a slow application's would.</summary>
+    /// <summary>A UI Automation worker whose reads take <paramref name="delay"/>, and that counts how many run at once.</summary>
     private sealed class SlowUiaWorker(TimeSpan delay) : IUiaWorker
     {
+        private int _running;
+        private int _mostAtOnce;
+
+        /// <summary>The most reads that ran at the same time.</summary>
+        public int MostAtOnce => Volatile.Read(ref _mostAtOnce);
+
         public async Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
         {
-            await Task.Delay(delay, CancellationToken.None);
-            return read(cancellationToken);
+            var running = Interlocked.Increment(ref _running);
+            int most;
+            while (running > (most = Volatile.Read(ref _mostAtOnce)) && Interlocked.CompareExchange(ref _mostAtOnce, running, most) != most)
+            {
+            }
+
+            try
+            {
+                await Task.Delay(delay, CancellationToken.None);
+                return read(cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _running);
+            }
         }
     }
 }

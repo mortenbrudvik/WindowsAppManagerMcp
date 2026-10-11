@@ -103,6 +103,9 @@ internal static class WindowTargeting
             throw new InvalidOperationException("A window selector needs the window service; the server always registers it.");
 
         var resolution = windows.ResolveWindow(window);
+
+        // The audit log names the window by the title and process it had now: a close leaves nothing to read afterwards
+        AuditScope.NoteWindow(resolution.Window);
         return resolution.Success
             ? Target.Of(resolution.Handle)
             : Target.Refused(resolution.ErrorCode ?? nameof(WindowErrorCode.WindowNotFound), resolution.Error ?? "No single window matched.",

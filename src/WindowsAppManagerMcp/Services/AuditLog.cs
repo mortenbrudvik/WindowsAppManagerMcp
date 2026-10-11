@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -29,13 +30,24 @@ namespace WindowsAppManagerMcp.Services;
 /// writer that finds the file busy retries for up to about half a second.
 /// </para>
 /// <para>
-/// A line that cannot be written is dropped: the tool call is never failed or delayed beyond those retries.
-/// <see cref="LastError"/> keeps the reason, get_server_info reports it as a warning, and stderr gets one warning per
-/// run of failures.
+/// The lines are written by one background writer, in order; <see cref="End"/> waits for its line at most
+/// <see cref="MaxCallDelay"/>, so a folder on a slow or unreachable share, or a stalled disk, delays a tool call by at most
+/// that and never blocks it. A line still waiting then is written when the writer gets to it; one that would make more than
+/// <see cref="MaxPendingLines"/> wait is dropped.
+/// </para>
+/// <para>
+/// A line that cannot be written is dropped: the tool call is never failed. <see cref="LastError"/> keeps the reason,
+/// get_server_info reports it as a warning, and stderr gets one warning per run of failures.
 /// </para>
 /// </remarks>
 public sealed partial class AuditLog : IAuditLog
 {
+    /// <summary>The longest a tool call waits for its line to be written (roadmap M2.17: the log never holds up a call).</summary>
+    public static readonly TimeSpan MaxCallDelay = TimeSpan.FromSeconds(2);
+
+    /// <summary>The most lines that wait for the writer; a line beyond them is dropped, with <see cref="LastError"/>.</summary>
+    public const int MaxPendingLines = 1000;
+
     private const int MaxWriteAttempts = 25;
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(20);
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
@@ -44,7 +56,12 @@ public sealed partial class AuditLog : IAuditLog
     private readonly INativeWindowWrapper? _windows;
     private readonly TimeProvider _clock;
     private readonly ILogger _logger;
+    private readonly TimeSpan _maxCallDelay;
+    private readonly Action<int>? _writeAttempt;
     private readonly object _writeLock = new();
+    private readonly ConcurrentQueue<PendingLine> _pending = new();
+    private int _pendingCount;
+    private int _writerRunning;
     private DateOnly? _cleanedDay;
     private volatile string? _lastError;
 
@@ -52,12 +69,25 @@ public sealed partial class AuditLog : IAuditLog
     /// <param name="windows">Reads the target windows' titles and processes before a call; null reads nothing.</param>
     /// <param name="clock">The clock; defaults to the system clock.</param>
     /// <param name="logger">Gets one warning when lines start failing.</param>
-    public AuditLog(AuditLogOptions options, INativeWindowWrapper? windows, TimeProvider? clock = null, ILogger<AuditLog>? logger = null)
+    /// <param name="maxCallDelay">How long <see cref="End"/> waits for its line; default <see cref="MaxCallDelay"/>.</param>
+    /// <param name="writeAttempt">
+    /// Called on the writer with the attempt's number (1 for the first) before each attempt to write a line; tests use it to
+    /// stall the writer or to act when it retries. Null in the server.
+    /// </param>
+    public AuditLog(
+        AuditLogOptions options,
+        INativeWindowWrapper? windows,
+        TimeProvider? clock = null,
+        ILogger<AuditLog>? logger = null,
+        TimeSpan? maxCallDelay = null,
+        Action<int>? writeAttempt = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _windows = windows;
         _clock = clock ?? TimeProvider.System;
         _logger = logger ?? (ILogger)NullLogger.Instance;
+        _maxCallDelay = maxCallDelay ?? MaxCallDelay;
+        _writeAttempt = writeAttempt;
     }
 
     public string Folder => _options.Folder;
@@ -109,12 +139,95 @@ public sealed partial class AuditLog : IAuditLog
         {
             var durationMs = (long)_clock.GetElapsedTime(call.StartTimestamp).TotalMilliseconds;
             var entry = AuditRecord.Build(call, result, outcome, durationMs, Environment.ProcessId);
-            Append(entry.Ts, AuditRecord.ToJsonLine(entry));
+            Enqueue(entry.Ts, AuditRecord.ToJsonLine(entry))?.Wait(_maxCallDelay);
         }
         catch (Exception ex)
         {
             Failed(ex);
         }
+    }
+
+    /// <summary>
+    /// Waits at most <paramref name="timeout"/> until every line handed to the writer so far is written (or has failed).
+    /// True when none is left waiting.
+    /// </summary>
+    public bool WaitForPendingLines(TimeSpan timeout)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (Volatile.Read(ref _pendingCount) > 0)
+        {
+            if (waited.Elapsed >= timeout)
+            {
+                return false;
+            }
+
+            Thread.Sleep(10);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Hands the line to the writer, which is started when it is not running. The task completes once the line is written
+    /// or has failed; null when the line was dropped because too many wait.
+    /// </summary>
+    private Task? Enqueue(DateTimeOffset when, string line)
+    {
+        if (Interlocked.Increment(ref _pendingCount) > MaxPendingLines)
+        {
+            Interlocked.Decrement(ref _pendingCount);
+            Failed(new IOException(
+                $"{MaxPendingLines} lines are still waiting to be written to '{_options.Folder}' (the folder is slow or does not " +
+                "answer), so this line was dropped."));
+            return null;
+        }
+
+        var pending = new PendingLine(when, line);
+        _pending.Enqueue(pending);
+        if (Interlocked.CompareExchange(ref _writerRunning, 1, 0) == 0)
+        {
+            // Not on the call's flow: nothing of the call (its audit scope) goes with the writer
+            ThreadPool.UnsafeQueueUserWorkItem(_ => WritePending(), null);
+        }
+
+        return pending.Written.Task;
+    }
+
+    /// <summary>The writer: writes the waiting lines in order until none is left.</summary>
+    private void WritePending()
+    {
+        while (true)
+        {
+            while (_pending.TryDequeue(out var pending))
+            {
+                try
+                {
+                    Append(pending.When, pending.Line);
+                }
+                catch (Exception ex)
+                {
+                    Failed(ex);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _pendingCount);
+                    pending.Written.TrySetResult();
+                }
+            }
+
+            Volatile.Write(ref _writerRunning, 0);
+
+            // A line handed over after the queue was found empty, and before the writer stopped, is written by this writer
+            if (_pending.IsEmpty || Interlocked.CompareExchange(ref _writerRunning, 1, 0) != 0)
+            {
+                return;
+            }
+        }
+    }
+
+    private sealed record PendingLine(DateTimeOffset When, string Line)
+    {
+        public TaskCompletionSource Written { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private AuditTarget ReadWindow(long handle)
@@ -171,6 +284,7 @@ public sealed partial class AuditLog : IAuditLog
 
             for (var attempt = 1; ; attempt++)
             {
+                _writeAttempt?.Invoke(attempt);
                 try
                 {
                     // Write access for this writer alone, so another server's line cannot land in the middle of this one;

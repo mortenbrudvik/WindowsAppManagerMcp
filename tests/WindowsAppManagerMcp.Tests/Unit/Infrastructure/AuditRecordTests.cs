@@ -415,6 +415,139 @@ public class AuditRecordTests
     }
 
     [Fact]
+    public void ACloseNamedByASelector_RecordsTheTitleAndProcess_OfTheWindowTheToolResolved()
+    {
+        // close_window with a window selector: the arguments name no handle, so Begin reads nothing; the tool notes the
+        // window it resolved before it closes it (AuditScope), and the result names its handle
+        var call = Call("close_window", new { window = new { processName = "notepad", titleContains = "notes" } });
+        using (AuditScope.Enter(call))
+        {
+            AuditScope.NoteWindow(TestDataFactory.CreateWindowInfo(0x1234, "notes.txt - Notepad", "notepad", 42));
+        }
+
+        var entry = Build(call, Result(new { success = true, status = "closed", handle = 0x1234 }));
+
+        entry.Target.Should().Be(new AuditTarget(0x1234, "notes.txt - Notepad", "notepad", 42));
+    }
+
+    [Fact]
+    public void ACloseBatchNamedBySelectors_RecordsEachItem_WithTheResolvedWindow_AndItsStatus()
+    {
+        var call = Call("close_windows_batch", new { windows = new[] { new { window = new { processName = "notepad" } } } });
+        using (AuditScope.Enter(call))
+        {
+            AuditScope.NoteWindow(TestDataFactory.CreateWindowInfo(7, "a.txt - Notepad", "notepad", 42));
+        }
+
+        var entry = Build(call, Result(new
+        {
+            totalRequested = 1, succeeded = 1, failed = 0,
+            results = new object[] { new { handle = 7, success = true, status = "closed" } }
+        }));
+
+        entry.Items.Should().Equal(new AuditItem(7, "a.txt - Notepad", "notepad", 42, null, true, null, Status: "closed"));
+    }
+
+    [Fact]
+    public void CloseApplication_RecordsEachWindowItClosed_WithItsProcess_AndStatus()
+    {
+        // close_application {processName}: the windows come from the result, their processes from what the tool listed
+        var call = Call("close_application", new { processName = "notepad" });
+        using (AuditScope.Enter(call))
+        {
+            AuditScope.NoteWindows([
+                TestDataFactory.CreateWindowInfo(1, "a.txt - Notepad", "notepad", 42),
+                TestDataFactory.CreateWindowInfo(2, "b.txt - Notepad", "notepad", 43)
+            ]);
+        }
+
+        var entry = Build(call, Result(new
+        {
+            success = false, status = "promptShown", processIds = new[] { 42, 43 }, promptDetected = true, errorCode = "PromptShown",
+            windows = new object[]
+            {
+                new { handle = 1, title = "a.txt - Notepad", status = "closed" },
+                new { handle = 2, title = "b.txt - Notepad", status = "promptShown", errorCode = "PromptShown" }
+            },
+            remainingWindows = new object[] { new { handle = 2, title = "b.txt - Notepad", processId = 43, processName = "notepad" } }
+        }), AuditOutcome.Error);
+
+        entry.Items.Should().Equal(
+            new AuditItem(1, "a.txt - Notepad", "notepad", 42, null, null, null, Status: "closed"),
+            new AuditItem(2, "b.txt - Notepad", "notepad", 43, null, null, "PromptShown", Status: "promptShown"));
+        entry.Args!["processName"]!.GetValue<string>().Should().Be("notepad");
+        entry.Result!["promptDetected"]!.GetValue<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public void CloseApplicationRefused_WithNoWindows_RecordsItsTarget()
+    {
+        var windows = new Dictionary<long, AuditTarget> { [100] = new(100, "Untitled - Notepad", "notepad", 42) };
+        var entry = Build(Call("close_application", new { handle = 100 }, windows),
+            Result(new { success = false, processIds = new[] { 42 }, windows = Array.Empty<object>(), errorCode = "ProtectedWindow" }, isError: true),
+            AuditOutcome.Error);
+
+        entry.Items.Should().BeNull();
+        entry.Target.Should().Be(new AuditTarget(100, "Untitled - Notepad", "notepad", 42));
+    }
+
+    [Fact]
+    public void ApplyLayout_RecordsEachPlacement_WithItsWindow_AndWhatItLaunched()
+    {
+        var call = Call("apply_layout", new { name = "Coding", launchMissing = true });
+        var entry = Build(call, Result(new
+        {
+            success = false, presetName = "Coding", windowsArranged = 1, windowsNotFound = 1, windowsLaunched = 1,
+            placements = new object[]
+            {
+                new
+                {
+                    order = 0, status = "applied", launched = true, launchCommand = @"C:\Tools\code.exe",
+                    window = new { handle = 5, title = "main.cs - Code", processName = "Code" }
+                },
+                new { order = 1, status = "failed", launchCommand = "https://example.com/reset?t=secret", errorCode = "LaunchFailed" },
+                new { order = 2, status = "notFound", errorCode = "WindowNotFound" }
+            }
+        }), AuditOutcome.Error);
+
+        entry.Items.Should().Equal(
+            new AuditItem(5, "main.cs - Code", "Code", null, @"C:\Tools\code.exe", null, null, Status: "applied", Launched: true),
+            new AuditItem(null, null, null, null, "https://example.com", null, "LaunchFailed", Status: "failed"),
+            new AuditItem(null, null, null, null, null, null, "WindowNotFound", Status: "notFound"));
+        entry.Result!["windowsLaunched"]!.GetValue<int>().Should().Be(1);
+        AuditRecord.ToJsonLine(entry).Should().NotContain("secret");
+    }
+
+    [Fact]
+    public void AnItemsStatusThatIsNoIdentifier_IsLeftOut()
+    {
+        var entry = Build(Call("close_windows_batch", new { windows = new[] { new { handle = 1 } } }),
+            Result(new { results = new object[] { new { handle = 1, success = true, status = "closed: hunter2" } } }));
+
+        entry.Items!.Single().Status.Should().BeNull();
+    }
+
+    [Fact]
+    public void AWindowNotedOutsideAnAuditedCall_GoesNowhere()
+    {
+        var act = () => AuditScope.NoteWindow(TestDataFactory.CreateWindowInfo(1, "a", "p", 2));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void AWindowsTitle_IsCut_WhenItIsNoted()
+    {
+        var call = Call("close_window", new { window = new { processName = "p" } });
+        using (AuditScope.Enter(call))
+        {
+            AuditScope.NoteWindow(TestDataFactory.CreateWindowInfo(1, new string('x', AuditRecord.MaxTitleLength + 9), "p", 2));
+        }
+
+        call.ResolvedWindows[1].Title.Should().HaveLength(AuditRecord.MaxTitleLength);
+    }
+
+    [Fact]
     public void TheWindowsAndProcessesToReadBeforeTheCall_ComeFromTheArguments()
     {
         AuditRecord.WindowHandles(Arguments(new { windowHandle = 5 })).Should().Equal(5);
