@@ -431,33 +431,9 @@ public class ProcessService : IProcessService
                 ErrorCode: nameof(ProcessErrorCode.ConfirmationRequired));
         }
 
-        // Validate process ID
-        if (processId <= 0)
+        if (ArgumentRefusal(processId, gracefulTimeoutMs) is { } invalid)
         {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Invalid process ID. Must be a positive integer.",
-                ErrorCode: nameof(ProcessErrorCode.InvalidProcessId));
-        }
-
-        // Cannot kill self
-        if (processId == Environment.ProcessId)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: "Cannot terminate the current process.",
-                ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
-        }
-
-        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
-        {
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
-                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+            return invalid;
         }
 
         IProcessHandle? process;
@@ -488,97 +464,9 @@ public class ProcessService : IProcessService
                 return ProcessNotFound(processId);
             }
 
-            // Check if it's a protected system process
-            if (ProtectedProcesses.Contains(processName))
+            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out _) is { } refused)
             {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
-                    ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
-            }
-
-            // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
-            if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
-            {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
-                                  "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
-                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
-            }
-
-            // PID reuse guard: the process the agent saw in list_processes may have exited
-            if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
-            {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
-                                  "The process you meant may have exited and its PID been reused. Nothing was done; " +
-                                  "call list_processes to get the current PID.",
-                    ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
-            }
-
-            // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
-            if (IsHostProcess(processId))
-            {
-                return new KillResult(
-                    Success: false,
-                    ProcessId: processId,
-                    ProcessName: processName,
-                    ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
-                                  "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
-                    ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
-            }
-
-            // forceKill ends the whole process tree, so every process in it must pass the policy and the
-            // host check too. A graceful close asks only the process's own main window to close.
-            if (forceKill)
-            {
-                // Fails closed: the runtime's tree kill finds the children on its own, so an unread tree would
-                // still be ended, unchecked
-                if (_processWrapper.GetDescendantsOf(processId) is not { } tree)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
-                                      "could not be read, or did not list the process (it may just have exited), so they could not be " +
-                                      "checked against the target policy and the agent's host. Nothing was terminated. Try again, or close " +
-                                      "it without forceKill (only its main window is asked to close).",
-                        ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
-                }
-
-                if (DeniedDescendant(tree) is { } denied)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
-                                      $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
-                                      "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
-                        ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
-                }
-
-                if (HostDescendant(tree) is { } host)
-                {
-                    return new KillResult(
-                        Success: false,
-                        ProcessId: processId,
-                        ProcessName: processName,
-                        ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
-                                      $"'{host.ImageName}' (PID {host.ProcessId}) belongs to the agent's host: {HostProcessKinds}. " +
-                                      "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
-                                      "forceKill (only its main window is asked to close), or ask the user.",
-                        ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
-                }
+                return refused;
             }
 
             // A call cancelled before anything is sent does nothing
@@ -588,6 +476,189 @@ public class ProcessService : IProcessService
                 ? await TerminateForcefullyAsync(process, processId, processName, cancellationToken).ConfigureAwait(false)
                 : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public KillTargetCheck CheckKillTarget(int processId, bool forceKill, int gracefulTimeoutMs, string? expectedProcessName = null)
+    {
+        if (ArgumentRefusal(processId, gracefulTimeoutMs) is { } invalid)
+        {
+            return KillTargetCheck.Refused(invalid);
+        }
+
+        IProcessHandle? process;
+        try
+        {
+            process = _processWrapper.OpenProcess(processId);
+        }
+        catch (Exception ex)
+        {
+            return KillTargetCheck.Refused(KillFailureFromException(ex, processId, processName: null));
+        }
+
+        if (process == null)
+        {
+            return KillTargetCheck.Refused(ProcessNotFound(processId));
+        }
+
+        using (process)
+        {
+            string processName;
+            try
+            {
+                processName = process.ProcessName;
+            }
+            catch (InvalidOperationException)
+            {
+                return KillTargetCheck.Refused(ProcessNotFound(processId));
+            }
+
+            return TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused
+                ? KillTargetCheck.Refused(refused)
+                : new KillTargetCheck(null, processName, tree ?? []);
+        }
+    }
+
+    /// <summary>The refusal of a process ID or timeout that is not valid, or null.</summary>
+    private static KillResult? ArgumentRefusal(int processId, int gracefulTimeoutMs)
+    {
+        // Validate process ID
+        if (processId <= 0)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Invalid process ID. Must be a positive integer.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidProcessId));
+        }
+
+        // Cannot kill self
+        if (processId == Environment.ProcessId)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: "Cannot terminate the current process.",
+                ErrorCode: nameof(ProcessErrorCode.CannotTerminateSelf));
+        }
+
+        if (gracefulTimeoutMs < 0 || gracefulTimeoutMs > MaxGracefulTimeoutMs)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ErrorMessage: $"gracefulTimeoutMs must be between 0 and {MaxGracefulTimeoutMs}.",
+                ErrorCode: nameof(ProcessErrorCode.InvalidTimeout));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Why the open process must not be closed or terminated, or null: a protected system process, the target
+    /// policy, a PID that now belongs to another process than <paramref name="expectedProcessName"/>, the agent's
+    /// host, and with <paramref name="forceKill"/> a child process that is denied or belongs to the host (or a tree
+    /// that cannot be read). <paramref name="tree"/> is the process tree a forced kill would end, when it was read.
+    /// </summary>
+    private KillResult? TargetRefusal(
+        int processId, string processName, bool forceKill, string? expectedProcessName, out IReadOnlyList<(int ProcessId, string ImageName)>? tree)
+    {
+        tree = null;
+
+        // Check if it's a protected system process
+        if (ProtectedProcesses.Contains(processName))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"Cannot terminate protected system process '{processName}'.",
+                ErrorCode: nameof(ProcessErrorCode.ProtectedProcess));
+        }
+
+        // The user's policy (WAM_DENY_PROCESSES, WAM_ALLOW_PROCESSES); no argument overrides it
+        if (_targetPolicy?.Evaluate([processName]) is { Allowed: false } verdict)
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) is refused by the server's target policy: {verdict.Reason}. " +
+                              "Nothing was done. The policy is set by the user in the server's environment; ask the user to end this process.",
+                ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+        }
+
+        // PID reuse guard: the process the agent saw in list_processes may have exited
+        if (!string.IsNullOrWhiteSpace(expectedProcessName) && !ProcessNameMatches(processName, expectedProcessName))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"PID {processId} belongs to '{processName}', not '{expectedProcessName.Trim()}'. " +
+                              "The process you meant may have exited and its PID been reused. Nothing was done; " +
+                              "call list_processes to get the current PID.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
+        }
+
+        // Closing or killing the agent's host (the terminal or editor hosting the agent) ends its own session
+        if (IsHostProcess(processId))
+        {
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"'{processName}' (PID {processId}) belongs to the agent's host: {HostProcessKinds}. " +
+                              "Closing it would end or disrupt the agent's own session, so it is refused. Nothing was done.",
+                ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+        }
+
+        // forceKill ends the whole process tree, so every process in it must pass the policy and the
+        // host check too. A graceful close asks only the process's own main window to close.
+        if (forceKill)
+        {
+            // Fails closed: the runtime's tree kill finds the children on its own, so an unread tree would
+            // still be ended, unchecked
+            if (_processWrapper.GetDescendantsOf(processId) is not { } descendants)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), but the process list " +
+                                  "could not be read, or did not list the process (it may just have exited), so they could not be " +
+                                  "checked against the target policy and the agent's host. Nothing was terminated. Try again, or close " +
+                                  "it without forceKill (only its main window is asked to close).",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessTreeUnreadable));
+            }
+
+            tree = descendants;
+            if (DeniedDescendant(descendants) is { } denied)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{denied.ImageName}' (PID {denied.ProcessId}) is refused by the server's target policy: {denied.Reason}. " +
+                                  "Nothing was terminated. Close it without forceKill (only its main window is asked to close), or ask the user.",
+                    ErrorCode: nameof(ProcessErrorCode.TargetDeniedByPolicy));
+            }
+
+            if (HostDescendant(descendants) is { } host)
+            {
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill also ends the child processes of '{processName}' (PID {processId}), and its child process " +
+                                  $"'{host.ImageName}' (PID {host.ProcessId}) belongs to the agent's host: {HostProcessKinds}. " +
+                                  "Ending it would end or disrupt the agent's own session, so nothing was terminated. Close it without " +
+                                  "forceKill (only its main window is asked to close), or ask the user.",
+                    ErrorCode: nameof(ProcessErrorCode.CannotTerminateHost));
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -16,7 +16,7 @@ public class WindowFinderTools
         _windowService = windowService;
     }
 
-    [McpServerTool(Name = "find_windows")]
+    [McpServerTool(Name = "find_windows", Title = "Find Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked.")]
     public IReadOnlyList<WindowInfoDto> FindWindows(
         [Description("Partial text to match in window title (case-insensitive)")]
@@ -54,7 +54,7 @@ public class WindowFinderTools
         return results.Select(ToDto).ToList();
     }
 
-    [McpServerTool(Name = "get_all_windows")]
+    [McpServerTool(Name = "get_all_windows", Title = "List All Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("List the visible user-facing app windows on the system: no cloaked, tool, untitled or shell windows (use find_windows with className, includeCloaked, includeToolWindows or includeShell for those). Returns window information including handle, title, process, className, bounds, and state.")]
     public IReadOnlyList<WindowInfoDto> GetAllWindows(
         [Description("Include minimized windows (default: true)")]
@@ -64,7 +64,7 @@ public class WindowFinderTools
         return results.Select(ToDto).ToList();
     }
 
-    [McpServerTool(Name = "get_foreground_window")]
+    [McpServerTool(Name = "get_foreground_window", Title = "Get Foreground Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
     public WindowInfoDto GetForegroundWindow()
     {

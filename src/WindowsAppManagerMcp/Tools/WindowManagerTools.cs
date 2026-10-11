@@ -28,14 +28,30 @@ public class WindowManagerTools
 
     private readonly IWindowService _windowService;
     private readonly IForegroundService _foregroundService;
+    private readonly IInputSession? _session;
+    private readonly TimeSpan _answerTimeout;
+    private readonly TimeSpan? _gateWaitTimeout;
 
-    public WindowManagerTools(IWindowService windowService, IForegroundService foregroundService)
+    /// <param name="windowService">Reads and changes windows.</param>
+    /// <param name="foregroundService">Brings a window to the front (focus_window).</param>
+    /// <param name="session">The input session, whose pause close_windows_batch respects (it takes the input gate itself).</param>
+    /// <param name="answerTimeout">How long close_windows_batch waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
+    /// <param name="gateWaitTimeout">How long close_windows_batch waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    public WindowManagerTools(
+        IWindowService windowService,
+        IForegroundService foregroundService,
+        IInputSession? session = null,
+        TimeSpan? answerTimeout = null,
+        TimeSpan? gateWaitTimeout = null)
     {
         _windowService = windowService;
         _foregroundService = foregroundService;
+        _session = session;
+        _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
+        _gateWaitTimeout = gateWaitTimeout;
     }
 
-    [McpServerTool(Name = "move_window")]
+    [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move a window to a specific position. Returns success and the window's newBounds." + WindowChangeErrors +
                  " MoveFailed: Windows did not move it (error has the reason).")]
     public WindowOperationResult MoveWindow(
@@ -52,7 +68,7 @@ public class WindowManagerTools
         return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront));
     }
 
-    [McpServerTool(Name = "resize_window")]
+    [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Resize a window to specific dimensions. Returns success and the window's newBounds." + WindowChangeErrors +
                  " ResizeFailed: Windows did not resize it (error has the reason). InvalidArguments: width or height is not positive.")]
     public WindowOperationResult ResizeWindow(
@@ -67,7 +83,7 @@ public class WindowManagerTools
         return SizeRefusal(width, height) ?? Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height));
     }
 
-    [McpServerTool(Name = "set_window_bounds")]
+    [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move and resize a window in a single operation. Returns success and the window's newBounds." + WindowChangeErrors +
                  " MoveFailed: Windows did not place it (error has the reason). InvalidArguments: width or height is not positive.")]
     public WindowOperationResult SetWindowBounds(
@@ -89,7 +105,7 @@ public class WindowManagerTools
                Change(hwnd, () => _windowService.SetWindowBounds(hwnd, x, y, width, height, bringToFront));
     }
 
-    [McpServerTool(Name = "set_window_state")]
+    [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state " +
                  "afterwards (within 300 ms); newState reports the state it is in (minimized, maximized or normal)." + WindowChangeErrors +
                  " StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). " +
@@ -105,7 +121,7 @@ public class WindowManagerTools
         return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), reportsState: true);
     }
 
-    [McpServerTool(Name = "focus_window")]
+    [McpServerTool(Name = "focus_window", Title = "Focus Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Bring a window to the foreground and verify it. Works around the Windows foreground lock without sending keys. " +
         "Returns isForeground (also as success), method (already, setForeground, attachThreadInput or inputUnlock), " +
         "the window actually in front (foregroundHandle, foregroundTitle, foregroundProcess) and blockingPopup, a dialog of the " +
@@ -128,7 +144,7 @@ public class WindowManagerTools
         "(the terminal, editor or chat app this server was started from). Default false: such windows are refused " +
         "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.";
 
-    [McpServerTool(Name = "close_window")]
+    [McpServerTool(Name = "close_window", Title = "Close Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close a window gracefully by sending WM_CLOSE. The application may prompt to save unsaved work. success means the close message was sent, not that the window has closed; check with find_windows. " +
                  "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true, " +
                  "refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), " +
@@ -152,9 +168,12 @@ public class WindowManagerTools
             ErrorCode: result.Success ? null : result.ErrorCode.ToString());
     }
 
-    [McpServerTool(Name = "close_windows_batch")]
+    [McpServerTool(Name = "close_windows_batch", Title = "Close Windows (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. " +
-                 "More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) " +
+                 "More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each " +
+                 "window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise " +
+                 "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
+                 "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null fails alone with InvalidArguments.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
@@ -162,22 +181,52 @@ public class WindowManagerTools
         WindowCloseRequest[] windows,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
-        [Description("Must be true to close more than 3 windows in one batch. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
+        [Description("Must be true to close more than 3 windows in one batch when the client cannot ask the user. Check the list (find_windows) first: closing many windows at once can lose unsaved work.")]
         bool confirm = false,
         [Description(ForceDescription + " Applies to every window in the batch.")]
         bool force = false,
+        McpServer? server = null,
         CancellationToken cancellationToken = default)
     {
         RequireItems(windows, nameof(windows));
-        if (windows.Length > MaxCloseBatchWithoutConfirm && !confirm)
+
+        // Nothing while the user has paused input, not even a question
+        InputGateToolFilter.ThrowIfPaused(_session);
+
+        Dictionary<nint, int>? confirmedOwners = null;
+        if (windows.Length > MaxCloseBatchWithoutConfirm)
         {
-            throw new ToolErrorException(
-                nameof(ConfirmationRequired),
-                $"close_windows_batch was asked to close {windows.Length} windows; more than {MaxCloseBatchWithoutConfirm} " +
-                "require confirm=true. Nothing was closed. Check the handles (find_windows) and call again with confirm=true.");
+            if (UserConfirmation.CanAsk(server))
+            {
+                // Ask the user, not the model, and before the input gate: a waiting user must not hold up every input call
+                var targets = windows.Where(w => w != null).Select(w => (Handle: (nint)w.Handle, Window: _windowService.GetWindowInfo((nint)w.Handle)))
+                    .ToList();
+                var answer = await UserConfirmation.AskAsync(server!, CloseQuestion(targets, force), $"Close these {targets.Count} windows",
+                    _answerTimeout, cancellationToken).ConfigureAwait(false);
+                if (!answer.Confirmed)
+                {
+                    throw new ToolErrorException(nameof(ConfirmationDeclined),
+                        $"{answer.Reason} Nothing was closed. Ask the user how to continue.");
+                }
+
+                confirmedOwners = targets.Where(t => t.Window != null).GroupBy(t => t.Handle)
+                    .ToDictionary(g => g.Key, g => g.First().Window!.ProcessId);
+            }
+            else if (!confirm)
+            {
+                throw new ToolErrorException(
+                    nameof(ConfirmationRequired),
+                    $"close_windows_batch was asked to close {windows.Length} windows; more than {MaxCloseBatchWithoutConfirm} " +
+                    "require confirm=true. Nothing was closed. Check the handles (find_windows) and call again with confirm=true.");
+            }
         }
 
-        var refusals = windows.Select((w, i) => w == null ? NullItem(i, nameof(windows), "a handle") : null).ToList();
+        using var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
+
+        // A window the user was asked about must still belong to the same process; a reused handle is not closed
+        var refusals = windows.Select((w, i) => w == null
+            ? NullItem(i, nameof(windows), "a handle")
+            : confirmedOwners == null ? null : HandleMismatchRefusal(w.Handle, confirmedOwners)).ToList();
         var handles = windows.Where((_, i) => refusals[i] == null).Select(w => (nint)w.Handle).ToList();
 
         var results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
@@ -189,7 +238,7 @@ public class WindowManagerTools
             ErrorCode: r.Success ? null : r.ErrorCode.ToString()))));
     }
 
-    [McpServerTool(Name = "snap_window")]
+    [McpServerTool(Name = "snap_window", Title = "Snap Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds." + WindowChangeErrors +
                  " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it.")]
     public WindowOperationResult SnapWindow(
@@ -206,7 +255,7 @@ public class WindowManagerTools
         return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront));
     }
 
-    [McpServerTool(Name = "move_window_to_monitor")]
+    [McpServerTool(Name = "move_window_to_monitor", Title = "Move Window to Monitor", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds." + WindowChangeErrors +
                  " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
                  "or with positioning 'maximize' it was not maximized on that monitor. An unknown positioning fails with InvalidPositioning.")]
@@ -224,7 +273,7 @@ public class WindowManagerTools
         return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront));
     }
 
-    [McpServerTool(Name = "set_windows_bounds_batch")]
+    [McpServerTool(Name = "set_windows_bounds_batch", Title = "Set Window Bounds (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls." + BatchErrors +
                  " MoveFailed: Windows did not place the window.")]
     public async Task<BatchWindowResult> SetWindowsBoundsBatch(
@@ -248,7 +297,7 @@ public class WindowManagerTools
         return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
     }
 
-    [McpServerTool(Name = "snap_windows_batch")]
+    [McpServerTool(Name = "snap_windows_batch", Title = "Snap Windows (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls." + BatchErrors +
                  " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window.")]
     public async Task<BatchWindowResult> SnapWindowsBatch(
@@ -280,7 +329,7 @@ public class WindowManagerTools
         return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
     }
 
-    [McpServerTool(Name = "set_windows_state_batch")]
+    [McpServerTool(Name = "set_windows_state_batch", Title = "Set Window States (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only " +
                  "when its window was seen in that state afterwards, and newState reports the state it is in." + BatchErrors +
                  " InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.")]
@@ -311,6 +360,33 @@ public class WindowManagerTools
 
         return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r, reportsState: true))));
     }
+
+    /// <summary>The question close_windows_batch asks the user: every window, with its title, process and PID.</summary>
+    private static string CloseQuestion(IReadOnlyList<(nint Handle, WindowInfo? Window)> targets, bool force)
+    {
+        var lines = targets.Take(20).Select((t, i) => t.Window is { } w
+            ? $"{i + 1}. '{(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)}' ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
+            : $"{i + 1}. window {t.Handle} (no longer exists)");
+        var more = targets.Count > 20 ? $"\n... and {targets.Count - 20} more" : string.Empty;
+        var protection = force
+            ? " force is set: protected windows (the desktop shell, the agent's own terminal or editor) are closed too."
+            : string.Empty;
+        return $"The AI agent asks to close {targets.Count} windows. Each app may ask to save your work, or close without asking.{protection}\n" +
+               string.Join("\n", lines) + more + "\nAllow it?";
+    }
+
+    /// <summary>
+    /// HandleMismatch for a window that belongs to another process than when the user confirmed (its handle was
+    /// reused), or null. A window that is gone is left to the close, which reports InvalidHandle.
+    /// </summary>
+    private WindowResultItem? HandleMismatchRefusal(long handle, IReadOnlyDictionary<nint, int> confirmedOwners) =>
+        confirmedOwners.TryGetValue((nint)handle, out var asked) &&
+        _windowService.GetWindowInfo((nint)handle) is { } now && now.ProcessId != asked
+            ? new WindowResultItem(handle, false,
+                Error: $"Window {handle} now belongs to {now.ProcessName} (PID {now.ProcessId}), not to the process (PID {asked}) the user " +
+                       "confirmed: the window closed and its handle was reused. It was not closed.",
+                ErrorCode: nameof(HandleMismatch))
+            : null;
 
     /// <summary>
     /// The refusal of a change before anything is sent: InvalidHandle, or TargetDeniedByPolicy for a window the user's

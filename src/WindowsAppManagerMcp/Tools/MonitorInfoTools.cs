@@ -15,7 +15,7 @@ public class MonitorInfoTools
         _monitorService = monitorService;
     }
 
-    [McpServerTool(Name = "get_monitors")]
+    [McpServerTool(Name = "get_monitors", Title = "List Monitors", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about all connected displays/monitors including bounds, work area (excluding taskbar), and scale factor.")]
     public MonitorsResult GetMonitors()
     {
@@ -35,7 +35,7 @@ public class MonitorInfoTools
         );
     }
 
-    [McpServerTool(Name = "get_primary_monitor")]
+    [McpServerTool(Name = "get_primary_monitor", Title = "Get Primary Monitor", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get information about the primary display. Convenience method that returns the main monitor's details.")]
     public MonitorInfoDto GetPrimaryMonitor()
     {

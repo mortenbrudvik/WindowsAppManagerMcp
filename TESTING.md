@@ -2133,6 +2133,12 @@ checked by `Unit/Infrastructure/ToolEnumTests`. A test that serves one tool clas
 registers it with `WithServerTools(instance)`, not the SDK's `WithTools(instance)`, so its arguments are bound
 as the server binds them.
 
+`Contract/ToolAnnotationContractTests` holds every tool to a title and all four hints (roadmap M2.10), and pins
+the read-only, destructive and open-world sets. `Contract/UserConfirmationContractTests` covers kill_process and
+close_windows_batch asking the user through elicitation on both protocol paths. Its elicitation handler takes the
+input gate (`InputGate.TryEnterAsync`) while the question is open: a tool that asked while holding the gate would
+fail it after 5 seconds instead of blocking every input call.
+
 `Contract/ToolPayloadBudgetTests` measures the typical result of every tool on `TypicalDesktop` (two
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
 presets) and holds it to a per-tool token budget. Text is estimated at 4 UTF-8 bytes per token; a capture's

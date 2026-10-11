@@ -1,0 +1,93 @@
+using System.Text.Json;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
+namespace WindowsAppManagerMcp.Infrastructure;
+
+/// <summary>The user's answer to a confirmation question: confirmed, or why not.</summary>
+/// <param name="Confirmed">True when the user accepted and ticked the confirmation.</param>
+/// <param name="Reason">Why the action must not go ahead: declined, dismissed, not answered, or not asked; null when confirmed.</param>
+public sealed record ConfirmationAnswer(bool Confirmed, string? Reason);
+
+/// <summary>
+/// Asks the user, not the model, to confirm an irreversible action (roadmap M2.10): the MCP client shows the question
+/// (elicitation) and only a ticked "confirm" from the user lets the action go ahead. kill_process and
+/// close_windows_batch use it when the client can ask; otherwise they fall back to their confirm argument.
+/// </summary>
+/// <remarks>
+/// Never ask while holding the input gate: the user may take minutes to answer, and every input and window call would
+/// wait for them (<see cref="InputGateToolFilter.SelfGatedTools"/>).
+/// </remarks>
+public static class UserConfirmation
+{
+    /// <summary>The name of the yes/no field in the question.</summary>
+    public const string ConfirmField = "confirm";
+
+    /// <summary>How long a tool waits for the user's answer by default.</summary>
+    public static readonly TimeSpan DefaultAnswerTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>True when the client can ask the user: it advertises form elicitation.</summary>
+    public static bool CanAsk(McpServer? server) => server?.ClientCapabilities?.Elicitation?.Form != null;
+
+    /// <summary>
+    /// Shows <paramref name="message"/> to the user with a "confirm" checkbox labelled <paramref name="title"/>, and
+    /// waits up to <paramref name="timeout"/> for the answer. Anything but an accepted, ticked answer is not a
+    /// confirmation, including a client that fails to ask. Cancelling the call cancels the question.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">The call was cancelled.</exception>
+    public static async Task<ConfirmationAnswer> AskAsync(
+        McpServer server, string message, string title, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+
+        var question = new ElicitRequestParams
+        {
+            Message = message,
+            RequestedSchema = new ElicitRequestParams.RequestSchema
+            {
+                Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>
+                {
+                    [ConfirmField] = new ElicitRequestParams.BooleanSchema
+                    {
+                        Title = title,
+                        Description = "Tick to let the AI agent do this; leave it unticked or decline to stop it",
+                        Default = false
+                    }
+                },
+                Required = [ConfirmField]
+            }
+        };
+
+        ElicitResult answer;
+        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            deadline.CancelAfter(timeout);
+            try
+            {
+                answer = await server.ElicitAsync(question, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new ConfirmationAnswer(false, $"The user did not answer within {timeout.TotalMinutes:0.#} minutes.");
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or McpException)
+            {
+                return new ConfirmationAnswer(false, $"The user could not be asked ({ex.Message}).");
+            }
+        }
+
+        if (answer.IsAccepted &&
+            answer.Content != null &&
+            answer.Content.TryGetValue(ConfirmField, out var value) &&
+            (value.ValueKind == JsonValueKind.True ||
+             (value.ValueKind == JsonValueKind.String && string.Equals(value.GetString(), "true", StringComparison.OrdinalIgnoreCase))))
+        {
+            return new ConfirmationAnswer(true, null);
+        }
+
+        return new ConfirmationAnswer(false, answer.IsAccepted
+            ? "The user did not confirm."
+            : $"The user {(answer.Action == "decline" ? "declined" : "dismissed")} the question.");
+    }
+}
