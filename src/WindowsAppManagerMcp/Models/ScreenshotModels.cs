@@ -16,7 +16,8 @@ public interface ICaptureMetadata
 /// screen origin, also for window captures. <see cref="ImageToScreen"/> maps an image pixel to a screen
 /// pixel. <see cref="OriginalWidth"/> and <see cref="OriginalHeight"/> are set only when the image was
 /// scaled down. <see cref="ScaleFactor"/> is the monitor's DPI scale, for information only: it plays no
-/// part in any coordinate conversion.
+/// part in any coordinate conversion. <see cref="Warnings"/> say why a successful image may not show what the
+/// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -35,7 +36,8 @@ public record ScreenshotResult(
     int? OriginalHeight = null,
     long? ByteSize = null,
     string? CaptureMethod = null,
-    string? CoordinateSpace = null
+    string? CoordinateSpace = null,
+    IReadOnlyList<string>? Warnings = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -107,7 +109,10 @@ public record VirtualScreenBounds(
 /// Metadata of a window capture with UI element overlays (see <see cref="ScreenshotResult"/> for the
 /// shared fields). <see cref="AnnotatedElement.ImageBounds"/> are output-image pixels, measured from
 /// the same origin as <see cref="CapturedRegion"/>; <see cref="AnnotatedElement.ScreenBounds"/> stay in
-/// screen pixels.
+/// screen pixels. The pixels are captured even when the UI Automation walk fails: the image then comes with
+/// <see cref="ElementsError"/> and <see cref="ElementsErrorCode"/> (the get_ui_elements code, for example
+/// OperationTimedOut) and no elements. <see cref="Truncated"/> is true when the element list is incomplete
+/// (the walk failed, timed out or skipped elements), and <see cref="TruncationReason"/> says why.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -131,7 +136,12 @@ public record AnnotatedScreenshotResult(
     int? OriginalHeight = null,
     long? ByteSize = null,
     string? CaptureMethod = null,
-    string? CoordinateSpace = null
+    string? CoordinateSpace = null,
+    IReadOnlyList<string>? Warnings = null,
+    string? ElementsError = null,
+    string? ElementsErrorCode = null,
+    bool? Truncated = null,
+    string? TruncationReason = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -200,4 +210,38 @@ public sealed record CaptureOptions
 
     /// <summary>Legacy alias: true turns output "image" or "metadata" into "file".</summary>
     public bool SaveToFile { get; init; }
+}
+
+/// <summary>
+/// The warnings a successful capture can carry (roadmap M2.9). Each one starts with a stable code and a colon,
+/// so an agent can match on the code; the rest of the sentence says what it means and what to do.
+/// </summary>
+public static class CaptureWarnings
+{
+    /// <summary>Every sampled pixel has one color.</summary>
+    public const string ImageBlank = "ImageBlank";
+
+    /// <summary>The window did not answer, so its pixels were copied from the screen.</summary>
+    public const string WindowNotResponding = "WindowNotResponding";
+
+    /// <summary>The requested region was cut to the virtual screen.</summary>
+    public const string RegionClipped = "RegionClipped";
+
+    /// <summary>Part of the region is on no monitor (a gap between monitors of different sizes) and is black.</summary>
+    public const string RegionPartlyOffMonitors = "RegionPartlyOffMonitors";
+
+    /// <summary>The window is not per-monitor DPI aware, so Windows scales it.</summary>
+    public const string DpiScaledWindow = "DpiScaledWindow";
+
+    /// <summary>restoreIfMinimized restored the window for the capture and minimized it again.</summary>
+    public const string WindowRestored = "WindowRestored";
+
+    /// <summary>The restored window did not show two equal frames in time.</summary>
+    public const string WindowStillPainting = "WindowStillPainting";
+
+    /// <summary>The window could not be minimized again after the capture.</summary>
+    public const string ReminimizeFailed = "ReminimizeFailed";
+
+    /// <summary>"Code: text".</summary>
+    public static string Format(string code, string text) => $"{code}: {text}";
 }

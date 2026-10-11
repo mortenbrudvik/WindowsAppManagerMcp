@@ -363,13 +363,13 @@ public class TargetPolicyEnforcementTests
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
 
     [Fact]
-    public void CaptureWindow_DeniedProcess_IsRefused_AndNothingIsCaptured()
+    public async Task CaptureWindow_DeniedProcess_IsRefused_AndNothingIsCaptured()
     {
         // Arrange
         var sut = CreateScreenshotTools(0x300, "KeePass");
 
         // Act
-        var result = sut.CaptureWindow(0x300);
+        var result = await sut.CaptureWindow(0x300);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -396,11 +396,11 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void CaptureWindow_AllowedProcess_IsCaptured()
+    public async Task CaptureWindow_AllowedProcess_IsCaptured()
     {
         var sut = CreateScreenshotTools(0x200, "notepad");
 
-        sut.CaptureWindow(0x200);
+        await sut.CaptureWindow(0x200);
 
         _screenshots.Verify(s => s.CaptureWindow(new nint(0x200), true, It.IsAny<CaptureOptions>()), Times.Once);
     }

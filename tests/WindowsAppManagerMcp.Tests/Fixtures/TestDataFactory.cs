@@ -436,7 +436,7 @@ public static class TestDataFactory
             MonitorIndex: monitorIndex,
             ScaleFactor: scaleFactor,
             ByteSize: 4,
-            CaptureMethod: "BitBlt",
+            CaptureMethod: "ScreenBitBlt",
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen);
     }
 
@@ -517,7 +517,7 @@ public static class TestDataFactory
         mock.Setup(s => s.CaptureScreenRegion(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
             .Returns((int x, int y, int w, int h) =>
-                new CaptureResult(pixelData ?? new byte[w * h * 4], w, h, x, y, "BitBlt"));
+                new CaptureResult(pixelData ?? new byte[w * h * 4], w, h, x, y, "ScreenBitBlt"));
 
         // CaptureWindow - return pixel data with specified default dimensions
         var windowPixelData = pixelData ?? new byte[captureWidth * captureHeight * 4];

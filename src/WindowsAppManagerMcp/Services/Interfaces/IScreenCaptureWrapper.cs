@@ -9,7 +9,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="Height">Height in pixels.</param>
 /// <param name="ScreenOriginX">Screen X (physical virtual-screen pixels) of the top-left pixel. Can be negative.</param>
 /// <param name="ScreenOriginY">Screen Y (physical virtual-screen pixels) of the top-left pixel. Can be negative.</param>
-/// <param name="Method">How the pixels were read: "BitBlt" (from the screen or window DC) or "PrintWindow".</param>
+/// <param name="Method">How the pixels were read: "ScreenBitBlt" (copied from the screen, covering windows included),
+/// "PrintWindow" (the window drew itself) or "BitBltFallback" (the window refused PrintWindow, so its device context
+/// was copied).</param>
 public sealed record CaptureResult(
     byte[] Bgra,
     int Width,
@@ -41,6 +43,15 @@ public interface IScreenCaptureWrapper
     /// (MapWindowPoints of the client rectangle, which is also right for mirrored right-to-left windows).
     /// </returns>
     CaptureResult CaptureWindow(nint windowHandle, bool includeFrame);
+
+    /// <summary>
+    /// Copies a window's rectangle from the screen (method "ScreenBitBlt") without asking the window to draw: for a
+    /// window whose thread does not answer, where PrintWindow would block. Windows that cover it show in the image.
+    /// </summary>
+    /// <param name="windowHandle">Handle to the window</param>
+    /// <param name="includeFrame">Whether to include the window frame/decoration</param>
+    /// <returns>The pixels, with the same screen origin as <see cref="CaptureWindow"/>.</returns>
+    CaptureResult CaptureWindowFromScreen(nint windowHandle, bool includeFrame);
 
     /// <summary>
     /// Gets the bounds of the virtual screen (all monitors combined).

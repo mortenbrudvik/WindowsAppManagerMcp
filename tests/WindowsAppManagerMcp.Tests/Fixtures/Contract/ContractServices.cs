@@ -281,7 +281,7 @@ public sealed class ContractServices : IDisposable
         Screenshots = new ScreenshotService(
             TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object,
             monitors.Object,
-            Mock.Of<INativeWindowWrapper>());
+            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
     }
 
     /// <summary>A launch that started a process and, when it waited, found the window.</summary>

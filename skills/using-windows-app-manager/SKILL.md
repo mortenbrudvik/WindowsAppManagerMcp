@@ -99,7 +99,7 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 
 - **A tool is missing:** the user's toolsets, excluded tools or read-only mode leave it out (see [Toolsets](#toolsets)); `get_server_info` says which. Tell the user instead of working around it.
 - **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`), and convert capture points with `imageToScreen`, never with `scaleFactor`.
-- **A minimized window cannot be captured** (`CaptureFailed`); restore it with `set_window_state` first, or capture what is on screen.
+- **A capture shows nothing useful:** a minimized window fails with `WindowMinimized` (pass `restoreIfMinimized: true`, which restores it without activation and minimizes it again), a hidden one with `WindowHidden`, one on another virtual desktop with `Cloaked`. Read the capture's `warnings`: `ImageBlank` (one solid color: GPU or protected content, or not painted yet), `WindowNotResponding` (copied from the screen, so covering windows show) or `DpiScaledWindow`.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.
 - **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows shows a consent or security prompt (UAC, SmartScreen): only the user may answer it, so ask the user and never click or type into it. `InvalidUri`: percent-encode quotes and spaces in a URI (`%22`, `%20`). `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
 
@@ -300,7 +300,7 @@ The capture tools return the image as image content, so you see the picture dire
 
 - Defaults are sized for vision: the long edge is at most 1568 pixels (`maxDimension`; 0 keeps full resolution), and the format is JPEG, or PNG when the image is at most 512 pixels on its long edge. Pass `format: "png"` when exact pixels matter, or capture a small region to read small text.
 - `output` chooses what comes back: `image` (default), `file` (only the metadata with `filePath`), `both`, or `metadata` (no image). Files go to `%TEMP%\WindowsAppManagerMcp\captures` unless you pass an absolute `outputPath` on a drive letter (network paths are refused) ending in `.png`, `.jpg` or `.jpeg` in an existing folder. An existing file is replaced only with `overwrite: true`.
-- A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists` or `CaptureFailed` (a minimized window cannot be captured). `capture_window` and `capture_with_elements` return `TargetDeniedByPolicy` for an app the user's policy denies.
+- A failed capture returns an error result with `errorCode`, for example `InvalidFormat`, `InvalidHandle`, `FileExists`, `WindowMinimized`, `WindowHidden`, `Cloaked` or `RegionOffScreen`. `capture_window` and `capture_with_elements` return `TargetDeniedByPolicy` for an app the user's policy denies. A successful capture can carry `warnings` (each starts with a code such as `ImageBlank`); `capture_with_elements` still returns the image when the UI element walk fails, with `elementsError` and `truncated: true`.
 - If you only need positions, call `get_ui_elements`. It returns element bounds with no image data.
 
 ## Reading Browser Pages
@@ -395,7 +395,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 - `get_foreground_window` reports any window, including untitled menus and popups (empty `title`, check `className`)
 - Layout presets can launch missing applications with `launchMissing: true`, but only with a `launchCommand` added to the preset by hand: `save_layout` records none
 - `close_window` returns `AccessDenied` for a window of an app running as administrator
-- `capture_window` works on occluded windows but not minimized ones
+- `capture_window` works on occluded windows; minimized ones need `restoreIfMinimized: true`
 - Filter elements by `controlTypes`: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, etc. Matching elements inside other containers are still returned, so `controlTypes: "Button"` finds Buttons inside panes and toolbars. An unknown name fails with `InvalidControlType`, which lists the valid names
 - `interactableOnly` keeps enabled elements that are keyboard-focusable or support an action (invoke, toggle, value, selection, expand/collapse); labels and containers are left out, but not the controls inside them
 - `visibleOnly` (on by default) leaves out everything inside an offscreen element; pass `false` if the control may be scrolled out of view

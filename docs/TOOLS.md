@@ -1390,6 +1390,8 @@ The **Response** examples below show the metadata text, formatted.
 - **Files:** without `outputPath`, the file gets a new name in `%TEMP%\WindowsAppManagerMcp\captures`. `outputPath` must be an absolute path on a drive letter (such as `C:\captures\shot.png`) ending in `.png`, `.jpg` or `.jpeg` to match the format (with `format: "auto"` the extension decides), in a folder that already exists; the server creates no folders. Network paths (`\\server\share\...`) and device paths (`\\?\...`, `\\.\...`) fail with `InvalidOutputPath` before anything is written or checked, so a capture cannot be sent to another computer. An existing file is replaced only with `overwrite: true`; otherwise the call fails with `FileExists`. `filePath` is the normalized full path.
 - **Legacy options:** `saveToFile: true` is the same as `output: "file"`. `maxWidth` limits the image width; given without `maxDimension`, it replaces the 1568 default and limits only the width, as in earlier versions.
 - **Errors:** a failed capture returns `isError: true` with only the metadata: `success: false`, `error` and `errorCode` (see the [Error code reference](#error-code-reference)). An unknown `format` or `output` is refused before the tool runs, so its error is a [tool error](#tool-errors) (`success`, `error`, `errorCode`, `tool`) without the capture metadata.
+- **Capture health:** a capture that cannot show the window fails with its own code before any pixel is read: `WindowHidden` (no WS_VISIBLE, for example an app hidden in the notification area), `Cloaked` (on another virtual desktop, or a suspended Store app) and `WindowMinimized` (pass `restoreIfMinimized: true`, or restore the window first). They are checked in that order, so a window that is minimized and also hidden or cloaked fails with `WindowHidden` or `Cloaked`, and `restoreIfMinimized` never restores it. A region entirely off the screen fails with `RegionOffScreen`; one partly off it is cut to the screen. A successful capture can carry `warnings`, each a sentence that starts with a code: `ImageBlank` (about 1024 sampled pixels all have one color, named in the warning: right for an empty area, but a black image usually means GPU or protected content this capture cannot read, or a window that has not painted yet), `WindowNotResponding` (the window could not be asked to draw itself, because its application does not answer or too many calls to other applications are stuck; the warning gives the reason. The window was copied from the screen instead, so windows that cover it show), `DpiScaledWindow` (the window is not per-monitor DPI aware, so Windows scales it and the image can show it at its unscaled size), `RegionClipped`, `RegionPartlyOffMonitors` (part of the region lies between monitors and is black), and for `restoreIfMinimized` `WindowRestored`, `WindowStillPainting` and `ReminimizeFailed`. `warnings` is left out when there is nothing to say. `captureMethod` says how the pixels were read: `ScreenBitBlt` (copied from the screen: what is on screen there, covering windows included; take_screenshot, capture_region, and a window that does not answer), `PrintWindow` (the window drew itself, so covering windows do not show) or `BitBltFallback` (the window refused PrintWindow and its device context was copied, which can show covering windows).
+- **Pixel budget:** one capture holds at most 64 megapixels (for example 8192 x 8192) and 16384 pixels on an edge; a larger region fails with `InvalidRegion` and a larger window with `CaptureFailed`, both before any memory is allocated. The pixels are read into a bitmap of the server and copied out once.
 - **Target policy:** [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) refuse a window whose app the user's [target policy](#target-policy) denies, with `TargetDeniedByPolicy`, before any pixel or element is read. [take_screenshot](#take_screenshot) and [capture_region](#capture_region) capture whatever is on screen, including a denied window that happens to be visible there: they do not black it out.
 - Image pixels are not screen coordinates. `capturedRegion` is the captured screen rectangle with its real origin, and `imageToScreen` converts image points to screen points; see [Image coordinates](#image-coordinates).
 - If you only need element positions, use [get_ui_elements](#get_ui_elements), which returns no image.
@@ -1501,7 +1503,7 @@ Capture a screenshot of a specific monitor.
   "originalWidth": 3840,
   "originalHeight": 2160,
   "byteSize": 241337,
-  "captureMethod": "BitBlt",
+  "captureMethod": "ScreenBitBlt",
   "coordinateSpace": "physical-virtual-screen"
 }
 ```
@@ -1538,7 +1540,7 @@ Image point (100, 50) is screen point (0 + 100 × 2.44898, 0 + 50 × 2.44898) = 
   "scaleFactor": 1.0,
   "filePath": "C:\\captures\\monitor0.png",
   "byteSize": 1834512,
-  "captureMethod": "BitBlt",
+  "captureMethod": "ScreenBitBlt",
   "coordinateSpace": "physical-virtual-screen"
 }
 ```
@@ -1597,10 +1599,12 @@ Capture a screenshot of an arbitrary screen region.
   "monitorIndex": 1,
   "scaleFactor": 1.5,
   "byteSize": 48211,
-  "captureMethod": "BitBlt",
+  "captureMethod": "ScreenBitBlt",
   "coordinateSpace": "physical-virtual-screen"
 }
 ```
+
+> **Note:** Only the part of the region on the virtual screen (the bounding box of all monitors, see [list_screens](#list_screens)) is captured. A region partly off it is cut to it: `capturedRegion` is the part captured, and a `RegionClipped` warning gives it. A region entirely off it fails with `RegionOffScreen`. Part of a region that lies between monitors of different sizes is black, with a `RegionPartlyOffMonitors` warning. `monitorIndex` and `scaleFactor` are those of the monitor that contains the region's center, and are left out when the center is on no monitor.
 
 ---
 
@@ -1622,6 +1626,7 @@ Capture a screenshot of a specific window. Works even if the window is partially
 | overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | boolean | No | false | Deprecated: the same as output "file" |
 | maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+| restoreIfMinimized | boolean | No | false | Restore a minimized window without activating it for the capture, then minimize it again; holds the input gate meanwhile (`PausedByUser` while paused). Without it a minimized window fails with `WindowMinimized` |
 <!-- tools:end params:capture_window -->
 
 **Example:**
@@ -1669,9 +1674,11 @@ Capture a screenshot of a specific window. Works even if the window is partially
 }
 ```
 
-> **Note:** Minimized windows cannot be captured (`CaptureFailed`). The window must be visible, though it can be behind other windows.
+> **Note:** A minimized window fails with `WindowMinimized`, unless `restoreIfMinimized: true`: then the window (or the minimized window it is inside) is restored without being activated, the call waits until two frames in a row are equal (at most 1.5 s, else a `WindowStillPainting` warning), captures it and minimizes it again with SW_SHOWMINNOACTIVE, which activates no other window; the warning `WindowRestored` says so. While the window is restored the call holds the input gate, like a window tool: it fails with `PausedByUser` while input is paused and with `InputBusy` when another input or window call holds the gate, and it is refused with `TargetDeniedByPolicy` when the [target policy](#target-policy) denies a window the restore would show (a dialog the minimized window owns). A window that was maximized before it was minimized is shown at its normal size for the capture, and the user's next restore may bring it back un-maximized (SW_SHOWNOACTIVATE clears its restore-to-maximized flag; the `WindowRestored` warning says so). A hidden window fails with `WindowHidden` and a cloaked one (on another virtual desktop) with `Cloaked`, also when it is minimized and `restoreIfMinimized` is true: it is never restored, so an app minimized to the notification area stays hidden. The window can be behind other windows.
 
-> **Note:** `capturedRegion` is the window's real screen rectangle: the window rectangle with the default `includeFrame: true` (the same corner as `bounds` from find_windows), or the client area with `includeFrame: false`. Convert image points with `imageToScreen`; see [Image coordinates](#image-coordinates). `captureMethod` is `PrintWindow`, or `BitBlt` when the window refused to draw itself and the visible pixels were copied instead.
+> **Note:** The window is asked to draw itself (PrintWindow) with a 5-second deadline. A window whose application Windows reports as hung, or that misses the deadline, is copied from the screen instead (`captureMethod: "ScreenBitBlt"`, warning `WindowNotResponding` with the reason), so windows that cover it show in the image. The same happens, at once, while too many earlier calls to other applications are still waiting for an answer.
+
+> **Note:** `capturedRegion` is the window's real screen rectangle: with the default `includeFrame: true` the visible frame (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible resize borders that the window rectangle and `bounds` from find_windows include (about 7 pixels left, right and bottom at 100%), or the client area with `includeFrame: false`. Convert image points with `imageToScreen`; see [Image coordinates](#image-coordinates). `captureMethod` is `PrintWindow`, `BitBltFallback` when the window refused to draw itself and its visible pixels were copied instead, or `ScreenBitBlt` for a window that does not answer.
 
 ---
 
@@ -1692,13 +1699,14 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 | interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
 | visibleOnly | boolean | No | true | Only include visible elements |
 | highlightInteractable | boolean | No | true | Use brighter colors for enabled elements |
-| timeoutMs | integer | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn |
+| timeoutMs | integer | No | 5000 | Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (`truncated: true`); with none found, the image comes without overlays (`elementsErrorCode: "OperationTimedOut"`) |
 | maxDimension | integer | No | 1568 px | Longest image edge in pixels; 0 keeps full resolution. `imageBounds` are scaled with the image; `screenBounds` stay in screen pixels |
 | output | string (one of: `"image"`, `"file"`, `"both"`, `"metadata"`) | No | "image" | "image", "file", "both" or "metadata" |
 | outputPath | string | No | temp file | Absolute file path on a drive letter (no network paths) for output "file" or "both"; the folder must exist |
 | overwrite | boolean | No | false | Allow `outputPath` to replace an existing file |
 | saveToFile | boolean | No | false | Deprecated: the same as output "file" |
 | maxWidth | integer | No | - | Deprecated: maximum image width in pixels |
+| restoreIfMinimized | boolean | No | false | Restore a minimized window without activating it for the capture, then minimize it again; holds the input gate meanwhile (`PausedByUser` while paused). Without it a minimized window fails with `WindowMinimized` |
 <!-- tools:end params:capture_with_elements -->
 
 **Color Coding:**
@@ -1785,13 +1793,13 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 
 > **Note:** `imageBounds` are pixels of the returned image (scaled with it), measured from its top-left corner, which is `capturedRegion`. `screenBounds` are absolute screen coordinates. Use `imageBounds` to find an element in the picture and `screenBounds` to click it. The overlays and `imageBounds` line up with the image with or without the frame.
 
-> **Note:** A minimized window is refused with `CaptureFailed` before the UI element walk, as in [capture_window](#capture_window); restore it first (for example with [set_window_state](#set_window_state)). A window whose app the user's [target policy](#target-policy) denies is refused with `TargetDeniedByPolicy` before any pixel or element is read.
+> **Note:** The handle only has to be a window, so untitled popups and menus work; their title comes from UI Automation. A minimized, hidden or cloaked window is refused before the UI element walk, as in [capture_window](#capture_window) (`WindowMinimized`, `WindowHidden`, `Cloaked`); `restoreIfMinimized` works as there, and the window stays restored for the walk and the capture. A window whose app the user's [target policy](#target-policy) denies is refused with `TargetDeniedByPolicy` before any pixel or element is read.
 
-> **Note:** When the UI element walk fails, `errorCode` is the [get_ui_elements](#get_ui_elements) code, for example `OperationTimedOut` (raise `timeoutMs` or lower `maxDepth`). A walk that the timeout cut off after it found matching elements is not a failure: the capture is returned with the elements read so far.
+> **Note:** The pixels do not depend on the UI element walk. When the walk fails, the image is still returned, without overlays and with `success: true`: `elementsError` says why, `elementsErrorCode` is the [get_ui_elements](#get_ui_elements) code (for example `OperationTimedOut`: raise `timeoutMs` or lower `maxDepth`; or `OperationException` when the app's UI Automation provider failed) and `truncated` is `true`. A walk that the timeout cut off after it found matching elements returns the elements read so far, with `truncated: true` and `truncationReason: "Timeout"`. Only an unknown `controlTypes` name fails the call (`InvalidControlType`).
 
 > **Note:** The filters work as in [get_ui_elements](#get_ui_elements): `controlTypes` and `interactableOnly` leave out only the elements that fail them, so a Button inside a Pane is still overlaid, while `visibleOnly` leaves out everything inside an offscreen element. An unknown control type name fails the call, and the error lists the valid names.
 
-> **Note:** Unlike get_ui_elements, this tool does not report elements that were skipped because they disappeared or their UI Automation provider failed during the walk, or that `timeoutMs` cut off. The annotations can be incomplete with no sign of it; call [get_ui_elements](#get_ui_elements) and check `truncated` if a control is missing.
+> **Note:** `truncated` is `true` whenever the element list is incomplete, and `truncationReason` says why, as in [get_ui_elements](#get_ui_elements): `Timeout`, or `ElementsSkipped` when elements disappeared or their UI Automation provider failed during the walk. Both fields are left out for a complete walk.
 
 > **Note:** Element names and the window title come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
@@ -1897,7 +1905,8 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
   "errorCode": "None",
   "skippedElementCount": 0,
   "depthReached": 5,
-  "truncated": false
+  "truncated": false,
+  "windowState": "Normal"
 }
 ```
 
@@ -1907,6 +1916,7 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from the element's lo
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
 - `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `windowState`: the state of the window's top-level window when the walk ended: `Normal`, `Maximized` or `Minimized`. A minimized window's elements are offscreen, so `visibleOnly` leaves them all out and the tree is empty: restore the window first (or capture it with `restoreIfMinimized`). Left out when the window could not be read.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
 **Error Codes:**
@@ -4017,7 +4027,7 @@ send_keys { "keys": "{ENTER}", "windowHandle": 12345 }
 
 ## Changes for existing clients
 
-These changes (roadmap M2.1, M2.2, M2.5, M2.6, M2.7 and M2.10: honest results, typed parameters, verified close, launch resolution, annotations and confirmation by the user) change what some calls return. A client
+These changes (roadmap M2.1, M2.2, M2.3, M2.5, M2.6, M2.7, M2.8, M2.9 and M2.10: honest results, typed parameters, geometry, verified close, launch resolution, layout matching, capture health, annotations and confirmation by the user) change what some calls return. A client
 that followed the documented contract keeps working; the list says what a client that relied on the old behavior
 sees now.
 
@@ -4089,6 +4099,7 @@ sees now.
   return `PausedByUser` and `InputBusy` as tool errors (it takes the input gate itself, only while it sends, and waits
   outside it). A close message Windows refuses because the window's message queue is full is `NotResponding` instead
   of `CloseFailed`. Two new tools: [get_owned_windows](#get_owned_windows) and [close_application](#close_application).
+- **Captures report their health (M2.9).** A minimized window fails with `WindowMinimized` instead of `CaptureFailed`; a hidden window (`WindowHidden`), a cloaked one (`Cloaked`) and a region entirely off the screen (`RegionOffScreen`) used to succeed with an empty, black or tiny image and now fail. A region partly off the screen is cut to the screen, so `capturedRegion` can be smaller than the request, and capture_region leaves `monitorIndex` and `scaleFactor` out when the region's center is on no monitor (it used to name the nearest one). Frame captures are cut to the visible frame, so `capturedRegion` starts about 7 pixels right of the window rectangle's corner. capture_with_elements returns the image when the UI element walk fails, with `success: true` and `elementsError`/`elementsErrorCode`, where it used to fail with the walk's code and no image. `captureMethod` `BitBlt` is now `ScreenBitBlt` (screen copies) or `BitBltFallback` (the window refused PrintWindow). A failure to build or encode the image is `EncodeFailed` instead of `CaptureFailed`. New: `warnings`, `restoreIfMinimized`, `truncated`/`truncationReason` in capture_with_elements, and `windowState` in get_ui_elements.
 - **Input error codes.** A send_keys string with a syntax error (a `{` without its `}`) is `InvalidKeySpecification`
   instead of `UnknownKey` (still used for an unknown key name), and a mouse pointer that Windows does not move is
   `CursorPositionFailed` instead of `SendInputFailed`.
@@ -4207,7 +4218,7 @@ table, it gives more detail.
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
 | `CannotTerminateSelf` | [kill_process](#kill_process) | The PID is this server |
-| `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels, for example because the window is minimized; `error` has the reason |
+| `CaptureFailed` | [Screenshot](#screenshot) tools | Windows could not capture the pixels: PrintWindow and the copy of the window's device context both failed, the window is over the 64-megapixel budget, or it closed during the capture; `error` has the reason |
 | `CdpDialogOpen` | [Browser Reading](#browser-reading) tools | The page has a JavaScript dialog open. Inspect it and decide deliberately how to close it, or ask the user, then retry (do not press Enter blindly) |
 | `CdpEvaluationFailed` | [Browser Reading](#browser-reading) tools | The page threw, or the browser rejected the script |
 | `CdpPortOwnerMismatch` | [Browser Reading](#browser-reading) tools | The CDP port belongs to a different process than the window |
@@ -4216,7 +4227,7 @@ table, it gives more detail.
 | `CdpTargetNotFound` | [Browser Reading](#browser-reading) tools | No tab's title matches the window title |
 | `CdpTimeout` | [Browser Reading](#browser-reading) tools | The browser or page did not answer within `timeoutMs` (often an open JavaScript dialog) |
 | `CdpUnavailable` | [Browser Reading](#browser-reading) tools | Nothing answered on the CDP port, or `requireCdp` was set without `cdpPort` |
-| `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | The window is cloaked (on another virtual desktop, or hidden by its app), so it was not activated |
+| `Cloaked` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is cloaked (on another virtual desktop, a suspended Store app, or hidden by its app), so it was not activated, or not captured: Windows does not draw it |
 | `CloseFailed` | [close_window](#close_window), close_windows_batch | Windows did not accept the close message; `error` gives the Win32 error |
 | `ConfirmationDeclined` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error) | The MCP client asked the user to confirm (elicitation), and the user declined, dismissed or did not tick the question, or did not answer within 2 minutes; nothing was done. Ask the user how to continue |
 | `ConfirmationRequired` | [kill_process](#kill_process), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (tool error) | `confirm` was not true (close_windows_batch and close_application: more than 3 windows), and the MCP client cannot ask the user; nothing was done |
@@ -4233,6 +4244,7 @@ table, it gives more detail.
 | `ElevationCancelled` | [launch_application](#launch_application), launch_applications_batch | The user declined or cancelled a prompt Windows showed for the start (most likely UAC, for a program that needs administrator rights); nothing was started. Ask the user before trying again |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
+| `EncodeFailed` | [Screenshot](#screenshot) tools | The pixels were captured, but the image could not be built, scaled or encoded (for example out of memory, or an edge too long for JPEG); `error` has the reason. Try a smaller `maxDimension` or another `format` |
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
 | `ExecutableNotFound` | [launch_application](#launch_application), launch_applications_batch | A bare name was not found in the Windows folder, System32, `PATH` or App Paths; pass the full path (it is never handed to Windows unresolved) |
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
@@ -4258,7 +4270,7 @@ table, it gives more detail.
 | `InvalidPath` | [launch_application](#launch_application), launch_applications_batch | The executable or working directory is not a valid path |
 | `InvalidPositioning` | [move_window_to_monitor](#move_window_to_monitor) (tool error) | `positioning` is not center, topleft, topright, bottomleft, bottomright, maximize or restore; nothing was moved |
 | `InvalidProcessId` | [kill_process](#kill_process) | `processId` is not a positive integer |
-| `InvalidRegion` | [capture_region](#capture_region) | `width` or `height` is not positive |
+| `InvalidRegion` | [capture_region](#capture_region) | `width` or `height` is not positive, or the part of the region on screen is over the 64-megapixel budget or 16384 pixels on an edge |
 | `InvalidSnapPosition` | [snap_window](#snap_window) (tool error), snap_windows_batch (per window) | `position` is missing or not a known snap position; `error` lists them |
 | `InvalidState` | [set_window_state](#set_window_state) (tool error), set_windows_state_batch (per window) | `state` is missing or not minimize, maximize or restore (or minimized, maximized, normal); nothing was changed |
 | `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
@@ -4291,6 +4303,7 @@ table, it gives more detail.
 | `PromptShown` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window waits behind a prompt such as "Save changes?"; `prompt` gives its handle, title, class, text, buttons and kind. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says |
 | `ProtectedProcess` | [kill_process](#kill_process) | Protected system or shell process |
 | `ProtectedWindow` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The window is part of the desktop shell or of the agent's own host, and `force` was not true (close_application has no `force`, and refuses the whole application); nothing was sent |
+| `RegionOffScreen` | [capture_region](#capture_region) | No part of the region is on the virtual screen (the area of all monitors); nothing was captured. Coordinates are physical virtual-screen pixels: check them against [list_screens](#list_screens) |
 | `ResizeFailed` | [resize_window](#resize_window) | Windows did not resize the window; `error` gives the Win32 error |
 | `ResumeDeclined` | [resume_input](#resume_input) | The user declined or dismissed the question, or did not answer in time, or paused again while it was open; or another `resume_input` is already waiting for the answer. Input stays paused |
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
@@ -4316,5 +4329,6 @@ table, it gives more detail.
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
-| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
+| `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
+| `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true`, or restore it first with [set_window_state](#set_window_state) |
 | `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window that is not given to another placement matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

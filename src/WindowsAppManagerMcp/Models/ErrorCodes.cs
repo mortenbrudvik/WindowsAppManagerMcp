@@ -353,14 +353,44 @@ public enum ScreenshotErrorCode
     /// <summary>The window handle is invalid or the window no longer exists.</summary>
     InvalidHandle = 9,
 
-    /// <summary>Windows could not capture the pixels (for example the window is minimized).</summary>
+    /// <summary>
+    /// Windows could not capture the pixels: PrintWindow and the window-DC copy both failed, the window is
+    /// larger than the pixel budget, or the window closed during the capture. The error has the reason.
+    /// </summary>
     CaptureFailed = 10,
 
     /// <summary>
     /// capture_window and capture_with_elements: the server's target policy (WAM_DENY_PROCESSES,
     /// WAM_ALLOW_PROCESSES) refuses the window's process (roadmap M1.12). Nothing was captured or read.
     /// </summary>
-    TargetDeniedByPolicy = 11
+    TargetDeniedByPolicy = 11,
+
+    // Capture health codes (roadmap M2.9):
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the window, or the top-level window it is part of, is minimized.
+    /// Windows does not draw it, so nothing was captured. Restore it first, or pass restoreIfMinimized.
+    /// </summary>
+    WindowMinimized = 12,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: the window, or a parent of it, is hidden (no WS_VISIBLE). Nothing
+    /// was captured: a hidden window draws nothing the user can see. The same name as the focus_window code.
+    /// </summary>
+    WindowHidden = 13,
+
+    /// <summary>
+    /// capture_window and capture_with_elements: DWM cloaks the window (it is on another virtual desktop, it is a
+    /// suspended Store app, or its app hid it this way), so its pixels are not drawn. Nothing was captured. The same
+    /// name as the focus_window code.
+    /// </summary>
+    Cloaked = 14,
+
+    /// <summary>capture_region: no part of the region is on the virtual screen (the area of all monitors). Nothing was captured.</summary>
+    RegionOffScreen = 15,
+
+    /// <summary>The pixels were captured, but the image could not be built, scaled or encoded (for example out of memory).</summary>
+    EncodeFailed = 16
 }
 
 /// <summary>

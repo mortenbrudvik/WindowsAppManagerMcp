@@ -157,6 +157,7 @@ public static class WrapperCatalog
             {
                 [nameof(IScreenCaptureWrapper.CaptureScreenRegion)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.CaptureWindow)] = WrapperMember.Read,
+                [nameof(IScreenCaptureWrapper.CaptureWindowFromScreen)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.GetVirtualScreenBounds)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read
             },

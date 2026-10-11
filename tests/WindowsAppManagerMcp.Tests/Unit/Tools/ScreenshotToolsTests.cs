@@ -249,33 +249,33 @@ public class ScreenshotToolsTests
     #region T9.3.6-T9.3.7: CaptureWindow Tests
 
     [Fact]
-    public void CaptureWindow_CallsServiceWithCorrectHandle()
+    public async Task CaptureWindow_CallsServiceWithCorrectHandle()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(handle: 12345);
+        await sut.CaptureWindow(handle: 12345);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), true, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WithIncludeFrameFalse_PassesCorrectFlag()
+    public async Task CaptureWindow_WithIncludeFrameFalse_PassesCorrectFlag()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(handle: 12345, includeFrame: false);
+        await sut.CaptureWindow(handle: 12345, includeFrame: false);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(12345), false, Defaults), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WithAllParameters_PassesAllCorrectly()
+    public async Task CaptureWindow_WithAllParameters_PassesAllCorrectly()
     {
         // Arrange
         var sut = CreateSut();
@@ -283,14 +283,14 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 50 };
 
         // Act
-        sut.CaptureWindow(handle: 99999, includeFrame: false, format: CaptureFormat.Jpeg, quality: 50);
+        await sut.CaptureWindow(handle: 99999, includeFrame: false, format: CaptureFormat.Jpeg, quality: 50);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(99999), false, expected), Times.Once);
     }
 
     [Fact]
-    public void CaptureWindow_WhenServiceReturnsError_ReturnsIsError()
+    public async Task CaptureWindow_WhenServiceReturnsError_ReturnsIsError()
     {
         // Arrange
         var failure = TestDataFactory.CreateScreenshotResult(success: false, error: "Invalid window handle",
@@ -300,7 +300,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CaptureWindow(handle: 0);
+        var result = await sut.CaptureWindow(handle: 0);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -397,11 +397,11 @@ public class ScreenshotToolsTests
     }
 
     [Fact]
-    public async Task CaptureWithElements_OfAMinimizedWindow_ReturnsCaptureFailedWithoutWalkingTheTree()
+    public async Task CaptureWithElements_OfAMinimizedWindow_ReturnsWindowMinimizedWithoutWalkingTheTree()
     {
         // Arrange - every element of a minimized window is offscreen, and its pixels cannot be captured
-        _mockWindowService.Setup(w => w.GetWindowInfo(new nint(4242)))
-            .Returns(TestDataFactory.CreateWindowInfo(handleValue: 4242, title: "Notepad", state: WindowState.Minimized));
+        _mockScreenshotService.Setup(s => s.CheckWindow(new nint(4242)))
+            .Returns(new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, ScreenshotService.MinimizedMessage));
         var sut = CreateSut();
 
         // Act
@@ -410,7 +410,7 @@ public class ScreenshotToolsTests
         // Assert
         result.IsError.Should().BeTrue();
         var json = Metadata(result);
-        json.GetProperty("errorCode").GetString().Should().Be("CaptureFailed");
+        json.GetProperty("errorCode").GetString().Should().Be("WindowMinimized");
         json.GetProperty("error").GetString().Should().Contain("minimized").And.Contain("set_window_state");
         VerifyNoWalk();
     }
@@ -425,16 +425,16 @@ public class ScreenshotToolsTests
         // Act
         var result = await sut.CaptureWithElements(handle: 4242);
 
-        // Assert
+        // Assert - the title then comes from the UI Automation walk
         result.IsError.Should().BeFalse();
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            new nint(4242), null, It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
+            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
     }
 
     [Fact]
-    public async Task CaptureWithElements_WithUIElementFailure_PassesTheWalksErrorCodeOn()
+    public async Task CaptureWithElements_WithUIElementFailure_StillReturnsTheImage_WithTheWalksError()
     {
-        // Arrange
+        // Arrange - the walk timed out before it found an element
         _mockUIElementService.Setup(u => u.GetUIElementsAsync(
                 It.IsAny<nint>(),
                 It.IsAny<int>(),
@@ -450,15 +450,19 @@ public class ScreenshotToolsTests
         // Act
         var result = await sut.CaptureWithElements(handle: 12345);
 
-        // Assert
-        result.IsError.Should().BeTrue();
+        // Assert - the pixels do not depend on the walk
+        result.IsError.Should().BeFalse();
+        result.Content.Select(c => c.Type).Should().Equal("image", "text");
         var json = Metadata(result);
-        json.GetProperty("errorCode").GetString().Should().Be("OperationTimedOut");
-        json.GetProperty("error").GetString().Should().Contain("UI elements");
+        json.GetProperty("success").GetBoolean().Should().BeTrue();
+        json.GetProperty("elementsErrorCode").GetString().Should().Be("OperationTimedOut");
+        json.GetProperty("elementsError").GetString().Should().Contain("Timeout");
+        json.GetProperty("truncated").GetBoolean().Should().BeTrue();
+        json.GetProperty("truncationReason").GetString().Should().Be("Timeout");
         json.GetProperty("windowTitle").GetString().Should().Be("Test Window");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+            new nint(12345), It.IsAny<string?>(), It.Is<IReadOnlyList<UIElementInfo>>(e => e.Count == 0),
+            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Once);
     }
 
     [Theory]
