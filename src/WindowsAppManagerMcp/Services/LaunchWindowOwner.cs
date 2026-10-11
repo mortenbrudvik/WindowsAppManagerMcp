@@ -107,6 +107,37 @@ public sealed class LaunchWindowOwner
     }
 
     /// <summary>
+    /// Handoffs to a host, not to the same app: a console program gets a Windows Terminal window and a web address a
+    /// browser window, and an open terminal or browser window is not an open copy of that program. reuseExisting (roadmap
+    /// M3.13) leaves these names out.
+    /// </summary>
+    private static readonly HashSet<string> HostHandoffs = new(StringComparer.OrdinalIgnoreCase) { "cmd", "powershell", "pwsh", "wsl", "http", "https" };
+
+    /// <summary>
+    /// The process names (without .exe) whose open windows are copies of the launched program, for reuseExisting (roadmap
+    /// M3.13): the program's own name and the names of the same app it hands off to (calc to CalculatorApp, code to Code,
+    /// wt to WindowsTerminal, ms-settings: to SystemSettings), but not a host it hands off to (<see cref="HostHandoffs"/>).
+    /// Empty for a document or URI whose app is not known.
+    /// </summary>
+    public static IReadOnlyList<string> SameAppProcessNames(ResolvedLaunchTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        var names = new List<string>();
+        var key = ProgramKey(target);
+        if (key == null)
+            return names;
+
+        if (target.Kind != LaunchTargetKind.Other)
+            names.Add(key);
+
+        if (!HostHandoffs.Contains(key) && HandoffMap.TryGetValue(key, out var handoffNames))
+            names.AddRange(handoffNames);
+
+        return names;
+    }
+
+    /// <summary>
     /// The program's name (a resolved file without its extension) or a URI's scheme, which keys <see cref="HandoffMap"/>;
     /// null for a document or anything else whose app is not known.
     /// </summary>

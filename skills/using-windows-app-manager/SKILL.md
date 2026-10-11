@@ -49,6 +49,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 - **Windows:** prefer naming the window with a `window` selector in the call that acts on it, over copying a raw `handle` from an earlier listing: `{"processName": "notepad"}`, `{"processName": "msedge", "titleContains": "Inbox"}`, `{"foreground": true, "processName": "notepad"}` (the window in front, if it is Notepad). `{"foreground": true}` alone names no window: input tools treat it as no `windowHandle`, close tools refuse it, and `allowHostTarget` needs the window named by handle. `processName` is the whole process name (more reliable than titles, which change; `processNameContains: true` for a part); `titleEquals` and `titleRegex` pin a title exactly. A selector must name exactly one window, so it never acts on the first of several. To look before you act, `find_windows` takes the same filters (plus `sort` and `limit`) and `get_window_info` reads one window (`detail: "full"` says whether it is in front, enabled, responding, its DPI and client area); `get_foreground_window` says what is in front. When you do keep a `handle`, pass it later as `{"handle": ..., "processId": ...}` so a window that closed and whose handle was reused is refused (`HandleMismatch`) instead of acted on.
 - **A program that is not running yet:** `launch_application` with `waitForWindow: true` returns the `window` it opened, whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to), with `launchStatus`: `windowObserved` (a new window), `reusedExistingWindow` or `openedInTab` (single-instance and tabbed apps such as Windows 11 Notepad, Terminal, VS Code and Explorer reuse a window that was already open). For a Store app (`shell:AppsFolder\<AppUserModelID>`), a Settings page (`ms-settings:...`) or a document, pass `expectWindow` (`processName` or `titleContains`, each matched as a part of the name or title, ignoring case: unlike a selector's `processName`, `Code` also matches `Code - Insiders`) so the wait can recognise its window.
+- **Launch and arrange in one call:** add `placement` (`{"snap": "left_half", "monitorIndex": 1, "focus": true}`, or `bounds`, or `state`) instead of following the launch with `find_windows`, `snap_window` and `focus_window`; it waits for the window, places it, places it again if the app restores its own saved bounds, and returns `placement.finalBounds`, `finalState` and `focused`. Add `reuseExisting: true` to use a window of the app that is already open (`launchStatus` `alreadyOpen`, nothing started) instead of opening a second copy. When `placement.errorCode` is set the app was still launched: arrange the window with the window tools, never launch again.
 - **Controls inside a window:** `get_ui_elements` with `controlTypes` (`Button`, `Edit`, ...) or `interactableOnly: true` gives names, automation IDs and screen `bounds`. `get_focused_element` says what has keyboard focus; `get_element_at_point` what is at a point.
 - **What it looks like:** `capture_window` (or `capture_with_elements` for overlays with each element's `screenBounds`).
 
@@ -283,7 +284,7 @@ All seven also take `allowHostTarget` (default false): only for input to your ow
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow |
+| `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow, placement, reuseExisting |
 | `list_processes` | List running processes | nameFilter, includeWindowless |
 | `kill_process` | Close or terminate a process | processId, confirm, forceKill, expectedProcessName |
 | `close_application` | Close an app's Alt+Tab windows gracefully; reports prompts and what remains | processName, processId, window (or handle), timeoutMs |
@@ -395,9 +396,8 @@ Each workflow is the loop: locate, activate and verify, act, verify.
 Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`, `+{HOME}` select to start. `send_keys` modifiers: `^` Ctrl, `%` Alt, `+` Shift; special keys go in braces (`{F1}`, `{DELETE}`).
 
 ### Launch and Position an App
-1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle` (its `window` says which process owns it). If it is null, find the window with `find_windows` (`processName` or `titleContains`) instead of launching again
-2. **Act:** `snap_window` or `set_window_bounds` with the handle (and `monitorIndex` from `get_monitors` for another monitor)
-3. **Verify:** check `bounds` (the visible frame) and `state` in the result
+1. **Locate and act in one call:** `launch_application` with `placement` (`snap` or `bounds`, `monitorIndex` from `get_monitors` for another monitor, `focus: true` to bring it in front) and `reuseExisting: true` to use a window that is already open
+2. **Verify:** check `placement.finalBounds` (the visible frame), `finalState` and `focused` in the result. If `placement.errorCode` is set, or the launch found no window (`WindowNotFound`), find the window with `find_windows` (`processName` or `titleContains`) and place it with `snap_window` or `set_window_bounds`; never launch again
 
 ### Arrange Windows for Development
 1. **Locate:** `find_windows` for VS Code and Terminal

@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -17,29 +18,53 @@ public class AppLauncherTools
     /// </summary>
     public const int MaxWaitTimeoutMs = 30_000;
 
+    /// <summary>What the launch tools say about placement (roadmap M3.13).</summary>
+    private const string PlacementDescription =
+        "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible " +
+        "frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked " +
+        "before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with " +
+        "bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with " +
+        "InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is checked again about 500 ms after it " +
+        "is placed and placed once more if the app moved it back (reapplied: true)";
+
+    private const string ReuseDescription =
+        "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
+        "the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; " +
+        "never a terminal for cmd or powershell, or a browser for a web address), and of expectWindow.processName when set; when " +
+        "the launch opens a file, folder or web address, its title must show that name (or expectWindow.titleContains). The " +
+        "front-most match is used, nothing is started, and launchStatus is alreadyOpen";
+
     private readonly IProcessService _processService;
     private readonly IWindowService? _windowService;
     private readonly IInputSession? _session;
     private readonly TimeSpan _answerTimeout;
     private readonly TimeSpan? _gateWaitTimeout;
+    private readonly ILaunchPlacementService? _placementService;
+    private readonly IMonitorService? _monitorService;
 
     /// <param name="processService">Launches, lists and ends processes.</param>
     /// <param name="windowService">Names the windows of a process in kill_process's question to the user.</param>
     /// <param name="session">The input session, whose pause kill_process respects (it takes the input gate itself).</param>
     /// <param name="answerTimeout">How long kill_process waits for the user's answer; default <see cref="UserConfirmation.DefaultAnswerTimeout"/>.</param>
     /// <param name="gateWaitTimeout">How long kill_process waits for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</param>
+    /// <param name="placementService">Places the launches' windows (placement, roadmap M3.13). The server always passes it.</param>
+    /// <param name="monitorService">Checks a placement's monitorIndex before anything is launched; without it the placement reports it.</param>
     public AppLauncherTools(
         IProcessService processService,
         IWindowService? windowService = null,
         IInputSession? session = null,
         TimeSpan? answerTimeout = null,
-        TimeSpan? gateWaitTimeout = null)
+        TimeSpan? gateWaitTimeout = null,
+        ILaunchPlacementService? placementService = null,
+        IMonitorService? monitorService = null)
     {
         _processService = processService;
         _windowService = windowService;
         _session = session;
         _answerTimeout = answerTimeout ?? UserConfirmation.DefaultAnswerTimeout;
         _gateWaitTimeout = gateWaitTimeout;
+        _placementService = placementService;
+        _monitorService = monitorService;
     }
 
     [McpServerTool(Name = "launch_application", Title = "Launch Application", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
@@ -49,7 +74,11 @@ public class AppLauncherTools
                  "code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab " +
                  "(single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, " +
                  "exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. " +
-                 "Never launch again just because no window was found: look for it with find_windows.")]
+                 "Never launch again just because no window was found: look for it with find_windows. " +
+                 "placement arranges the window in the same call (snap or bounds, monitor, state, focus) and returns placement {finalBounds, " +
+                 "finalState, monitorIndex, focused, reapplied}; a placement that fails has placement.errorCode and error while success " +
+                 "stays true, because the app was launched: fix the window with the window tools, never launch again. reuseExisting uses " +
+                 "an open window of the app instead of starting another (launchStatus alreadyOpen).")]
     public async Task<LaunchResultDto> LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound")]
         string executable,
@@ -63,13 +92,30 @@ public class AppLauncherTools
         int waitTimeoutMs = 5000,
         [Description("With waitForWindow: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it. A new window that matches every field set counts as the launch's window")]
         LaunchWindowHint? expectWindow = null,
+        [Description(PlacementDescription)]
+        LaunchPlacement? placement = null,
+        [Description(ReuseDescription)]
+        bool reuseExisting = false,
         CancellationToken cancellationToken = default)
     {
+        // A placement is checked before anything is launched; a bad one launches nothing
+        LaunchPlacementPlan? plan = null;
+        if (placement != null)
+        {
+            var monitorCount = MonitorCount();
+            if (!TryPlan(placement, monitorCount, out plan, out var errorCode, out var error))
+            {
+                throw new ToolErrorException(errorCode!, $"{error} Nothing was launched.");
+            }
+        }
+
         var result = await _processService.LaunchApplicationAsync(
-            new LaunchRequest(executable, arguments, workingDirectory, expectWindow),
-            waitForWindow,
+            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting),
+            waitForWindow || plan != null,
             BoundedWait(waitTimeoutMs),
             cancellationToken).ConfigureAwait(false);
+
+        var placed = await PlaceAsync([(result, plan)], cancellationToken).ConfigureAwait(false);
 
         return new LaunchResultDto(
             Success: result.Success,
@@ -80,8 +126,93 @@ public class AppLauncherTools
             Warning: result.Warning,
             LaunchStatus: result.Status?.ToWireName(),
             Window: result.Window is { } window ? WindowFinderTools.ToDto(window) : null,
-            LauncherExited: result.LauncherExited
+            LauncherExited: result.LauncherExited,
+            Placement: placed[0]
         );
+    }
+
+    /// <summary>The number of monitors, to check a placement's monitorIndex before the launch; null without a monitor service.</summary>
+    private int? MonitorCount() => _monitorService?.GetAllMonitors().Count;
+
+    /// <summary>
+    /// Checks a placement (<see cref="LaunchPlacementPlan.TryCreate"/>), and its monitorIndex against the monitors there are
+    /// when <paramref name="monitorCount"/> is known.
+    /// </summary>
+    private static bool TryPlan(LaunchPlacement placement, int? monitorCount, out LaunchPlacementPlan? plan, out string? errorCode, out string? error)
+    {
+        if (!LaunchPlacementPlan.TryCreate(placement, out plan, out errorCode, out error))
+        {
+            return false;
+        }
+
+        if (plan!.MonitorIndex is { } index && monitorCount is { } count && index >= count)
+        {
+            plan = null;
+            errorCode = nameof(WindowErrorCode.InvalidMonitorIndex);
+            error = $"placement.monitorIndex: {WindowService.MonitorIndexMessage(index, count)}";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Places the windows of the launches that have a plan (roadmap M3.13), all in one go (<see cref="ILaunchPlacementService"/>),
+    /// and returns each launch's placement result, in order: null without a plan or for a launch that failed, WindowNotFound
+    /// for a launch that found no window.
+    /// </summary>
+    private async Task<IReadOnlyList<LaunchPlacementResultDto?>> PlaceAsync(
+        IReadOnlyList<(LaunchResult Result, LaunchPlacementPlan? Plan)> launches, CancellationToken cancellationToken)
+    {
+        var placed = new LaunchPlacementResultDto?[launches.Count];
+        var placements = new List<(nint Handle, LaunchPlacementPlan Plan)>();
+        var positions = new List<int>();
+        for (var i = 0; i < launches.Count; i++)
+        {
+            var (result, plan) = launches[i];
+            if (plan == null || !result.Success)
+                continue;
+
+            if (result.Window is { } window)
+            {
+                placements.Add((window.Handle, plan));
+                positions.Add(i);
+            }
+            else
+            {
+                placed[i] = new LaunchPlacementResultDto(null, null, null, Focused: false, Reapplied: false,
+                    ErrorCode: nameof(WindowErrorCode.WindowNotFound),
+                    Error: $"The launch succeeded (launchStatus {result.Status?.ToWireName()}) but found no window, so nothing was placed. " +
+                           "Look for its window with find_windows and arrange it with snap_window, set_window_bounds or focus_window; " +
+                           "do not launch it again.");
+            }
+        }
+
+        if (placements.Count > 0)
+        {
+            var service = _placementService ?? throw new InvalidOperationException("No launch placement service is registered.");
+            var outcomes = await service.PlaceAsync(placements, cancellationToken).ConfigureAwait(false);
+            for (var k = 0; k < outcomes.Count; k++)
+            {
+                placed[positions[k]] = ToDto(outcomes[k]);
+            }
+        }
+
+        return placed;
+    }
+
+    private static LaunchPlacementResultDto ToDto(LaunchPlacementOutcome outcome)
+    {
+        var window = outcome.Window;
+        var visible = window is null || window.State == WindowState.Minimized ? null : window.VisibleBounds ?? window.Bounds;
+        return new LaunchPlacementResultDto(
+            FinalBounds: visible is null ? null : new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
+            FinalState: window?.State.ToString().ToLowerInvariant(),
+            MonitorIndex: window?.MonitorIndex,
+            Focused: outcome.Focused,
+            Reapplied: outcome.Reapplied,
+            ErrorCode: outcome.Success ? null : outcome.ErrorCode.ToString(),
+            Error: outcome.Error);
     }
 
     [McpServerTool(Name = "list_processes", Title = "List Processes", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -224,9 +355,14 @@ public class AppLauncherTools
     [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls. " +
                  "Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, " +
                  "and each result has its own launchStatus, window and errorCode. " +
-                 "An item that is null fails alone with InvalidArguments; the others are still launched.")]
+                 "An item that is null fails alone with InvalidArguments; the others are still launched. " +
+                 "Each item can have a placement and reuseExisting, as launch_application takes them: an item whose placement is invalid " +
+                 "fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a " +
+                 "placement on any item every window is waited for; the windows are placed after all of them were found, in order, and " +
+                 "checked again together once.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("Array of applications to launch with executable, optional arguments, optional workingDirectory and optional expectWindow")]
+        [Description("Array of applications to launch with executable, optional arguments, optional workingDirectory, optional expectWindow, " +
+                     "optional placement and optional reuseExisting")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
@@ -241,43 +377,81 @@ public class AppLauncherTools
                 "applications must be an array of items, not null. Nothing was launched.");
         }
 
-        // A null item fails alone (roadmap M2.1); the others go to the service, in request order
-        var requested = applications.Where(a => a != null).ToList();
+        // Only one window can end in front: two items asking for focus contradict each other, so nothing is launched
+        var focusing = applications.Select((a, i) => (Item: a, Index: i)).Where(t => t.Item?.Placement?.Focus == true).Select(t => t.Index).ToList();
+        if (focusing.Count > 1)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"Items {string.Join(", ", focusing)} all ask for placement.focus, but only one window can end in front. Nothing was launched.");
+        }
+
+        // A null item, or one whose placement is invalid, fails alone (roadmap M2.1) and is not launched; the others go to the
+        // service, in request order
+        var refusals = new LaunchResultItem?[applications.Length];
+        var plans = new LaunchPlacementPlan?[applications.Length];
+        var monitorCount = applications.Any(a => a?.Placement?.MonitorIndex != null) ? MonitorCount() : null;
+        for (var i = 0; i < applications.Length; i++)
+        {
+            var application = applications[i];
+            if (application == null)
+            {
+                refusals[i] = new LaunchResultItem(string.Empty, false,
+                    Error: $"Item {i} of applications is null; each item needs an executable. Nothing was launched for it.",
+                    ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+            }
+            else if (application.Placement != null &&
+                     !TryPlan(application.Placement, monitorCount, out plans[i], out var errorCode, out var error))
+            {
+                refusals[i] = new LaunchResultItem(application.Executable, false,
+                    Error: $"Item {i}: {error} Nothing was launched for it.", ErrorCode: errorCode);
+            }
+        }
+
+        var requested = Enumerable.Range(0, applications.Length).Where(i => refusals[i] == null).ToList();
         var serviceApplications = requested
-            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow))
+            .Select(i => applications[i])
+            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow, a.ReuseExisting))
             .ToList();
 
         // Started one after another, then the windows are waited for together; the client gets "i of n" as each one is
-        // done, and a cancelled call starts no more
+        // done, and a cancelled call starts no more. A placement needs the window, so any placement waits for every window
         var results = await _processService.LaunchApplicationsBatchAsync(
-            serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs), ToolProgress.ForServices(progress), cancellationToken)
+            serviceApplications, waitForWindows || requested.Any(i => plans[i] != null), BoundedWait(waitTimeoutMs),
+            ToolProgress.ForServices(progress), cancellationToken)
             .ConfigureAwait(false);
 
-        using var launched = results.Select((r, i) => new LaunchResultItem(
-            Executable: requested[i].Executable,
-            Success: r.Success,
-            ProcessId: r.ProcessId,
-            WindowHandle: r.WindowHandle?.ToInt64(),
-            Error: r.ErrorMessage,
-            Warning: r.Warning,
-            ErrorCode: r.ErrorCode,
-            LaunchStatus: r.Status?.ToWireName(),
-            Window: r.Window is { } window ? WindowFinderTools.ToDto(window) : null,
-            LauncherExited: r.LauncherExited
-        )).GetEnumerator();
+        // Then the windows are placed, after every launch has its window, so a placement does not race another item's wait
+        var placed = await PlaceAsync(results.Select((r, k) => (r, plans[requested[k]])).ToList(), cancellationToken).ConfigureAwait(false);
+
         var items = new List<LaunchResultItem>(applications.Length);
+        var next = 0;
         for (var i = 0; i < applications.Length; i++)
         {
-            if (applications[i] == null)
+            if (refusals[i] is { } refusal)
             {
-                items.Add(new LaunchResultItem(string.Empty, false,
-                    Error: $"Item {i} of applications is null; each item needs an executable. Nothing was launched for it.",
-                    ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode));
+                items.Add(refusal);
+                continue;
             }
-            else if (launched.MoveNext())
+
+            if (next >= results.Count)
             {
-                items.Add(launched.Current);
+                continue;
             }
+
+            var r = results[next];
+            items.Add(new LaunchResultItem(
+                Executable: applications[i].Executable,
+                Success: r.Success,
+                ProcessId: r.ProcessId,
+                WindowHandle: r.WindowHandle?.ToInt64(),
+                Error: r.ErrorMessage,
+                Warning: r.Warning,
+                ErrorCode: r.ErrorCode,
+                LaunchStatus: r.Status?.ToWireName(),
+                Window: r.Window is { } window ? WindowFinderTools.ToDto(window) : null,
+                LauncherExited: r.LauncherExited,
+                Placement: placed[next]));
+            next++;
         }
 
         return new BatchLaunchResult(
@@ -307,7 +481,8 @@ public record KillResultDto(
 /// <summary>
 /// launch_application's result. launchStatus says what the launch led to (see <see cref="LaunchStatus"/>); window is the
 /// window it found (with its real owner process, which can differ from processId), and windowHandle its handle;
-/// launcherExited says whether the started process had exited by the end of the window wait.
+/// launcherExited says whether the started process had exited by the end of the window wait. placement is what the
+/// placement did, when one was asked for and the launch succeeded (roadmap M3.13).
 /// </summary>
 public record LaunchResultDto(
     bool Success,
@@ -318,7 +493,24 @@ public record LaunchResultDto(
     string? Warning = null,
     string? LaunchStatus = null,
     WindowInfoDto? Window = null,
-    bool? LauncherExited = null
+    bool? LauncherExited = null,
+    LaunchPlacementResultDto? Placement = null
+);
+
+/// <summary>
+/// What a launch's placement did (roadmap M3.13): the window as it is afterwards (finalBounds its visible frame, none when
+/// minimized; finalState normal, minimized or maximized; monitorIndex), whether it is in front (focused), and whether it
+/// was placed a second time because the app moved it back (reapplied). errorCode and error say why the placement failed;
+/// the launch itself still succeeded, so the window is arranged with the window tools, never by launching again.
+/// </summary>
+public record LaunchPlacementResultDto(
+    BoundsDto? FinalBounds,
+    string? FinalState,
+    int? MonitorIndex,
+    bool Focused,
+    bool Reapplied,
+    string? ErrorCode = null,
+    string? Error = null
 );
 
 public record ProcessInfoDto(

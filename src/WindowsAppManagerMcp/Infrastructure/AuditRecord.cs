@@ -46,6 +46,9 @@ public static class AuditRecord
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
     private const string ClipboardOriginProperty = "origin";
 
+    /// <summary>The result property, kept as an identifier, that says what a launch led to.</summary>
+    private const string LaunchStatusProperty = "launchStatus";
+
     /// <summary>The key under which the arguments a tool does not declare are counted.</summary>
     public const string UnknownArgumentsCount = "unknownArgumentsCount";
 
@@ -339,8 +342,66 @@ public static class AuditRecord
         {
             Handle = target.Handle ?? resultHandle,
             ProcessId = target.ProcessId ?? resultProcessId,
-            Process = target.Process ?? resultProcess
+            Process = target.Process ?? resultProcess,
+            Placement = Placement(call.Arguments.TryGetValue(PlacementProperty, out var asked) ? asked : null, body)
         };
+    }
+
+    /// <summary>The placement argument of a launch tool and of each launch batch item, and its result (roadmap M3.13).</summary>
+    private const string PlacementProperty = "placement";
+
+    /// <summary>
+    /// A launch's placement (roadmap M3.13), default-deny: of the arguments only snap and state that are valid values (as
+    /// their canonical names), monitorIndex, the bounds' numbers and focus; of the result (<paramref name="owner"/>'s
+    /// placement) the final bounds, a valid final state, focused, reapplied and the errorCode, never the error text. Null
+    /// when neither has one.
+    /// </summary>
+    private static AuditPlacement? Placement(JsonElement? asked, JsonObject? owner)
+    {
+        var done = owner != null && owner.TryGetPropertyValue(PlacementProperty, out var node) ? node as JsonObject : null;
+        var request = asked is { ValueKind: JsonValueKind.Object } a ? a : (JsonElement?)null;
+        if (request == null && done == null)
+        {
+            return null;
+        }
+
+        string? snap = null;
+        string? state = null;
+        int? monitorIndex = null;
+        BoundsDto? bounds = null;
+        bool? focus = null;
+        if (request is { } r)
+        {
+            snap = r.TryGetProperty("snap", out var s) && s.ValueKind == JsonValueKind.String &&
+                   ToolEnum<SnapPosition>.TryParse(s.GetString(), out var position, out _) ? ToolEnum<SnapPosition>.Name(position) : null;
+            state = r.TryGetProperty("state", out var st) && st.ValueKind == JsonValueKind.String &&
+                    ToolEnum<LaunchWindowState>.TryParse(st.GetString(), out var parsed, out _) ? ToolEnum<LaunchWindowState>.Name(parsed) : null;
+            monitorIndex = r.TryGetProperty("monitorIndex", out var m) && m.ValueKind == JsonValueKind.Number && m.TryGetInt32(out var index)
+                ? index
+                : null;
+            bounds = r.TryGetProperty("bounds", out var b) ? BoundsIn(b) : null;
+            focus = r.TryGetProperty("focus", out var f) && f.ValueKind is JsonValueKind.True or JsonValueKind.False ? f.GetBoolean() : null;
+        }
+
+        var finalBounds = done != null && done.TryGetPropertyValue("finalBounds", out var fb) && fb is JsonObject box &&
+                          Int(box, "x") is { } x && Int(box, "y") is { } y && Int(box, "width") is { } w && Int(box, "height") is { } h
+            ? new BoundsDto(x, y, w, h)
+            : null;
+        var finalState = done == null ? null : Identifier(done, "finalState") is { } fs && Enum.TryParse<WindowState>(fs, true, out _) ? fs : null;
+        return new AuditPlacement(snap, monitorIndex, bounds, state, focus, finalBounds, finalState,
+            done == null ? null : Bool(done, "focused"), done == null ? null : Bool(done, "reapplied"),
+            done == null ? null : Identifier(done, "errorCode"));
+
+        static BoundsDto? BoundsIn(JsonElement value) =>
+            value.ValueKind == JsonValueKind.Object && Number(value, "x") is { } x && Number(value, "y") is { } y &&
+            Number(value, "width") is { } w && Number(value, "height") is { } h
+                ? new BoundsDto(x, y, w, h)
+                : null;
+
+        static int? Number(JsonElement value, string name) =>
+            value.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetInt32(out var result)
+                ? result
+                : null;
     }
 
     /// <summary>
@@ -364,9 +425,22 @@ public static class AuditRecord
             return null;
         }
 
-        return results.OfType<JsonObject>()
-            .Select(item =>
+        // A launch batch's items, in request order like its results, each with its placement argument (roadmap M3.13)
+        var requested = call.Arguments.TryGetValue("applications", out var applications) && applications.ValueKind == JsonValueKind.Array
+            ? applications.EnumerateArray().ToList()
+            : [];
+
+        return results
+            .Select((node, index) => (Item: node as JsonObject, Index: index))
+            .Where(t => t.Item != null)
+            .Select(t =>
             {
+                var item = t.Item!;
+                JsonElement? asked = t.Index < requested.Count && requested[t.Index] is { ValueKind: JsonValueKind.Object } request &&
+                                     request.TryGetProperty(PlacementProperty, out var argument)
+                    ? argument
+                    : null;
+                var placement = Placement(asked, item);
                 // A launch batch item and an apply_layout placement name their window in a window object
                 var window = item.TryGetPropertyValue("window", out var node) ? node as JsonObject : null;
                 var handle = Long(item, "handle") ?? Long(item, "windowHandle") ?? (window == null ? null : Long(window, "handle"));
@@ -381,8 +455,9 @@ public static class AuditRecord
                     executable == null ? null : RedactExecutable(executable),
                     Bool(item, "success"),
                     Identifier(item, "errorCode"),
-                    Identifier(item, "status"),
-                    Bool(item, "launched"));
+                    Identifier(item, "status") ?? Identifier(item, LaunchStatusProperty),
+                    Bool(item, "launched"),
+                    placement);
             })
             .ToList();
     }
@@ -435,6 +510,12 @@ public static class AuditRecord
         if (Identifier(body, ClipboardOriginProperty) is { } origin)
         {
             scalars[ClipboardOriginProperty] = origin;
+        }
+
+        // A launch's launchStatus (roadmap M3.13): whether it started something or reused an open window (alreadyOpen)
+        if (Identifier(body, LaunchStatusProperty) is { } launchStatus)
+        {
+            scalars[LaunchStatusProperty] = launchStatus;
         }
 
         foreach (var (name, value) in body)

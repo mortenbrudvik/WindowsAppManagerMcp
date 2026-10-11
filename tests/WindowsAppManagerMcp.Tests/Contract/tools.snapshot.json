@@ -2235,7 +2235,7 @@
     {
       "name": "launch_application",
       "title": "Launch Application",
-      "description": "Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab (single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. Never launch again just because no window was found: look for it with find_windows.",
+      "description": "Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab (single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. Never launch again just because no window was found: look for it with find_windows. placement arranges the window in the same call (snap or bounds, monitor, state, focus) and returns placement {finalBounds, finalState, monitorIndex, focused, reapplied}; a placement that fails has placement.errorCode and error while success stays true, because the app was launched: fix the window with the window tools, never launch again. reuseExisting uses an open window of the app instead of starting another (launchStatus alreadyOpen).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2300,6 +2300,104 @@
               }
             },
             "default": null
+          },
+          "placement": {
+            "description": "Where to put the window once it is found (implies waiting for it): snap (a snap_window position) or bounds (the visible frame, as set_window_bounds), monitorIndex, state (normal, maximized or minimized) and focus (as focus_window). Checked before anything is launched: unknown values fail with InvalidSnapPosition or InvalidState, contradictions (snap with bounds, bounds with monitorIndex, maximized with snap or bounds, focus with minimized, or nothing asked) with InvalidArguments, a monitor that does not exist with InvalidMonitorIndex. The window is checked again about 500 ms after it is placed and placed once more if the app moved it back (reapplied: true)",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "snap": {
+                "description": "Snap position, as snap_window takes it; not together with bounds",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null,
+                "enum": [
+                  "left_half",
+                  "right_half",
+                  "top_half",
+                  "bottom_half",
+                  "top_left_quarter",
+                  "top_right_quarter",
+                  "bottom_left_quarter",
+                  "bottom_right_quarter",
+                  "left_third",
+                  "center_third",
+                  "right_third",
+                  "left_two_thirds",
+                  "right_two_thirds",
+                  "fullscreen",
+                  null
+                ]
+              },
+              "monitorIndex": {
+                "description": "Monitor (0-based, see get_monitors): where snap places the window; without snap and bounds the window is centred on it (with state 'maximized', maximized there). Not together with bounds",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "default": null
+              },
+              "bounds": {
+                "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "width": {
+                    "type": "integer"
+                  },
+                  "height": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "default": null
+              },
+              "state": {
+                "description": "normal, maximized (not with snap or bounds; activates the window) or minimized (after it is placed; not with focus)",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null,
+                "enum": [
+                  "normal",
+                  "maximized",
+                  "minimized",
+                  null
+                ]
+              },
+              "focus": {
+                "description": "Bring the window to the front afterwards, as focus_window does (default false)",
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "default": null
+              }
+            },
+            "default": null
+          },
+          "reuseExisting": {
+            "description": "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; never a terminal for cmd or powershell, or a browser for a web address), and of expectWindow.processName when set; when the launch opens a file, folder or web address, its title must show that name (or expectWindow.titleContains). The front-most match is used, nothing is started, and launchStatus is alreadyOpen",
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [
@@ -2317,12 +2415,12 @@
     {
       "name": "launch_applications_batch",
       "title": "Launch Applications (Batch)",
-      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched.",
+      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched. Each item can have a placement and reuseExisting, as launch_application takes them: an item whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them were found, in order, and checked again together once.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "applications": {
-            "description": "Array of applications to launch with executable, optional arguments, optional workingDirectory and optional expectWindow",
+            "description": "Array of applications to launch with executable, optional arguments, optional workingDirectory, optional expectWindow, optional placement and optional reuseExisting",
             "type": "array",
             "items": {
               "type": "object",
@@ -2371,6 +2469,104 @@
                     }
                   },
                   "default": null
+                },
+                "placement": {
+                  "description": "Where to put the item's window once it is found, as launch_application's placement",
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "snap": {
+                      "description": "Snap position, as snap_window takes it; not together with bounds",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "default": null,
+                      "enum": [
+                        "left_half",
+                        "right_half",
+                        "top_half",
+                        "bottom_half",
+                        "top_left_quarter",
+                        "top_right_quarter",
+                        "bottom_left_quarter",
+                        "bottom_right_quarter",
+                        "left_third",
+                        "center_third",
+                        "right_third",
+                        "left_two_thirds",
+                        "right_two_thirds",
+                        "fullscreen",
+                        null
+                      ]
+                    },
+                    "monitorIndex": {
+                      "description": "Monitor (0-based, see get_monitors): where snap places the window; without snap and bounds the window is centred on it (with state 'maximized', maximized there). Not together with bounds",
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "default": null
+                    },
+                    "bounds": {
+                      "description": "The visible frame to place the window at: x, y, width and height in physical virtual-screen pixels, as set_window_bounds takes them; not together with snap",
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "x": {
+                          "type": "integer"
+                        },
+                        "y": {
+                          "type": "integer"
+                        },
+                        "width": {
+                          "type": "integer"
+                        },
+                        "height": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height"
+                      ],
+                      "default": null
+                    },
+                    "state": {
+                      "description": "normal, maximized (not with snap or bounds; activates the window) or minimized (after it is placed; not with focus)",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "default": null,
+                      "enum": [
+                        "normal",
+                        "maximized",
+                        "minimized",
+                        null
+                      ]
+                    },
+                    "focus": {
+                      "description": "Bring the window to the front afterwards, as focus_window does (default false)",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ],
+                      "default": null
+                    }
+                  },
+                  "default": null
+                },
+                "reuseExisting": {
+                  "description": "Use an open window of the app instead of starting it, as launch_application's reuseExisting (default false)",
+                  "type": "boolean",
+                  "default": false
                 }
               },
               "required": [

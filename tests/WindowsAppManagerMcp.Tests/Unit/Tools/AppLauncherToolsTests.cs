@@ -62,7 +62,7 @@ public class AppLauncherToolsTests
 
         // Assert
         _mockProcessService.Verify(p => p.LaunchApplicationAsync(
-            new LaunchRequest("notepad.exe", null, null, null),
+            new LaunchRequest("notepad.exe", null, null, null, false),
             false,
             5000,
             It.IsAny<CancellationToken>()), Times.Once);

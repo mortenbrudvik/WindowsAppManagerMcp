@@ -109,7 +109,7 @@ public static class ToolDocCatalog
         ]),
         new("App Launch",
         [
-            new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow"),
+            new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow", "placement", "reuseExisting"),
             new("list_processes", "List running processes", "nameFilter", "includeWindowless"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
             new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "window (or handle)", "timeoutMs"),

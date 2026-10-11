@@ -96,6 +96,17 @@ public class ProcessService : IProcessService
         // A call cancelled before the start starts nothing
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.ReuseExisting)
+        {
+            var reuse = FindOpenWindow(plan, request, taken: null);
+            if (reuse.Result is { } alreadyOpen)
+            {
+                return alreadyOpen;
+            }
+
+            plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
+        }
+
         var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
@@ -118,6 +129,85 @@ public class ProcessService : IProcessService
 
     private static LaunchResult Rejected(LaunchPlan plan) =>
         new(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+
+    /// <summary>
+    /// reuseExisting (roadmap M3.13): the open window to use instead of starting the program, as an
+    /// <see cref="LaunchStatus.AlreadyOpen"/> result, or, when there is none, a note for the launch's warning when the
+    /// server could not look (null when it looked and found none). A window counts when it is:
+    /// <list type="bullet">
+    /// <item>an application window the user can switch to (<see cref="IWindowService.GetApplicationWindows"/>: visible,
+    /// not cloaked, so on the current virtual desktop, unowned, not a tool or shell window, not the server's own), minimized
+    /// or not, that is not the agent's own host and not already used by an earlier item of the batch
+    /// (<paramref name="taken"/>);</item>
+    /// <item>of the same app: its process has the started program's path or name, or the name of the same app it hands
+    /// off to (<see cref="LaunchWindowOwner.SameAppProcessNames"/>; never a terminal for a console program or a browser for
+    /// a web address), and, when expectWindow names a process, that process (part of the name, also the frame host's). A
+    /// launch whose app is not known (a document, a Store app, a web address) needs expectWindow.processName;</item>
+    /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise, when
+    /// the launch opens something (an argument that is not an option, or a document or URI), every file, folder and host
+    /// name the launch names (<see cref="DocumentHints"/>). A launch that opens something none of those names is never
+    /// reused.</item>
+    /// </list>
+    /// Of several, the front-most in z-order (the one used last) is used, and the warning says how many matched.
+    /// </summary>
+    private (LaunchResult? Result, string? Note) FindOpenWindow(LaunchPlan plan, LaunchRequest request, IReadOnlySet<nint>? taken)
+    {
+        var target = plan.Target!;
+        var hint = request.ExpectWindow is { IsEmpty: false } expected ? expected : null;
+        var names = LaunchWindowOwner.SameAppProcessNames(target);
+        var imagePath = target.Kind == LaunchTargetKind.NativeExecutable && Path.IsPathFullyQualified(target.FileName) ? target.FileName : null;
+        var wantedProcess = string.IsNullOrWhiteSpace(hint?.ProcessName) ? null : StripExe(hint.ProcessName.Trim());
+        if (names.Count == 0 && imagePath == null && wantedProcess == null)
+        {
+            return (null, "reuseExisting: the server cannot tell which app opens this target, so it did not look for an open window " +
+                          "and started it. Pass expectWindow.processName to reuse a window of that app.");
+        }
+
+        IReadOnlyList<string> titleParts;
+        if (!string.IsNullOrWhiteSpace(hint?.TitleContains))
+        {
+            titleParts = [hint.TitleContains.Trim()];
+        }
+        else if ((request.Arguments ?? []).Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')) || target.Kind == LaunchTargetKind.Other)
+        {
+            titleParts = DocumentHints(target, request.Arguments);
+            if (titleParts.Count == 0)
+            {
+                return (null, "reuseExisting: the launch opens something whose name a window title would not show, so no open window " +
+                              "was reused and it was started. Pass expectWindow.titleContains to name the window to reuse.");
+            }
+        }
+        else
+        {
+            titleParts = [];
+        }
+
+        var nameSet = new HashSet<string>(names.Select(StripExe), StringComparer.OrdinalIgnoreCase);
+        var matches = _windowService.GetApplicationWindows()
+            .Where(w => !w.IsAgentHost && taken?.Contains(w.Handle) != true)
+            .Where(w => (names.Count == 0 && imagePath == null) || nameSet.Contains(StripExe(w.ProcessName)) ||
+                        (imagePath != null && string.Equals(_processWrapper.GetProcessImagePath(w.ProcessId), imagePath, StringComparison.OrdinalIgnoreCase)))
+            .Where(w => wantedProcess == null || w.ProcessName.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) ||
+                        w.HostProcessName?.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) == true)
+            .Where(w => titleParts.All(part => w.Title.Contains(part, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (matches.Count == 0)
+        {
+            return (null, null);
+        }
+
+        var window = matches[0];
+        return (new LaunchResult(
+            Success: true,
+            WindowHandle: window.Handle,
+            Warning: CombineWarnings(plan.Warning, matches.Count == 1 ? null :
+                $"reuseExisting: {matches.Count} open windows matched; the front-most one was used. Nothing was started."),
+            Status: LaunchStatus.AlreadyOpen,
+            Window: window), null);
+    }
+
+    private static string StripExe(string name) =>
+        name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
 
     /// <summary>
     /// A launch whose start was requested: the started process (null when Windows started none), the windows before the
@@ -667,6 +757,7 @@ public class ProcessService : IProcessService
 
         var results = new LaunchResult?[applications.Count];
         var waiting = new List<(int Index, StartedLaunch Launch)>();
+        var reused = new HashSet<nint>();
         var finished = 0;
         var reportLock = new object();
 
@@ -696,6 +787,21 @@ public class ProcessService : IProcessService
                     results[i] = Rejected(plan);
                     Report(i);
                     continue;
+                }
+
+                // reuseExisting: an open window of the app, each used by one item only
+                if (request.ReuseExisting)
+                {
+                    var reuse = FindOpenWindow(plan, request, reused);
+                    if (reuse.Result is { } alreadyOpen)
+                    {
+                        reused.Add(alreadyOpen.WindowHandle!.Value);
+                        results[i] = alreadyOpen;
+                        Report(i);
+                        continue;
+                    }
+
+                    plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
                 }
 
                 var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
@@ -778,6 +884,7 @@ public class ProcessService : IProcessService
             LaunchStatus.ExitedWithoutWindow => "started, but it exited without a window",
             LaunchStatus.TimedOut => "started, no window appeared in time",
             LaunchStatus.AwaitingUserConsent => "is waiting for the user to answer a prompt (most likely UAC)",
+            LaunchStatus.AlreadyOpen => "was already open, nothing was started",
             _ => "started"
         };
 

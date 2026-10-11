@@ -57,6 +57,9 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
+        // Places the launch tools' windows (placement, roadmap M3.13) through the window and foreground services
+        services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
+            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
