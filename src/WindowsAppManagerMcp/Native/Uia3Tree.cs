@@ -388,7 +388,8 @@ public sealed class Uia3Tree : IUiaTree
             AutomationId: CachedString(element, UiaIds.AutomationIdProperty),
             Bounds: ToRect(element.GetCachedPropertyValue(UiaIds.BoundingRectangleProperty)),
             IsEnabled: CachedBool(element, UiaIds.IsEnabledProperty),
-            IsOffscreen: CachedBool(element, UiaIds.IsOffscreenProperty));
+            IsOffscreen: CachedBool(element, UiaIds.IsOffscreenProperty),
+            FrameworkId: CachedString(element, UiaIds.FrameworkIdProperty));
 
         return new UiaElement(
             new Node(element),
@@ -511,7 +512,7 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.NameProperty, UiaIds.ControlTypeProperty, UiaIds.LocalizedControlTypeProperty,
                 UiaIds.AutomationIdProperty, UiaIds.ClassNameProperty, UiaIds.BoundingRectangleProperty,
                 UiaIds.IsEnabledProperty, UiaIds.IsOffscreenProperty, UiaIds.IsKeyboardFocusableProperty,
-                UiaIds.RuntimeIdProperty, .. UiaIds.PatternAvailability.Select(p => p.Property)
+                UiaIds.RuntimeIdProperty, UiaIds.FrameworkIdProperty, .. UiaIds.PatternAvailability.Select(p => p.Property)
             ];
             WalkRequest = Request(walkProperties);
             SubtreeRequest = Request(walkProperties);

@@ -122,13 +122,15 @@ public class UIElementTools
         IProgress<ProgressNotificationValue>? progress,
         CancellationToken cancellationToken)
     {
+        var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));
+        deadline.CancelAfter(timeout);
 
+        // A window with web content is waited for within a third of the timeout (roadmap M3.3), so the walk keeps the rest
         var result = await service.GetUIElementsAsync(
             handle,
             Math.Clamp(maxDepth, 1, MaxDepth),
-            filter,
+            filter with { AccessibilityWarmupBudget = Services.AccessibilityWarmup.BudgetFor(timeout) },
             ToolProgress.ForServices(progress),
             deadline.Token).ConfigureAwait(false);
 

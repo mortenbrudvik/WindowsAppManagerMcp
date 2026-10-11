@@ -1484,4 +1484,126 @@ public class UIElementServiceTests
     }
 
     #endregion
+
+    #region Web content warm-up and frameworks (roadmap M3.3)
+
+    private static readonly AccessibilityWarmupInfo NotReady =
+        new(AccessibilityWarmupStatus.NotReady, WebContentHost.Chromium, 500, 3, 0, "Read again in a moment.");
+
+    [Fact]
+    public async Task GetUIElements_WarmsUpTheWindowBeforeTheWalk_WithTheFiltersBudget_AndReportsIt()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var order = new List<string>();
+        warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add($"warm-up after {_tree.ChildListings.Count} listings"))
+            .Returns(NotReady);
+        var sut = new UIElementService(_tree, _worker, warmup: warmup.Object);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, filter: new UIElementFilter(AccessibilityWarmupBudget: TimeSpan.FromMilliseconds(700)));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.AccessibilityWarmup.Should().Be(NotReady);
+        order.Should().Equal("warm-up after 0 listings");
+        warmup.Verify(w => w.WarmUp(Handle, TimeSpan.FromMilliseconds(700), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetUIElements_WithoutABudget_GivesTheWarmupItsLongestWait()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var sut = new UIElementService(_tree, _worker, warmup: warmup.Object);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle);
+
+        // Assert
+        result.AccessibilityWarmup.Should().BeNull("nothing was warmed up");
+        warmup.Verify(w => w.WarmUp(Handle, AccessibilityWarmup.MaxWait, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWindowThatIsNotFound_DoesNotWarmItUp()
+    {
+        // Arrange
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var sut = new UIElementService(_tree, _worker, warmup: warmup.Object);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheTimeoutPassesWithNothingRead_StillReportsTheWarmup()
+    {
+        // Arrange - the warm-up used the time up
+        BuildToolbarWindow();
+        using var deadline = new CancellationTokenSource();
+        var warmup = new Mock<IAccessibilityWarmup>();
+        warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(deadline.Cancel)
+            .Returns(NotReady);
+        var sut = new UIElementService(_tree, _worker, warmup: warmup.Object);
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle, cancellationToken: deadline.Token);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.AccessibilityWarmup.Should().Be(NotReady);
+    }
+
+    [Fact]
+    public async Task GetUIElements_NamesAnElementsFrameworkOnlyWhereItChanges()
+    {
+        // Arrange - a WPF window hosting a WebView2 pane (Win32 host window, Chrome content)
+        var window = new FakeUiaNode("Window", "Mail") { FrameworkId = "WPF" }.With(
+            new FakeUiaNode("Button", "New") { FrameworkId = "WPF" },
+            new FakeUiaNode("Pane", "WebView host") { FrameworkId = "Win32" }.With(
+                new FakeUiaNode("Document", "Inbox") { FrameworkId = "Chrome" }.With(
+                    new FakeUiaNode("Hyperlink", "Message") { FrameworkId = "Chrome" })),
+            new FakeUiaNode("Text", "Status"));
+        _tree.WithWindow(Handle, window);
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        result.FrameworkId.Should().Be("WPF");
+        var elements = result.Elements!;
+        elements[0].FrameworkId.Should().BeNull("the same framework as the window");
+        elements[1].FrameworkId.Should().Be("Win32");
+        var document = elements[1].Children!.Single();
+        document.FrameworkId.Should().Be("Chrome");
+        document.Children!.Single().FrameworkId.Should().BeNull("the same framework as the document it is inside");
+        elements[2].FrameworkId.Should().BeNull("a provider that reports no framework names none");
+    }
+
+    [Fact]
+    public async Task GetUIElements_AnElementLeftOutByAFilter_PassesItsFrameworkOnToNoOne()
+    {
+        // Arrange - the Chrome document is left out by controlTypes; its link is compared with the window's framework
+        var window = new FakeUiaNode("Window", "Browser") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" }.With(
+                new FakeUiaNode("Hyperlink", "Home") { FrameworkId = "Chrome" }));
+        _tree.WithWindow(Handle, window);
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: ["Hyperlink"]));
+
+        // Assert
+        result.Elements!.Single().FrameworkId.Should().Be("Chrome");
+    }
+
+    #endregion
 }

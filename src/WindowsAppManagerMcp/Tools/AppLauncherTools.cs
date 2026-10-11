@@ -34,6 +34,12 @@ public class AppLauncherTools
         "the launch opens a file, folder or web address, its title must show that name (or expectWindow.titleContains). The " +
         "front-most match is used, nothing is started, and launchStatus is alreadyOpen";
 
+    private const string ForceAccessibilityDescription =
+        "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, " +
+        "so get_ui_elements sees its web content from the first read (default false). Added only when the executable is such a " +
+        "program's .exe (for VS Code Code.exe, not code); otherwise nothing is added and warning says why. forceAccessibilityApplied " +
+        "reports it. An app that is already running keeps its mode: close it first";
+
     private readonly IProcessService _processService;
     private readonly IWindowService? _windowService;
     private readonly IInputSession? _session;
@@ -96,6 +102,8 @@ public class AppLauncherTools
         LaunchPlacement? placement = null,
         [Description(ReuseDescription)]
         bool reuseExisting = false,
+        [Description(ForceAccessibilityDescription)]
+        bool forceAccessibility = false,
         CancellationToken cancellationToken = default)
     {
         // A placement is checked before anything is launched; a bad one launches nothing
@@ -110,7 +118,7 @@ public class AppLauncherTools
         }
 
         var result = await _processService.LaunchApplicationAsync(
-            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting),
+            new LaunchRequest(executable, arguments, workingDirectory, expectWindow, reuseExisting, forceAccessibility),
             waitForWindow || plan != null,
             BoundedWait(waitTimeoutMs),
             cancellationToken).ConfigureAwait(false);
@@ -127,7 +135,8 @@ public class AppLauncherTools
             LaunchStatus: result.Status?.ToWireName(),
             Window: result.Window is { } window ? WindowFinderTools.ToDto(window) : null,
             LauncherExited: result.LauncherExited,
-            Placement: placed[0]
+            Placement: placed[0],
+            ForceAccessibilityApplied: result.ForceAccessibilityApplied
         );
     }
 
@@ -496,7 +505,8 @@ public record KillResultDto(
 /// launch_application's result. launchStatus says what the launch led to (see <see cref="LaunchStatus"/>); window is the
 /// window it found (with its real owner process, which can differ from processId), and windowHandle its handle;
 /// launcherExited says whether the started process had exited by the end of the window wait. placement is what the
-/// placement did, when one was asked for and the launch succeeded (roadmap M3.13).
+/// placement did, when one was asked for and the launch succeeded (roadmap M3.13). forceAccessibilityApplied says whether
+/// the program was started with --force-renderer-accessibility, when forceAccessibility was asked for (roadmap M3.3).
 /// </summary>
 public record LaunchResultDto(
     bool Success,
@@ -508,7 +518,8 @@ public record LaunchResultDto(
     string? LaunchStatus = null,
     WindowInfoDto? Window = null,
     bool? LauncherExited = null,
-    LaunchPlacementResultDto? Placement = null
+    LaunchPlacementResultDto? Placement = null,
+    bool? ForceAccessibilityApplied = null
 );
 
 /// <summary>

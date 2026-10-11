@@ -368,6 +368,7 @@ public class ScreenshotTools
             {
                 ElementsError = $"The UI elements could not be read, so the image has no overlays: {walk.Error ?? "unknown error"}",
                 ElementsErrorCode = code,
+                AccessibilityWarmup = walk.AccessibilityWarmup,
                 Truncated = true,
                 TruncationReason = walk.ErrorCode == UIElementErrorCode.OperationTimedOut
                     ? nameof(UIElementTruncationReason.Timeout)
@@ -375,6 +376,7 @@ public class ScreenshotTools
             };
         }
 
+        metadata = metadata with { AccessibilityWarmup = walk.AccessibilityWarmup };
         return walk.Truncated
             ? metadata with { Truncated = true, TruncationReason = walk.TruncationReason?.ToString() }
             : metadata;

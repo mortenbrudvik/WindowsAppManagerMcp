@@ -2125,6 +2125,8 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 
 > **Note:** `truncated` is `true` whenever the element list is incomplete, and `truncationReason` says why, as in [get_ui_elements](#get_ui_elements): `Timeout`, or `ElementsSkipped` when elements disappeared or their UI Automation provider failed during the walk. Both fields are left out for a complete walk.
 
+> **Note:** A window with a web page (Chromium, Electron, WebView2) is warmed up before the walk, and the metadata carries `accessibilityWarmup` as in [get_ui_elements](#get_ui_elements) (see [Web content](#ui-automation)). With `status: "NotReady"`, the overlays show the app's frame, not its page.
+
 > **Note:** Element names and the window title come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
 ---
@@ -2134,6 +2136,20 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 Tools for reading UI elements through Windows UI Automation: the element tree of a window, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
 **Engine.** The server reads UI Automation through the COM client (UI Automation 3) by default. Each of its calls gives up on an application that does not connect within 1 s or answer within 5 s, so a hung application costs a call seconds instead of blocking it until the timeout; it names the control types Windows 8 added (AppBar, SemanticZoom) from their ids, in every display language; and it reads an element's properties, or a level of the tree of up to 200 elements, in one cross-process call. The user can switch to the managed client of earlier versions with `WAM_UIA_ENGINE=uia2`, as a fallback for an application that reads wrongly; the tools return the same fields with either, and [get_server_info](#get_server_info) reports the engine in force (`uiAutomation`).
+
+**Web content (Chromium, Electron, WebView2).** Chromium builds the accessibility tree of a page only after a UI Automation client asks for it, and then in the background, so the first read of a Chrome or Edge window, an Electron app (VS Code, Slack, Discord, Teams classic), a CEF app or a WebView2 pane (the new Outlook) used to see an empty page. Before get_ui_elements, capture_with_elements, get_focused_element and get_element_at_point read a window with a visible page in it (a `Chrome_RenderWidgetHostHWND` window, its own or inside it), the server asks for the page's document and waits up to 1.5 s (at most a third of `timeoutMs`), checking every 200-500 ms until the document has elements and their number stopped changing. The result then carries `accessibilityWarmup`:
+
+| Field | Meaning |
+|-------|---------|
+| `status` | `Ready`: the page has elements. `Partial`: it has some, but more were still being added when the wait ended; read again for the full tree. `NotReady`: no element came within the wait, so what was read shows the app's frame, not its page: an element missing from it may still be there |
+| `host` | `Chromium` (a Chromium browser, an Electron or a CEF app) or `WebView2` (web content inside another app) |
+| `waitedMs`, `polls` | How long the call waited (0 when the page was already built) and how often it checked |
+| `documentChildCount` | The elements directly in the page's document at the last check; absent when no document was found |
+| `warning` | What to do, when `status` is not `Ready`: read again in a moment; for a Chromium or Electron app that stays empty, relaunch it with launch_application `forceAccessibility: true` |
+
+A window that got its page is remembered (until it closes), so later reads do not wait and carry no `accessibilityWarmup`; a window that stayed empty is waited for again, at most three times, and after that only checked. Only the window being read is asked: nothing global is changed, and no other application is touched. A window without a page (any native app, or a menu of the browser frame) is read as before.
+
+**UI frameworks.** Elements say which UI framework provides them (`frameworkId`: `Win32`, `WPF`, `XAML`, `WinForm`, `DirectUI`, `Chrome` for web content, ...). get_focused_element, get_element_at_point and its `ancestors` name it on every element; get_ui_elements names the window's at the top (`frameworkId`) and an element's only where it differs from the element it is inside, so a web page in a native frame shows where it starts (`Document 'Inbox' fw=Chrome` in the text format) without repeating it on every element.
 
 ### get_ui_elements
 
@@ -2173,13 +2189,14 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from their control ty
 - It stops once `maxElements` elements (default 300) are returned, with `truncated: true` and `truncationReason: MaxElements`; `maxElements` counts returned elements, not the ones the filters leave out. To see more of a large window, narrow the walk (`controlTypes`, `interactableOnly`, a smaller `maxDepth`) rather than raising the limit.
 - An element's children are first listed, which is cheap. Up to 200 of them are then read in one cross-process call together with the properties the walk needs. A wider level (a long list that does not virtualize, for example) is read one element at a time, so `maxElements` and the timeout stop the walk in the middle of it instead of losing the whole level. If the one call fails (a provider that fails for one child can fail it), the children are read one at a time too, so only the element that fails is skipped.
 - A window that does not respond is not read: when Windows reports it hung, or it does not answer a message within 500 ms, the call fails at once with `NotResponding` instead of blocking. Wait and call again. A window that cannot be sent the message (one of a more privileged process) is read as usual.
+- A window with a web page is warmed up first, within a third of `timeoutMs` (see [Web content](#ui-automation)), and the result says so in `accessibilityWarmup`.
 
 #### Formats
 
 `format` changes only the shape of the result; the walk and the other fields are the same.
 - `tree` (default): each element lists the elements inside it in `children`.
 - `flat`: every element once, in reading order (an element, then the elements inside it), without `children`, with `depth` (1 for the elements directly under the window) and `parent` (the index in `elements` of the element it is inside; left out under the window).
-- `text`: `elements` is left out and `text` holds one line per element, indented two spaces per level. It costs the fewest tokens. A line is the control type; the name in single quotes (`'` and `\` inside are escaped with `\`, line breaks become spaces, and names longer than 100 characters are cut with `…`), left out when there is none; `aid=` and the automation id (quoted the same way when it holds a space or a quote); `@x,y wxh`, the bounds in physical screen pixels, left out when there are none; and the flags `[disabled]` and `[offscreen]` when they apply. The element's centre is `x + w/2`, `y + h/2`.
+- `text`: `elements` is left out and `text` holds one line per element, indented two spaces per level. It costs the fewest tokens. A line is the control type; the name in single quotes (`'` and `\` inside are escaped with `\`, line breaks become spaces, and names longer than 100 characters are cut with `…`), left out when there is none; `aid=` and the automation id (quoted the same way when it holds a space or a quote); `fw=` and the UI framework, only where it changes from the element it is inside (see `frameworkId` below); `@x,y wxh`, the bounds in physical screen pixels, left out when there are none; and the flags `[disabled]` and `[offscreen]` when they apply. The element's centre is `x + w/2`, `y + h/2`.
 
 ```text
 ToolBar 'Standard' @100,130 600x28
@@ -2266,6 +2283,8 @@ Edit 'Text Editor' aid=15 @100,160 1200x740
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
 - `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned), `MaxElements` (the walk stopped at `maxElements` with elements left unread: deeper elements, or the rest of the level it stopped in. When exactly `maxElements` elements exist, it is not set) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
 - `depth` and `parent` on each element (`format: "flat"` only), and `text` instead of `elements` (`format: "text"`); see [Formats](#formats).
+- `frameworkId`: at the top, the UI framework of the window itself (`Win32`, `WPF`, `Chrome`, ...); on an element, its framework where it differs from that of the element it is inside (for an element directly under the window, from the window's). Absent means the same framework as there.
+- `accessibilityWarmup`: present when the window shows a web page and this call waited for it; see [Web content](#ui-automation). `status: "NotReady"` means the page's elements were not there yet, not that the control is absent.
 - `windowState`: the state of the window's top-level window when the walk ended: `Normal`, `Maximized` or `Minimized`. A minimized window's elements are offscreen, so `visibleOnly` leaves them all out and the tree is empty: restore the window first (or capture it with `restoreIfMinimized`). Left out when the window could not be read.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
 
@@ -2337,6 +2356,7 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 - `element.patterns` lists the action patterns the element supports: Invoke, Toggle, Value, SelectionItem, ExpandCollapse and RangeValue.
 - `windowHandle` is the top-level window that contains the element: the root window of the nearest element above it that has a window handle of its own. Compare it with the window you mean to type into. It is absent when no such window was found.
 - `processId` and `processName` are the process that provides the element. For Store (UWP) apps, `windowHandle` can belong to `ApplicationFrameHost` while the element belongs to the app's own process.
+- `accessibilityWarmup`: present when the foreground window shows a web page and this call waited for it first (see [Web content](#ui-automation)); with `NotReady`, focus may be reported on the page's frame instead of the field inside it.
 - Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
 **Error Codes:**
@@ -2416,7 +2436,8 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 ```
 
 - `element` has the same fields as in [get_focused_element](#get_focused_element), including the value rules for password fields.
-- `ancestors` never goes above the top-level window, so it can be shorter than requested.
+- `ancestors` never goes above the top-level window, so it can be shorter than requested. Each one names its `frameworkId`.
+- `accessibilityWarmup`: present when the window at the point shows a web page and this call waited for it before the hit test (see [Web content](#ui-automation)); with `NotReady`, the element may be the page's frame rather than the control under the point.
 - `windowHandle` is the root of the window hit-tested at the point (WindowFromPoint, then its root window). That lookup skips hidden windows and disabled child windows, but not a disabled top-level window such as the owner of a modal dialog. The window the element belongs to is used only when no window is hit, which practically never happens on a monitor.
 - Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
@@ -3433,6 +3454,7 @@ Launch an application by path, name, or protocol URI, and optionally wait for th
 | expectWindow | object | No | - | With `waitForWindow`: `processName` and/or `titleContains` of the window to expect, for Store apps, URIs and documents whose app the server cannot tell from what was started |
 | placement | object | No | - | Where to put the window once it is found: `snap` or `bounds`, `monitorIndex`, `state`, `focus` (see [Launch and arrange](#launch-and-arrange)); implies waiting for the window |
 | reuseExisting | boolean | No | false | Use an open window of the app instead of starting another copy (`launchStatus` `alreadyOpen`; see [Reusing an open window](#reusing-an-open-window)) |
+| forceAccessibility | boolean | No | false | Start a Chromium browser, an Electron or a CEF app with `--force-renderer-accessibility`, so its pages are readable from the first UI Automation read (see [Web content accessibility](#web-content-accessibility)) |
 <!-- tools:end params:launch_application -->
 
 **Example 1:** Launch by name
@@ -3543,7 +3565,7 @@ A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `she
 | `awaitingUserConsent` | The start did not return within 5 seconds: Windows is most likely showing a consent or security prompt (UAC, SmartScreen, a security warning for a downloaded or network file, or "How do you want to open this file?"). Only the user may answer it; do not click or type into it. The program starts only if the user approves; `processId` is absent, and a decline after the 5 seconds is not reported | - |
 | `alreadyOpen` | Only with `reuseExisting`: a window of the app was already open (see [Reusing an open window](#reusing-an-open-window)), so nothing was started; `processId` is absent | That window |
 
-`warning` says what to do for the statuses without a window: look for the window with [find_windows](#find_windows), or launch with `expectWindow`. `launcherExited` (after a window wait) is `true` when the started process had exited by then, as launchers and single-instance stubs do after a handoff.
+`warning` says what to do for the statuses without a window: look for the window with [find_windows](#find_windows), or launch with `expectWindow`. `launcherExited` (after a window wait) is `true` when the started process had exited by then, as launchers and single-instance stubs do after a handoff. `forceAccessibilityApplied` is there only with `forceAccessibility` (see [Web content accessibility](#web-content-accessibility)).
 
 **How the window is found** (with `waitForWindow`): the server records the open windows before the start and then, every 100 ms, looks for a new visible, titled, uncloaked app window that belongs to the launch: a window of the started process or of a process it started (checked by start time, so a reused process ID does not count), of a process with the same program path or name, of the app a launcher hands off to (`calc` to `CalculatorApp`, `wt`, `cmd`, `powershell` and `pwsh` to `WindowsTerminal`, `code` to `Code`, `ms-settings:` to `SystemSettings`, an `http` or `https` address to Edge, Chrome, Firefox, Brave, Opera, Vivaldi or Arc), or one that matches `expectWindow`. A UWP app's window is matched by the app's own process, not `ApplicationFrameHost`. The window must stay for 300 ms (a splash screen does not count), then the server waits up to a second for the app to be ready for input. While no new window is pending, a window of the app that was already open counts once it has come to the front, or its title shows the launched file, folder or host, for a second (`reusedExistingWindow`, `openedInTab`). `expectWindow` is needed when the server cannot tell the app from what was started: a Store app through `shell:AppsFolder`, a document opened by whatever app is registered for it, or another browser or URI scheme.
 
@@ -3597,6 +3619,12 @@ The result is the launch's, with `placement`:
 `window` is the window as the launch found it; `placement` is where it is now: `finalBounds` (its visible frame; none when minimized), `finalState`, `monitorIndex`, `focused` (it, or a dialog it owns, is the foreground window; also reported when `focus` was not asked for) and `reapplied` (the app moved it back after the first placement, and it was placed a second time).
 
 **A placement failure does not fail the launch.** `success` stays `true` (the app was launched, and `isError` is unset), and `placement` has `errorCode` and `error`: the same codes the window tools report (`MoveFailed`, `AccessDenied`, `NotResponding`, `StateChangeFailed`, `TargetDeniedByPolicy`, `PausedByUser`, `FocusFailed`, `Cloaked`, `WindowHidden`, `InvalidMonitorIndex` when a monitor was unplugged meanwhile), `WindowNotFound` when the launch found no window (any status without a window; nothing was placed), `InvalidHandle` when the window closed, `MoveFailed` or `FocusFailed` also for an unexpected failure while placing or focusing (for example the monitors changed meanwhile), and `ProtectedWindow` when the window belongs to the agent's own host (it is not moved or focused; use the window tools on it if you mean it). The first step that fails ends that window's placement, so a failed snap is not followed by the focus. Fix the window with [find_windows](#find_windows) and the window tools; never launch again, which would open a second copy. An app that moves its window again later than about 500 ms after it appeared, or a second time, is not followed.
+
+#### Web content accessibility
+
+`forceAccessibility: true` starts the program with `--force-renderer-accessibility`, which makes Chromium build the accessibility tree of every page from the start, so the UI Automation tools see the page at once instead of after the [warm-up](#ui-automation); some older Electron apps expose their pages only with it. The switch is added only to a Chromium browser (Chrome, Edge, Brave, Vivaldi), an Electron app (VS Code, Slack, Discord) or a CEF app (Spotify), recognised by its `.exe` with Chromium's resource files (`icudtl.dat` and `resources.pak`) next to it or in a version folder next to it; never to an installer, updater or helper in the same folder, and never to any other program. It goes in front of `arguments` (Chromium reads no switch after `--`) and is not added twice. For any other target, a batch file shim such as `code` (`bin\code.cmd`: pass `...\Microsoft VS Code\Code.exe` instead), a URI, a document or a Store app, nothing is added, the program is launched as asked, `forceAccessibilityApplied` is `false` and `warning` says why. `forceAccessibilityApplied: true` means the switch was on the command line; when the launch went to an instance of the app that was already running (`possibleHandoff`, `reusedExistingWindow`, `openedInTab`, or `launcherExited: true`), that instance keeps the mode it started with, and `warning` says to close the app's windows and launch it again. With `reuseExisting`, an `alreadyOpen` result started nothing (`false`). WebView2 panes inside other apps cannot be switched on this way.
+
+The server never turns on the system-wide screen reader flag (`SPI_SETSCREENREADER`), which would change how every running application behaves and would stay on if the server were killed.
 
 #### Reusing an open window
 
@@ -4852,6 +4880,14 @@ Since 1.14.0 (roadmap M3):
   `confirm: true` too. close_window gains the `confirm` argument for this. `force` on windows that are not protected,
   and every call on a client with elicitation (the user is asked, as in 1.14.0), are unchanged. close_application has
   no `force`, so it is unchanged.
+- **Web content accessibility (roadmap M3.3, after 1.14.0).** get_ui_elements, capture_with_elements,
+  get_focused_element and get_element_at_point now wait up to 1.5 s (at most a third of `timeoutMs`) the first time
+  they read a window with a Chromium, Electron or WebView2 page, so such a first call can take that much longer, and
+  their results carry `accessibilityWarmup` when they waited (see [Web content](#ui-automation)). Elements carry
+  `frameworkId`: get_ui_elements reports it at the top and on an element only where it changes (`fw=` in the text
+  format), and get_element_at_point's `ancestors` have it too. launch_application takes `forceAccessibility` and then
+  returns `forceAccessibilityApplied` (see [Web content accessibility](#web-content-accessibility)). All of these are
+  new fields; a call without `forceAccessibility` launches as before.
 
 ## Error Codes
 

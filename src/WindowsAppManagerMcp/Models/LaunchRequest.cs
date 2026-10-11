@@ -17,12 +17,18 @@ namespace WindowsAppManagerMcp.Models;
 /// Use a window of the app that is already open instead of starting the program (roadmap M3.13); see
 /// IProcessService.LaunchApplicationAsync for which window counts.
 /// </param>
+/// <param name="ForceAccessibility">
+/// Start a Chromium browser, an Electron or a CEF app with --force-renderer-accessibility, so its pages' accessibility
+/// trees are built from the start (roadmap M3.3). Added only for such a program (Services.ChromiumPrograms); for any other
+/// target nothing is added and the result's warning says why.
+/// </param>
 public sealed record LaunchRequest(
     string Executable,
     string[]? Arguments = null,
     string? WorkingDirectory = null,
     LaunchWindowHint? ExpectWindow = null,
-    bool ReuseExisting = false);
+    bool ReuseExisting = false,
+    bool ForceAccessibility = false);
 
 /// <summary>
 /// The window a launch is expected to open, for the cases the server cannot work out on its own: a packaged app

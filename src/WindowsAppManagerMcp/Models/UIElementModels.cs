@@ -11,6 +11,10 @@ namespace WindowsAppManagerMcp.Models;
 /// the window). Null in the tree format, where the nesting shows it.</param>
 /// <param name="Parent">format=flat only: the index in the flat list of the returned element this one is inside, or null
 /// when it is listed directly under the window.</param>
+/// <param name="FrameworkId">The UI framework that provides the element (for example Win32, WPF, XAML, WinForm, DirectUI or
+/// Chrome, which is web content in a Chromium, Electron or WebView2 app), set only where it differs from that of the
+/// returned element it is inside, or, for an element listed directly under the window, from the result's
+/// <see cref="UIElementResult.FrameworkId"/> (roadmap M3.3). Null means the same framework as there.</param>
 public record UIElementInfo(
     string? Name,
     string ControlType,
@@ -20,7 +24,8 @@ public record UIElementInfo(
     bool IsOffscreen,
     IReadOnlyList<UIElementInfo>? Children = null,
     int? Depth = null,
-    int? Parent = null
+    int? Parent = null,
+    string? FrameworkId = null
 );
 
 /// <summary>
@@ -41,6 +46,10 @@ public record UIElementInfo(
 /// window could not be read.</param>
 /// <param name="Text">format=text only: the elements as one compact line each, indented two spaces per level (see
 /// Tools.UIElementTextFormat); <paramref name="Elements"/> is null then.</param>
+/// <param name="FrameworkId">The UI framework of the window itself (for example Win32, WPF or Chrome); the elements name
+/// theirs only where it changes (<see cref="UIElementInfo.FrameworkId"/>). Null when the window did not report one.</param>
+/// <param name="AccessibilityWarmup">Set when the window shows web content (Chromium, Electron or WebView2) and this call
+/// waited for its accessibility tree (roadmap M3.3); null otherwise, also for a window an earlier call warmed up.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -56,7 +65,9 @@ public record UIElementResult(
     bool Truncated = false,
     UIElementTruncationReason? TruncationReason = null,
     WindowState? WindowState = null,
-    string? Text = null
+    string? Text = null,
+    string? FrameworkId = null,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 );
 
 /// <summary>
@@ -88,13 +99,17 @@ public enum UIElementTruncationReason
 /// <param name="VisibleOnly">Leave out elements reported as offscreen, together with everything inside them.</param>
 /// <param name="MaxElements">Stop the walk once this many elements are returned (truncationReason MaxElements), or null
 /// for no limit. Not a filter: it bounds the walk, which reads breadth first so the levels nearest the window are kept.</param>
+/// <param name="AccessibilityWarmupBudget">The longest wait for the accessibility tree of a window that shows web content
+/// (roadmap M3.3), or null for <see cref="Services.AccessibilityWarmup.MaxWait"/>. Not a filter: the tools set it to a
+/// share of their timeout (<see cref="Services.AccessibilityWarmup.BudgetFor"/>), so the walk keeps time to read.</param>
 public record UIElementFilter(
     string[]? ControlTypes = null,
     bool InteractableOnly = false,
     bool VisibleOnly = true,
     int? MinWidth = null,
     int? MinHeight = null,
-    int? MaxElements = null
+    int? MaxElements = null,
+    TimeSpan? AccessibilityWarmupBudget = null
 );
 
 /// <summary>
@@ -157,12 +172,14 @@ public record UIElementDetails(
 /// <summary>
 /// An element above another one in the UI Automation tree.
 /// </summary>
+/// <param name="FrameworkId">The UI framework that provides the ancestor (for example Win32, WPF or Chrome).</param>
 public record UIElementAncestor(
     string? Name,
     string ControlType,
     string? AutomationId,
     string? ClassName,
-    BoundsDto? Bounds
+    BoundsDto? Bounds,
+    string? FrameworkId = null
 );
 
 /// <summary>
@@ -174,6 +191,8 @@ public record UIElementAncestor(
 /// <param name="WindowTitle">The title of <paramref name="WindowHandle"/>.</param>
 /// <param name="ProcessId">The process that provides the element.</param>
 /// <param name="ProcessName">The name of that process, without ".exe".</param>
+/// <param name="AccessibilityWarmup">Set when the foreground window shows web content (Chromium, Electron or WebView2) and
+/// this call waited for its accessibility tree first (roadmap M3.3); null otherwise.</param>
 public record FocusedElementResult(
     bool Success,
     UIElementDetails? Element,
@@ -183,7 +202,8 @@ public record FocusedElementResult(
     string? ProcessName,
     double ElapsedMilliseconds,
     string? Error = null,
-    UIElementErrorCode ErrorCode = UIElementErrorCode.None
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 );
 
 /// <summary>
@@ -200,6 +220,8 @@ public record FocusedElementResult(
 /// <param name="WindowTitle">The title of <paramref name="WindowHandle"/>.</param>
 /// <param name="ProcessId">The process that provides the element.</param>
 /// <param name="ProcessName">The name of that process, without ".exe".</param>
+/// <param name="AccessibilityWarmup">Set when the window at the point shows web content (Chromium, Electron or WebView2)
+/// and this call waited for its accessibility tree first (roadmap M3.3); null otherwise.</param>
 public record ElementAtPointResult(
     bool Success,
     int X,
@@ -212,5 +234,51 @@ public record ElementAtPointResult(
     string? ProcessName,
     double ElapsedMilliseconds,
     string? Error = null,
-    UIElementErrorCode ErrorCode = UIElementErrorCode.None
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 );
+
+/// <summary>
+/// What the accessibility warm-up of a window with web content did (roadmap M3.3). Chromium, and the Electron and WebView2
+/// apps built on it, build the accessibility tree of a page only once a UI Automation client asks for it, so the first
+/// read of such a window can see an empty document. The server asks, then waits a moment for the document to fill.
+/// </summary>
+/// <param name="Status">Ready: the web content has elements. Partial: it has some, but more were still being added when
+/// the wait ended. NotReady: no web content came within the wait, so what was read shows the app's frame, not its page.</param>
+/// <param name="Host">Chromium (a Chromium browser, an Electron or a CEF app) or WebView2 (web content inside another app).</param>
+/// <param name="WaitedMs">How long the call waited for the web content, in milliseconds (0 when it was there at once).</param>
+/// <param name="Polls">How many times the web content was checked.</param>
+/// <param name="DocumentChildCount">How many elements the page's documents had at the last check, or null when no document
+/// was found.</param>
+/// <param name="Warning">What it means and what to do, when <paramref name="Status"/> is not Ready.</param>
+public record AccessibilityWarmupInfo(
+    AccessibilityWarmupStatus Status,
+    WebContentHost Host,
+    int WaitedMs,
+    int Polls,
+    int? DocumentChildCount,
+    string? Warning = null
+);
+
+/// <summary>The outcome of an accessibility warm-up (<see cref="AccessibilityWarmupInfo"/>).</summary>
+public enum AccessibilityWarmupStatus
+{
+    /// <summary>The page's document has elements, and their number had stopped changing (or they were there at once).</summary>
+    Ready = 1,
+
+    /// <summary>The document has elements, but their number was still changing when the wait ended.</summary>
+    Partial = 2,
+
+    /// <summary>The document had no elements, or no document was found, when the wait ended.</summary>
+    NotReady = 3
+}
+
+/// <summary>What kind of program shows the web content of a window (<see cref="AccessibilityWarmupInfo"/>).</summary>
+public enum WebContentHost
+{
+    /// <summary>A Chromium-based browser (Chrome, Edge, Brave, ...), an Electron app (VS Code, Slack, Discord, ...) or a CEF app.</summary>
+    Chromium = 1,
+
+    /// <summary>A WebView2 control (msedgewebview2.exe) inside another app, such as the new Outlook or Teams.</summary>
+    WebView2 = 2
+}

@@ -55,6 +55,23 @@ public class FixtureUiElementsTests
     }
 
     [DesktopNoInputFact]
+    public async Task GetUIElements_NamesTheWpfFramework_AndWarmsNothingUpInANativeWindow()
+    {
+        // Arrange - roadmap M3.3: the fixture is a WPF window without web content
+        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
+
+        // Act
+        var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
+
+        // Assert - the elements inherit the window's framework, so they name none of their own
+        result.Success.Should().BeTrue(result.Error);
+        result.FrameworkId.Should().Be("WPF");
+        result.AccessibilityWarmup.Should().BeNull("a native window has no web content to wait for");
+        UiaReads.Flatten(result.Elements).Where(e => e.AutomationId != null)
+            .Should().OnlyContain(e => e.FrameworkId == null);
+    }
+
+    [DesktopNoInputFact]
     public async Task GetUIElements_BoundsMatchWhereTheFixtureDrawsItsElements()
     {
         // Arrange

@@ -23,6 +23,7 @@ public class ProcessService : IProcessService
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
     private readonly IWindowWaitService _windowWait;
+    private readonly ChromiumPrograms _chromiumPrograms;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -37,6 +38,8 @@ public class ProcessService : IProcessService
     /// Finds the window a launch opens (roadmap M2.6). The server always passes it; without it a wait reads the real
     /// desktop through a <see cref="NativeWindowWrapper"/> created here (eagerly, so that the E2E reference walk sees it).
     /// </param>
+    /// <param name="chromiumPrograms">Tells which programs forceAccessibility may add --force-renderer-accessibility to
+    /// (roadmap M3.3); default the real file system.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -45,7 +48,8 @@ public class ProcessService : IProcessService
         INativeProcessWrapper? processWrapper = null,
         ITargetPolicy? targetPolicy = null,
         IHostGuard? hostGuard = null,
-        IWindowWaitService? windowWait = null)
+        IWindowWaitService? windowWait = null,
+        ChromiumPrograms? chromiumPrograms = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -55,6 +59,7 @@ public class ProcessService : IProcessService
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
         _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
+        _chromiumPrograms = chromiumPrograms ?? new ChromiumPrograms();
     }
 
     /// <summary>
@@ -87,7 +92,7 @@ public class ProcessService : IProcessService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
         if (!plan.IsValid)
         {
             return Rejected(plan);
@@ -101,7 +106,7 @@ public class ProcessService : IProcessService
             var reuse = FindOpenWindow(plan, request, taken: null, openBefore: null);
             if (reuse.Result is { } alreadyOpen)
             {
-                return alreadyOpen;
+                return WithForceAccessibility(alreadyOpen, plan);
             }
 
             plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
@@ -110,7 +115,7 @@ public class ProcessService : IProcessService
         var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
-            return ended;
+            return WithForceAccessibility(ended, plan);
         }
 
         using (launch.Process)
@@ -118,13 +123,58 @@ public class ProcessService : IProcessService
             // Cancelled while waiting for the window: the program was started and keeps running, and the call throws
             if (!waitForWindow)
             {
-                return StartedWithoutWait(launch);
+                return WithForceAccessibility(StartedWithoutWait(launch), plan);
             }
 
             var owner = OwnerOf(launch, request);
-            return await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
-                .ConfigureAwait(false);
+            return WithForceAccessibility(
+                await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
+                    .ConfigureAwait(false),
+                plan);
         }
+    }
+
+    /// <summary>
+    /// Says whether forceAccessibility took effect (roadmap M3.3), when it was asked for and the request was valid: false
+    /// when nothing was started (reuseExisting found an open window) or the start failed. The flag only matters when the
+    /// app's main process starts with it: when the launch went to an instance that was already running (a handoff, a
+    /// reused window or a new tab, or a launcher that exited), that instance keeps the mode it started with, and the result
+    /// warns about it.
+    /// </summary>
+    private static LaunchResult WithForceAccessibility(LaunchResult result, LaunchPlan plan)
+    {
+        if (plan.ForceAccessibilityApplied is not { } applied)
+        {
+            return result;
+        }
+
+        if (!applied || !result.Success)
+        {
+            return result with { ForceAccessibilityApplied = false };
+        }
+
+        if (result.Status == LaunchStatus.AlreadyOpen)
+        {
+            return result with
+            {
+                ForceAccessibilityApplied = false,
+                Warning = CombineWarnings(result.Warning,
+                    "forceAccessibility was not applied: reuseExisting used an open window, so nothing was started.")
+            };
+        }
+
+        var handedOff = result.Status is LaunchStatus.PossibleHandoff or LaunchStatus.ReusedExistingWindow or LaunchStatus.OpenedInTab ||
+                        result.LauncherExited == true;
+        return result with
+        {
+            ForceAccessibilityApplied = true,
+            Warning = handedOff
+                ? CombineWarnings(result.Warning,
+                    $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the launch went to an instance of the app " +
+                    "that was already running, which keeps the accessibility mode it started with. To apply it, close every " +
+                    "window of the app and launch it again.")
+                : result.Warning
+        };
     }
 
     private static LaunchResult Rejected(LaunchPlan plan) =>
@@ -591,9 +641,13 @@ public class ProcessService : IProcessService
     /// <item>When the target is a batch file (ShellExecute runs it through cmd.exe) or cannot be verified to
     /// be a native executable, arguments containing cmd.exe metacharacters are rejected, because cmd.exe
     /// ignores \" escaping and expands %VAR% even inside quotes.</item>
+    /// <item><paramref name="forceAccessibility"/> (roadmap M3.3) puts --force-renderer-accessibility in front of the
+    /// arguments, only for a program <see cref="ChromiumPrograms"/> recognizes (a Chromium browser, an Electron or a CEF
+    /// app, started by its .exe) and only once; for any other target nothing is added and the plan's warning says why. In
+    /// front, because Chromium reads no switch after a "--" argument.</item>
     /// </list>
     /// </remarks>
-    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null)
+    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false)
     {
         // Validate executable path
         var executableValidation = _validationService.ValidateExecutable(executable);
@@ -668,6 +722,28 @@ public class ProcessService : IProcessService
             }
         }
 
+        bool? forceAccessibilityApplied = null;
+        if (forceAccessibility)
+        {
+            var whyNot = isNativeExecutable
+                ? _chromiumPrograms.WhyNot(target.FileName)
+                : target.Kind == LaunchTargetKind.BatchFile
+                    ? $"it resolves to the batch file '{target.FileName}'"
+                    : "it is not a program's .exe (a URI, document, shortcut or Store app)";
+            forceAccessibilityApplied = whyNot == null;
+            if (whyNot != null)
+            {
+                warning = CombineWarnings(warning,
+                    $"forceAccessibility was not applied to '{executable}': {whyNot}. {ChromiumPrograms.ForceRendererAccessibility} " +
+                    "is added only to a Chromium browser, an Electron or a CEF app started by its .exe (for VS Code, Code.exe, " +
+                    "not code.cmd).");
+            }
+            else if (arguments?.Any(ChromiumPrograms.IsForceAccessibilityArgument) != true)
+            {
+                arguments = [ChromiumPrograms.ForceRendererAccessibility, .. arguments ?? []];
+            }
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = target.FileName,
@@ -680,7 +756,7 @@ public class ProcessService : IProcessService
             startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
         }
 
-        return new LaunchPlan(startInfo, target.Kind, warning, Target: target);
+        return new LaunchPlan(startInfo, target.Kind, warning, Target: target, ForceAccessibilityApplied: forceAccessibilityApplied);
     }
 
     /// <summary>
@@ -896,6 +972,7 @@ public class ProcessService : IProcessService
         ArgumentNullException.ThrowIfNull(applications);
 
         var results = new LaunchResult?[applications.Count];
+        var plans = new LaunchPlan?[applications.Count];
         var waiting = new List<(int Index, StartedLaunch Launch)>();
         var reused = new HashSet<nint>();
         // reuseExisting reuses only windows that were open before the batch started anything, not one an earlier item started
@@ -925,7 +1002,8 @@ public class ProcessService : IProcessService
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var request = applications[i];
-                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
+                plans[i] = plan;
                 if (!plan.IsValid)
                 {
                     results[i] = Rejected(plan);
@@ -946,6 +1024,7 @@ public class ProcessService : IProcessService
                     }
 
                     plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
+                    plans[i] = plan;
                 }
 
                 var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
@@ -1014,7 +1093,7 @@ public class ProcessService : IProcessService
             }
         }
 
-        return results!;
+        return results.Select((result, i) => plans[i] is { } plan ? WithForceAccessibility(result!, plan) : result!).ToList();
     }
 
     private static string DescribeLaunch(LaunchResult result) => !result.Success

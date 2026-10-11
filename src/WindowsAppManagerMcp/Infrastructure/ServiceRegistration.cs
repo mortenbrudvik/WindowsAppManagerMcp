@@ -76,6 +76,10 @@ public static class ServiceRegistration
         services.AddSingleton<IUiaWorker, UiaWorker>();
         services.AddSingleton<INativeHitTestWrapper, NativeHitTestWrapper>();
         services.AddSingleton<IElementInspectionService, ElementInspectionService>();
+        // Warms up the web content of Chromium, Electron and WebView2 windows before the two services above read them
+        // (roadmap M3.3); it remembers the windows it warmed up
+        services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
+            sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>()));
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

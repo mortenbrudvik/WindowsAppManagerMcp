@@ -601,4 +601,106 @@ public class ElementInspectionServiceTests
     }
 
     #endregion
+
+    #region Web content warm-up (roadmap M3.3)
+
+    private static readonly AccessibilityWarmupInfo Warmed =
+        new(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 400, 3, 12);
+
+    private readonly Mock<IAccessibilityWarmup> _warmup = new();
+
+    private ElementInspectionService CreateSutWithWarmup() =>
+        new(_tree, _worker, _hitTest.Object, _windows.Object, _monitors.Object, _warmup.Object);
+
+    [Fact]
+    public async Task GetFocusedElement_WarmsUpTheForegroundWindowFirst_WithinAThirdOfTheTimeout()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => _tree.Reads.Should().BeEmpty("the warm-up comes before the focused element is read"))
+            .Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(TimeSpan.FromSeconds(3));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.AccessibilityWarmup.Should().Be(Warmed);
+        _warmup.Verify(w => w.WarmUp(TopLevel, TimeSpan.FromSeconds(1), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WhenNothingHasFocus_StillReportsTheWarmup()
+    {
+        // Arrange
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.ElementNotFound);
+        result.AccessibilityWarmup.Should().Be(Warmed);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WithoutAForegroundWindow_WarmsNothingUp()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.AccessibilityWarmup.Should().BeNull();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_WarmsUpTheWindowAtThePointBeforeTheHitTest()
+    {
+        // Arrange
+        var field = BuildForm();
+        var hitTested = false;
+        _tree.AtPoint = (_, _) =>
+        {
+            hitTested = true;
+            return field;
+        };
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => hitTested.Should().BeFalse("a page that is not built yet would answer with its frame"))
+            .Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetElementAtPointAsync(150, 210, 1, Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.AccessibilityWarmup.Should().Be(Warmed);
+        _warmup.Verify(w => w.WarmUp(TopLevel, AccessibilityWarmup.BudgetFor(Timeout), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_AncestorsNameTheirFramework()
+    {
+        // Arrange
+        var link = new FakeUiaNode("Hyperlink", "Home") { FrameworkId = "Chrome" };
+        new FakeUiaNode("Pane", "Host") { FrameworkId = "Win32", ClassName = "Chrome_RenderWidgetHostHWND" }.With(
+            new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" }.With(link));
+        _tree.AtPoint = (_, _) => link;
+
+        // Act
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 2, Timeout);
+
+        // Assert
+        result.Element!.FrameworkId.Should().Be("Chrome");
+        result.Ancestors!.Select(a => a.FrameworkId).Should().Equal("Chrome", "Win32");
+    }
+
+    #endregion
 }

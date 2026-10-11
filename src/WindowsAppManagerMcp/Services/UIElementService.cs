@@ -36,6 +36,11 @@ namespace WindowsAppManagerMcp.Services;
 /// what was read so far; a level already fetched when it passes is kept whole, because reading it cost no further
 /// call. So does a walk that is abandoned because a UI Automation call did not return (a hung provider): the
 /// elements it had read until then are returned.</item>
+/// <item>A window that shows web content (Chromium, Electron, WebView2) is warmed up first (<see cref="IAccessibilityWarmup"/>,
+/// roadmap M3.3): its page's accessibility tree is asked for and waited for, within a share of the timeout, and the result
+/// says what came of it (accessibilityWarmup) instead of returning a silently thin tree.</item>
+/// <item>Each element names its UI framework only where it changes from the returned element it is inside (or, at the top,
+/// from the window's), so a web page inside a native frame shows where it starts without repeating it on every element.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -65,6 +70,7 @@ public class UIElementService : IUIElementService
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
     private readonly INativeWindowWrapper? _windows;
+    private readonly IAccessibilityWarmup? _warmup;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
@@ -72,11 +78,14 @@ public class UIElementService : IUIElementService
     /// whose window is read (for a UWP app its own process, see <see cref="UwpFrames"/>), so a hung application blocks
     /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count and nothing is
     /// checked first.</param>
-    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null)
+    /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
+    /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
+    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null, IAccessibilityWarmup? warmup = null)
     {
         _tree = tree;
         _worker = worker;
         _windows = windows;
+        _warmup = warmup;
     }
 
     /// <inheritdoc />
@@ -126,7 +135,7 @@ public class UIElementService : IUIElementService
                      CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
         }
 
-        return result with { WindowState = ReadWindowState(windowHandle) };
+        return result with { WindowState = ReadWindowState(windowHandle), AccessibilityWarmup = started.Warmup };
     }
 
     /// <summary>
@@ -223,11 +232,19 @@ public class UIElementService : IUIElementService
     private sealed class WalkStarted
     {
         private Walk? _walk;
+        private AccessibilityWarmupInfo? _warmup;
 
         public Walk? Walk
         {
             get => Volatile.Read(ref _walk);
             set => Volatile.Write(ref _walk, value);
+        }
+
+        /// <summary>What the warm-up of the window's web content did, when it ran (roadmap M3.3).</summary>
+        public AccessibilityWarmupInfo? Warmup
+        {
+            get => Volatile.Read(ref _warmup);
+            set => Volatile.Write(ref _warmup, value);
         }
     }
 
@@ -320,8 +337,12 @@ public class UIElementService : IUIElementService
                     UIElementErrorCode.WindowNotFound);
             }
 
-            var windowTitle = TryReadName(window);
-            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, progress, cancellationToken);
+            // A window with web content builds its page's tree only once asked: ask, and wait for it a moment
+            started.Warmup = _warmup?.WarmUp(
+                windowHandle, filter?.AccessibilityWarmupBudget ?? AccessibilityWarmup.MaxWait, cancellationToken);
+
+            var (windowTitle, windowFramework) = TryReadWindow(window);
+            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
@@ -357,7 +378,8 @@ public class UIElementService : IUIElementService
                 SkippedElementCount: walk.SkippedElementCount,
                 DepthReached: walk.DepthReached,
                 Truncated: truncationReason != null,
-                TruncationReason: truncationReason);
+                TruncationReason: truncationReason,
+                FrameworkId: windowFramework);
         }
         catch (UiaElementUnavailableException ex)
         {
@@ -385,18 +407,22 @@ public class UIElementService : IUIElementService
         }
     }
 
-    private string? TryReadName(IUiaNode node)
+    /// <summary>The window's name and UI framework, or nulls when they cannot be read.</summary>
+    private (string? Name, string? FrameworkId) TryReadWindow(IUiaNode node)
     {
         try
         {
-            return _tree.Read(node).Name;
+            var properties = _tree.Read(node);
+            return (properties.Name, EmptyToNull(properties.FrameworkId));
         }
         catch (Exception)
         {
             // The window title is optional
-            return null;
+            return (null, null);
         }
     }
+
+    private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     /// <summary>
     /// The state of one breadth-first tree walk. The walk runs on the worker thread; when the worker abandons it, the
@@ -416,6 +442,7 @@ public class UIElementService : IUIElementService
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
         string? windowTitle,
+        string? windowFramework,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -553,7 +580,7 @@ public class UIElementService : IUIElementService
         {
             lock (_gate)
             {
-                var elements = Materialize(_root.Children);
+                var elements = Materialize(_root.Children, windowFramework);
                 return (elements, Count(elements));
             }
 
@@ -580,7 +607,8 @@ public class UIElementService : IUIElementService
                     SkippedElementCount: SkippedElementCount,
                     DepthReached: DepthReached,
                     Truncated: true,
-                    TruncationReason: UIElementTruncationReason.Timeout);
+                    TruncationReason: UIElementTruncationReason.Timeout,
+                    FrameworkId: windowFramework);
         }
 
         /// <summary>
@@ -719,28 +747,34 @@ public class UIElementService : IUIElementService
 
         /// <summary>
         /// The returned elements of a list of walk nodes: an element left out by the filters is replaced by the
-        /// returned elements inside it. Called under the gate.
+        /// returned elements inside it. An element names its framework only where it differs from
+        /// <paramref name="enclosingFramework"/>, that of the returned element it is inside (or the window's). Called
+        /// under the gate.
         /// </summary>
-        private static List<UIElementInfo> Materialize(List<WalkNode> nodes)
+        private static List<UIElementInfo> Materialize(List<WalkNode> nodes, string? enclosingFramework)
         {
             var output = new List<UIElementInfo>();
             foreach (var node in nodes)
             {
-                var children = Materialize(node.Children);
-                if (node.Included)
+                if (!node.Included)
                 {
-                    output.Add(Element(node.Properties!, children));
+                    output.AddRange(Materialize(node.Children, enclosingFramework));
+                    continue;
                 }
-                else
-                {
-                    output.AddRange(children);
-                }
+
+                var properties = node.Properties!;
+                var framework = EmptyToNull(properties.FrameworkId);
+                var children = Materialize(node.Children, framework ?? enclosingFramework);
+                output.Add(Element(
+                    properties,
+                    children,
+                    framework != null && !string.Equals(framework, enclosingFramework, StringComparison.Ordinal) ? framework : null));
             }
 
             return output;
         }
 
-        private static UIElementInfo Element(UiaNodeProperties properties, List<UIElementInfo> children) =>
+        private static UIElementInfo Element(UiaNodeProperties properties, List<UIElementInfo> children, string? frameworkId) =>
             new(
                 Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
                 ControlType: properties.ControlType,
@@ -748,7 +782,8 @@ public class UIElementService : IUIElementService
                 Bounds: properties.Bounds.ToBounds(),
                 IsEnabled: properties.IsEnabled,
                 IsOffscreen: properties.IsOffscreen,
-                Children: children.Count > 0 ? children : null);
+                Children: children.Count > 0 ? children : null,
+                FrameworkId: frameworkId);
 
         /// <summary>
         /// Reports every <see cref="ProgressInterval"/> elements read. Never once the walk is asked to stop: the caller

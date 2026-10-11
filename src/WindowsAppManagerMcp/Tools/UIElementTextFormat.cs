@@ -11,7 +11,9 @@ namespace WindowsAppManagerMcp.Tools;
 /// <para>A text line is: the control type; the name in single quotes (a quote or backslash inside is escaped with a
 /// backslash, control characters become spaces, and a name longer than <see cref="MaxNameLength"/> characters is cut
 /// with an ellipsis), left out when the element has none; <c>aid=</c> and the automation id (quoted the same way when it
-/// holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as another token), when it has one; <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any;
+/// holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as another token), when it has one; <c>fw=</c>
+/// and the UI framework where it changes (<see cref="UIElementInfo.FrameworkId"/>, roadmap M3.3), quoted the same way;
+/// <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any;
 /// then the flags that are set, <c>[disabled]</c> and <c>[offscreen]</c>. Each level below the window's children is
 /// indented by two more spaces.</para>
 /// <para>Element refs (roadmap M3.4) are to go in front of the control type (<c>w1e12 Button 'Save' ...</c>), so the line
@@ -58,6 +60,13 @@ public static class UIElementTextFormat
             line.Append(" aid=").Append(NeedsQuotes(element.AutomationId)
                 ? Quote(element.AutomationId, MaxNameLength)
                 : element.AutomationId);
+        }
+
+        if (!string.IsNullOrEmpty(element.FrameworkId))
+        {
+            line.Append(" fw=").Append(NeedsQuotes(element.FrameworkId)
+                ? Quote(element.FrameworkId, MaxNameLength)
+                : element.FrameworkId);
         }
 
         if (element.Bounds is { } b)

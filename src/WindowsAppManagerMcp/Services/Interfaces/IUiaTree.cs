@@ -139,13 +139,16 @@ public interface IUiaNode
 /// localized control type. "Unknown" when neither gives a name.</param>
 /// <param name="Bounds">The bounding rectangle in physical screen pixels, as UI Automation reports it. An
 /// element without geometry has <see cref="UiaRect.Empty"/> (infinite position, negative infinite size) in both engines.</param>
+/// <param name="FrameworkId">The UI framework that provides the element, for example "Win32", "WPF", "XAML" or "Chrome"
+/// (roadmap M3.3), or null when the provider reports none.</param>
 public record UiaNodeProperties(
     string? Name,
     string ControlType,
     string? AutomationId,
     UiaRect Bounds,
     bool IsEnabled,
-    bool IsOffscreen);
+    bool IsOffscreen,
+    string? FrameworkId = null);
 
 /// <summary>Keyboard focus and the action patterns of a node.</summary>
 /// <param name="ActionPatterns">The supported patterns that act on the element, by name: Invoke, Toggle,

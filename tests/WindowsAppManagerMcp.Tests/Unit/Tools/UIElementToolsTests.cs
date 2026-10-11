@@ -690,6 +690,35 @@ public class UIElementToolsTests
     }
 
     [Fact]
+    public void TextFormat_NamesTheFrameworkWhereItChanges_BeforeTheBounds()
+    {
+        var element = new UIElementInfo("Inbox", "Document", null, new BoundsDto(10, 20, 300, 200), true, false, FrameworkId: "Chrome");
+
+        UIElementTextFormat.Line(element).Should().Be("Document 'Inbox' fw=Chrome @10,20 300x200");
+    }
+
+    [Theory]
+    [InlineData(10_000, 1_500)]
+    [InlineData(1_500, 500)]
+    [InlineData(100, 333)]
+    public async Task GetUIElements_GivesTheWarmupAThirdOfTheTimeout_AtMost1500Ms(int timeoutMs, int expectedBudgetMs)
+    {
+        // Arrange
+        UIElementFilter? passed = null;
+        _mockService.Setup(s => s.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((nint _, int _, UIElementFilter? filter, IProgress<OperationProgress>? _, CancellationToken _) => passed = filter)
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult());
+
+        // Act - the timeout is clamped to 1000-30000 first
+        await CreateSut().GetUIElements(handle: 12345, timeoutMs: timeoutMs);
+
+        // Assert
+        passed!.AccessibilityWarmupBudget!.Value.TotalMilliseconds.Should().BeApproximately(expectedBudgetMs, 1);
+    }
+
+    [Fact]
     public async Task GetUIElements_TextFormat_OfAFailedWalk_KeepsTheError()
     {
         _mockService.Setup(s => s.GetUIElementsAsync(

@@ -55,6 +55,29 @@ public class ScreenshotToolsCaptureHealthTests
         // Assert
         json.TryGetProperty("truncated", out _).Should().BeFalse();
         json.TryGetProperty("elementsErrorCode", out _).Should().BeFalse();
+        json.TryGetProperty("accessibilityWarmup", out _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CaptureWithElements_ReportsTheWebContentWarmup_WhetherTheWalkSucceededOrNot(bool walked)
+    {
+        // Arrange - roadmap M3.3: the window's page was not built in time
+        var warmup = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.NotReady, WebContentHost.Chromium, 1500, 6, 0, "Read again.");
+        var walk = walked
+            ? TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()])
+            : TestDataFactory.CreateUIElementResult(success: false, error: "timed out", errorCode: UIElementErrorCode.OperationTimedOut);
+        WalkReturns(walk with { AccessibilityWarmup = warmup });
+
+        // Act
+        var json = Metadata(await CreateSut().CaptureWithElements(handle: (long)Window));
+
+        // Assert
+        var reported = json.GetProperty("accessibilityWarmup");
+        reported.GetProperty("status").GetString().Should().Be("NotReady");
+        reported.GetProperty("host").GetString().Should().Be("Chromium");
+        reported.GetProperty("warning").GetString().Should().Be("Read again.");
     }
 
     [Fact]

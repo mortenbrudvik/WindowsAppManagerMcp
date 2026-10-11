@@ -29,7 +29,7 @@ public sealed class UiaTree : IUiaTree
         AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.LocalizedControlTypeProperty,
         AutomationElement.AutomationIdProperty, AutomationElement.ClassNameProperty, AutomationElement.BoundingRectangleProperty,
         AutomationElement.IsEnabledProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsKeyboardFocusableProperty,
-        AutomationElement.RuntimeIdProperty
+        AutomationElement.RuntimeIdProperty, AutomationElement.FrameworkIdProperty
     ];
 
     private static readonly (AutomationProperty Property, UiaPatterns Pattern)[] PatternAvailability =
@@ -169,7 +169,8 @@ public sealed class UiaTree : IUiaTree
                 AutomationId: current.AutomationId,
                 Bounds: rect.IsEmpty ? UiaRect.Empty : new UiaRect(rect.X, rect.Y, rect.Width, rect.Height),
                 IsEnabled: current.IsEnabled,
-                IsOffscreen: current.IsOffscreen);
+                IsOffscreen: current.IsOffscreen,
+                FrameworkId: current.FrameworkId);
         });
     }
 
@@ -402,7 +403,8 @@ public sealed class UiaTree : IUiaTree
             AutomationId: cached.AutomationId,
             Bounds: rect.IsEmpty ? UiaRect.Empty : new UiaRect(rect.X, rect.Y, rect.Width, rect.Height),
             IsEnabled: cached.IsEnabled,
-            IsOffscreen: cached.IsOffscreen);
+            IsOffscreen: cached.IsOffscreen,
+            FrameworkId: cached.FrameworkId);
 
         return new UiaElement(
             new Node(element),
