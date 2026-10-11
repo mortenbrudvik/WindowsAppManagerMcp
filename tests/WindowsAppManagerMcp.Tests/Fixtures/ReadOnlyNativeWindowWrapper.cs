@@ -63,7 +63,7 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
     public bool IsHungAppWindow(nint hWnd) => inner.IsHungAppWindow(hWnd);
 
     // WM_NULL with SMTO_ABORTIFHUNG: the window ignores the message, so this only reads whether its thread answers
-    public bool RespondsWithin(nint hWnd, uint timeoutMs) => inner.RespondsWithin(hWnd, timeoutMs);
+    public bool? RespondsWithin(nint hWnd, uint timeoutMs) => inner.RespondsWithin(hWnd, timeoutMs);
 
     public uint GetDpiForWindow(nint hWnd) => inner.GetDpiForWindow(hWnd);
 

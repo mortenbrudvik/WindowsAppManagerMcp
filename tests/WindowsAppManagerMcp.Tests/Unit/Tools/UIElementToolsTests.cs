@@ -677,6 +677,18 @@ public class UIElementToolsTests
         line.Should().Be($"Text '{new string('x', UIElementTextFormat.MaxNameLength)}…' aid='my id'");
     }
 
+    [Theory]
+    [InlineData("[disabled]", "aid='[disabled]'")]
+    [InlineData("@1,2", "aid='@1,2'")]
+    [InlineData("row]", "aid='row]'")]
+    [InlineData("Save_Btn-1", "aid=Save_Btn-1")]
+    public void TextFormat_QuotesAutomationIdsThatCouldReadAsBoundsOrFlags(string automationId, string expected)
+    {
+        var element = new UIElementInfo(null, "Button", automationId, null, true, false);
+
+        UIElementTextFormat.Line(element).Should().Be($"Button {expected}");
+    }
+
     [Fact]
     public async Task GetUIElements_TextFormat_OfAFailedWalk_KeepsTheError()
     {

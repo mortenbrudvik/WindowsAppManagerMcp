@@ -12,6 +12,7 @@ public sealed class FakeUiaTree : IUiaTree
     private readonly ConcurrentDictionary<nint, FakeUiaNode> _windows = new();
     private readonly ConcurrentQueue<string> _reads = new();
     private readonly ConcurrentQueue<string> _cachedFetches = new();
+    private readonly ConcurrentQueue<string> _childListings = new();
 
     /// <summary>The engine the fake claims to be.</summary>
     public UiaEngine Engine { get; set; } = UiaEngine.Uia3;
@@ -78,6 +79,7 @@ public sealed class FakeUiaTree : IUiaTree
     public IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken)
     {
         var fake = Fake(node);
+        _childListings.Enqueue(fake.Name ?? fake.ControlType);
         fake.OnGetChildren?.Invoke();
         ThrowIfSet(fake.ChildrenException);
         return fake.Children.ToList();
@@ -133,7 +135,9 @@ public sealed class FakeUiaTree : IUiaTree
 
     /// <summary>
     /// The children with their properties in one "call", as a cache request reads them: each child's properties are
-    /// read ("Read:Name") and its <see cref="FakeUiaNode.OnRead"/> runs, in order. The call is atomic like the real one
+    /// read ("Read:Name") and its <see cref="FakeUiaNode.OnRead"/> runs, in order (the node's
+    /// <see cref="FakeUiaNode.OnGetChildren"/> runs only for <see cref="GetChildren"/>, which the walk calls first, so it
+    /// runs once per level). The call is atomic like the real one
     /// (it does not stop when the token is cancelled during it), and it fails as a whole when the node's
     /// <see cref="FakeUiaNode.CachedChildrenException"/> or <see cref="FakeUiaNode.ChildrenException"/> is set, or when
     /// any child's <see cref="FakeUiaNode.ReadException"/> or <see cref="FakeUiaNode.InteractionException"/> is: one
@@ -144,7 +148,6 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         cancellationToken.ThrowIfCancellationRequested();
         _cachedFetches.Enqueue(fake.Name ?? fake.ControlType);
-        fake.OnGetChildren?.Invoke();
         ThrowIfSet(fake.CachedChildrenException);
         ThrowIfSet(fake.ChildrenException);
         return fake.Children.Select(ReadCached).ToList();
@@ -205,6 +208,9 @@ public sealed class FakeUiaTree : IUiaTree
 
     /// <summary>The nodes whose children were fetched with <see cref="GetChildElements"/>, by name, in call order.</summary>
     public IReadOnlyList<string> CachedFetches => _cachedFetches.ToList();
+
+    /// <summary>The nodes whose children were listed with <see cref="GetChildren"/>, by name, in call order.</summary>
+    public IReadOnlyList<string> ChildListings => _childListings.ToList();
 
     private UiaElement ReadCached(FakeUiaNode node)
     {

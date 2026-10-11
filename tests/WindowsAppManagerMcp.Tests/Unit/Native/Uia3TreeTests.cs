@@ -479,5 +479,62 @@ public class Uia3TreeTests
         sut.ReadIsModal(node).Should().BeTrue();
     }
 
+    [Fact]
+    public void ReadIsModal_ReadsOnlyIsModal()
+    {
+        // Arrange - a provider that fails every other Window-pattern property
+        var sut = CreateSut();
+        var dialog = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, dialog);
+        var window = new Mock<IUIAutomationWindowPattern>(MockBehavior.Strict);
+        window.SetupGet(p => p.CurrentIsModal).Returns(0);
+        dialog.Setup(e => e.GetCurrentPattern(UiaIds.WindowPattern)).Returns(window.Object);
+
+        // Act & Assert - one cross-process read, as with the managed client; a strict mock throws for any other
+        sut.ReadIsModal(node).Should().BeFalse();
+        window.VerifyGet(p => p.CurrentIsModal, Times.Once);
+    }
+
+    [Fact]
+    public void ReadIsModal_OfAnElementWithoutAWindowPattern_IsNull()
+    {
+        var sut = CreateSut();
+        var pane = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, pane);
+
+        sut.ReadIsModal(node).Should().BeNull();
+    }
+
+    [Fact]
+    public void GetPattern_WrapsByTheRequestedType_WhenThePatternObjectAlsoAnswersForAnotherPattern()
+    {
+        // Arrange - a table pattern object that is also a grid pattern (QueryInterface answers for both)
+        var sut = CreateSut();
+        var grid = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, grid);
+        var table = new Mock<IUIAutomationTablePattern>();
+        table.SetupGet(p => p.CurrentRowOrColumnMajor).Returns(RowOrColumnMajor.RowOrColumnMajor_ColumnMajor);
+        table.As<IUIAutomationGridPattern>().SetupGet(p => p.CurrentRowCount).Returns(7);
+        grid.Setup(e => e.GetCurrentPattern(UiaIds.TablePattern)).Returns(table.Object);
+        grid.Setup(e => e.GetCurrentPattern(UiaIds.GridPattern)).Returns(table.Object);
+
+        // Act & Assert
+        sut.GetPattern<IUiaTablePattern>(node)!.RowOrColumnMajor.Should().Be(UiaRowOrColumnMajor.ColumnMajor);
+        sut.GetPattern<IUiaGridPattern>(node)!.RowCount.Should().Be(7);
+    }
+
+    [Fact]
+    public void GetPattern_WhenThePatternObjectIsNotOfTheRequestedPattern_IsNull()
+    {
+        // Arrange - a provider that answers the pattern id with an object of another pattern
+        var sut = CreateSut();
+        var button = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, button);
+        button.Setup(e => e.GetCurrentPattern(UiaIds.TogglePattern)).Returns(new Mock<IUIAutomationInvokePattern>().Object);
+
+        // Act & Assert
+        sut.GetPattern<IUiaTogglePattern>(node).Should().BeNull();
+    }
+
     #endregion
 }

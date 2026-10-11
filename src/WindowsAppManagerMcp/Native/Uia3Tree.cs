@@ -183,7 +183,17 @@ public sealed class Uia3Tree : IUiaTree
     public string? ReadValue(IUiaNode node) => GetPattern<IUiaValuePattern>(node)?.Value;
 
     /// <inheritdoc />
-    public bool? ReadIsModal(IUiaNode node) => GetPattern<IUiaWindowPattern>(node)?.State.IsModal;
+    public bool? ReadIsModal(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        Started();
+
+        // Only IsModal: the pattern's other properties are further calls, any of which a provider can fail
+        return UiaComErrors.Run<bool?>(() =>
+            element.GetCurrentPattern(UiaIds.WindowPattern) is IUIAutomationWindowPattern window
+                ? window.CurrentIsModal != 0
+                : null);
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<UiaElement> GetChildElements(IUiaNode node, CancellationToken cancellationToken)
@@ -272,7 +282,7 @@ public sealed class Uia3Tree : IUiaTree
         }
 
         var pattern = UiaComErrors.Run(() => element.GetCurrentPattern(patternId));
-        return pattern == null ? null : WrapPattern(pattern) as TPattern;
+        return pattern == null ? null : WrapPattern(typeof(TPattern), pattern) as TPattern;
     }
 
     /// <summary>
@@ -454,23 +464,33 @@ public sealed class Uia3Tree : IUiaTree
               throw new ArgumentException($"'{value}' is not a control type name.", nameof(value))
             : value;
 
-    private static object? WrapPattern(object pattern) => pattern switch
+    /// <summary>
+    /// The wrapper of the pattern <paramref name="type"/> asks for, over the COM pattern object, or null when the object
+    /// is not of that pattern. Chosen by the requested type, not by what the object answers QueryInterface for: a table
+    /// pattern object is often a grid pattern object too.
+    /// </summary>
+    private static IUiaPattern? WrapPattern(Type type, object pattern) => type switch
     {
-        IUIAutomationInvokePattern invoke => new InvokePattern(invoke),
-        IUIAutomationTogglePattern toggle => new TogglePattern(toggle),
-        IUIAutomationValuePattern value => new ValuePattern(value),
-        IUIAutomationExpandCollapsePattern expand => new ExpandCollapsePattern(expand),
-        IUIAutomationSelectionItemPattern selection => new SelectionItemPattern(selection),
-        IUIAutomationScrollItemPattern scrollItem => new ScrollItemPattern(scrollItem),
-        IUIAutomationScrollPattern scroll => new ScrollPattern(scroll),
-        IUIAutomationRangeValuePattern range => new RangeValuePattern(range),
-        IUIAutomationWindowPattern window => new WindowPattern(window),
-        IUIAutomationTextPattern text => new TextPattern(text),
-        IUIAutomationGridPattern grid => new GridPattern(grid),
-        IUIAutomationTablePattern table => new TablePattern(table),
-        IUIAutomationItemContainerPattern container => new ItemContainerPattern(container),
-        IUIAutomationVirtualizedItemPattern virtualized => new VirtualizedItemPattern(virtualized),
-        IUIAutomationLegacyIAccessiblePattern legacy => new LegacyIAccessiblePattern(legacy),
+        _ when type == typeof(IUiaInvokePattern) => pattern is IUIAutomationInvokePattern p ? new InvokePattern(p) : null,
+        _ when type == typeof(IUiaTogglePattern) => pattern is IUIAutomationTogglePattern p ? new TogglePattern(p) : null,
+        _ when type == typeof(IUiaValuePattern) => pattern is IUIAutomationValuePattern p ? new ValuePattern(p) : null,
+        _ when type == typeof(IUiaExpandCollapsePattern) =>
+            pattern is IUIAutomationExpandCollapsePattern p ? new ExpandCollapsePattern(p) : null,
+        _ when type == typeof(IUiaSelectionItemPattern) =>
+            pattern is IUIAutomationSelectionItemPattern p ? new SelectionItemPattern(p) : null,
+        _ when type == typeof(IUiaScrollItemPattern) => pattern is IUIAutomationScrollItemPattern p ? new ScrollItemPattern(p) : null,
+        _ when type == typeof(IUiaScrollPattern) => pattern is IUIAutomationScrollPattern p ? new ScrollPattern(p) : null,
+        _ when type == typeof(IUiaRangeValuePattern) => pattern is IUIAutomationRangeValuePattern p ? new RangeValuePattern(p) : null,
+        _ when type == typeof(IUiaWindowPattern) => pattern is IUIAutomationWindowPattern p ? new WindowPattern(p) : null,
+        _ when type == typeof(IUiaTextPattern) => pattern is IUIAutomationTextPattern p ? new TextPattern(p) : null,
+        _ when type == typeof(IUiaGridPattern) => pattern is IUIAutomationGridPattern p ? new GridPattern(p) : null,
+        _ when type == typeof(IUiaTablePattern) => pattern is IUIAutomationTablePattern p ? new TablePattern(p) : null,
+        _ when type == typeof(IUiaItemContainerPattern) =>
+            pattern is IUIAutomationItemContainerPattern p ? new ItemContainerPattern(p) : null,
+        _ when type == typeof(IUiaVirtualizedItemPattern) =>
+            pattern is IUIAutomationVirtualizedItemPattern p ? new VirtualizedItemPattern(p) : null,
+        _ when type == typeof(IUiaLegacyIAccessiblePattern) =>
+            pattern is IUIAutomationLegacyIAccessiblePattern p ? new LegacyIAccessiblePattern(p) : null,
         _ => null
     };
 

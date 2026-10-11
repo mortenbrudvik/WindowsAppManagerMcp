@@ -11,7 +11,7 @@ namespace WindowsAppManagerMcp.Tools;
 /// <para>A text line is: the control type; the name in single quotes (a quote or backslash inside is escaped with a
 /// backslash, control characters become spaces, and a name longer than <see cref="MaxNameLength"/> characters is cut
 /// with an ellipsis), left out when the element has none; <c>aid=</c> and the automation id (quoted the same way when it
-/// holds a space or a quote), when it has one; <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any;
+/// holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as another token), when it has one; <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any;
 /// then the flags that are set, <c>[disabled]</c> and <c>[offscreen]</c>. Each level below the window's children is
 /// indented by two more spaces.</para>
 /// <para>Element refs (roadmap M3.4) are to go in front of the control type (<c>w1e12 Button 'Save' ...</c>), so the line
@@ -99,7 +99,9 @@ public static class UIElementTextFormat
         }
     }
 
-    private static bool NeedsQuotes(string value) => value.Any(c => char.IsWhiteSpace(c) || c is '\'' or '\\' || char.IsControl(c));
+    // '@' and '[' start the bounds and flag tokens of a line, so an id holding them is quoted too
+    private static bool NeedsQuotes(string value) =>
+        value.Any(c => char.IsWhiteSpace(c) || c is '\'' or '\\' or '@' or '[' or ']' || char.IsControl(c));
 
     private static string Quote(string value, int maxLength)
     {

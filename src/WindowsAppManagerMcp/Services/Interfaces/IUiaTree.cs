@@ -47,7 +47,8 @@ public interface IUiaTree
 
     /// <summary>
     /// The children of a node in the control view, in tree order, read in one call so a child that
-    /// disappears during the read cannot end the list early.
+    /// disappears during the read cannot end the list early. Only references: no property is read, so the call is cheap
+    /// even for a wide level, and tells how wide it is before its properties are read.
     /// </summary>
     IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken);
 
@@ -84,14 +85,17 @@ public interface IUiaTree
     /// The children of a node in the control view, in tree order, each with the properties a walk needs
     /// (<see cref="UiaElement"/>), all read in one cross-process call with a cache request. Faster than
     /// <see cref="GetChildren"/> and a <see cref="Read"/> per child, but a provider that fails for one child can fail
-    /// the whole call: read the children one at a time then.
+    /// the whole call: read the children one at a time then. Its cost grows with the number of children and cannot be
+    /// stopped once started, so call it only for a level known to be small (list it with <see cref="GetChildren"/>
+    /// first, as the tree walk does).
     /// </summary>
     IReadOnlyList<UiaElement> GetChildElements(IUiaNode node, CancellationToken cancellationToken);
 
     /// <summary>
     /// The elements in <paramref name="scope"/> of <paramref name="root"/> in the control view that match
     /// <paramref name="condition"/>, in tree order, with their properties, searched in the provider's process in one
-    /// call.
+    /// call. Nothing limits its cost: every element in the scope is tested and every match read with all the walk's
+    /// properties, in one call that cannot be stopped once started. Search a small root, or the children of one.
     /// </summary>
     /// <exception cref="NotSupportedException">The engine cannot express the condition (the managed client has no
     /// id for the AppBar and SemanticZoom control types).</exception>
@@ -99,8 +103,9 @@ public interface IUiaTree
 
     /// <summary>
     /// A node and its subtree in the control view with their properties, fetched in one call (BuildUpdatedCache with a
-    /// subtree scope). Only for small subtrees such as a menu or a dialog: the call cannot be stopped once started. At
-    /// most <paramref name="maxElements"/> elements are returned, breadth first.
+    /// subtree scope). Only for small subtrees such as a menu or a dialog: the call cannot be stopped once started, and
+    /// it reads the whole subtree. <paramref name="maxElements"/> limits only what is returned (breadth first), not what
+    /// is read, so it bounds the result's size, not the call's cost.
     /// </summary>
     UiaElementTree ReadSubtree(IUiaNode root, int maxElements);
 

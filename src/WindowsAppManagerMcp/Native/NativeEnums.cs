@@ -91,6 +91,7 @@ internal static class NativeEnums
     // Win32 error codes that a wrapper returns in a Win32CallResult
     public const int ERROR_ACCESS_DENIED = 5;
     public const int ERROR_INVALID_WINDOW_HANDLE = 1400;
+    public const int ERROR_TIMEOUT = 1460;
     public const int ERROR_NOT_ENOUGH_QUOTA = 1816;
 
     // Raster operation codes for BitBlt

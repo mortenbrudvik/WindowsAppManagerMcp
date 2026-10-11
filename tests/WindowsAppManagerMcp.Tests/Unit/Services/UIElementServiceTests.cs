@@ -1043,10 +1043,11 @@ public class UIElementServiceTests
         // Act
         var result = await CreateSut().GetUIElementsAsync(Handle);
 
-        // Assert - one call per element whose children are read, the whole of a level before the next; no element is
-        // read on its own
+        // Assert - the whole of a level before the next: each element's children are listed (one cheap call), and a
+        // level that has any is read in one more call with their properties; no element is read on its own
         Shape(result.Elements).Should().Be("Host(Tools(Save,Open)),Name,Footer(Box(OK))");
-        _tree.CachedFetches.Should().Equal("Main window", "Host", "Name", "Footer", "Tools", "Box", "Save", "Open", "OK");
+        _tree.ChildListings.Should().Equal("Main window", "Host", "Name", "Footer", "Tools", "Box", "Save", "Open", "OK");
+        _tree.CachedFetches.Should().Equal("Main window", "Host", "Footer", "Tools", "Box");
         _tree.ReadNodes.Should().Equal("Main window", "Host", "Name", "Footer", "Tools", "Box", "Save", "Open", "OK");
     }
 
@@ -1117,6 +1118,91 @@ public class UIElementServiceTests
         // Assert
         Shape(result.Elements).Should().Be("Save,Open");
         result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAVeryWideLevel_ReadsOnlyUpToMaxElements()
+    {
+        // Arrange - 5000 children on one level (a list without virtualization): reading them all with their properties
+        // in one call could outlast the deadline and lose the level
+        Window(Enumerable.Range(1, 5000).Select(i => Node("ListItem", $"I{i}")).ToArray());
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 10));
+
+        // Assert - listed in one cheap call, then read one at a time until maxElements
+        result.Success.Should().BeTrue();
+        result.TotalElementCount.Should().Be(10);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        _tree.CachedFetches.Should().BeEmpty();
+        _tree.ReadNodes.Where(n => n != "Main window").Should().HaveCount(10);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfALevelJustWithinTheLimit_ReadsItInOneCall()
+    {
+        // Arrange
+        Window(Enumerable.Range(1, UIElementService.CachedLevelLimit).Select(i => Node("ListItem", $"I{i}")).ToArray());
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        result.TotalElementCount.Should().Be(UIElementService.CachedLevelLimit);
+        _tree.CachedFetches.Should().Equal("Main window");
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheTimeoutPassesInAVeryWideLevel_ReturnsWhatWasReadOfIt()
+    {
+        // Arrange - the timeout passes while the 50th of 1000 children is read
+        using var cts = new CancellationTokenSource();
+        var items = Enumerable.Range(1, 1000)
+            .Select(i => new FakeUiaNode("ListItem", $"I{i}") { OnRead = i == 50 ? cts.Cancel : null })
+            .ToArray();
+        Window(items);
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, cancellationToken: cts.Token);
+
+        // Assert - a partial tree, not OperationTimedOut with nothing
+        result.Success.Should().BeTrue();
+        result.TruncationReason.Should().Be(UIElementTruncationReason.Timeout);
+        result.TotalElementCount.Should().Be(50);
+        _tree.ReadNodes.Should().NotContain("I51");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReachedByTheLastElement_AtTheDefaultDepth_IsNoTruncation()
+    {
+        // Arrange - exactly three elements; their children are still to be read when the limit is reached
+        Window(Node("Button", "A"), Node("Pane", "B").With(Node("Button", "B1")));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 3));
+
+        // Assert - the elements still waiting were listed: none has a child, so nothing was left unread
+        Shape(result.Elements).Should().Be("A,B(B1)");
+        result.Truncated.Should().BeFalse();
+        result.TruncationReason.Should().BeNull();
+        _tree.ChildListings.Should().Contain("B1");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReached_WhenAWaitingElementCannotBeListed_AssumesTruncation()
+    {
+        // Arrange
+        var b1 = Node("Button", "B1");
+        b1.ChildrenException = new System.Runtime.InteropServices.COMException("provider failed");
+        Window(Node("Button", "A"), Node("Pane", "B").With(b1));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 3));
+
+        // Assert
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        result.SkippedElementCount.Should().Be(0, "the check reads nothing that is returned");
     }
 
     [Fact]
@@ -1196,6 +1282,24 @@ public class UIElementServiceTests
         result.Error.Should().Contain("500 ms");
         _tree.Reads.Should().BeEmpty();
         windows.Verify(w => w.RespondsWithin(Handle, UIElementService.RespondTimeoutMs), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheMessageCannotBeSent_ReadsTheWindowAnyway()
+    {
+        // Arrange - SendMessageTimeout failed for another reason than a timeout (User Interface Privilege Isolation
+        // refuses it for a window of a more privileged process): nothing is known about the thread, so it is not
+        // reported hung; the walk's own deadline still bounds the read
+        BuildToolbarWindow();
+        var windows = RespondingWindow();
+        windows.Setup(w => w.RespondsWithin(Handle, It.IsAny<uint>())).Returns((bool?)null);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.TotalElementCount.Should().Be(8);
     }
 
     [Fact]
@@ -1279,14 +1383,14 @@ public class UIElementServiceTests
     [Fact]
     public async Task GetUIElementsAsync_OnceTheWalkIsAskedToStop_ReportsNoMoreProgress()
     {
-        // Arrange - the walk is asked to stop while the second pane's children are fetched, after 152 elements were
-        // read: the caller may already have its result, and a progress notification must not follow the result of the
-        // call, so the 200th element read (in the level that fetch returns) reports nothing
+        // Arrange - the walk is asked to stop while the second pane's children are read in one call, after 152 elements
+        // were read: the caller may already have its result, and a progress notification must not follow the result of
+        // the call, so the 200th element read (in the level that call returns) reports nothing
         using var cts = new CancellationTokenSource();
         Window(
             Node("Pane", "P1").With(Enumerable.Range(1, 150).Select(i => Node("Button", $"A{i}")).ToArray()),
-            new FakeUiaNode("Pane", "P2") { OnGetChildren = cts.Cancel }.With(
-                Enumerable.Range(1, 100).Select(i => Node("Button", $"B{i}")).ToArray()));
+            Node("Pane", "P2").With(
+                Enumerable.Range(1, 100).Select(i => new FakeUiaNode("Button", $"B{i}") { OnRead = i == 1 ? cts.Cancel : null }).ToArray()));
         var progress = new RecordingProgress<OperationProgress>();
 
         // Act

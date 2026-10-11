@@ -2032,7 +2032,7 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 
 Tools for reading UI elements through Windows UI Automation: the element tree of a window, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
-**Engine.** The server reads UI Automation through the COM client (UI Automation 3) by default. Each of its calls gives up on an application that does not connect within 1 s or answer within 5 s, so a hung application costs a call seconds instead of blocking it until the timeout; it names the control types Windows 8 added (AppBar, SemanticZoom) from their ids, in every display language; and it reads an element's properties, or a whole level of the tree, in one cross-process call. The user can switch to the managed client of earlier versions with `WAM_UIA_ENGINE=uia2`, as a fallback for an application that reads wrongly; the tools return the same fields with either, and [get_server_info](#get_server_info) reports the engine in force (`uiAutomation`).
+**Engine.** The server reads UI Automation through the COM client (UI Automation 3) by default. Each of its calls gives up on an application that does not connect within 1 s or answer within 5 s, so a hung application costs a call seconds instead of blocking it until the timeout; it names the control types Windows 8 added (AppBar, SemanticZoom) from their ids, in every display language; and it reads an element's properties, or a level of the tree of up to 200 elements, in one cross-process call. The user can switch to the managed client of earlier versions with `WAM_UIA_ENGINE=uia2`, as a fallback for an application that reads wrongly; the tools return the same fields with either, and [get_server_info](#get_server_info) reports the engine in force (`uiAutomation`).
 
 ### get_ui_elements
 
@@ -2070,8 +2070,8 @@ AppBar and SemanticZoom (used by UWP/WinUI apps) are named from their control ty
 **How the walk works:**
 - It reads breadth first: all of the window's children, then all of their children, and so on. A walk cut short keeps the levels nearest the window.
 - It stops once `maxElements` elements (default 300) are returned, with `truncated: true` and `truncationReason: MaxElements`; `maxElements` counts returned elements, not the ones the filters leave out. To see more of a large window, narrow the walk (`controlTypes`, `interactableOnly`, a smaller `maxDepth`) rather than raising the limit.
-- An element's children are read in one cross-process call together with the properties the walk needs. If that call fails (a provider that fails for one child can fail it), the children are read one at a time, so only the element that fails is skipped.
-- A window that does not respond is not read: when Windows reports it hung, or it does not answer a message within 500 ms, the call fails at once with `NotResponding` instead of blocking. Wait and call again.
+- An element's children are first listed, which is cheap. Up to 200 of them are then read in one cross-process call together with the properties the walk needs. A wider level (a long list that does not virtualize, for example) is read one element at a time, so `maxElements` and the timeout stop the walk in the middle of it instead of losing the whole level. If the one call fails (a provider that fails for one child can fail it), the children are read one at a time too, so only the element that fails is skipped.
+- A window that does not respond is not read: when Windows reports it hung, or it does not answer a message within 500 ms, the call fails at once with `NotResponding` instead of blocking. Wait and call again. A window that cannot be sent the message (one of a more privileged process) is read as usual.
 
 #### Formats
 
@@ -2163,7 +2163,7 @@ Edit 'Text Editor' aid=15 @100,160 1200x740
 - `children`: the returned elements inside this one; absent when there are none.
 - `totalElementCount`: how many elements the response contains, nested ones included.
 - `depth`: the `maxDepth` that was applied. `depthReached`: the deepest level read, where the window's children are level 1. When the two are equal, there may be elements below the limit; call again with a larger `maxDepth` if a control is missing.
-- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned), `MaxElements` (the walk stopped at `maxElements`; deeper elements, and the rest of the level it stopped in, are left out) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
+- `truncated`: `true` when the tree is incomplete, and `truncationReason` says why: `Timeout` (the timeout passed, or UI Automation stopped answering in the middle of the walk; the elements read until then are returned), `MaxElements` (the walk stopped at `maxElements` with elements left unread: deeper elements, or the rest of the level it stopped in. When exactly `maxElements` elements exist, it is not set) or `ElementsSkipped` (see `skippedElementCount`). The `maxDepth` limit does not set it.
 - `depth` and `parent` on each element (`format: "flat"` only), and `text` instead of `elements` (`format: "text"`); see [Formats](#formats).
 - `windowState`: the state of the window's top-level window when the walk ended: `Normal`, `Maximized` or `Minimized`. A minimized window's elements are offscreen, so `visibleOnly` leaves them all out and the tree is empty: restore the window first (or capture it with `restoreIfMinimized`). Left out when the window could not be read.
 - `skippedElementCount`: elements, or lists of children, left out because they disappeared or their UI Automation provider failed while the tree was walked. The walk continues with their siblings. With `interactableOnly`, an element whose focus and pattern properties cannot be read is left out and counted, but the elements inside it are still walked. Errors reading the window itself still fail the call.
@@ -4653,8 +4653,9 @@ the old behavior sees now. The plugin's committed exe has them since release 1.1
   and SemanticZoom elements are named from their ids on every display language; with the managed client a
   non-English Windows gave them a localized name. get_ui_elements reads breadth first and returns at most `maxElements`
   elements (default 300; it had no limit), so a window with more elements now returns `truncated: true` with the new
-  `truncationReason: MaxElements`; pass a larger `maxElements` (up to 5000) to read more. When the timeout passes, the level
-  whose children were already fetched is returned whole, and a timeout or a hang can leave out deeper levels that the
+  `truncationReason: MaxElements`; pass a larger `maxElements` (up to 5000) to read more. A level of more than 200
+  elements is read one element at a time and can be cut in the middle. When the timeout passes, a level of up to 200
+  elements whose properties were already fetched is returned whole, and a timeout or a hang can leave out deeper levels that the
   depth-first walk used to reach first. A window that Windows reports hung, or that does not answer a message within
   500 ms, fails at once with `NotResponding` (it used to block until the timeout); capture_with_elements then
   captures the image without overlays and reports it as `elementsErrorCode`. New parameter `format` (`tree`, the

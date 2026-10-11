@@ -15,15 +15,21 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>A window that does not respond is not read (NotResponding): Windows reports it hung, or it does not answer a
 /// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
 /// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
-/// or by maxElements keeps the levels nearest the window. The children of an element are read in one cross-process
-/// call with their properties (a cache request: <see cref="IUiaTree.GetChildElements"/>); when that call fails, they
-/// are read one at a time, so one failing element costs only itself.</item>
+/// or by maxElements keeps the levels nearest the window. The children of an element are first listed without their
+/// properties (<see cref="IUiaTree.GetChildren"/>, one cheap call). A level of at most <see cref="CachedLevelLimit"/>
+/// children is then read in one more cross-process call with their properties (a cache request:
+/// <see cref="IUiaTree.GetChildElements"/>); a wider level, or one whose cached read fails, is read one element at a
+/// time, so the walk stops in the middle of it at maxElements or the timeout, and one failing element costs only
+/// itself.</item>
 /// <item>maxDepth counts levels below the window: its children are level 1, and nothing below
 /// level maxDepth is read.</item>
 /// <item>The controlTypes, size and interactable filters decide only whether an element itself is
 /// returned. An element that fails one is left out, and the elements inside it that pass take its
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
-/// <item>maxElements stops the walk once that many elements are returned (truncationReason MaxElements).</item>
+/// <item>maxElements stops the walk once that many elements are returned. truncationReason MaxElements says something
+/// was left unread: an element of the level being read, or the children of an element whose children were still to
+/// be read. To tell, the elements still waiting are listed (one cheap call each) until one has a child; when that
+/// cannot be told (the timeout, a failing call), it is assumed.</item>
 /// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
 /// siblings. An element whose interaction properties cannot be read (interactableOnly) is left out
 /// and counted too, but the elements inside it are still walked. A timeout ends the walk and returns
@@ -36,6 +42,13 @@ public class UIElementService : IUIElementService
 {
     private const int MaxAllowedDepth = 10;
     private const int DefaultMaxDepth = 5;
+
+    /// <summary>
+    /// The widest level read in one call with its properties. A wider level is read one element at a time, so that
+    /// maxElements and the timeout stop the walk in it: one call for thousands of children with all their properties
+    /// can outlast the deadline, and its elements would all be lost.
+    /// </summary>
+    public const int CachedLevelLimit = 200;
 
     /// <summary>A walk reports its progress after every this many elements read.</summary>
     public const int ProgressInterval = 100;
@@ -182,7 +195,8 @@ public class UIElementService : IUIElementService
                        "get_window_info (isResponding).";
             }
 
-            if (!_windows.RespondsWithin(windowHandle, RespondTimeoutMs))
+            // Null: the message could not be sent (the window is gone, or a more privileged one); the read decides
+            if (_windows.RespondsWithin(windowHandle, RespondTimeoutMs) == false)
             {
                 // It may have closed meanwhile; then the lookup below reports that
                 if (!_windows.IsWindow(windowHandle))
@@ -460,7 +474,7 @@ public class UIElementService : IUIElementService
         /// <summary>The walk stopped early because the timeout passed.</summary>
         public bool TimedOut => _timedOut;
 
-        /// <summary>The walk stopped at maxElements with elements left to read.</summary>
+        /// <summary>The walk stopped at maxElements with elements left unread (or, when that could not be told, perhaps).</summary>
         public bool StoppedAtMaxElements => _capReached && _leftUnread;
 
         /// <summary>Walks the window's subtree, level by level.</summary>
@@ -480,8 +494,9 @@ public class UIElementService : IUIElementService
 
                 if (_capReached)
                 {
-                    // Elements are left whose children were not read
-                    _leftUnread = true;
+                    // Elements are left whose children were not read; whether there are any is still to be seen
+                    // (a level cut in the middle has already said so)
+                    _leftUnread = _leftUnread || AnyChildLeft(next.Node);
                     return;
                 }
 
@@ -491,6 +506,45 @@ public class UIElementService : IUIElementService
                 }
 
                 ReadChildren(next.Parent, next.Node, next.Level);
+            }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="first"/> or an element still waiting has a child: the elements maxElements left unread.
+        /// One call per element, until the first with a child. When the walk is asked to stop, or a call fails, it is
+        /// not known, and assumed.
+        /// </summary>
+        private bool AnyChildLeft(IUiaNode first)
+        {
+            var node = first;
+            while (true)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return true;
+                }
+
+                try
+                {
+                    if (tree.GetChildren(node, cancellationToken).Count > 0)
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception)
+                {
+                    return true;
+                }
+
+                lock (_gate)
+                {
+                    if (!_pending.TryDequeue(out var next))
+                    {
+                        return false;
+                    }
+
+                    node = next.Node;
+                }
             }
         }
 
@@ -543,7 +597,7 @@ public class UIElementService : IUIElementService
             IReadOnlyList<Candidate> children;
             try
             {
-                children = FetchChildren(node, isWindow);
+                children = FetchChildren(node);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -577,27 +631,33 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>
-        /// The children of a node: with their properties in one call, or, when that call fails, as nodes to read one at
-        /// a time. A timeout, or the cancellation of the walk, is not retried; neither is the window's own failure when
-        /// its children cannot be read either way.
+        /// The children of a node: listed in one call without their properties, then, for a level of at most
+        /// <see cref="CachedLevelLimit"/>, read in one more call with them. A wider level, or one whose cached read fails
+        /// (a provider that fails one child can fail it all), comes as nodes to read one at a time. A cached read that
+        /// times out, or the cancellation of the walk, is not retried one at a time: each read would wait again.
         /// </summary>
-        private IReadOnlyList<Candidate> FetchChildren(IUiaNode node, bool isWindow)
+        private IReadOnlyList<Candidate> FetchChildren(IUiaNode node)
         {
-            try
+            var children = tree.GetChildren(node, cancellationToken);
+            if (children.Count == 0)
             {
-                return tree.GetChildElements(node, cancellationToken).Select(e => new Candidate(e.Node, e)).ToList();
-            }
-            catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
-            {
-                // A provider failed for the fetch as a whole (often for one child): read the children one at a time
+                return [];
             }
 
-            if (StopRequested())
+            if (children.Count <= CachedLevelLimit)
             {
-                throw new OperationCanceledException(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    return tree.GetChildElements(node, cancellationToken).Select(e => new Candidate(e.Node, e)).ToList();
+                }
+                catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+                {
+                    // A provider failed for the read as a whole (often for one child): read the children one at a time
+                }
             }
 
-            return tree.GetChildren(node, cancellationToken).Select(n => new Candidate(n, null)).ToList();
+            return children.Select(n => new Candidate(n, null)).ToList();
         }
 
         /// <summary>
