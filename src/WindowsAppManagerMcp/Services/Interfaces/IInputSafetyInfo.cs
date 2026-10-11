@@ -4,8 +4,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
 /// The safety settings in force, for reporting: what the host guard recorded, the target policy, and the
-/// destructive chords that need a target. Meant for a later get_server_info (roadmap M2.11); no tool reads
-/// it yet.
+/// destructive chords that need a target. get_server_info reports them (ServerInfoService).
 /// </summary>
 public interface IInputSafetyInfo
 {

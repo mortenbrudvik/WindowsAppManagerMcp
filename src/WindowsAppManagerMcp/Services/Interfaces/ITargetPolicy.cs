@@ -11,7 +11,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// </summary>
 public interface ITargetPolicy
 {
-    /// <summary>The policy in force, for reporting (a later get_server_info).</summary>
+    /// <summary>The policy in force, for reporting (the start log and get_server_info).</summary>
     TargetPolicySettings Settings { get; }
 
     /// <summary>
