@@ -116,13 +116,42 @@ public static class ToolSurface
 
 /// <summary>
 /// The UPDATE_SNAPSHOTS=1 switch: the snapshot and generated-docs tests rewrite their files instead of failing
-/// when the files are out of date. See TESTING.md.
+/// when the files are out of date. See TESTING.md. A CI run refuses it (<see cref="IsUpdateRequested"/>).
 /// </summary>
 public static class Snapshots
 {
     public const string UpdateVariable = "UPDATE_SNAPSHOTS";
 
-    public static bool UpdateRequested => Environment.GetEnvironmentVariable(UpdateVariable) == "1";
+    /// <summary>
+    /// Variables a CI service sets to "true": GitHub Actions sets CI and GITHUB_ACTIONS, Azure Pipelines TF_BUILD, and
+    /// most other services CI.
+    /// </summary>
+    private static readonly string[] CiVariables = ["CI", "GITHUB_ACTIONS", "TF_BUILD"];
+
+    public static bool UpdateRequested => IsUpdateRequested(Environment.GetEnvironmentVariable);
+
+    /// <summary>
+    /// True when <see cref="UpdateVariable"/> is "1". Throws when it is set in a CI run: there the snapshot and docs
+    /// tests would rewrite their files on the runner and pass, which turns the guards off without anyone noticing.
+    /// </summary>
+    public static bool IsUpdateRequested(Func<string, string?> environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+        if (environment(UpdateVariable) != "1")
+        {
+            return false;
+        }
+
+        var ci = CiVariables.FirstOrDefault(name => string.Equals(environment(name), "true", StringComparison.OrdinalIgnoreCase));
+        if (ci != null)
+        {
+            throw new InvalidOperationException(
+                $"{UpdateVariable}=1 is refused in CI ({ci} is true): it would rewrite the tool snapshot and the generated docs " +
+                "on the runner instead of checking them. Regenerate them locally and commit the result (see TESTING.md).");
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// The text of a repository file with LF line ends, or null when it does not exist.
@@ -133,7 +162,8 @@ public static class Snapshots
     /// <summary>
     /// Writes <paramref name="text"/> (LF line ends) to <paramref name="path"/>, keeping the line ends (CRLF or
     /// LF) and the byte order mark of the file that is there, so a regenerated file differs from the checked-out
-    /// one only where its content changed.
+    /// one only where its content changed. The file is replaced in one step (a temporary file moved over it), so
+    /// a test that reads it in parallel sees the old or the new text, never a truncated file.
     /// </summary>
     public static void WritePreservingFormat(string path, string text)
     {
@@ -147,6 +177,15 @@ public static class Snapshots
         }
 
         var content = crlf ? text.Replace("\n", "\r\n", StringComparison.Ordinal) : text;
-        File.WriteAllText(path, content, new UTF8Encoding(bom));
+        var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temporary, content, new UTF8Encoding(bom));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
 }
