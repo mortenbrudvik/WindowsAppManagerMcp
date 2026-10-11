@@ -769,25 +769,26 @@ public class LayoutService : ILayoutService
     /// <summary>
     /// A captured process name (<see cref="WindowMatcher.ExactProcessName"/>) must be the window's whole process name,
     /// so "Code" does not match "Code - Insiders"; a hand-written one may be part of it. Either may name a UWP window's
-    /// frame host.
+    /// frame host. The rule is the window selectors' (<see cref="WindowMatching"/>, roadmap M2.4).
     /// </summary>
     private static bool MatchesProcessName(WindowInfo window, WindowMatcher matcher) =>
-        matcher.ExactProcessName
-            ? string.Equals(window.ProcessName, matcher.ProcessName, StringComparison.OrdinalIgnoreCase) ||
-              string.Equals(window.HostProcessName, matcher.ProcessName, StringComparison.OrdinalIgnoreCase)
-            : ProcessNameContains(window, matcher.ProcessName!);
+        WindowMatching.ProcessNameMatches(window.ProcessName, window.HostProcessName, matcher.ProcessName!, contains: !matcher.ExactProcessName);
 
     /// <summary>
     /// True when <paramref name="name"/> is part of the window's process name or, for a UWP window, of
-    /// its frame host's (ApplicationFrameHost), the same rule as find_windows. Presets saved before
-    /// UWP windows were attributed to the app store ApplicationFrameHost as their process name.
+    /// its frame host's (ApplicationFrameHost). Presets saved before UWP windows were attributed to the app
+    /// store ApplicationFrameHost as their process name.
     /// </summary>
     private static bool ProcessNameContains(WindowInfo window, string name) =>
-        window.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase) ||
-        window.HostProcessName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
+        WindowMatching.ProcessNameMatches(window.ProcessName, window.HostProcessName, name, contains: true);
 
+    /// <summary>
+    /// The title criterion, compared as the window selectors compare titles (<see cref="WindowTitles"/>, roadmap M2.4):
+    /// ignoring case, invisible format characters and Edge's " and N more pages", so a preset written for
+    /// "Microsoft Edge" finds the Edge window whose title has a zero-width space in it.
+    /// </summary>
     private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher) =>
-        window.Title.Contains(matcher.TitleContains!, StringComparison.OrdinalIgnoreCase);
+        WindowTitles.Contains(window.Title, matcher.TitleContains);
 
     private double Score(
         WindowMatcher matcher, WindowInfo window, int ordinal, WindowRect target, MonitorRect workArea, Dictionary<int, string?> exePaths)

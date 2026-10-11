@@ -42,16 +42,17 @@ public class ToolPayloadBudgetTests
         ["get_all_windows"] = 1_500, // 989
         ["get_foreground_window"] = 100, // 58
         ["get_owned_windows"] = 150, // 76: one Save As dialog
+        ["get_window_info"] = 150, // 86: detail full, by a window selector (roadmap M2.4)
 
         // Window Control
-        ["move_window"] = 100, // 39: bounds, outerBounds, state, monitorIndex (roadmap M2.3)
-        ["resize_window"] = 100, // 39
-        ["set_window_bounds"] = 100, // 39
-        ["set_window_state"] = 100, // 39
+        ["move_window"] = 100, // 43: handle (roadmap M2.4), bounds, outerBounds, state, monitorIndex (roadmap M2.3)
+        ["resize_window"] = 100, // 43
+        ["set_window_bounds"] = 100, // 43
+        ["set_window_state"] = 100, // 43
         ["focus_window"] = 100, // 44
-        ["close_window"] = 100, // 9: the status
-        ["snap_window"] = 100, // 39
-        ["move_window_to_monitor"] = 100, // 39
+        ["close_window"] = 100, // 13: the status and handle
+        ["snap_window"] = 100, // 43
+        ["move_window_to_monitor"] = 100, // 43
 
         // Batch Operations: 2 windows or applications
         ["set_windows_bounds_batch"] = 160, // 104

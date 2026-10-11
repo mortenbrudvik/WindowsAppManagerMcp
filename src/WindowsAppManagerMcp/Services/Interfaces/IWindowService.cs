@@ -19,10 +19,31 @@ public interface IWindowService
         bool visibleOnly = true);
 
     /// <summary>
-    /// Finds the windows that match every filter of <paramref name="query"/>, in z-order. Lists only
-    /// user-facing app windows unless the query names a handle or class name or sets IncludeShell.
+    /// Finds the windows that match every filter of <paramref name="query"/>, in its sort order (z-order by default), at
+    /// most its limit. Lists only user-facing app windows unless the query names a handle or class name or sets
+    /// IncludeShell.
     /// </summary>
+    /// <exception cref="ArgumentException">The query's titleRegex is not a valid regular expression, or its limit is below 1.</exception>
+    /// <exception cref="System.Text.RegularExpressions.RegexMatchTimeoutException">The titleRegex took longer than 100 ms on a title.</exception>
     IReadOnlyList<WindowInfo> FindWindows(WindowQuery query);
+
+    /// <summary>
+    /// Resolves a window selector to exactly one window (roadmap M2.4), never silently to the first of several. A
+    /// selector with a handle reads that window, unfiltered, and refuses it with HandleMismatch when it no longer matches
+    /// the selector's other filters (InvalidHandle when it is no window); one with foreground does the same for the window
+    /// in front (WindowNotFound when it does not match). Otherwise the filters run as <see cref="FindWindows(WindowQuery)"/>
+    /// (visible windows, the user-facing filter unless a class name is given): one match is found, none is
+    /// WindowNotFound, several are AmbiguousWindow with up to 5 candidates in z-order, unless the selector's index picks one
+    /// (WindowNotFound when it is past the matches). A selector that names nothing, or has an invalid value or titleRegex,
+    /// is InvalidArguments. Only reads; never sends a message to a window.
+    /// </summary>
+    WindowResolution ResolveWindow(WindowSelector selector);
+
+    /// <summary>
+    /// Reads one window in full for get_window_info (roadmap M2.4): <see cref="GetWindowInfo"/> plus whether it is in
+    /// front, its z-order position, topmost, enabled, responding and its DPI. Null when the handle is not a window.
+    /// </summary>
+    WindowDetails? GetWindowDetails(nint handle);
 
     /// <summary>
     /// The foreground window, read without any listing filter: it can be untitled (a menu, a popup,

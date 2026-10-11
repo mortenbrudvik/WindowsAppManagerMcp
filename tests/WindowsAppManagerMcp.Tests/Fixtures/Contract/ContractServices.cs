@@ -177,6 +177,11 @@ public sealed class ContractServices : IDisposable
         Windows.Setup(w => w.GetWindowInfo(It.IsAny<nint>()))
             .Returns((nint handle) => windows.FirstOrDefault(w => w.Handle == handle) ?? notepad);
         Windows.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns(true);
+        // A window selector names Notepad (roadmap M2.4); get_window_info reads it in full
+        Windows.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>())).Returns(WindowResolution.Found(notepad));
+        Windows.Setup(w => w.GetWindowDetails(It.IsAny<nint>())).Returns((nint handle) => new WindowDetails(
+            windows.FirstOrDefault(w => w.Handle == handle) ?? notepad, IsForeground: true, ZOrder: 0, IsTopmost: false, IsEnabled: true,
+            IsResponding: true, Dpi: 120));
         Windows.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns(new TargetPolicyVerdict(true, notepad.ProcessName, null));
         Windows.Setup(w => w.MoveWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, int _, bool _) => WindowChangeResult.Done(handle));
@@ -357,6 +362,9 @@ public sealed class ContractServices : IDisposable
         Windows.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
         Windows.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
         Windows.Setup(w => w.IsValidWindow(It.IsAny<nint>())).Returns(false);
+        Windows.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>())).Returns(
+            WindowResolution.Failed(nameof(WindowErrorCode.WindowNotFound), "No window matches processName 'notepad'. Nothing was done."));
+        Windows.Setup(w => w.GetWindowDetails(It.IsAny<nint>())).Returns((WindowDetails?)null);
         Windows.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns(new TargetPolicyVerdict(true, null, null));
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()))
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));

@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Models;
 
 namespace WindowsAppManagerMcp.Infrastructure;
 
@@ -129,7 +130,7 @@ public static class ToolErrorReporting
                     logger.LogInformation(
                         "Tool '{ToolName}' returned error {ErrorCode}: {ErrorMessage}", toolName, errorCode, deliberate.Message);
                     call.Finished($"isError {errorCode}");
-                    return CreateToolErrorResult(toolName, errorCode, deliberate.Message);
+                    return CreateToolErrorResult(toolName, errorCode, deliberate.Message, (deliberate as ToolErrorException)?.Candidates);
                 }
 
                 if (exception is ToolArgumentException invalidValue)
@@ -221,7 +222,8 @@ public static class ToolErrorReporting
     /// <summary>
     /// Builds the error result for an error a tool reported on purpose: the message is passed on unchanged.
     /// </summary>
-    public static CallToolResult CreateToolErrorResult(string toolName, string errorCode, string message)
+    public static CallToolResult CreateToolErrorResult(
+        string toolName, string errorCode, string message, IReadOnlyList<WindowCandidateDto>? candidates = null)
     {
         ArgumentNullException.ThrowIfNull(toolName);
         ArgumentNullException.ThrowIfNull(errorCode);
@@ -232,7 +234,8 @@ public static class ToolErrorReporting
             Error: message,
             ErrorCode: errorCode,
             ExceptionType: null,
-            Tool: toolName));
+            Tool: toolName,
+            Candidates: candidates is { Count: > 0 } ? candidates : null));
     }
 
     private static CallToolResult CreateInvalidArgumentsResult(string toolName, Exception exception)
@@ -366,12 +369,14 @@ public static class ToolErrorReporting
 
 /// <summary>
 /// Error result returned to the agent when a tool throws. Matches the success/error/errorCode
-/// shape of the regular tool results. ExceptionType is left out for deliberate tool errors.
+/// shape of the regular tool results. ExceptionType is left out for deliberate tool errors. Candidates lists the windows
+/// a window selector matched when it could not be resolved to one (roadmap M2.4), and is left out otherwise.
 /// </summary>
 public record ToolErrorResultDto(
     bool Success,
     string Error,
     string ErrorCode,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExceptionType,
-    string Tool
+    string Tool,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<WindowCandidateDto>? Candidates = null
 );

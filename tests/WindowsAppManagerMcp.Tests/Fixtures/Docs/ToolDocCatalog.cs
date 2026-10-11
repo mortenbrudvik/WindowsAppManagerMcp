@@ -31,21 +31,26 @@ public static class ToolDocCatalog
     [
         new("Window Discovery",
         [
-            new("find_windows", "Find windows by criteria", "titleContains", "processName", "processId", "handle", "className"),
+            new("find_windows", "Find windows by criteria", "titleContains", "titleEquals", "titleRegex", "processName", "processId", "className", "sort", "limit"),
             new("get_all_windows", "List user-facing app windows", "includeMinimized"),
             new("get_foreground_window", "Get focused window"),
             new("get_owned_windows", "Dialogs and popups a window owns; which one blocks it", "handle", "includeHidden"),
-        ]),
+            new("get_window_info", "One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI", "window (or handle)", "detail"),
+        ],
+        SkillNote: "Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector with the filters of " +
+                   "`find_windows` (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processId`, `className`, `foreground`, " +
+                   "`index`, ...). It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, " +
+                   "none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`)."),
         new("Window Control",
         [
-            new("move_window", "Move to x,y position", "handle", "x", "y"),
-            new("resize_window", "Change dimensions", "handle", "width", "height"),
-            new("set_window_bounds", "Move + resize combined", "handle", "x", "y", "width", "height"),
-            new("set_window_state", "Min/max/restore", "handle", "state"),
-            new("focus_window", "Bring to foreground, verified; reports what is in front", "handle"),
-            new("close_window", "Close gracefully and verify: closed, hidden, stillOpen or promptShown", "handle", "waitMs", "force"),
-            new("snap_window", "Snap to preset position", "handle", "position", "monitorIndex"),
-            new("move_window_to_monitor", "Move to monitor", "handle", "monitorIndex", "positioning"),
+            new("move_window", "Move to x,y position", "window (or handle)", "x", "y"),
+            new("resize_window", "Change dimensions", "window (or handle)", "width", "height"),
+            new("set_window_bounds", "Move + resize combined", "window (or handle)", "x", "y", "width", "height"),
+            new("set_window_state", "Min/max/restore", "window (or handle)", "state"),
+            new("focus_window", "Bring to foreground, verified; reports what is in front", "window (or handle)"),
+            new("close_window", "Close gracefully and verify: closed, hidden, stillOpen or promptShown", "window (or handle)", "waitMs", "force"),
+            new("snap_window", "Snap to preset position", "window (or handle)", "position", "monitorIndex"),
+            new("move_window_to_monitor", "Move to monitor", "window (or handle)", "monitorIndex", "positioning"),
         ]),
         new("Batch Operations",
         [
@@ -107,7 +112,7 @@ public static class ToolDocCatalog
             new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow"),
             new("list_processes", "List running processes", "nameFilter", "includeWindowless"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
-            new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "handle", "timeoutMs"),
+            new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "window (or handle)", "timeoutMs"),
         ]),
         new("Clipboard",
         [

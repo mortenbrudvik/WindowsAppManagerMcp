@@ -60,10 +60,10 @@ public class WindowManagerToolsCloseTests
     public async Task CloseWindow_PassesForceToTheService(bool force)
     {
         // Act
-        var result = await CreateSut().CloseWindow(12345, force);
+        var result = await CreateSut().CloseWindow(12345, force: force);
 
         // Assert
-        result.Should().Be(new CloseWindowResult(Success: true, Status: "closed"));
+        result.Should().Be(new CloseWindowResult(Success: true, Status: "closed", Handle: 12345));
         _windowService.Verify(w => w.CloseWindow(12345, force), Times.Once);
     }
 
@@ -94,7 +94,7 @@ public class WindowManagerToolsCloseTests
         var result = await CreateSut().CloseWindow(12345);
 
         // Assert
-        result.Should().Be(new CloseWindowResult(Success: false, Error: "why", ErrorCode: code.ToString()));
+        result.Should().Be(new CloseWindowResult(Success: false, Error: "why", ErrorCode: code.ToString(), Handle: 12345));
         _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -103,7 +103,7 @@ public class WindowManagerToolsCloseTests
     {
         var result = await CreateSut().CloseWindow(12345, waitMs: 0);
 
-        result.Should().Be(new CloseWindowResult(Success: true, Status: "requested"));
+        result.Should().Be(new CloseWindowResult(Success: true, Status: "requested", Handle: 12345));
         _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -490,7 +490,7 @@ public class WindowManagerToolsCloseTests
     [InlineData(null, null, " .exe")]
     public async Task CloseApplication_NotExactlyOneValidTarget_IsInvalidArguments(long? handle, int? processId, string? processName)
     {
-        var act = () => CreateSut().CloseApplication(handle, processId, processName);
+        var act = () => CreateSut().CloseApplication(handle: handle, processId: processId, processName: processName);
 
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);

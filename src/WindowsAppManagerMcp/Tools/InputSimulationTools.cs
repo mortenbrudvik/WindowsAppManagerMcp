@@ -63,10 +63,14 @@ public class InputSimulationTools
         " Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).";
 
     private readonly IInputSimulationService _inputService;
+    private readonly IWindowService? _windowService;
 
-    public InputSimulationTools(IInputSimulationService inputService)
+    /// <param name="inputService">The guarded input.</param>
+    /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
+    public InputSimulationTools(IInputSimulationService inputService, IWindowService? windowService = null)
     {
         _inputService = inputService;
+        _windowService = windowService;
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -79,13 +83,15 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.Click(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.Click(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -97,13 +103,15 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.RightClick(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.RightClick(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -117,13 +125,15 @@ public class InputSimulationTools
         int delayMs = 50,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, allowHostTarget), releaseHeldModifiers,
+        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, window, allowHostTarget), releaseHeldModifiers,
             cancellationToken);
     }
 
@@ -137,13 +147,15 @@ public class InputSimulationTools
         int y,
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.MoveMouse(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "scroll", Title = "Scroll", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -161,6 +173,8 @@ public class InputSimulationTools
     public ScrollResult Scroll(
         [Description(MouseWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(XDescription + ", together with y. Default: the centre of windowHandle's client area")]
         int? x = null,
         [Description(YDescription + ", together with x. Default: the centre of windowHandle's client area")]
@@ -181,10 +195,10 @@ public class InputSimulationTools
                 "Pass both x and y, or neither (then the wheel turns at the centre of windowHandle's client area). Nothing was scrolled.");
         }
 
-        if (!x.HasValue && !windowHandle.HasValue)
+        if (!x.HasValue && !windowHandle.HasValue && window == null)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "Pass windowHandle (the wheel turns at the centre of its client area), or x and y. Nothing was scrolled.");
+                "Pass windowHandle or window (the wheel turns at the centre of its client area), or x and y. Nothing was scrolled.");
         }
 
         const int Max = InputSimulationService.MaxScrollNotches;
@@ -195,7 +209,7 @@ public class InputSimulationTools
                 $"and not both 0 (got deltaY {deltaY}, deltaX {deltaX}). Nothing was scrolled.");
         }
 
-        return _inputService.Scroll(x, y, deltaY, deltaX, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.Scroll(x, y, deltaY, deltaX, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -210,6 +224,8 @@ public class InputSimulationTools
         int delayMs = 0,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
@@ -217,7 +233,7 @@ public class InputSimulationTools
         CancellationToken cancellationToken = default)
     {
         delayMs = Math.Clamp(delayMs, 0, 100);
-        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.TypeTextAsync(text, delayMs, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -231,15 +247,24 @@ public class InputSimulationTools
         string keys,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
         [Description(AllowHostTargetDescription)]
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.SendKeysAsync(keys, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        return _inputService.SendKeysAsync(keys, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
-    private static InputTarget Target(long? windowHandle, bool allowHostTarget) =>
-        new(windowHandle.HasValue ? (nint)windowHandle.Value : null, allowHostTarget);
+    /// <summary>
+    /// The input's target: windowHandle, or the window selector resolved to one window (roadmap M2.4), before the input
+    /// service takes the input gate. The resolved window is passed exactly as a windowHandle would be, so the input guard,
+    /// the host guard (allowHostTarget still needs the user's explicit request) and the target policy check it as they
+    /// check any windowHandle.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Both were given, or the selector names no single window; nothing is sent.</exception>
+    private InputTarget Target(long? windowHandle, WindowSelector? window, bool allowHostTarget) =>
+        new(WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle"), allowHostTarget);
 }

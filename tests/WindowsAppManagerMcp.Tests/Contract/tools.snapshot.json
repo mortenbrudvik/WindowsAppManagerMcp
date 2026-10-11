@@ -148,8 +148,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows",
-            "type": "integer"
+            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "includeFrame": {
             "description": "Whether to include the window frame/decoration (title bar, borders). Default: true",
@@ -222,10 +297,7 @@
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Capture Window",
@@ -243,8 +315,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows",
-            "type": "integer"
+            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "includeFrame": {
             "description": "Whether to include the window frame/decoration. Default: true",
@@ -350,10 +497,7 @@
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Capture Window with Element Boxes",
@@ -386,6 +530,77 @@
             ],
             "default": null
           },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "allowHostTarget": {
             "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
@@ -413,7 +628,7 @@
     {
       "name": "close_application",
       "title": "Close Application",
-      "description": "Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, runningProcessIds lists those that keep running, for example in the notification area), promptShown (errorCode PromptShown, promptDetected, and prompt with its handle, title, text and buttons. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.) or stillOpen (errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, InvalidArguments. More than 3 windows need a confirmation as close_windows_batch does (ConfirmationDeclined, ConfirmationRequired), and a window that changed hands meanwhile is not closed (HandleMismatch).",
+      "description": "Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its windows), window (a selector for one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, runningProcessIds lists those that keep running, for example in the notification area), promptShown (errorCode PromptShown, promptDetected, and prompt with its handle, title, text and buttons. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.) or stillOpen (errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, InvalidArguments. More than 3 windows need a confirmation as close_windows_batch does (ConfirmationDeclined, ConfirmationRequired), and a window that changed hands meanwhile is not closed (HandleMismatch).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -423,6 +638,77 @@
               "integer",
               "null"
             ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window of the application as a window selector (find_windows' filters), resolved to exactly one window; its process is closed.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
             "default": null
           },
           "processId": {
@@ -469,8 +755,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "force": {
             "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window.",
@@ -482,10 +843,7 @@
             "type": "integer",
             "default": 2000
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Close Window",
@@ -509,12 +867,83 @@
               "type": "object",
               "properties": {
                 "handle": {
-                  "type": "integer"
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "window": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "handle": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "titleContains": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleEquals": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleRegex": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processNameContains": {
+                      "type": "boolean"
+                    },
+                    "processId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "className": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "foreground": {
+                      "type": "boolean"
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "includeCloaked": {
+                      "type": "boolean"
+                    },
+                    "includeUntitled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "default": null
                 }
-              },
-              "required": [
-                "handle"
-              ]
+              }
             }
           },
           "delayBetweenMs": {
@@ -602,6 +1031,77 @@
             ],
             "default": null
           },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "allowHostTarget": {
             "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
@@ -629,7 +1129,7 @@
     {
       "name": "find_windows",
       "title": "Find Windows",
-      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked.",
+      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked. The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front; handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -642,7 +1142,7 @@
             "default": null
           },
           "processName": {
-            "description": "Process name to match (e.g., 'notepad', 'chrome'). For a UWP app, both the app process (e.g., 'CalculatorApp') and its host 'ApplicationFrameHost' match",
+            "description": "The whole process name, case-insensitive, with or without .exe (e.g., 'notepad', 'chrome'); set processNameContains to match part of it. For a UWP app, both the app process (e.g., 'CalculatorApp') and its host 'ApplicationFrameHost' match",
             "type": [
               "string",
               "null"
@@ -692,6 +1192,50 @@
             "description": "Skip the user-facing filter: also return the desktop, taskbar and tray, and tool, cloaked and untitled windows (default: false)",
             "type": "boolean",
             "default": false
+          },
+          "titleEquals": {
+            "description": "The whole window title (case-insensitive)",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "titleRegex": {
+            "description": "A .NET regular expression the title must match (case-insensitive, 100 ms timeout), e.g. '^Untitled - Notepad$'",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "processNameContains": {
+            "description": "Match processName as a part of the process name instead of the whole name (default: false)",
+            "type": "boolean",
+            "default": false
+          },
+          "includeUntitled": {
+            "description": "Also return untitled windows, which the user-facing filter leaves out (default: false)",
+            "type": "boolean",
+            "default": false
+          },
+          "sort": {
+            "description": "Order of the result: 'zorder' (default, front to back), 'title' or 'process'",
+            "default": "zorder",
+            "type": "string",
+            "enum": [
+              "zorder",
+              "title",
+              "process"
+            ]
+          },
+          "limit": {
+            "description": "Return at most this many windows, the first in sort order (at least 1; default: all)",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
           }
         }
       },
@@ -711,13 +1255,85 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Focus Window",
@@ -792,8 +1408,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle of the browser (as integer). Get this from find_windows or get_foreground_window.",
-            "type": "integer"
+            "description": "Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: the browser window as a window selector with find_windows' filters, resolved to exactly one window, e.g. {\"processName\": \"msedge\", \"titleContains\": \"Inbox\"}.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "maxLength": {
             "description": "Maximum length of content to return, at least 1. If not specified, returns all available content. 0 or less fails with InvalidArguments.",
@@ -826,10 +1517,7 @@
             "type": "integer",
             "default": 10000
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Read Browser Page Content",
@@ -847,8 +1535,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle of the browser (as integer). Get this from find_windows or get_foreground_window.",
-            "type": "integer"
+            "description": "Window handle of the browser (as integer). Get this from find_windows or get_foreground_window. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: the browser window as a window selector with find_windows' filters, resolved to exactly one window, e.g. {\"processName\": \"msedge\", \"titleContains\": \"Inbox\"}.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "cdpPort": {
             "description": "Optional CDP port of the browser that owns the window. If the browser was started with --remote-debugging-port=9222 (for example by launch_browser_with_debug), specify 9222 here.",
@@ -868,10 +1631,7 @@
             "type": "integer",
             "default": 10000
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Get Browser URL",
@@ -1054,18 +1814,90 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) of the owner",
-            "type": "integer"
+            "description": "Window handle (as integer) of the owner. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "includeHidden": {
             "description": "Also list hidden owned windows, such as IME and other helper windows (default: false)",
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Get Owned Windows",
@@ -1115,8 +1947,83 @@
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows",
-            "type": "integer"
+            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "maxDepth": {
             "description": "How many levels below the window to read (default: 5, max: 10). 1 returns only the window's direct children. When depthReached in the result equals depth, there may be more elements below.",
@@ -1162,13 +2069,116 @@
             "type": "integer",
             "default": 10000
           }
-        },
-        "required": [
-          "handle"
-        ]
+        }
       },
       "annotations": {
         "title": "Get UI Element Tree",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_window_info",
+      "title": "Get Window Info",
+      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports; 'full' adds visibleBounds (the frame you see), clientBounds (the client area on screen), isForeground, zOrder (0 is the front window), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
+          "detail": {
+            "description": "How much to report: 'compact', 'standard' (default) or 'full'",
+            "default": "standard",
+            "type": "string",
+            "enum": [
+              "compact",
+              "standard",
+              "full"
+            ]
+          }
+        }
+      },
+      "annotations": {
+        "title": "Get Window Info",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -1524,6 +2534,77 @@
             ],
             "default": null
           },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "allowHostTarget": {
             "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
@@ -1555,10 +2636,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer) from find_windows",
-            "type": "integer"
-          },
           "x": {
             "description": "X coordinate of the visible frame's left edge",
             "type": "integer"
@@ -1566,6 +2643,85 @@
           "y": {
             "description": "Y coordinate of the visible frame's top edge",
             "type": "integer"
+          },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "bringToFront": {
             "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
@@ -1579,7 +2735,6 @@
           }
         },
         "required": [
-          "handle",
           "x",
           "y"
         ]
@@ -1599,13 +2754,88 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
-          },
           "monitorIndex": {
             "description": "Target monitor index (0-based, see get_monitors)",
             "type": "integer"
+          },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "positioning": {
             "description": "Position on the monitor's work area: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's normal size, fitted to the work area), 'maximize' (moved there, then maximized) or 'restore' (normal size, at the work area's top-left corner)",
@@ -1633,7 +2863,6 @@
           }
         },
         "required": [
-          "handle",
           "monitorIndex"
         ]
       },
@@ -1674,10 +2903,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
-          },
           "width": {
             "description": "New width of the visible frame in pixels (at least 1)",
             "type": "integer"
@@ -1686,6 +2911,85 @@
             "description": "New height of the visible frame in pixels (at least 1)",
             "type": "integer"
           },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "settleMs": {
             "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
             "type": "integer",
@@ -1693,7 +2997,6 @@
           }
         },
         "required": [
-          "handle",
           "width",
           "height"
         ]
@@ -1743,6 +3046,77 @@
               "integer",
               "null"
             ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
             "default": null
           },
           "allowHostTarget": {
@@ -1832,6 +3206,77 @@
             ],
             "default": null
           },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "x": {
             "description": "X coordinate in physical virtual-desktop pixels (negative on monitors left of the primary monitor), together with y. Default: the centre of windowHandle's client area",
             "type": [
@@ -1897,6 +3342,77 @@
             ],
             "default": null
           },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "allowHostTarget": {
             "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
@@ -1951,10 +3467,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
-          },
           "x": {
             "description": "X coordinate of the visible frame's left edge",
             "type": "integer"
@@ -1971,6 +3483,85 @@
             "description": "New height of the visible frame in pixels (at least 1)",
             "type": "integer"
           },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "bringToFront": {
             "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
             "type": "boolean",
@@ -1983,7 +3574,6 @@
           }
         },
         "required": [
-          "handle",
           "x",
           "y",
           "width",
@@ -2005,10 +3595,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
-          },
           "state": {
             "description": "Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' are accepted too). Restore returns a minimized window to its previous state (normal, or maximized if it was maximized before) and makes a maximized window normal.",
             "type": "string",
@@ -2021,6 +3607,85 @@
               "normal"
             ]
           },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
+          },
           "settleMs": {
             "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
             "type": "integer",
@@ -2028,7 +3693,6 @@
           }
         },
         "required": [
-          "handle",
           "state"
         ]
       },
@@ -2043,19 +3707,16 @@
     {
       "name": "set_windows_bounds_batch",
       "title": "Set Window Bounds (Batch)",
-      "description": "Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are each window's visible frame. More efficient than multiple individual calls. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
+      "description": "Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are each window's visible frame. More efficient than multiple individual calls. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "placements": {
-            "description": "Array of window placements with handle, x, y, width, height (the visible frame), and optional bringToFront (raises the window without activating it)",
+            "description": "Array of window placements, each with x, y, width, height (the visible frame), the window as handle or window (a selector, as the single-window tools take it), and optional bringToFront (raises the window without activating it)",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "handle": {
-                  "type": "integer"
-                },
                 "x": {
                   "type": "integer"
                 },
@@ -2068,13 +3729,89 @@
                 "height": {
                   "type": "integer"
                 },
+                "handle": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "default": null
+                },
                 "bringToFront": {
                   "type": "boolean",
                   "default": true
+                },
+                "window": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "handle": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "titleContains": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleEquals": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleRegex": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processNameContains": {
+                      "type": "boolean"
+                    },
+                    "processId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "className": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "foreground": {
+                      "type": "boolean"
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "includeCloaked": {
+                      "type": "boolean"
+                    },
+                    "includeUntitled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "default": null
                 }
               },
               "required": [
-                "handle",
                 "x",
                 "y",
                 "width",
@@ -2103,19 +3840,16 @@
     {
       "name": "set_windows_state_batch",
       "title": "Set Window States (Batch)",
-      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only when its window was seen in that state afterwards, and state reports the state it is in. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.",
+      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only when its window was seen in that state afterwards, and state reports the state it is in. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "changes": {
-            "description": "Array of state changes with handle and state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' are accepted too)",
+            "description": "Array of state changes, each with state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' are accepted too) and the window as handle or window (a selector, as the single-window tools take it)",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "handle": {
-                  "type": "integer"
-                },
                 "state": {
                   "type": "string",
                   "enum": [
@@ -2126,10 +3860,86 @@
                     "maximized",
                     "normal"
                   ]
+                },
+                "handle": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "window": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "handle": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "titleContains": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleEquals": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleRegex": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processNameContains": {
+                      "type": "boolean"
+                    },
+                    "processId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "className": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "foreground": {
+                      "type": "boolean"
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "includeCloaked": {
+                      "type": "boolean"
+                    },
+                    "includeUntitled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "default": null
                 }
               },
               "required": [
-                "handle",
                 "state"
               ]
             }
@@ -2159,10 +3969,6 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "handle": {
-            "description": "Window handle (as integer)",
-            "type": "integer"
-          },
           "position": {
             "description": "Snap position: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen",
             "type": "string",
@@ -2182,6 +3988,85 @@
               "right_two_thirds",
               "fullscreen"
             ]
+          },
+          "handle": {
+            "description": "Window handle (as integer) from find_windows. Pass handle or window, not both.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "default": null
           },
           "monitorIndex": {
             "description": "Target monitor index (0-based, see get_monitors). Defaults to the window's current monitor. An index that is not a monitor fails with InvalidMonitorIndex.",
@@ -2203,7 +4088,6 @@
           }
         },
         "required": [
-          "handle",
           "position"
         ]
       },
@@ -2218,19 +4102,16 @@
     {
       "name": "snap_windows_batch",
       "title": "Snap Windows (Batch)",
-      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
+      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "placements": {
-            "description": "Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized or maximized window is restored first, without activating it)",
+            "description": "Array of snap placements, each with position, the window as handle or window (a selector, as the single-window tools take it), optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized or maximized window is restored first, without activating it)",
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "handle": {
-                  "type": "integer"
-                },
                 "position": {
                   "type": "string",
                   "enum": [
@@ -2250,6 +4131,13 @@
                     "fullscreen"
                   ]
                 },
+                "handle": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "default": null
+                },
                 "monitorIndex": {
                   "type": [
                     "integer",
@@ -2260,10 +4148,79 @@
                 "bringToFront": {
                   "type": "boolean",
                   "default": true
+                },
+                "window": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "handle": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "titleContains": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleEquals": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "titleRegex": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processNameContains": {
+                      "type": "boolean"
+                    },
+                    "processId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "className": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "foreground": {
+                      "type": "boolean"
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "includeCloaked": {
+                      "type": "boolean"
+                    },
+                    "includeUntitled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "default": null
                 }
               },
               "required": [
-                "handle",
                 "position"
               ]
             }
@@ -2394,6 +4351,77 @@
               "integer",
               "null"
             ],
+            "default": null
+          },
+          "window": {
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "handle": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "titleContains": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleEquals": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "titleRegex": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processNameContains": {
+                "type": "boolean"
+              },
+              "processId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "className": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "foreground": {
+                "type": "boolean"
+              },
+              "index": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "includeCloaked": {
+                "type": "boolean"
+              },
+              "includeUntitled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
             "default": null
           },
           "allowHostTarget": {

@@ -15,14 +15,15 @@ public record ClosePromptDto(long Handle, string Title, string ClassName, string
 /// <summary>
 /// close_window's result. Status is requested (waitMs 0: sent, not checked), closed, hidden (the app hid the window
 /// instead of closing it; it still runs), stillOpen or promptShown (with Prompt). Success is true for requested, closed
-/// and hidden.
+/// and hidden. Handle is the window the call was for (roadmap M2.4: the one a window selector resolved to).
 /// </summary>
 public record CloseWindowResult(
     bool Success,
     string? Status = null,
     ClosePromptDto? Prompt = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    long? Handle = null
 );
 
 /// <summary>A window close_application asked to close, and what became of it (closed, hidden, stillOpen, promptShown or notSent).</summary>

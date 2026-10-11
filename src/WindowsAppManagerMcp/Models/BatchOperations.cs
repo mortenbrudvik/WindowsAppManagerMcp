@@ -1,13 +1,16 @@
 namespace WindowsAppManagerMcp.Models;
 
-// Input models for batch operations
+// Input models for batch operations. Each item names its window by handle or by a window selector (roadmap M2.4), not both.
+
+/// <summary>A set_windows_bounds_batch item: the visible frame to place the window at.</summary>
 public record WindowBoundsPlacement(
-    long Handle,
     int X,
     int Y,
     int Width,
     int Height,
-    bool BringToFront = true
+    long? Handle = null,
+    bool BringToFront = true,
+    WindowSelector? Window = null
 );
 
 /// <summary>
@@ -15,10 +18,11 @@ public record WindowBoundsPlacement(
 /// the input schema lists the positions.
 /// </summary>
 public record WindowSnapPlacement(
-    long Handle,
     [ToolValues(typeof(SnapPosition))] string Position,
+    long? Handle = null,
     int? MonitorIndex = null,
-    bool BringToFront = true
+    bool BringToFront = true,
+    WindowSelector? Window = null
 );
 
 /// <summary>
@@ -26,8 +30,9 @@ public record WindowSnapPlacement(
 /// input schema lists the states.
 /// </summary>
 public record WindowStateChange(
-    long Handle,
-    [ToolValues(typeof(WindowStateRequest))] string State
+    [ToolValues(typeof(WindowStateRequest))] string State,
+    long? Handle = null,
+    WindowSelector? Window = null
 );
 
 /// <summary>A launch_applications_batch item: what launch_application takes for one application.</summary>
@@ -38,7 +43,8 @@ public record ApplicationLaunchRequest(
     LaunchWindowHint? ExpectWindow = null
 );
 
-public record WindowCloseRequest(long Handle);
+/// <summary>A close_windows_batch item: the window to close.</summary>
+public record WindowCloseRequest(long? Handle = null, WindowSelector? Window = null);
 
 // Output models for batch operations
 public record BatchWindowResult(
@@ -53,7 +59,8 @@ public record BatchWindowResult(
 /// for an invalid handle): Bounds is its visible frame, OuterBounds its window rect with the invisible resize borders (the
 /// bounds find_windows reports), State normal, minimized or maximized, MonitorIndex its monitor. A minimized window has no
 /// bounds. Status and Prompt are close_windows_batch's (roadmap M2.5): what became of the window after its close message,
-/// and the prompt that keeps it open; the other batches leave them out.
+/// and the prompt that keeps it open; the other batches leave them out. Candidates lists the windows an item's selector
+/// matched when it named no single window (roadmap M2.4: AmbiguousWindow); Handle is then 0.
 /// </summary>
 public record WindowResultItem(
     long Handle,
@@ -65,7 +72,8 @@ public record WindowResultItem(
     string? Error = null,
     string? ErrorCode = null,
     string? Status = null,
-    ClosePromptDto? Prompt = null
+    ClosePromptDto? Prompt = null,
+    IReadOnlyList<WindowCandidateDto>? Candidates = null
 );
 
 public record BatchLaunchResult(

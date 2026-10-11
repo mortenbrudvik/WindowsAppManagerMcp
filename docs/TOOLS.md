@@ -1,13 +1,13 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 53 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 54 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
 | Category | Tools | Count |
 |----------|-------|-------|
-| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows) | 4 |
+| [Window Discovery](#window-discovery) | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info) | 5 |
 | [Window Control](#window-control) | [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [focus_window](#focus_window), [close_window](#close_window), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor) | 8 |
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
@@ -202,7 +202,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | Toolset | Default | What it covers | Tools |
 |---------|---------|----------------|-------|
 | `server` | always on | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
-| `windows` | on | Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows) |
+| `windows` | on | Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | UI Automation: element trees, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
@@ -219,7 +219,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 **Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 19 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
+Read-only mode serves these 20 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -258,9 +258,55 @@ Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows))
 - shell windows: the desktop (`Progman`, `WorkerW`) and the taskbars (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`)
 - untitled windows, and the server's own windows
 
-Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the reads of the window after a window action (`bounds`, `state`) never apply it.
+Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. The results are in z-order, front to back, unless `sort` says `title` or `process`; `limit` keeps the first ones. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the reads of the window after a window action (`bounds`, `state`) never apply it.
 
 Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply. `isAgentHost: true` marks a window of the agent's own host (the terminal, editor or chat app this server was started from, or a window it owns, as recorded when the server started); it is left out for every other window. The [Input guard](#input-guard) refuses input to such a window unless it is named as `windowHandle` with `allowHostTarget: true`, and [close_window](#close_window) refuses it without `force`.
+
+### Window selectors
+
+Every tool that acts on one window takes it as `handle` (`windowHandle` for the [Input Simulation](#input-simulation) tools) or as `window`, a **window selector**: an object with the filters of [find_windows](#find_windows). Pass one of the two, not both (`InvalidArguments`). The tools that take a window this way are the [Window Control](#window-control) tools, the items of the window [Batch Operations](#batch-operations), [close_application](#close_application), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), [get_ui_elements](#get_ui_elements), [get_browser_url](#get_browser_url), [get_browser_content](#get_browser_content) and the input tools. A selector is resolved to exactly one window before the tool does anything: it never picks the first of several matches. Prefer a selector to a handle copied from an earlier listing: it costs no extra call, and it cannot act on a window that closed meanwhile.
+
+| Field | Meaning |
+|-------|---------|
+| `titleContains` | Part of the title, ignoring case |
+| `titleEquals` | The whole title, ignoring case |
+| `titleRegex` | A .NET regular expression the title must match, ignoring case. A pattern that runs longer than 100 ms on one title is given up (`InvalidArguments`) |
+| `processName` | The whole process name, ignoring case, with or without `.exe`: `notepad` matches notepad.exe, `Code` does not match `Code - Insiders`. With `processNameContains: true`, a part of it. A UWP app's window matches its app process and `ApplicationFrameHost` |
+| `processId` | The process ID (the app's, or a UWP window's host) |
+| `className` | The exact window class, ignoring case; skips the user-facing filter, as in find_windows |
+| `includeCloaked`, `includeUntitled` | Also match cloaked windows (other virtual desktops, suspended apps) or untitled windows |
+| `index` | Which of several matches, front to back in z-order (0 is the front one) |
+| `foreground` | The window in front; the other filters must match it (`WindowNotFound` otherwise) |
+| `handle` | One window by handle; the other filters then say what that window must still be (see `HandleMismatch` below) |
+
+Titles are compared as they read: invisible format characters (the U+200B zero-width space Edge writes into "Microsoft Edge"), runs of whitespace and Edge's " and N more pages" segment are ignored. So `{"titleContains": "Microsoft Edge"}` finds Edge windows, and `{"titleEquals": "Inbox - Personal - Microsoft Edge"}` finds the window titled "Inbox and 2 more pages - Personal - Microsoft Edge". find_windows and [apply_layout](#apply_layout) compare titles the same way, as the CDP tab match of the [Browser Reading](#browser-reading) tools does. A selector with a field it does not know is refused (`InvalidArguments`), so a misspelled filter never widens the match; so is an empty selector.
+
+| Outcome | errorCode | Meaning |
+|---------|-----------|---------|
+| One window | - | The tool goes on exactly as if it had been given that window's handle. The window tools report it as `handle` |
+| No window | `WindowNotFound` | Nothing matches, or `index` is past the matches (then with the matches as `candidates`). The listing rules of find_windows apply: no cloaked, untitled, tool or shell windows unless the selector asks for them. Nothing was done |
+| Several windows | `AmbiguousWindow` | More than one window matches and there is no `index`. `candidates` lists up to 5 of them, front to back, each with `handle`, `title`, `processName`, `processId` and `className`. Nothing was done |
+| A reused handle | `HandleMismatch` | `window.handle` came with `processId`, `processName`, a title filter or `className`, and the window no longer matches it: it closed, and Windows gave its handle to another window. Nothing was done |
+| A closed handle | `InvalidHandle` | `window.handle` (with filters) is no window any more. A selector with only `handle` is that handle, and the tool reports it as it reports its own `handle` |
+
+The single-window tools report these as a tool error (`isError: true`) with `candidates`; in a batch, an item whose selector names no single window fails alone with the same code and `candidates`, and the other items run:
+
+```json
+{
+  "success": false,
+  "error": "2 windows match processName 'chrome', so the window cannot be told; nothing was done. candidates lists them, front to back. Call again with one candidate's handle as window.handle (with its processId, so a reused handle is refused), narrow the filters (titleEquals, processId, className), or pick one in z-order with window.index.",
+  "errorCode": "AmbiguousWindow",
+  "tool": "focus_window",
+  "candidates": [
+    { "handle": 2821181, "title": "Inbox - Gmail - Google Chrome", "processName": "chrome", "processId": 7720, "className": "Chrome_WidgetWin_1" },
+    { "handle": 3015622, "title": "Windows App Manager - GitHub - Google Chrome", "processName": "chrome", "processId": 7720, "className": "Chrome_WidgetWin_1" }
+  ]
+}
+```
+
+**After `AmbiguousWindow`**, do not repeat the same selector: pick the candidate you mean and call again with `"window": {"handle": 2821181, "processId": 7720}` (the `processId` turns a reused handle into `HandleMismatch` instead of an action on another app), or narrow the selector (`titleEquals`, `titleRegex`, `processId`, `className`), or pick by z-order with `index`. If you cannot tell which window the user means, ask.
+
+**Guards.** A resolved window goes through every check a handle goes through: the [target policy](#target-policy), the [input guard](#input-guard) and its host rule (`allowHostTarget` still needs the user's explicit request, and `{"foreground": true}` on the agent's own terminal is refused like its handle), and close_window's protected-window rules. A selector cannot reach a window its handle could not. Resolving only reads windows, never activates or restores one, and happens before the tool waits for the input gate, so it never holds up other input or window calls; while input is paused, the window tools return `PausedByUser` without resolving.
 
 ### find_windows
 
@@ -279,6 +325,12 @@ Find windows matching specific criteria.
 | includeCloaked | boolean | No | false | Also return cloaked windows (other virtual desktops, suspended apps) |
 | includeToolWindows | boolean | No | false | Also return tool windows (palettes and helper windows kept out of the taskbar and Alt+Tab) |
 | includeShell | boolean | No | false | Skip the user-facing filter: also return the desktop, taskbar and tray, and tool, cloaked and untitled windows |
+| titleEquals | string | No | - | The whole window title (case-insensitive) |
+| titleRegex | string | No | - | A .NET regular expression the title must match (case-insensitive, 100 ms timeout), e.g. '^Untitled - Notepad$' |
+| processNameContains | boolean | No | false | Match processName as a part of the process name instead of the whole name (default: false) |
+| includeUntitled | boolean | No | false | Also return untitled windows, which the user-facing filter leaves out (default: false) |
+| sort | string (one of: `"zorder"`, `"title"`, `"process"`) | No | "zorder" | Order of the result: 'zorder' (default, front to back), 'title' or 'process' |
+| limit | integer | No | - | Return at most this many windows, the first in sort order (at least 1; default: all) |
 <!-- tools:end params:find_windows -->
 
 **Example:**
@@ -472,7 +524,8 @@ List the windows a window owns, directly or through its other owned windows, in 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle (as integer) of the owner |
+| handle | integer | No | - | Window handle (as integer) of the owner |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | includeHidden | boolean | No | false | Also list hidden owned windows, such as IME and other helper windows (default: false) |
 <!-- tools:end params:get_owned_windows -->
 
@@ -514,6 +567,66 @@ Each owned window has `handle`, `title`, `className` (`#32770` is a standard dia
 
 A handle that is not a window returns `success: false` with `errorCode: "InvalidHandle"`.
 
+### get_window_info
+
+Read one window, named by `handle` or by a [window selector](#window-selectors), without listing every window (roadmap M2.4). Read-only.
+
+<!-- tools:begin params:get_window_info -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | integer | No | - | Window handle (as integer) from find_windows. Pass handle or window, not both. |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows; index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
+| detail | string (one of: `"compact"`, `"standard"`, `"full"`) | No | "standard" | How much to report: 'compact', 'standard' (default) or 'full' |
+<!-- tools:end params:get_window_info -->
+
+`detail` sets how much is reported:
+
+| detail | Fields |
+|--------|--------|
+| `compact` | `handle`, `title`, `processName`, `processId`, `state` |
+| `standard` (default) | What [find_windows](#find_windows) reports for the window: also `bounds` (the window rect), `isVisible`, `monitorIndex`, `className`, `isCloaked`, and `ownerHandle`, `hostProcessName`, `hostProcessId` and `isAgentHost` when they apply |
+| `full` | Standard, plus `visibleBounds` (the visible frame, without the invisible resize borders; see [Window Control](#window-control)), `clientBounds` (the client area on screen), `isForeground`, `zOrder` (its place among all top-level windows, hidden ones included, front to back from 0; left out for a child window), `isTopmost`, `isEnabled` (false: it is disabled, usually by a modal dialog; [get_owned_windows](#get_owned_windows) names it), `isResponding` (false: Windows reports it hung) and `dpi` (96 is 100%) |
+
+A window named by its handle is read whatever the listing filter would say: untitled, cloaked, tool and child windows too. No value waits for the window's application, so a hung window is read too.
+
+**Example:**
+> "Is Notepad responding, and where is its client area?"
+
+```json
+{
+  "name": "get_window_info",
+  "arguments": { "window": { "processName": "notepad" }, "detail": "full" }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "handle": 1706796,
+  "title": "notes.txt - Notepad",
+  "processName": "notepad",
+  "processId": 10244,
+  "state": "normal",
+  "bounds": { "x": 0, "y": 0, "width": 1280, "height": 1392 },
+  "isVisible": true,
+  "monitorIndex": 0,
+  "className": "Notepad",
+  "isCloaked": false,
+  "visibleBounds": { "x": 7, "y": 0, "width": 1266, "height": 1385 },
+  "clientBounds": { "x": 8, "y": 68, "width": 1264, "height": 1316 },
+  "isForeground": true,
+  "zOrder": 0,
+  "isTopmost": false,
+  "isEnabled": true,
+  "isResponding": true,
+  "dpi": 120
+}
+```
+
+A handle that is not a window returns `success: false` with `errorCode: "InvalidHandle"`. A selector that names no single window is a tool error: `WindowNotFound`, `AmbiguousWindow` (with `candidates`) or `HandleMismatch` (see [Window selectors](#window-selectors)).
+
 ---
 
 ## Window Control
@@ -546,7 +659,8 @@ Only move_window_to_monitor with `positioning: "maximize"` can still activate th
 | Code | Meaning |
 |------|---------|
 | `InvalidHandle` | The handle is not a window, or the window closed during the call |
-| `InvalidArguments` | resize_window, set_window_bounds: `width` or `height` is below 1; nothing was changed |
+| `InvalidArguments` | resize_window, set_window_bounds: `width` or `height` is below 1; nothing was changed. Any of them: both `handle` and `window`, or neither, or a selector that cannot be used (tool error) |
+| `WindowNotFound`, `AmbiguousWindow`, `HandleMismatch` | The `window` selector named no window, several (with `candidates`), or a reused handle (tool error); nothing was changed. See [Window selectors](#window-selectors) |
 | `InvalidMonitorIndex` | snap_window, move_window_to_monitor: `monitorIndex` is not a monitor; `error` gives the valid range. Nothing was changed (it is never put on another monitor instead) |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was changed. Ask the user |
 | `AccessDenied` | Windows refused the move or resize (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks this server. Ask the user |
@@ -556,7 +670,7 @@ Only move_window_to_monitor with `positioning: "maximize"` can still activate th
 
 An unknown `state` (set_window_state), `position` (snap_window) or `positioning` (move_window_to_monitor) is refused before the tool runs, as a tool error with `InvalidState`, `InvalidSnapPosition` or `InvalidPositioning` that lists the allowed values; the input schema lists them too. Such a value used to fall back to another action (restore, center) that was reported as success. [focus_window](#focus_window) and [close_window](#close_window) have their own error tables below.
 
-These tools, focus_window, close_window, the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) can change which window is in front, so each waits until a running input call (or another such call) has finished. A call that waits more than 30 seconds gives up with a tool error (`isError: true`, `errorCode: "InputBusy"`) and does nothing; while the user has paused input (see [Pause hotkey](#pause-hotkey)) it returns `PausedByUser` the same way, also when the pause comes while it waits. The wait for a window is bounded too: a hung application holds such a call, and every input call queued behind it, for at most about 5 seconds per application.
+These tools, focus_window, close_window, the [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process) and [launch_browser_with_debug](#launch_browser_with_debug) can change which window is in front, so each waits until a running input call (or another such call) has finished. A call that waits more than 30 seconds gives up with a tool error (`isError: true`, `errorCode: "InputBusy"`) and does nothing; while the user has paused input (see [Pause hotkey](#pause-hotkey)) it returns `PausedByUser` the same way, also when the pause comes while it waits. The wait for a window is bounded too: a hung application holds such a call, and every input call queued behind it, for at most about 5 seconds per application. A `window` selector is resolved before the wait, outside the gate.
 
 ### move_window
 
@@ -566,9 +680,10 @@ Move a window so that its visible frame's top-left corner is at `x`, `y`. It kee
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle from find_windows |
 | x | integer | Yes | - | X of the visible frame's left edge |
 | y | integer | Yes | - | Y of the visible frame's top edge |
+| handle | integer | No | - | Window handle from find_windows |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:move_window -->
@@ -608,9 +723,10 @@ Resize a window's visible frame. Its top-left corner stays where it is (`SWP_NOM
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | width | integer | Yes | - | New width of the visible frame in pixels |
 | height | integer | Yes | - | New height of the visible frame in pixels |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:resize_window -->
 
@@ -649,11 +765,12 @@ Move and resize a window in a single operation: `x`, `y`, `width` and `height` a
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | x | integer | Yes | - | X of the visible frame's left edge |
 | y | integer | Yes | - | Y of the visible frame's top edge |
 | width | integer | Yes | - | Width of the visible frame in pixels |
 | height | integer | Yes | - | Height of the visible frame in pixels |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:set_window_bounds -->
@@ -695,8 +812,9 @@ Minimize, maximize, or restore a window. `success` is true only when the window 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | state | string (one of: `"minimize"`, `"maximize"`, `"restore"`, `"minimized"`, `"maximized"`, `"normal"`) | Yes | - | Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' also work, in any case). Any other value fails with `InvalidState` |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:set_window_state -->
 
@@ -734,7 +852,8 @@ Bring a window to the foreground, verify it, and report which window is actually
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 <!-- tools:end params:focus_window -->
 
 Windows' foreground lock usually refuses a background process such as this server when it asks to bring a window to the front. `focus_window` works around that without sending keys, and checks the foreground window after every step (for about a second in total):
@@ -835,7 +954,8 @@ Close a window gracefully (sends WM_CLOSE), then wait up to `waitMs` and report 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | force | boolean | No | false | Close even a protected window (see below). Set it only when the user explicitly asked to close that window |
 | waitMs | integer | No | 2000 | How long to wait for the window to close, in milliseconds (0-30000, default 2000). 0 only sends the close message (status requested). The wait ends early when the window closes or shows a prompt. |
 <!-- tools:end params:close_window -->
@@ -935,8 +1055,9 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | position | string (one of: `"left_half"`, `"right_half"`, `"top_half"`, `"bottom_half"`, `"top_left_quarter"`, `"top_right_quarter"`, `"bottom_left_quarter"`, `"bottom_right_quarter"`, `"left_third"`, `"center_third"`, `"right_third"`, `"left_two_thirds"`, `"right_two_thirds"`, `"fullscreen"`) | Yes | - | Snap position (see table below) |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | monitorIndex | integer | No | current | Target monitor (0-based index) |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
@@ -1009,8 +1130,9 @@ Move a window to a specific monitor. The window keeps its normal size, made smal
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | monitorIndex | integer | Yes | - | Target monitor (0-based index) |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | positioning | string (one of: `"center"`, `"topleft"`, `"topright"`, `"bottomleft"`, `"bottomright"`, `"maximize"`, `"restore"`) | No | "center" | Position on monitor (see below) |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 | settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
@@ -1083,12 +1205,13 @@ Move and resize multiple windows in a single batch operation.
 Each item of `placements` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | x | integer | Yes | - | X of the visible frame's left edge |
 | y | integer | Yes | - | Y of the visible frame's top edge |
 | width | integer | Yes | - | Width of the visible frame in pixels |
 | height | integer | Yes | - | Height of the visible frame in pixels |
+| handle | integer | No | - | Window handle |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| window | object | No | - | - |
 <!-- tools:end params:set_windows_bounds_batch -->
 
 **Example:**
@@ -1135,10 +1258,11 @@ Snap multiple windows to predefined positions in a single batch operation.
 Each item of `placements` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | position | string (one of: `"left_half"`, `"right_half"`, `"top_half"`, `"bottom_half"`, `"top_left_quarter"`, `"top_right_quarter"`, `"bottom_left_quarter"`, `"bottom_right_quarter"`, `"left_third"`, `"center_third"`, `"right_third"`, `"left_two_thirds"`, `"right_two_thirds"`, `"fullscreen"`) | Yes | - | Snap position (see snap_window) |
+| handle | integer | No | - | Window handle |
 | monitorIndex | integer | No | current | Target monitor |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| window | object | No | - | - |
 <!-- tools:end params:snap_windows_batch -->
 
 **Example:**
@@ -1185,8 +1309,9 @@ Set the state (minimize, maximize, restore) of multiple windows in a single batc
 Each item of `changes` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
 | state | string (one of: `"minimize"`, `"maximize"`, `"restore"`, `"minimized"`, `"maximized"`, `"normal"`) | Yes | - | State: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' also work). Any other value fails that item with `InvalidState` |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | - |
 <!-- tools:end params:set_windows_state_batch -->
 
 **Example:**
@@ -1236,7 +1361,8 @@ Close multiple windows gracefully in a single batch operation, then wait up to `
 Each item of `windows` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle |
+| handle | integer | No | - | Window handle |
+| window | object | No | - | - |
 <!-- tools:end params:close_windows_batch -->
 
 **Example:**
@@ -1680,7 +1806,8 @@ Capture a screenshot of a specific window. Works even if the window is partially
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | includeFrame | boolean | No | true | Include window frame/decoration (title bar, borders) |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | integer | No | 80 | JPEG quality (1-100) |
@@ -1754,7 +1881,8 @@ Capture a window screenshot with UI element bounding box overlays. Returns an an
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | includeFrame | boolean | No | true | Include window frame/decoration |
 | format | string (one of: `"auto"`, `"png"`, `"jpeg"`, `"jpg"`) | No | "auto" | "auto" (JPEG, or PNG up to a 512-pixel long edge), "png" or "jpeg" |
 | quality | integer | No | 80 | JPEG quality (1-100) |
@@ -1881,7 +2009,8 @@ Get the UI element tree with bounding boxes for a window. Provides a lightweight
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle from find_windows or get_all_windows |
+| handle | integer | No | - | Window handle from find_windows or get_all_windows |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxDepth | integer | No | 5 | How many levels below the window to read (1-10). 1 returns only the window's direct children |
 | controlTypes | string | No | - | Comma-separated control types to include (e.g., "Button,Edit,ComboBox"). Unknown names fail with `InvalidControlType` |
 | interactableOnly | boolean | No | false | Only include interactable elements: enabled, and keyboard-focusable or with an action pattern |
@@ -2175,7 +2304,8 @@ Get the current URL from a browser window: from the address bar with UI Automati
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| handle | integer | No | - | Window handle of the browser, from find_windows or get_foreground_window |
+| window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | cdpPort | integer | No | - | CDP debug port of the browser that owns the window (for example 9222) |
 | requireCdp | boolean | No | false | Return the CDP error instead of falling back to UI Automation (needs cdpPort) |
 | timeoutMs | integer | No | 10000 | Time limit for the CDP requests of this call in ms (1000-30000) |
@@ -2292,7 +2422,8 @@ Extract the content of the page shown in a browser window. UI Automation returns
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | Yes | - | Window handle of the browser, from find_windows or get_foreground_window |
+| handle | integer | No | - | Window handle of the browser, from find_windows or get_foreground_window |
+| window | object | No | - | Alternative to handle: the browser window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), e.g. {"processName": "msedge", "titleContains": "Inbox"}. Filters as in find_windows (processName is the whole name; titles ignore the zero-width space in 'Microsoft Edge' and ' and N more pages'); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | maxLength | integer | No | all | Maximum number of characters to return, at least 1; longer content is cut off. 0 or less fails with `InvalidArguments` (0 used to return empty content as a success) |
 | textOnly | boolean | No | true | Return text only. false returns the full HTML, which requires CDP |
 | cdpPort | integer | No | - | CDP debug port of the browser that owns the window; includes JavaScript-rendered content |
@@ -2515,6 +2646,7 @@ Perform a left mouse click at the specified screen coordinates. Pass `windowHand
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:click -->
@@ -2579,6 +2711,7 @@ Perform a right mouse click at the specified screen coordinates.
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:right_click -->
@@ -2613,6 +2746,7 @@ Perform a double left click at the specified screen coordinates. Useful for open
 | y | integer | Yes | - | Y coordinate (screen position) |
 | delayMs | integer | No | 50 | Delay between clicks in milliseconds (range: 10-500) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:double_click -->
@@ -2661,6 +2795,7 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the input is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:mouse_move -->
@@ -2710,6 +2845,7 @@ The wheel over a combo box, slider or number box changes its value, so point at 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | windowHandle | integer | No | - | The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | x | integer | No | - | X coordinate in physical virtual-desktop pixels (negative on monitors left of the primary monitor), together with y. Default: the centre of windowHandle's client area |
 | y | integer | No | - | Y coordinate in physical virtual-desktop pixels (negative on monitors above the primary monitor), together with x. Default: the centre of windowHandle's client area |
 | deltaY | integer | No | 0 | Vertical wheel notches: positive scrolls down, negative scrolls up, at most 100 either way. Default: 0 |
@@ -2762,6 +2898,7 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 | text | string | Yes | - | The text to type |
 | delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:type_text -->
@@ -2832,6 +2969,7 @@ Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`
 |-----------|------|----------|---------|-------------|
 | keys | string | Yes | - | Keys to send in SendKeys format (see syntax below) |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:send_keys -->
@@ -3443,6 +3581,7 @@ Close an application gracefully, without ever forcing it: send WM_CLOSE to each 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | No | - | A window of the application (as integer); its process is closed |
+| window | object | No | - | Alternative to handle: a window of the application as a selector, resolved to exactly one window (WindowNotFound; AmbiguousWindow with candidates); its process is closed. Filters as in find_windows. |
 | processId | integer | No | - | The application's process ID |
 | processName | string | No | - | The application's process name, with or without .exe (e.g. 'notepad'); matched exactly, ignoring case |
 | timeoutMs | integer | No | 5000 | How long to wait for the windows to close and the processes to exit, in milliseconds (0-30000, default 5000). 0 only sends the close messages (status requested) |
@@ -3521,7 +3660,8 @@ The close messages are sent inside the input gate, which is released before the 
 | `ProtectedWindow` | One of its windows is the agent's host or the desktop shell; nothing was sent |
 | `TargetDeniedByPolicy` | The user's target policy refuses the application; nothing was sent |
 | `InvalidHandle` | `handle` is not a window (tool error) |
-| `InvalidArguments` | Not exactly one of `handle`, `processId` and `processName`, a `processId` below 1, an empty `processName`, or `timeoutMs` outside 0-30000 (tool error) |
+| `InvalidArguments` | Not exactly one of `handle`, `window`, `processId` and `processName`, a `processId` below 1, an empty `processName`, or `timeoutMs` outside 0-30000 (tool error) |
+| `WindowNotFound` / `AmbiguousWindow` / `HandleMismatch` | `window` named no single window (tool error, with `candidates` when ambiguous); nothing was sent. See [Window selectors](#window-selectors) |
 | `ConfirmationRequired` / `ConfirmationDeclined` | More than 3 windows and no confirmation (tool error); nothing was sent |
 | `HandleMismatch` | In a window's item: the window changed hands while the user was asked; it was not closed |
 | `PausedByUser` / `InputBusy` | Input is paused, or the input gate stayed busy (tool error); nothing was sent |
@@ -4254,7 +4394,7 @@ send_keys { "keys": "{ENTER}", "windowHandle": 12345 }
 
 ## Changes for existing clients
 
-These changes (roadmap M2.1, M2.2, M2.3, M2.5, M2.6, M2.7, M2.8, M2.9 and M2.10: honest results, typed parameters, geometry, verified close, launch resolution, layout matching, capture health, annotations and confirmation by the user) change what some calls return. A client
+These changes (roadmap M2.1, M2.2, M2.3, M2.4, M2.5, M2.6, M2.7, M2.8, M2.9 and M2.10: honest results, typed parameters, geometry, verified close, launch resolution, layout matching, capture health, annotations and confirmation by the user) change what some calls return. A client
 that followed the documented contract keeps working; the list says what a client that relied on the old behavior
 sees now.
 
@@ -4352,6 +4492,20 @@ sees now.
   is `ElevationCancelled`. launch_applications_batch starts every application first and then waits for all the windows
   together, so `waitTimeoutMs` bounds the whole wait instead of each application's; a window of the process one item
   started goes to that item, never to another launch of the same program.
+- **Window selectors (M2.4).** Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a
+  [window selector](#window-selectors); `handle` is kept and works as before, but it is no longer marked required in
+  the input schema (a call needs one of `handle` and `window`, and fails with `InvalidArguments` without either, as it
+  did without `handle`). The window tools, focus_window and close_window report the window they acted on as `handle`.
+  find_windows' `processName` now matches the whole process name (with or without `.exe`), the rule save_layout's
+  presets already used: `Code` no longer finds `Code - Insiders` windows; set `processNameContains: true` for the old
+  part match. Its title filter ignores invisible characters and Edge's " and N more pages", so
+  `titleContains: "Microsoft Edge"` now finds Edge windows it used to miss; apply_layout compares titles the same way.
+  find_windows gains `titleEquals`, `titleRegex`, `includeUntitled`, `sort` and `limit`, and the new
+  [get_window_info](#get_window_info) reads one window without a listing. New codes: `WindowNotFound` and
+  `AmbiguousWindow` (with `candidates`) for a selector that names no single window, and `HandleMismatch` also for a
+  selector's handle that was reused. The window changes (move, resize, bounds, state, snap, move to a monitor, focus
+  and their batches) take the input gate themselves, after resolving the selector, instead of through the gate
+  filter; `PausedByUser` and `InputBusy` arrive as before.
 - **Launch path hygiene.** A bare name that is not found in the Windows folder, System32, `PATH` or App Paths fails
   with `ExecutableNotFound` instead of being passed to Windows, whose search includes the current directory. Without
   `workingDirectory`, a program starts in its own folder instead of the server's current directory. `ms-settings:`
@@ -4438,6 +4592,7 @@ table, it gives more detail.
 | Code | Returned by | Meaning |
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch, the window changes (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and their batches, per window) | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window and the window changes: Windows refused the message or the move (Win32 error 5), because the window belongs to a more privileged app, for example one running as administrator; ask the user |
+| `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized (its placement is `applied` with this code); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
@@ -4483,15 +4638,15 @@ table, it gives more detail.
 | `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
 | `FormatNotAvailable` | [get_clipboard](#get_clipboard) | The clipboard holds nothing in the format asked for; `availableFormats` lists what it holds |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
-| `HandleMismatch` | [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; it was not closed |
+| `HandleMismatch` | [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused); nothing was done |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)) and from [set_clipboard](#set_clipboard) | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
-| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
+| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms; and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools, [get_clipboard](#get_clipboard) (tool error) | `format` is not auto, png, jpeg or jpg (get_clipboard: text, html or files); `error` lists them |
-| `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`) | The window handle is zero or invalid, or the window no longer exists |
+| `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`) | The window handle is zero or invalid, or the window no longer exists |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string is not valid syntax, such as a `{` without its `}`, or nothing could be read from it; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
@@ -4565,4 +4720,4 @@ table, it gives more detail.
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
 | `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true`, or restore it first with [set_window_state](#set_window_state) |
-| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window that is not given to another placement matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements); every tool that takes a `window` selector (tool error; per item in the window batches) | apply_layout: no open window that is not given to another placement matched a placement. get_ui_elements and capture_with_elements: the window no longer exists. A `window` selector: no window matches it, or its `index` is past the matches; nothing was done (see [Window selectors](#window-selectors)) |

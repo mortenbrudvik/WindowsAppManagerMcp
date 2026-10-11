@@ -21,7 +21,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 53 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 54 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -45,7 +45,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 1. Locate
 
-- **Windows:** `find_windows` with `processName` (more reliable than titles, which change) or `titleContains`; `get_foreground_window` for what is in front. Keep the `handle`: every later call names the window by it.
+- **Windows:** prefer naming the window with a `window` selector in the call that acts on it, over copying a raw `handle` from an earlier listing: `{"processName": "notepad"}`, `{"processName": "msedge", "titleContains": "Inbox"}`, `{"foreground": true}`. `processName` is the whole process name (more reliable than titles, which change; `processNameContains: true` for a part); `titleEquals` and `titleRegex` pin a title exactly. A selector must name exactly one window, so it never acts on the first of several. To look before you act, `find_windows` takes the same filters (plus `sort` and `limit`) and `get_window_info` reads one window (`detail: "full"` says whether it is in front, enabled, responding, its DPI and client area); `get_foreground_window` says what is in front. When you do keep a `handle`, pass it later as `{"handle": ..., "processId": ...}` so a window that closed and whose handle was reused is refused (`HandleMismatch`) instead of acted on.
 - **A program that is not running yet:** `launch_application` with `waitForWindow: true` returns the `window` it opened, whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to), with `launchStatus`: `windowObserved` (a new window), `reusedExistingWindow` or `openedInTab` (single-instance and tabbed apps such as Windows 11 Notepad, Terminal, VS Code and Explorer reuse a window that was already open). For a Store app (`shell:AppsFolder\<AppUserModelID>`), a Settings page (`ms-settings:...`) or a document, pass `expectWindow` (`processName` or `titleContains`) so the wait can recognise its window.
 - **Controls inside a window:** `get_ui_elements` with `controlTypes` (`Button`, `Edit`, ...) or `interactableOnly: true` gives names, automation IDs and screen `bounds`. `get_focused_element` says what has keyboard focus; `get_element_at_point` what is at a point.
 - **What it looks like:** `capture_window` (or `capture_with_elements` for overlays with each element's `screenBounds`).
@@ -58,8 +58,8 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 3. Act
 
-- **Input:** always with `windowHandle`. Click at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, convert it with the capture's `imageToScreen` (see [Coordinates](#coordinates)).
-- **Windows:** the window tools take the exact `handle` (`snap_window`, `set_window_bounds`, `set_window_state`, `move_window_to_monitor`, ...). Close with `close_window`.
+- **Input:** always with `windowHandle`, or `window` (a selector, resolved to one window and then guarded exactly like `windowHandle`). Click at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, convert it with the capture's `imageToScreen` (see [Coordinates](#coordinates)).
+- **Windows:** the window tools take `window` (a selector) or the exact `handle`, never both (`snap_window`, `set_window_bounds`, `set_window_state`, `move_window_to_monitor`, ...); their result's `handle` is the window they acted on. Close with `close_window`.
 - **Keys:** `type_text` for text, `send_keys` for keys and chords. A chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, the Windows key, Alt+Space) must be the last key of a call (`KeysAfterFocusChange`); better, pass the other window's handle instead of switching.
 
 ### 4. Wait
@@ -72,6 +72,12 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 - Then check the new state with a read tool or a capture before the next step: the dialog opened, the text is in the field, the window is where it should be. A `close_window` success means the window closed (`status: "closed"`) or hid itself (`"hidden"`); `promptShown` means the app asks to save, and `get_owned_windows` lists a window's dialogs and which one blocks it.
 
 ## When Something Fails
+
+**Window selectors** (any tool given `window`; nothing was done):
+
+- `AmbiguousWindow`: several windows match, and `candidates` lists up to 5 (handle, title, processName, processId, className), front to back. Never repeat the same selector and never just take the first candidate: pick the one the user means and call again with `window: {"handle": ..., "processId": ...}`, or narrow the selector (`titleEquals`, `titleRegex`, `processId`, `className`), or use `index` when z-order is what you mean. If you cannot tell which one the user means, ask.
+- `WindowNotFound`: nothing matches. Check with `find_windows`: `processName` is the whole name, and cloaked (other virtual desktop) and untitled windows need `includeCloaked` or `includeUntitled`. With `foreground: true`, the window in front is not the one the filters describe.
+- `HandleMismatch`: the handle now belongs to another window (the one you meant closed). Locate the window again; do not retry the handle.
 
 **Input refusals** (`errorCode` of `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text`, `send_keys`):
 
@@ -168,29 +174,32 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (53)
+## Available Tools (54)
 
-### Window Discovery (4 tools)
+### Window Discovery (5 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `find_windows` | Find windows by criteria | titleContains, processName, processId, handle, className |
+| `find_windows` | Find windows by criteria | titleContains, titleEquals, titleRegex, processName, processId, className, sort, limit |
 | `get_all_windows` | List user-facing app windows | includeMinimized |
 | `get_foreground_window` | Get focused window | (none) |
 | `get_owned_windows` | Dialogs and popups a window owns; which one blocks it | handle, includeHidden |
+| `get_window_info` | One window, without listing all; full adds foreground, z-order, topmost, enabled, responding, DPI | window (or handle), detail |
+
+Every tool that takes a window's `handle` (or `windowHandle`) also takes `window`, a selector with the filters of `find_windows` (`titleContains`, `titleEquals`, `titleRegex`, `processName`, `processId`, `className`, `foreground`, `index`, ...). It must name exactly one window: several matches fail with `AmbiguousWindow` and up to 5 `candidates`, none with `WindowNotFound`. `window.handle` with `processId` or a title refuses a reused handle (`HandleMismatch`).
 
 ### Window Control (8 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `move_window` | Move to x,y position | handle, x, y |
-| `resize_window` | Change dimensions | handle, width, height |
-| `set_window_bounds` | Move + resize combined | handle, x, y, width, height |
-| `set_window_state` | Min/max/restore | handle, state |
-| `focus_window` | Bring to foreground, verified; reports what is in front | handle |
-| `close_window` | Close gracefully and verify: closed, hidden, stillOpen or promptShown | handle, waitMs, force |
-| `snap_window` | Snap to preset position | handle, position, monitorIndex |
-| `move_window_to_monitor` | Move to monitor | handle, monitorIndex, positioning |
+| `move_window` | Move to x,y position | window (or handle), x, y |
+| `resize_window` | Change dimensions | window (or handle), width, height |
+| `set_window_bounds` | Move + resize combined | window (or handle), x, y, width, height |
+| `set_window_state` | Min/max/restore | window (or handle), state |
+| `focus_window` | Bring to foreground, verified; reports what is in front | window (or handle) |
+| `close_window` | Close gracefully and verify: closed, hidden, stillOpen or promptShown | window (or handle), waitMs, force |
+| `snap_window` | Snap to preset position | window (or handle), position, monitorIndex |
+| `move_window_to_monitor` | Move to monitor | window (or handle), monitorIndex, positioning |
 
 ### Batch Operations (5 tools)
 
@@ -267,7 +276,7 @@ All seven also take `allowHostTarget` (default false): only for input to your ow
 | `launch_application` | Launch app by path/name/URI | executable, arguments, workingDirectory, waitForWindow |
 | `list_processes` | List running processes | nameFilter, includeWindowless |
 | `kill_process` | Close or terminate a process | processId, confirm, forceKill, expectedProcessName |
-| `close_application` | Close an app's Alt+Tab windows gracefully; reports prompts and what remains | processName, processId, handle, timeoutMs |
+| `close_application` | Close an app's Alt+Tab windows gracefully; reports prompts and what remains | processName, processId, window (or handle), timeoutMs |
 
 ### Clipboard (2 tools)
 
