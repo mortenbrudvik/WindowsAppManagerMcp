@@ -3176,9 +3176,11 @@ If the folder cannot be created or used (for example, `WAM_LAYOUTS_PATH` points 
 | `NoWindowsCaptured` | save_layout | No visible window matched the filters, so nothing was saved |
 | `SaveFailed` | save_layout | The preset file could not be written |
 | `DeleteFailed` | delete_layout | The preset file could not be deleted |
-| `WindowNotFound` | apply_layout | No open window matched a placement |
+| `WindowNotFound` | apply_layout | No open window matched a placement (or every match was given to another placement) |
+| `NoMatchCriterion` | apply_layout | A placement has no criterion the `matchBy` used can match on, so it was skipped |
+| `InvalidMonitorIndex` | apply_layout | A placement's monitor does not exist (for example, after undocking) |
 | `LaunchFailed` | apply_layout | A missing app could not be launched, or its window did not appear |
-| `ArrangeFailed` | apply_layout | A matched window could not be moved, resized or brought to the foreground |
+| `ArrangeFailed` | apply_layout | A matched window could not be moved, resized, maximized, minimized or brought to the foreground |
 | `StorageUnavailable` | all layout tools | The layouts folder could not be created or used |
 
 `list_layouts` and `get_layout` return plain data, so they report `PresetNotFound` and `StorageUnavailable` as a tool error (`isError: true`) with that `errorCode` (see [Tool errors](#tool-errors)). The other layout tools return `success: false` with `error` and `errorCode` fields, with `isError: true`.
@@ -3258,7 +3260,13 @@ Get full details of a layout preset. If no preset has that name, the call return
       "position": { "x": 0, "y": 0, "width": 0.5, "height": 1.0 },
       "launchCommand": "code",
       "focus": true,
-      "order": 1
+      "order": 1,
+      "exactProcessName": true,
+      "className": "Chrome_WidgetWin_1",
+      "titlePattern": "main.cs - WindowsAppManagerMcp - Visual Studio Code",
+      "exePath": "C:\\Users\\user\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+      "ordinal": 0,
+      "state": "normal"
     },
     {
       "processName": "WindowsTerminal",
@@ -3282,6 +3290,8 @@ Get full details of a layout preset. If no preset has that name, the call return
 }
 ```
 
+The first placement above was saved by [save_layout](#save_layout) (and given a launch command and focus by hand), so it also has what save_layout records about the window: `exactProcessName`, `className`, `titlePattern`, `exePath`, `ordinal` and `state` (see [save_layout](#save_layout)). Placements written by hand, like the other two, leave them out.
+
 ---
 
 ### save_layout
@@ -3301,6 +3311,19 @@ If no visible window matches the filters, nothing is saved (an existing preset w
 <!-- tools:end params:save_layout -->
 
 The process filters match part of the process name, case-insensitive. As in [find_windows](#find_windows), a Store (UWP) app's window matches both its own process name and `ApplicationFrameHost`. Each saved placement stores the app's own process name (for example `CalculatorApp`).
+
+Each placement also records which window it is, so [apply_layout](#apply_layout) can tell several windows of one app apart:
+
+| Field | What it holds |
+|-------|---------------|
+| `exactProcessName` | `true`: the process name must match the window's whole process name (`Code` does not match `Code - Insiders`) |
+| `className` | The window class, for example `CabinetWClass` for a File Explorer folder window |
+| `titlePattern` | The window title when it was saved (not saved for a window the [target policy](#target-policy) denies) |
+| `exePath` | The full path of the window's program. It only identifies the window: apply_layout never starts it |
+| `ordinal` | Which window of its process it was, from the top of the z-order (0 is the top one) |
+| `state` | `normal` or `maximized` |
+
+Minimized windows are not saved, and no launch command is recorded: `launchMissing` only starts what you add as `launchCommand` by hand. Presets saved by earlier versions keep working, and earlier versions ignore these fields.
 
 **Example 1:** Save all windows
 > "Save my current layout as 'morning-routine'"
@@ -3367,17 +3390,32 @@ Apply a saved layout preset.
 <!-- tools:end params:apply_layout -->
 
 **Match Methods:**
-- `process_and_title` - Match by process name AND window title
+- `process_and_title` - Match by process name AND window title (a placement without `titleContains` matches by process name)
 - `process_only` - Match by process name only
-- `title_only` - Match by window title only
+- `title_only` - Match by window title only, so only placements with `titleContains` can match; save_layout records none
 
 Any other `matchBy` fails with `InvalidMatchBy` (a [tool error](#tool-errors) that lists the methods) and arranges nothing; it used to fall back to `process_and_title`.
 
-A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows.
+A placement with no criterion the method can use (`title_only` without `titleContains`, `process_only` without a process name, or neither) is skipped: its status is `notApplicable` with `NoMatchCriterion`, and no window is moved for it. An empty criterion used to match every window, so `title_only` on a saved layout moved whatever windows were on top.
 
-Only the windows that [get_all_windows](#get_all_windows) lists are matched. A window on another virtual desktop (cloaked) or a tool window is not, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again.
+A placement's process name matches part of the window's process name, case-insensitive; a Store (UWP) app's window also matches `ApplicationFrameHost`, which is what presets saved by earlier versions stored for UWP windows. A process name that [save_layout](#save_layout) recorded (`exactProcessName: true`) must match the whole name instead, so `Code` does not match `Code - Insiders`.
 
-`success` is true only when every placement was arranged. If a window is not found, cannot be launched, or cannot be arranged or focused, `success` is false, `errorCode` names the first problem, and `errors` lists every problem. The counts show what was done.
+**One window per placement.** apply_layout reads the open windows once, the windows [get_all_windows](#get_all_windows) lists, and gives each placement its own window: a window is never given to two placements, and a placement left without a window is `notFound` (a layout with three Chrome windows and one Chrome window open arranges that window once). Among the windows that pass the method's filter, the one most like what save_layout recorded wins: the same title (or most of its parts, split at ` - ` and ` | `, so a browser window whose tab changed still counts), the same window class, the same program, and then the window closest to the placement's place and the same position among its process's windows. The best pairs are taken first, so a placement that recognizes its window by title gets it even when an earlier placement would take any window of that process; a hand-written placement without these fields takes the matching window closest to its place. A window on another virtual desktop (cloaked) or a tool window is not listed, so its placement counts as not found, and with `launchMissing` a placement that has a launch command starts its application again; if that brings up a window another placement was given (a single-instance app), the placement fails with `LaunchFailed`.
+
+**Monitors and state.** A placement whose `monitorIndex` is not a monitor now (after undocking, for example) fails with `InvalidMonitorIndex`; it is no longer put on monitor 0. A placement with `state: "maximized"` maximizes its window on its monitor, as [move_window_to_monitor](#move_window_to_monitor) `maximize` does; any other placement restores a maximized window first, then gives it the placement's rectangle, and `state: "minimized"` (hand-written only) minimizes it afterwards.
+
+**Results.** `success` is true only when every placement was arranged (and focused, for a placement with focus). `status` is `applied` when it was, `partial` when some placements were arranged and others not, and `failed` when none was. `placements` has one result per placement, in placement order:
+
+| Field | Meaning |
+|-------|---------|
+| `order` | The placement's `order` |
+| `status` | `applied`, `notFound`, `notApplicable` or `failed` |
+| `window` | The window it was given: `handle`, `title`, `processName`; left out when none was |
+| `launched` | `true` when the window was launched for it (`launchMissing`) |
+| `focused` | For a placement with `focus: true` that was arranged: whether its window is in front |
+| `errorCode`, `error` | Why it was not (fully) applied: `WindowNotFound`, `NoMatchCriterion`, `InvalidMonitorIndex`, `LaunchFailed`, `TargetDeniedByPolicy` or `ArrangeFailed`. An `applied` placement with `ArrangeFailed` was arranged but not brought to the front (or not minimized) |
+
+`errorCode` names the first problem and `errors` lists every problem; the counts show what was done. Each placement runs on its own: one that fails, even unexpectedly, does not stop the others.
 
 A placement with `focus: true` brings its window to the front with the same verified activation as [focus_window](#focus_window), once the window is arranged. `focus` lists the outcome of each such activation, in placement order, with the fields of a [focus_window](#focus_window) result (`handle`, `isForeground`, `method`, `foregroundHandle`, `foregroundTitle`, `foregroundProcess`, `blockingPopup`, `menuClosed`, `inMenuMode`, `error`, `errorCode`); it is left out when no window of a focus placement was arranged. A focus that fails also adds an `ArrangeFailed` error whose text names the [focus_window](#focus_window) error code (for example `FocusFailed`, `NotResponding` or `PausedByUser`) and the reason. The foreground can change again after the call, so confirm what is in front with [get_foreground_window](#get_foreground_window) before typing. A window that the user's [target policy](#target-policy) denies is neither arranged nor focused, and adds a `TargetDeniedByPolicy` error. A window whose application does not answer (see `NotResponding` under [Window Control](#window-control)), or that Windows does not let the server move (for example an app running as administrator), is not arranged and adds an `ArrangeFailed` error whose text starts with the window change's own code (`NotResponding: ...`, `AccessDenied: ...`, `MoveFailed: ...`) and the reason; the other placements still run.
 
@@ -3410,10 +3448,19 @@ A placement with `focus: true` brings its window to the front with the same veri
 ```json
 {
   "success": true,
+  "status": "applied",
   "presetName": "work-setup",
   "windowsArranged": 3,
   "windowsNotFound": 0,
-  "windowsLaunched": 1
+  "windowsLaunched": 1,
+  "focus": [
+    { "success": true, "handle": 2884384, "isForeground": true, "method": "setForeground", "foregroundHandle": 2884384, "foregroundTitle": "main.cs - Visual Studio Code", "foregroundProcess": "Code" }
+  ],
+  "placements": [
+    { "order": 1, "status": "applied", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" }, "focused": true },
+    { "order": 2, "status": "applied", "window": { "handle": 1312934, "title": "Windows PowerShell", "processName": "WindowsTerminal" }, "launched": true },
+    { "order": 3, "status": "applied", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" } }
+  ]
 }
 ```
 
@@ -3421,6 +3468,7 @@ A placement with `focus: true` brings its window to the front with the same veri
 ```json
 {
   "success": false,
+  "status": "partial",
   "presetName": "work-setup",
   "windowsArranged": 3,
   "windowsNotFound": 0,
@@ -3440,6 +3488,11 @@ A placement with `focus: true` brings its window to the front with the same veri
       "error": "The window could not be brought to the foreground; 'Administrator: Windows PowerShell' (WindowsTerminal) is in front: SetForegroundWindow was refused (foreground lock); ...",
       "errorCode": "FocusFailed"
     }
+  ],
+  "placements": [
+    { "order": 1, "status": "applied", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" }, "focused": false, "errorCode": "ArrangeFailed", "error": "Arranged window 'main.cs - Visual Studio Code' for placement 1 (process 'Code'), but could not bring it to the foreground (FocusFailed): ..." },
+    { "order": 2, "status": "applied", "window": { "handle": 1312934, "title": "Administrator: Windows PowerShell", "processName": "WindowsTerminal" } },
+    { "order": 3, "status": "applied", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" } }
   ]
 }
 ```
@@ -3448,6 +3501,7 @@ A placement with `focus: true` brings its window to the front with the same veri
 ```json
 {
   "success": false,
+  "status": "partial",
   "presetName": "work-setup",
   "windowsArranged": 2,
   "windowsNotFound": 1,
@@ -3455,7 +3509,12 @@ A placement with `focus: true` brings its window to the front with the same veri
   "errors": [
     "No open window matched placement 3 (process 'WindowsTerminal'); set launchMissing=true to launch 'wt'"
   ],
-  "errorCode": "WindowNotFound"
+  "errorCode": "WindowNotFound",
+  "placements": [
+    { "order": 1, "status": "applied", "window": { "handle": 2884384, "title": "main.cs - Visual Studio Code", "processName": "Code" } },
+    { "order": 2, "status": "applied", "window": { "handle": 657212, "title": "GitHub - Google Chrome", "processName": "chrome" } },
+    { "order": 3, "status": "notFound", "errorCode": "WindowNotFound", "error": "No open window matched placement 3 (process 'WindowsTerminal'); set launchMissing=true to launch 'wt'" }
+  ]
 }
 ```
 
@@ -3780,6 +3839,16 @@ sees now.
 - **Input error codes.** A send_keys string with a syntax error (a `{` without its `}`) is `InvalidKeySpecification`
   instead of `UnknownKey` (still used for an unknown key name), and a mouse pointer that Windows does not move is
   `CursorPositionFailed` instead of `SendInputFailed`.
+- **apply_layout gives each placement its own window (roadmap M2.8).** It used to move the top window of a process
+  once for every placement of that process and count each move, so a layout with three Chrome windows moved one of
+  them three times and reported three arranged. Now no window is given to two placements, a placement without a
+  window of its own is `notFound`, and the result adds `status` (`applied`, `partial` or `failed`) and `placements`
+  (one result per placement). A placement with no criterion for the `matchBy` used (`title_only` on a layout
+  save_layout made) is skipped with `NoMatchCriterion` instead of matching every window, and a placement whose
+  monitor is gone fails with `InvalidMonitorIndex` instead of landing on monitor 0. A process name save_layout
+  records must now match the whole process name (`Code` no longer matches `Code - Insiders`); hand-written presets
+  still match part of it. A hand-written placement now takes the matching window closest to its place rather than
+  the top one. Presets from earlier versions load unchanged, and earlier versions ignore the fields save_layout adds.
 
 ## Error Codes
 
@@ -3858,7 +3927,7 @@ table, it gives more detail.
 | Code | Returned by | Meaning |
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch, the window changes (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and their batches, per window) | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window and the window changes: Windows refused the message or the move (Win32 error 5), because the window belongs to a more privileged app, for example one running as administrator; ask the user |
-| `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved or resized (also when its application did not answer in time), or could not be brought to the foreground; `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
+| `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized (its placement is `applied` with this code); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
 | `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
@@ -3907,7 +3976,7 @@ table, it gives more detail.
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
 | `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string is not valid syntax, such as a `{` without its `}`, or nothing could be read from it; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
-| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
+| `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
 | `InvalidOutputMode` | [Screenshot](#screenshot) tools | `output` is not image, file, both or metadata (a tool error that lists them), or `outputPath` was given without a file output |
 | `InvalidOutputPath` | [Screenshot](#screenshot) tools | `outputPath` is not an absolute path on a drive letter (network and device paths are refused), does not end in an extension that matches the format, names a folder, or is in a folder that does not exist |
@@ -3922,13 +3991,14 @@ table, it gives more detail.
 | `InvalidWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | The working directory contains invalid characters |
 | `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |
-| `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, or its window did not appear |
+| `LaunchFailed` | [apply_layout](#apply_layout) | A missing app could not be launched, its window did not appear, or the window it brought up was already given to another placement (a single-instance app) |
 | `ModifiersHeld` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`) | Shift, Ctrl, Alt or Windows is down (`heldModifiers`), held by the user or stuck, or keys the server pressed earlier could not be released; nothing (more) was sent. Wait and retry; for a stuck key pass `releaseHeldModifiers: true` or call [release_all_input](#release_all_input). While any modifier of the [pause hotkey](#pause-hotkey) is down, no modifier is released for the agent: ask the user |
 | `MouseInUse` | [click](#click), right_click, double_click, mouse_move | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error), or move_window_to_monitor with `positioning: "maximize"` maximized it on another monitor than the one asked for |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
 | `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question) |
 | `NoForegroundWindow` | [get_foreground_window](#get_foreground_window) (tool error) | No window is in the foreground right now (windows are switching, or a UAC prompt or the lock screen is shown); call again shortly |
+| `NoMatchCriterion` | [apply_layout](#apply_layout) (per placement) | The placement has no criterion the `matchBy` used can match on (`title_only` without `titleContains`, as in every layout save_layout made; `process_only` without a process name; or neither), so it was skipped and no window was moved for it. Apply with `process_and_title` |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools, [resume_input](#resume_input), [release_all_input](#release_all_input) | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |
 | `NotResponding` | [focus_window](#focus_window), move_window, resize_window, set_window_bounds, set_window_state, snap_window, move_window_to_monitor (see [Window Control](#window-control)), the window batches (per window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | The window's application did not answer: Windows reports the window as hung, it did not answer within 5 seconds (focus_window: within its activation time), or an earlier call to it is still blocked (also when 8 earlier window calls to applications that do not answer are). A call refused at once changed nothing, but a minimized window may already have been restored before a placement was given up on, and a call that timed out can still take effect once the application answers |
@@ -3971,4 +4041,4 @@ table, it gives more detail.
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see |
-| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | apply_layout: no open window that is not given to another placement matched a placement. get_ui_elements and capture_with_elements: the window no longer exists |

@@ -130,17 +130,28 @@ public static class TypicalDesktop
         Patterns: ["Value", "Text", "ScrollItem"],
         Value: "window layout presets for a dual monitor setup");
 
+    // Presets as save_layout writes them (roadmap M2.8): the exact process name and the window's identity, plus a
+    // launch command and focus the user added to the first placement by hand
     public static IReadOnlyList<LayoutPreset> Layouts { get; } = Enumerable.Range(1, 5)
         .Select(i => new LayoutPreset(
             Name: $"layout-{i}",
             Description: $"Preset {i}: editor left, browser right, terminal below",
             Placements: Enumerable.Range(0, 6).Select(p => new WindowPlacement(
-                Matcher: new WindowMatcher(TitleContains: p % 2 == 0 ? "WindowsAppManagerMcp" : null, ProcessName: ProcessNames[p]),
+                Matcher: new WindowMatcher(ProcessName: ProcessNames[p], ClassName: "Chrome_WidgetWin_1")
+                {
+                    ExactProcessName = true,
+                    TitlePattern = $"README.md - WindowsAppManagerMcp - {ProcessNames[p]}",
+                    ExePath = $@"C:\Program Files\{ProcessNames[p]}\{ProcessNames[p]}.exe",
+                    Ordinal = 0
+                },
                 MonitorIndex: p % 2,
                 Position: new RelativePosition(p % 2 * 0.5, 0, 0.5, 1),
                 LaunchCommand: p == 0 ? "code" : null,
                 Focus: p == 0,
-                Order: p)).ToList())
+                Order: p)
+            {
+                State = p == 0 ? WindowState.Maximized : WindowState.Normal
+            }).ToList())
         {
             CreatedAt = new DateTime(2026, 9, 1, 8, 30, 0, DateTimeKind.Utc),
             UpdatedAt = new DateTime(2026, 10, 1, 17, 5, 0, DateTimeKind.Utc)

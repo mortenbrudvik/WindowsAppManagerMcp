@@ -280,7 +280,13 @@ public enum LayoutErrorCode
     NoWindowsCaptured = 9,
 
     /// <summary>apply_layout's matchBy is not one of the allowed values (roadmap M2.2). Nothing was arranged.</summary>
-    InvalidMatchBy = 10
+    InvalidMatchBy = 10,
+
+    /// <summary>
+    /// A placement has no criterion apply_layout's matchBy can use (title_only without titleContains, process_only
+    /// without a process name, or neither), so it was skipped instead of matching every window (roadmap M2.8).
+    /// </summary>
+    NoMatchCriterion = 11
 }
 
 /// <summary>

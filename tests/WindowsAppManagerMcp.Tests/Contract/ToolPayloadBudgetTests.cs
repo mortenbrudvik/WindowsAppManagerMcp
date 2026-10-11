@@ -101,9 +101,9 @@ public class ToolPayloadBudgetTests
 
         // Layout Presets: 5 presets of 6 placements
         ["list_layouts"] = 400, // 239
-        ["get_layout"] = 400, // 257
+        ["get_layout"] = 800, // 529: captured placements carry the window identity (M2.8)
         ["save_layout"] = 100, // 19
-        ["apply_layout"] = 150, // 72
+        ["apply_layout"] = 420, // 277: one result per placement (M2.8)
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors

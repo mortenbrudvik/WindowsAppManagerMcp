@@ -168,6 +168,36 @@ public class LayoutPresetToolsTests
         placementDto.LaunchCommand.Should().Be("code.exe");
         placementDto.Focus.Should().BeTrue();
         placementDto.Order.Should().Be(1);
+        placementDto.ExactProcessName.Should().BeNull("a hand-written placement matches part of the process name");
+        placementDto.State.Should().BeNull();
+    }
+
+    [Fact]
+    public void GetLayout_MapsTheIdentitySaveLayoutRecorded()
+    {
+        // Arrange
+        var placement = new WindowPlacement(
+            new WindowMatcher(ProcessName: "chrome", ClassName: "Chrome_WidgetWin_1")
+            {
+                ExactProcessName = true,
+                TitlePattern = "Inbox - Mail - Google Chrome",
+                ExePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                Ordinal = 1
+            },
+            0, new RelativePosition(0, 0, 1, 1)) { State = WindowState.Maximized };
+        _mockLayoutService.Setup(l => l.GetPreset("captured"))
+            .Returns(TestDataFactory.CreateLayoutPreset("captured", placements: [placement]));
+
+        // Act
+        var dto = CreateSut().GetLayout("captured").Placements.Single();
+
+        // Assert
+        dto.ExactProcessName.Should().BeTrue();
+        dto.ClassName.Should().Be("Chrome_WidgetWin_1");
+        dto.TitlePattern.Should().Be("Inbox - Mail - Google Chrome");
+        dto.ExePath.Should().Be(@"C:\Program Files\Google\Chrome\Application\chrome.exe");
+        dto.Ordinal.Should().Be(1);
+        dto.State.Should().Be("maximized");
     }
 
     #endregion
@@ -355,6 +385,37 @@ public class LayoutPresetToolsTests
             false,
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyLayout_MapsTheStatusAndEachPlacement()
+    {
+        // Arrange
+        var placements = new List<LayoutPlacementResult>
+        {
+            new(0, LayoutPlacementStatus.Applied, new LayoutWindowRef(0x101, "Inbox - Mail - Google Chrome", "chrome")),
+            new(1, LayoutPlacementStatus.NotFound, ErrorCode: nameof(LayoutErrorCode.WindowNotFound), Error: "No open window matched placement 1")
+        };
+        _mockLayoutService.Setup(l => l.ApplyPresetAsync(
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(false, "two", WindowsArranged: 1, WindowsNotFound: 1,
+                ErrorCode: nameof(LayoutErrorCode.WindowNotFound), Placements: placements));
+
+        // Act
+        var result = await CreateSut().ApplyLayout("two");
+
+        // Assert
+        result.Status.Should().Be(LayoutApplyStatus.Partial);
+        result.Placements.Should().Equal(placements);
+    }
+
+    [Theory]
+    [InlineData(true, 2, "applied")]
+    [InlineData(false, 1, "partial")]
+    [InlineData(false, 0, "failed")]
+    public void LayoutApplyResult_Status_FollowsSuccessAndTheArrangedCount(bool success, int arranged, string status)
+    {
+        new LayoutApplyResult(success, "any", WindowsArranged: arranged).Status.Should().Be(status);
     }
 
     [Fact]

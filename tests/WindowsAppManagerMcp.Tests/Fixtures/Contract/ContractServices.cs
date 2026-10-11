@@ -203,7 +203,11 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.CaptureCurrentLayoutAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string[]?>(), It.IsAny<string[]?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutSaveResult(true, preset));
         Layouts.Setup(l => l.ApplyPresetAsync(It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LayoutApplyResult(true, preset.Name, WindowsArranged: preset.Placements.Count, Focus: [TypicalDesktop.NotepadFocused]));
+            .ReturnsAsync(new LayoutApplyResult(true, preset.Name, WindowsArranged: preset.Placements.Count, Focus: [TypicalDesktop.NotepadFocused],
+                Placements: preset.Placements
+                    .Select((placement, i) => new LayoutPlacementResult(placement.Order, LayoutPlacementStatus.Applied,
+                        LayoutWindowRef.From(TypicalDesktop.Windows[i]), Focused: placement.Focus ? true : null))
+                    .ToList()));
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) => new LayoutDeleteResult(true, name));
 

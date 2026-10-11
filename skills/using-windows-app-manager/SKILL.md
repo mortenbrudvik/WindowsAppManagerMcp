@@ -372,7 +372,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 
 ### Save and Restore a Workspace
 1. Arrange the windows, then `save_layout` with a descriptive name
-2. Later, `apply_layout`. `success: false` lists every placement that was not found, launched, arranged or focused in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result
+2. Later, `apply_layout` (keep the default `matchBy`: a saved layout has no title text for `title_only`). Each placement gets its own window; `status` is `applied`, `partial` or `failed`, and `placements` says per placement what happened (`applied`, `notFound`, `notApplicable` or `failed`, with `window` and `errorCode`). `success: false` lists every problem in `errors`; a placement with `focus` that did not come to the front is an `ArrangeFailed` error, and `focus` lists each focus placement's activation with the fields of a `focus_window` result
 3. **Verify:** `get_foreground_window` before typing anything
 
 ### Multi-Monitor Setup
@@ -390,7 +390,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 - `find_windows` and `get_all_windows` list only user-facing app windows: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows. Dialogs are listed, with `ownerHandle`. To reach the taskbar, tray or an untitled popup, pass `className` (for example `Shell_TrayWnd`) or a `handle`, or set `includeShell: true`
 - UWP apps such as Calculator or Settings are reported under their own process (for example `CalculatorApp`), with `hostProcessName: "ApplicationFrameHost"`
 - `get_foreground_window` reports any window, including untitled menus and popups (empty `title`, check `className`)
-- Layout presets can launch missing applications with `launchMissing: true`
+- Layout presets can launch missing applications with `launchMissing: true`, but only with a `launchCommand` added to the preset by hand: `save_layout` records none
 - `close_window` returns `AccessDenied` for a window of an app running as administrator
 - `capture_window` works on occluded windows but not minimized ones
 - Filter elements by `controlTypes`: Button, Edit, CheckBox, ComboBox, ListItem, MenuItem, etc. Matching elements inside other containers are still returned, so `controlTypes: "Button"` finds Buttons inside panes and toolbars. An unknown name fails with `InvalidControlType`, which lists the valid names
