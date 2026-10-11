@@ -211,6 +211,34 @@ public class LaunchPlacementServiceTests
     }
 
     [Fact]
+    public async Task AnUnexpectedFailureWhilePlacing_IsMoveFailed_AndTheOtherWindowsArePlaced()
+    {
+        _windows.Setup(w => w.SnapWindow(Code, It.IsAny<SnapPosition>(), It.IsAny<int?>(), It.IsAny<bool>()))
+            .Throws(new InvalidOperationException("The monitor list changed."));
+
+        var outcomes = await CreateSut().PlaceAsync([
+            (Code, Plan(new LaunchPlacement(Snap: "left_half"))),
+            (Terminal, Plan(new LaunchPlacement(Bounds: new BoundsDto(10, 20, 800, 600), Focus: true)))
+        ]);
+
+        outcomes[0].ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
+        outcomes[0].Error.Should().Contain("The monitor list changed.");
+        outcomes[1].Success.Should().BeTrue();
+        outcomes[1].Focused.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AnUnexpectedFailureWhileFocusing_IsFocusFailed()
+    {
+        _foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>())).Throws(new InvalidOperationException("boom"));
+
+        var outcome = await PlaceOneAsync(Code, new LaunchPlacement(Focus: true));
+
+        outcome.ErrorCode.Should().Be(WindowErrorCode.FocusFailed);
+        outcome.Error.Should().Contain("boom");
+    }
+
+    [Fact]
     public async Task TheAgentsOwnHostWindow_IsNeitherMovedNorFocused()
     {
         _desktop[Terminal] = _desktop[Terminal] with { IsAgentHost = true };

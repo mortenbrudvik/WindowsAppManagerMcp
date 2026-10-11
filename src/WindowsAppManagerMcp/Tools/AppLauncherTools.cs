@@ -190,11 +190,25 @@ public class AppLauncherTools
 
         if (placements.Count > 0)
         {
-            var service = _placementService ?? throw new InvalidOperationException("No launch placement service is registered.");
-            var outcomes = await service.PlaceAsync(placements, cancellationToken).ConfigureAwait(false);
-            for (var k = 0; k < outcomes.Count; k++)
+            try
             {
-                placed[positions[k]] = ToDto(outcomes[k]);
+                var service = _placementService ?? throw new InvalidOperationException("No launch placement service is registered.");
+                var outcomes = await service.PlaceAsync(placements, cancellationToken).ConfigureAwait(false);
+                for (var k = 0; k < outcomes.Count; k++)
+                {
+                    placed[positions[k]] = ToDto(outcomes[k]);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A placement failure never hides a successful launch: the launch result stays, the placement reports it
+                foreach (var position in positions)
+                {
+                    placed[position] = new LaunchPlacementResultDto(null, null, null, Focused: false, Reapplied: false,
+                        ErrorCode: nameof(WindowErrorCode.MoveFailed),
+                        Error: $"The launch succeeded, but placing its window failed: {ex.Message} Arrange it with snap_window, " +
+                               "set_window_bounds or focus_window; do not launch it again.");
+                }
             }
         }
 

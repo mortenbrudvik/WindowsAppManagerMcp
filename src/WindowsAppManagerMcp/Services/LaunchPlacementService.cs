@@ -121,12 +121,7 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
                 continue;
 
             cancellationToken.ThrowIfCancellationRequested();
-            var outcome = _foreground.EnsureForeground(handle);
-            if (!outcome.IsForeground)
-            {
-                failures[i] = WindowChangeResult.Failed(handle, outcome.ErrorCode == None ? FocusFailed : outcome.ErrorCode,
-                    outcome.Error ?? "The window did not come to the front.");
-            }
+            failures[i] = Focus(handle);
         }
 
         // 4. Every window as it is now
@@ -204,6 +199,35 @@ public sealed class LaunchPlacementService : ILaunchPlacementService
         catch (WindowNotRespondingException ex)
         {
             return WindowChangeResult.Failed(handle, NotResponding, ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The launch has succeeded: a failure here is the placement's (MoveFailed), never the launch's
+            return WindowChangeResult.Failed(handle, MoveFailed, $"Placing the window failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Brings the window to the front as focus_window does (<see cref="IForegroundService.EnsureForeground"/>); null when
+    /// it is in front, else why not (FocusFailed for an unexpected failure, which never hides the launch).
+    /// </summary>
+    private WindowChangeResult? Focus(nint handle)
+    {
+        try
+        {
+            var outcome = _foreground.EnsureForeground(handle);
+            return outcome.IsForeground
+                ? null
+                : WindowChangeResult.Failed(handle, outcome.ErrorCode == None ? FocusFailed : outcome.ErrorCode,
+                    outcome.Error ?? "The window did not come to the front.");
+        }
+        catch (WindowNotRespondingException ex)
+        {
+            return WindowChangeResult.Failed(handle, NotResponding, ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return WindowChangeResult.Failed(handle, FocusFailed, $"Bringing the window to the front failed: {ex.Message}");
         }
     }
 

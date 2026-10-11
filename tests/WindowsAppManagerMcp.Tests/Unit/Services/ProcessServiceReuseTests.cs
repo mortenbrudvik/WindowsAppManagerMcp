@@ -147,15 +147,181 @@ public class ProcessServiceReuseTests
     }
 
     [Fact]
-    public async Task ALaunchThatOpensAFileNoWindowShows_IsStarted()
+    public async Task ALaunchThatOpensAFileNoWindowShows_IsStarted_AndTheWarningSaysSo()
     {
         Open(0x10, "Notepad", "other.txt - Notepad");
 
         var result = await LaunchAsync("notepad.exe", [@"C:\notes\todo.txt"]);
 
         result.Status.Should().Be(LaunchStatus.Started);
-        result.Warning.Should().BeNull("the server looked and found no window");
+        result.Warning.Should().Contain("1 open window(s) of the app").And.Contain("'todo.txt'");
         VerifyStarted();
+    }
+
+    [Fact]
+    public async Task NoWindowOfTheAppOpen_IsStarted_WithoutAWarning()
+    {
+        Open(0x10, "Code", "todo.txt - Visual Studio Code");
+
+        var result = await LaunchAsync("notepad.exe", [@"C:\notes\todo.txt"]);
+
+        result.Status.Should().Be(LaunchStatus.Started);
+        result.Warning.Should().BeNull("the server looked and no window of the app was open");
+        VerifyStarted();
+    }
+
+    [Theory]
+    [InlineData("old-todo.txt - Notepad")]
+    [InlineData("todo.txt.bak - Notepad")]
+    [InlineData("old_todo.txt - Notepad")]
+    [InlineData("my todo.txt - Notepad")]
+    [InlineData("mytodo.txt - Notepad")]
+    public async Task AWindowShowingANameThatOnlyContainsTheFilesName_IsNotReused(string title)
+    {
+        Open(0x10, "Notepad", title);
+
+        var result = await LaunchAsync("notepad.exe", [@"C:\notes\todo.txt"]);
+
+        result.Status.Should().Be(LaunchStatus.Started, $"'{title}' shows another file than todo.txt");
+        VerifyStarted();
+    }
+
+    [Theory]
+    [InlineData("todo.txt - Notepad")]
+    [InlineData("*todo.txt - Notepad")]
+    [InlineData("TODO.TXT - Notepad")]
+    [InlineData(@"C:\notes\todo.txt - Notepad")]
+    [InlineData("old-todo.txt | todo.txt - Notepad")]
+    public async Task AWindowShowingTheFilesWholeName_IsReused(string title)
+    {
+        var window = Open(0x10, "Notepad", title);
+
+        var result = await LaunchAsync("notepad.exe", [@"C:\notes\todo.txt"]);
+
+        result.Window.Should().Be(window);
+        VerifyNothingStarted();
+    }
+
+    [Theory]
+    [InlineData("Program.cs - MyApp2 - Visual Studio Code", false)]
+    [InlineData("Program.cs - MyApp.Tests - Visual Studio Code", false)]
+    [InlineData("Program.cs - MyApp Tests - Visual Studio Code", false)]
+    [InlineData("Program.cs - MyApp - Visual Studio Code", true)]
+    [InlineData("MyApp (Workspace) - Visual Studio Code", true)]
+    public async Task AFolder_IsReusedOnlyFromAWindowShowingItsWholeName(string title, bool reused)
+    {
+        Open(0x10, "Code", title);
+
+        var result = await LaunchAsync("code.cmd", [@"C:\Projects\MyApp"]);
+
+        result.Status.Should().Be(reused ? LaunchStatus.AlreadyOpen : LaunchStatus.Started);
+    }
+
+    [Theory]
+    [InlineData("todo.txt - Notepad", "todo.txt", true)]
+    [InlineData("todo.txt", "todo.txt", true)]
+    [InlineData("[todo.txt]", "todo.txt", true)]
+    [InlineData("todo.txt: edited", "todo.txt", true)]
+    [InlineData("old-todo.txt - Notepad", "todo.txt", false)]
+    [InlineData("todo.txt.bak", "todo.txt", false)]
+    [InlineData("todo.txt2", "todo.txt", false)]
+    [InlineData("old todo.txt", "todo.txt", false)]
+    [InlineData("todo.txt old", "todo.txt", false)]
+    [InlineData("api-gateway - Code", "api", false)]
+    [InlineData("api - Code", "api", true)]
+    [InlineData("hub.com - Edge", "github.com", false)]
+    [InlineData("", "todo.txt", false)]
+    [InlineData("todo.txt", "", false)]
+    public void TitleShowsName_MatchesWholeNamesOnly(string title, string name, bool expected) =>
+        ProcessService.TitleShowsName(title, name).Should().Be(expected);
+
+    [Fact]
+    public async Task AStoreApp_IsReusedByProcessName_WithoutATitle()
+    {
+        const string aumid = @"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
+        _resolver.Setup(r => r.Resolve(aumid, It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(aumid, LaunchTargetKind.Other));
+        var calculator = Open(0x10, "CalculatorApp", "Calculator");
+
+        var result = await LaunchAsync(aumid, expectWindow: new LaunchWindowHint(ProcessName: "CalculatorApp"));
+
+        result.Status.Should().Be(LaunchStatus.AlreadyOpen);
+        result.Window.Should().Be(calculator);
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task ABareSettingsUri_ReusesTheSettingsWindow()
+    {
+        _resolver.Setup(r => r.Resolve("ms-settings:", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget("ms-settings:", LaunchTargetKind.Other));
+        var settings = Open(0x10, "SystemSettings", "Settings");
+
+        var result = await LaunchAsync("ms-settings:");
+
+        result.Window.Should().Be(settings);
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task ASettingsPage_IsStarted_UnlessExpectWindowTitleContainsNamesIt()
+    {
+        _resolver.Setup(r => r.Resolve("ms-settings:display", It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget("ms-settings:display", LaunchTargetKind.Other));
+        var settings = Open(0x10, "SystemSettings", "Settings");
+
+        var page = await LaunchAsync("ms-settings:display");
+        page.Status.Should().Be(LaunchStatus.Started, "the open Settings window may show another page");
+        page.Warning.Should().Contain("expectWindow.titleContains");
+
+        var named = await LaunchAsync("ms-settings:display", expectWindow: new LaunchWindowHint(TitleContains: "Settings"));
+        named.Window.Should().Be(settings);
+    }
+
+    [Theory]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", 0)]
+    [InlineData("ms-settings:", 0)]
+    [InlineData("ms-settings://", 0)]
+    [InlineData("ms-settings:display", -1)]
+    [InlineData("mailto:someone@example.com", -1)]
+    [InlineData(@"C:\docs\report.docx", 1)]
+    [InlineData("https://www.github.com/x", 1)]
+    public void ReuseTitleNames_ForATargetLaunchedDirectly(string fileName, int expected)
+    {
+        var names = ProcessService.ReuseTitleNames(new ResolvedLaunchTarget(fileName, LaunchTargetKind.Other), null);
+
+        if (expected < 0)
+            names.Should().BeNull("no title can be expected to show it");
+        else
+            names.Should().HaveCount(expected);
+    }
+
+    [Fact]
+    public async Task AWindowTheTargetPolicyDenies_IsNotReused()
+    {
+        var denied = Open(0x10, "Notepad", "Untitled - Notepad");
+        var allowed = Open(0x11, "Notepad", "Other - Notepad");
+        _windows.Setup(w => w.EvaluateTargetPolicy(denied.Handle)).Returns(new TargetPolicyVerdict(false, "notepad", "denied"));
+
+        var result = await LaunchAsync("notepad.exe");
+
+        result.Window.Should().Be(allowed);
+    }
+
+    [Fact]
+    public async Task InABatch_AWindowAnEarlierItemStarted_IsNotReused()
+    {
+        // The first item's window appears as soon as it is started, before the second item looks for an open window
+        _processes.Setup(p => p.StartProcess(It.IsAny<ProcessStartInfo>())).Returns(() =>
+        {
+            Open(0x20, "Notepad", "Untitled - Notepad", processId: LaunchedProcessId);
+            return _launched.Object;
+        });
+
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("notepad.exe"), new LaunchRequest("notepad.exe", ReuseExisting: true)]);
+
+        results[0].Status.Should().Be(LaunchStatus.Started);
+        results[1].Status.Should().Be(LaunchStatus.Started, "the only Notepad window was started by this batch");
+        _processes.Verify(p => p.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Exactly(2));
     }
 
     [Fact]

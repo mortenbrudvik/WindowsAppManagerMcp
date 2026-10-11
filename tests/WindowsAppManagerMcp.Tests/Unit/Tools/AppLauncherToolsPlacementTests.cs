@@ -140,6 +140,35 @@ public class AppLauncherToolsPlacementTests
     }
 
     [Fact]
+    public async Task APlacementThatThrows_KeepsTheLaunchASuccess()
+    {
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("The monitor list changed."));
+
+        var result = await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half"));
+
+        result.Success.Should().BeTrue("the app was launched; an exception in the placement must not hide that");
+        result.ProcessId.Should().Be(600);
+        result.WindowHandle.Should().Be(CodeWindow.Handle.ToInt64());
+        result.LaunchStatus.Should().Be("windowObserved");
+        result.Placement!.ErrorCode.Should().Be(nameof(WindowErrorCode.MoveFailed));
+        result.Placement.Error.Should().Contain("The monitor list changed.").And.Contain("do not launch it again");
+    }
+
+    [Fact]
+    public async Task ACancelledPlacement_IsStillCancelled()
+    {
+        LaunchReturns(new LaunchResult(true, 600, CodeWindow.Handle, Status: LaunchStatus.WindowObserved, Window: CodeWindow));
+        _placer.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var call = async () => await CreateSut().LaunchApplication("code", placement: new LaunchPlacement(Snap: "left_half"));
+
+        await call.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task AFailedLaunch_HasNoPlacement()
     {
         LaunchReturns(new LaunchResult(false, ErrorMessage: "not found", ErrorCode: nameof(LaunchErrorCode.ExecutableNotFound)));

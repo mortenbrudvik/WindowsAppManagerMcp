@@ -98,7 +98,7 @@ public class ProcessService : IProcessService
 
         if (request.ReuseExisting)
         {
-            var reuse = FindOpenWindow(plan, request, taken: null);
+            var reuse = FindOpenWindow(plan, request, taken: null, openBefore: null);
             if (reuse.Result is { } alreadyOpen)
             {
                 return alreadyOpen;
@@ -132,25 +132,28 @@ public class ProcessService : IProcessService
 
     /// <summary>
     /// reuseExisting (roadmap M3.13): the open window to use instead of starting the program, as an
-    /// <see cref="LaunchStatus.AlreadyOpen"/> result, or, when there is none, a note for the launch's warning when the
-    /// server could not look (null when it looked and found none). A window counts when it is:
+    /// <see cref="LaunchStatus.AlreadyOpen"/> result, or, when there is none, a note for the launch's warning (null when the
+    /// server looked and no window of the app was open). A window counts when it is:
     /// <list type="bullet">
     /// <item>an application window the user can switch to (<see cref="IWindowService.GetApplicationWindows"/>: visible,
     /// not cloaked, so on the current virtual desktop, unowned, not a tool or shell window, not the server's own), minimized
-    /// or not, that is not the agent's own host and not already used by an earlier item of the batch
-    /// (<paramref name="taken"/>);</item>
+    /// or not, that is not the agent's own host, not refused by the user's target policy, open before the batch started
+    /// anything (<paramref name="openBefore"/>, null for a single launch) and not already used by an earlier item of the
+    /// batch (<paramref name="taken"/>);</item>
     /// <item>of the same app: its process has the started program's path or name, or the name of the same app it hands
     /// off to (<see cref="LaunchWindowOwner.SameAppProcessNames"/>; never a terminal for a console program or a browser for
     /// a web address), and, when expectWindow names a process, that process (part of the name, also the frame host's). A
     /// launch whose app is not known (a document, a Store app, a web address) needs expectWindow.processName;</item>
-    /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise, when
-    /// the launch opens something (an argument that is not an option, or a document or URI), every file, folder and host
-    /// name the launch names (<see cref="DocumentHints"/>). A launch that opens something none of those names is never
-    /// reused.</item>
+    /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise it
+    /// shows every file, folder and host name the launch opens (<see cref="ReuseTitleNames"/>), each as a whole name
+    /// (<see cref="TitleShowsName"/>), so todo.txt is not shown by old-todo.txt or todo.txt.bak. Starting an app
+    /// (shell:AppsFolder\&lt;AUMID&gt;, a bare scheme such as ms-settings:) opens nothing; a launch that opens something
+    /// whose name a title would not show (an ms-settings: page, a mailto: address) is never reused.</item>
     /// </list>
     /// Of several, the front-most in z-order (the one used last) is used, and the warning says how many matched.
     /// </summary>
-    private (LaunchResult? Result, string? Note) FindOpenWindow(LaunchPlan plan, LaunchRequest request, IReadOnlySet<nint>? taken)
+    private (LaunchResult? Result, string? Note) FindOpenWindow(
+        LaunchPlan plan, LaunchRequest request, IReadOnlySet<nint>? taken, IReadOnlySet<nint>? openBefore)
     {
         var target = plan.Target!;
         var hint = request.ExpectWindow is { IsEmpty: false } expected ? expected : null;
@@ -163,37 +166,39 @@ public class ProcessService : IProcessService
                           "and started it. Pass expectWindow.processName to reuse a window of that app.");
         }
 
-        IReadOnlyList<string> titleParts;
-        if (!string.IsNullOrWhiteSpace(hint?.TitleContains))
+        var titleContains = string.IsNullOrWhiteSpace(hint?.TitleContains) ? null : hint.TitleContains.Trim();
+        IReadOnlyList<string> titleNames = [];
+        if (titleContains == null)
         {
-            titleParts = [hint.TitleContains.Trim()];
-        }
-        else if ((request.Arguments ?? []).Any(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')) || target.Kind == LaunchTargetKind.Other)
-        {
-            titleParts = DocumentHints(target, request.Arguments);
-            if (titleParts.Count == 0)
+            if (ReuseTitleNames(target, request.Arguments) is not { } shownNames)
             {
                 return (null, "reuseExisting: the launch opens something whose name a window title would not show, so no open window " +
                               "was reused and it was started. Pass expectWindow.titleContains to name the window to reuse.");
             }
-        }
-        else
-        {
-            titleParts = [];
+
+            titleNames = shownNames;
         }
 
         var nameSet = new HashSet<string>(names.Select(StripExe), StringComparer.OrdinalIgnoreCase);
-        var matches = _windowService.GetApplicationWindows()
-            .Where(w => !w.IsAgentHost && taken?.Contains(w.Handle) != true)
+        var appWindows = _windowService.GetApplicationWindows()
+            .Where(w => !w.IsAgentHost && taken?.Contains(w.Handle) != true && openBefore?.Contains(w.Handle) != false)
             .Where(w => (names.Count == 0 && imagePath == null) || nameSet.Contains(StripExe(w.ProcessName)) ||
                         (imagePath != null && string.Equals(_processWrapper.GetProcessImagePath(w.ProcessId), imagePath, StringComparison.OrdinalIgnoreCase)))
             .Where(w => wantedProcess == null || w.ProcessName.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) ||
                         w.HostProcessName?.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) == true)
-            .Where(w => titleParts.All(part => w.Title.Contains(part, StringComparison.OrdinalIgnoreCase)))
+            .Where(w => _windowService.EvaluateTargetPolicy(w.Handle) is not { Allowed: false })
+            .ToList();
+        var matches = appWindows
+            .Where(w => titleContains != null
+                ? w.Title.Contains(titleContains, StringComparison.OrdinalIgnoreCase)
+                : titleNames.All(name => TitleShowsName(w.Title, name)))
             .ToList();
         if (matches.Count == 0)
         {
-            return (null, null);
+            var wanted = titleContains != null ? $"'{titleContains}'" : string.Join(" and ", titleNames.Select(n => $"'{n}'"));
+            return (null, appWindows.Count == 0 ? null :
+                $"reuseExisting: {appWindows.Count} open window(s) of the app were found, but no title shows {wanted}, so none was " +
+                "reused and it was started.");
         }
 
         var window = matches[0];
@@ -204,6 +209,91 @@ public class ProcessService : IProcessService
                 $"reuseExisting: {matches.Count} open windows matched; the front-most one was used. Nothing was started."),
             Status: LaunchStatus.AlreadyOpen,
             Window: window), null);
+    }
+
+    /// <summary>
+    /// The names an open window's title must show for reuseExisting to count it as showing what the launch opens: the
+    /// file, folder and host names (as <see cref="DocumentHints"/> takes them) of the arguments that are not options and of
+    /// a document or web address launched directly. Empty when the launch opens nothing: no such argument, and a target
+    /// that only starts an app (shell:AppsFolder\&lt;AUMID&gt;, or a scheme alone such as ms-settings:). Null when it opens
+    /// something no title can be expected to show: a URI other than a web address (ms-settings:display, mailto:...), or
+    /// arguments none of which names a file, folder or host.
+    /// </summary>
+    public static IReadOnlyList<string>? ReuseTitleNames(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
+        if (target.Kind == LaunchTargetKind.Other && !StartsAppOnly(target.FileName))
+        {
+            if (IsUri(target.FileName, out var scheme) && !IsWebScheme(scheme))
+                return null;
+
+            values.Add(target.FileName);
+        }
+
+        if (values.Count == 0)
+            return [];
+
+        var hints = NameHints(values);
+        return hints.Count == 0 ? null : hints;
+    }
+
+    /// <summary>A target that starts an app and opens nothing in it: shell:AppsFolder\&lt;AUMID&gt;, or a scheme alone (ms-settings:).</summary>
+    private static bool StartsAppOnly(string fileName) =>
+        fileName.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase) ||
+        (IsUri(fileName, out var scheme) && !IsWebScheme(scheme) && fileName.AsSpan(scheme.Length + 1).TrimStart('/').IsWhiteSpace());
+
+    /// <summary>A URI: a scheme of two or more characters (not a drive letter) before a colon, other than file:.</summary>
+    private static bool IsUri(string value, out string scheme)
+    {
+        var colon = value.IndexOf(':');
+        scheme = colon > 1 ? value[..colon] : string.Empty;
+        return colon > 1 && !scheme.Equals("file", StringComparison.OrdinalIgnoreCase) &&
+               scheme.All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.');
+    }
+
+    private static bool IsWebScheme(string scheme) =>
+        scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) || scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a window title shows <paramref name="name"/> as a whole name, not as part of a longer one: on each side of
+    /// an occurrence (case-insensitive) is the end of the title; or a character that cannot continue a name (anything but
+    /// a letter, digit, '.', '-', '_' or whitespace: a path separator, '*', a bullet, '(', ':', ...); or whitespace that is not
+    /// followed, on that side, by a letter or digit. So "todo.txt - Notepad", "*todo.txt - Notepad"
+    /// and "C:\notes\todo.txt - Notepad++" show todo.txt; "old-todo.txt", "todo.txt.bak" and "old todo.txt" do not, nor
+    /// do "MyApp2", "MyApp.Tests" or "MyApp Tests" show MyApp.
+    /// </summary>
+    public static bool TitleShowsName(string title, string name)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        for (var at = title.IndexOf(name, StringComparison.OrdinalIgnoreCase); at >= 0;
+             at = at + 1 < title.Length ? title.IndexOf(name, at + 1, StringComparison.OrdinalIgnoreCase) : -1)
+        {
+            if (EndsName(title, at - 1, -1) && EndsName(title, at + name.Length, +1))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether the title's character at <paramref name="index"/> (beside a name, on the side <paramref name="step"/> points to) ends that name.</summary>
+    private static bool EndsName(string title, int index, int step)
+    {
+        if (index < 0 || index >= title.Length)
+            return true;
+
+        var c = title[index];
+        if (char.IsWhiteSpace(c))
+        {
+            var beyond = index + step;
+            return beyond < 0 || beyond >= title.Length || !char.IsLetterOrDigit(title[beyond]);
+        }
+
+        return !(char.IsLetterOrDigit(c) || c is '.' or '-' or '_');
     }
 
     private static string StripExe(string name) =>
@@ -413,6 +503,15 @@ public class ProcessService : IProcessService
         if (target.Kind == LaunchTargetKind.Other)
             values.Add(target.FileName);
 
+        return NameHints(values);
+    }
+
+    /// <summary>
+    /// The file or folder name of each path among <paramref name="values"/> and the host name of each web address, each
+    /// of 3 characters or more and listed once.
+    /// </summary>
+    private static List<string> NameHints(IEnumerable<string> values)
+    {
         var hints = new List<string>();
         foreach (var value in values)
         {
@@ -758,6 +857,10 @@ public class ProcessService : IProcessService
         var results = new LaunchResult?[applications.Count];
         var waiting = new List<(int Index, StartedLaunch Launch)>();
         var reused = new HashSet<nint>();
+        // reuseExisting reuses only windows that were open before the batch started anything, not one an earlier item started
+        var openBefore = applications.Any(a => a.ReuseExisting)
+            ? _windowService.GetApplicationWindows().Select(w => w.Handle).ToHashSet()
+            : null;
         var finished = 0;
         var reportLock = new object();
 
@@ -792,7 +895,7 @@ public class ProcessService : IProcessService
                 // reuseExisting: an open window of the app, each used by one item only
                 if (request.ReuseExisting)
                 {
-                    var reuse = FindOpenWindow(plan, request, reused);
+                    var reuse = FindOpenWindow(plan, request, reused, openBefore);
                     if (reuse.Result is { } alreadyOpen)
                     {
                         reused.Add(alreadyOpen.WindowHandle!.Value);
