@@ -71,7 +71,8 @@ public static class InputGateToolFilter
 
     /// <summary>
     /// Tools that only read windows, processes, monitors, the screen, UI Automation or a browser page, or
-    /// that write only layout files. They run without the gate.
+    /// that write only layout files. They run without the gate. capture_window and capture_with_elements with
+    /// restoreIfMinimized take it themselves (<see cref="EnterAsync"/>) while they restore a minimized window.
     /// </summary>
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {

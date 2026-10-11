@@ -33,8 +33,10 @@ public interface IScreenshotService
     ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options);
 
     /// <summary>
-    /// Captures a specific window. The captured region's origin is the window rectangle's corner with
-    /// the frame, or the client area's corner without it.
+    /// Captures a specific window. The captured region's origin is the visible frame's corner with the frame
+    /// (DWMWA_EXTENDED_FRAME_BOUNDS, without the invisible resize borders), or the client area's corner without it.
+    /// A window that cannot be captured right now (see <see cref="CheckWindow"/>) is refused with its code; a window
+    /// that does not answer is copied from the screen with a warning.
     /// </summary>
     /// <param name="windowHandle">Handle to the window</param>
     /// <param name="includeFrame">Whether to include the window frame/decoration</param>
@@ -58,4 +60,35 @@ public interface IScreenshotService
         bool includeFrame,
         bool highlightInteractable,
         CaptureOptions options);
+
+    /// <summary>
+    /// Why the window cannot be captured right now, or null when it can: the handle is not a window
+    /// (InvalidHandle), the window or its top-level window is minimized (WindowMinimized), the window or a parent
+    /// of it is hidden (WindowHidden), or DWM cloaks it (Cloaked). Only reads the window; captures run it first.
+    /// </summary>
+    CaptureRefusal? CheckWindow(nint windowHandle);
+
+    /// <summary>
+    /// The window that restoreIfMinimized would restore: the top-level window of <paramref name="windowHandle"/>
+    /// when that is minimized, or <paramref name="windowHandle"/> itself when it is; null when neither is minimized.
+    /// </summary>
+    nint? FindMinimizedWindow(nint windowHandle);
+
+    /// <summary>
+    /// The windows that restoring <paramref name="minimizedWindow"/> puts on screen: the window itself and every
+    /// top-level window it owns (Windows hides those while their owner is minimized). The caller checks the target
+    /// policy for each before it restores anything.
+    /// </summary>
+    IReadOnlyList<nint> WindowsShownByRestore(nint minimizedWindow);
+
+    /// <summary>
+    /// Restores <paramref name="minimizedWindow"/> without activating it (SW_SHOWNOACTIVATE) and waits until
+    /// <paramref name="captureWindow"/> shows two equal frames, so the capture does not get a half-painted window.
+    /// Disposing the result minimizes the window again without activating another one (SW_SHOWMINNOACTIVE). The
+    /// caller holds the input gate for the whole time: the restored window can cover a point another call clicks.
+    /// </summary>
+    MinimizedWindowRestore RestoreForCapture(nint minimizedWindow, nint captureWindow, bool includeFrame);
 }
+
+/// <summary>Why a window cannot be captured: the error code and a message that says what to do.</summary>
+public sealed record CaptureRefusal(ScreenshotErrorCode Code, string Message);

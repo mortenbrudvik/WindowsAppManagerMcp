@@ -43,7 +43,7 @@
     {
       "name": "capture_region",
       "title": "Capture Screen Region",
-      "description": "Capture an arbitrary screen region given in screen coordinates. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture an arbitrary screen region given in screen coordinates. Only the part on the screen is captured: a region partly off the screen is cut to it (warning RegionClipped, see capturedRegion), and a region entirely off it fails with RegionOffScreen. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -143,7 +143,7 @@
     {
       "name": "capture_window",
       "title": "Capture Window",
-      "description": "Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized (CaptureFailed). A window of an app the user's policy denies is refused (TargetDeniedByPolicy). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. capturedRegion and imageToScreen use the window's real screen position: the window's corner, or the client area's corner when includeFrame is false. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -216,6 +216,11 @@
               "null"
             ],
             "default": null
+          },
+          "restoreIfMinimized": {
+            "description": "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait until it has painted, capture, then minimize it again without activating another window. Default: false, which refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy denies a window the restore would show.",
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [
@@ -233,7 +238,7 @@
     {
       "name": "capture_with_elements",
       "title": "Capture Window with Element Boxes",
-      "description": "Capture a window with UI element bounding boxes drawn on it. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The overlays line up with or without the frame. A minimized window is refused (CaptureFailed), and so is a window of an app the user's policy denies (TargetDeniedByPolicy). Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a window with UI element bounding boxes drawn on it. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -291,7 +296,7 @@
             "default": true
           },
           "timeoutMs": {
-            "description": "Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn; with none found, the call fails with OperationTimedOut. Default: 5000",
+            "description": "Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000",
             "type": "integer",
             "default": 5000
           },
@@ -339,6 +344,11 @@
               "null"
             ],
             "default": null
+          },
+          "restoreIfMinimized": {
+            "description": "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait until it has painted, capture, then minimize it again without activating another window. Default: false, which refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy denies a window the restore would show.",
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [

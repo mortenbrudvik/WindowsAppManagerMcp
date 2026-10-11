@@ -249,7 +249,7 @@ public sealed class ContractServices : IDisposable
         Screenshots = new ScreenshotService(
             TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object,
             monitors.Object,
-            Mock.Of<INativeWindowWrapper>());
+            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
     }
 
     private static ClickResult Clicked(int x, int y, string type, WindowSummary receiving) =>

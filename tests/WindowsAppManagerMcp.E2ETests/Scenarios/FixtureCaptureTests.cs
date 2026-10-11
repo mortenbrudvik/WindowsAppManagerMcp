@@ -38,22 +38,24 @@ public class FixtureCaptureTests
     }
 
     [DesktopNoInputFact]
-    public void CaptureWindow_WithFrame_HasTheWindowSizeAndTheSwatchesAtTheirWindowOffsets()
+    public void CaptureWindow_WithFrame_HasTheVisibleFrameAndTheSwatchesAtTheirOffsetsFromIt()
     {
-        // Arrange
+        // Arrange - the capture is cut to DWMWA_EXTENDED_FRAME_BOUNDS, without the invisible resize borders that
+        // GetWindowRect includes (roadmap M2.9); the server's own wrapper reads them, which the guard allows
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
-        var ready = e2e.Fixture.Ready;
+        var handle = e2e.Fixture.MainWindowHandle;
+        var frame = e2e.Server.Get<INativeWindowWrapper>().GetExtendedFrameBounds(handle)
+                    ?? throw new InvalidOperationException("The fixture window has no DWM frame bounds.");
+        var visible = new ScreenRect(frame.Left, frame.Top, frame.Right - frame.Left, frame.Bottom - frame.Top);
 
-        // Act - image pixel (0, 0) is the GetWindowRect top-left corner, invisible resize borders included
-        var (result, mismatches) = CaptureUntilSwatchesMatch(
-            e2e, includeFrame: true, ready.WindowRect.X, ready.WindowRect.Y);
+        // Act - image pixel (0, 0) is the visible frame's top-left corner
+        var (result, mismatches) = CaptureUntilSwatchesMatch(e2e, includeFrame: true, visible.X, visible.Y);
 
         // Assert
         result.Success.Should().BeTrue(result.Error);
-        result.CapturedRegion.Should().Be(new CapturedRegion(
-            ready.WindowRect.X, ready.WindowRect.Y, ready.WindowRect.Width, ready.WindowRect.Height));
-        result.Width.Should().Be(ready.WindowRect.Width);
-        result.Height.Should().Be(ready.WindowRect.Height);
+        result.CapturedRegion.Should().Be(new CapturedRegion(visible.X, visible.Y, visible.Width, visible.Height));
+        result.Width.Should().Be(visible.Width);
+        result.Height.Should().Be(visible.Height);
         mismatches.Should().BeEmpty();
     }
 

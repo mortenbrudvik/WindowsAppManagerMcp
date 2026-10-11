@@ -743,6 +743,59 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public async Task GetUIElements_OfAMinimizedWindow_ReportsWindowStateMinimized()
+    {
+        // Arrange - a minimized window's elements are offscreen, so visibleOnly leaves them all out (roadmap M2.9)
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+        windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert - sent by name, as the tool results serialize it
+        result.WindowState.Should().Be(WindowState.Minimized);
+        System.Text.Json.JsonSerializer.Serialize(result, ModelContextProtocol.McpJsonUtilities.DefaultOptions)
+            .Should().Contain("\"windowState\":\"Minimized\"");
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAControlInAMaximizedWindow_ReportsTheTopLevelWindowsState()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var root = new nint(0x7000);
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+        windows.Setup(w => w.GetAncestor(Handle, WindowAncestor.Root)).Returns(root);
+        windows.Setup(w => w.IsZoomed(root)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.WindowState.Should().Be(WindowState.Maximized);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfANormalWindow_ReportsWindowStateNormal_AndOfNoWindowNone()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.IsWindow(Handle)).Returns(true);
+
+        // Act
+        var normal = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+        var unknown = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        normal.WindowState.Should().Be(WindowState.Normal);
+        unknown.WindowState.Should().BeNull("without window reads the state is not known");
+    }
+
+    [Fact]
     public async Task GetUIElements_WhenTheWindowsProcessCannotBeRead_RunsTheWalkForAnUnknownTarget()
     {
         // Arrange

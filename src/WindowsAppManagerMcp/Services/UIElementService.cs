@@ -84,9 +84,10 @@ public class UIElementService : IUIElementService
         }
 
         var started = new WalkStarted();
+        UIElementResult result;
         try
         {
-            return await _worker.RunAsync(
+            result = await _worker.RunAsync(
                 TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, started, progress, token),
                 cancellationToken,
@@ -96,8 +97,49 @@ public class UIElementService : IUIElementService
         {
             // The worker gave up on a read stuck in an application that does not answer. The walk thread is
             // still blocked in a UI Automation call; what it had read until then is returned all the same
-            return started.Walk?.PartialResult(windowHandle, stopwatch) ??
-                   CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+            result = started.Walk?.PartialResult(windowHandle, stopwatch) ??
+                     CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
+        }
+
+        return result with { WindowState = ReadWindowState(windowHandle) };
+    }
+
+    /// <summary>
+    /// The state of the window's top-level window: Minimized when it, or the window itself, is minimized (its elements
+    /// are offscreen), Maximized or Normal otherwise. Null without a window wrapper, or when the handle is no window.
+    /// These are reads Windows answers without the window's thread, so a hung application does not block them.
+    /// </summary>
+    private WindowState? ReadWindowState(nint windowHandle)
+    {
+        if (_windows == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!_windows.IsWindow(windowHandle))
+            {
+                return null;
+            }
+
+            var root = _windows.GetAncestor(windowHandle, WindowAncestor.Root);
+            if (root == nint.Zero)
+            {
+                root = windowHandle;
+            }
+
+            if (_windows.IsIconic(root) || _windows.IsIconic(windowHandle))
+            {
+                return WindowState.Minimized;
+            }
+
+            return _windows.IsZoomed(root) ? WindowState.Maximized : WindowState.Normal;
+        }
+        catch (Exception)
+        {
+            // Only the reported state depends on it
+            return null;
         }
     }
 

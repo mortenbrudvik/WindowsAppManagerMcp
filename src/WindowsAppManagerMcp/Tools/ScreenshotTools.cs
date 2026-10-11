@@ -49,21 +49,42 @@ public class ScreenshotTools
         "Deprecated: maximum image width in pixels. Given without maxDimension it replaces the 1568 default and limits only the width; " +
         "with maxDimension both limits apply.";
 
+    internal const string WarningsDescription =
+        "A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), " +
+        "WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. ";
+
+    internal const string RestoreIfMinimizedDescription =
+        "Restore a minimized window (or the minimized window it is inside) for the capture without activating it, wait " +
+        "until it has painted, capture, then minimize it again without activating another window. Default: false, which " +
+        "refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so " +
+        "it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy " +
+        "denies a window the restore would show.";
+
     private readonly IScreenshotService _screenshotService;
     private readonly IUIElementService _uiElementService;
     private readonly IWindowService _windowService;
     private readonly ITargetPolicy _targetPolicy;
+    private readonly IInputSession? _session;
 
+    /// <param name="screenshotService">The captures.</param>
+    /// <param name="uiElementService">The UI Automation walk of capture_with_elements.</param>
+    /// <param name="windowService">Window reads and the target policy of windows a restore would show.</param>
+    /// <param name="targetPolicy">The user's target policy.</param>
+    /// <param name="session">
+    /// The input session: restoreIfMinimized takes the input gate through it, and refuses while input is paused.
+    /// </param>
     public ScreenshotTools(
         IScreenshotService screenshotService,
         IUIElementService uiElementService,
         IWindowService windowService,
-        ITargetPolicy targetPolicy)
+        ITargetPolicy targetPolicy,
+        IInputSession? session = null)
     {
         _screenshotService = screenshotService;
         _uiElementService = uiElementService;
         _windowService = windowService;
         _targetPolicy = targetPolicy ?? throw new ArgumentNullException(nameof(targetPolicy));
+        _session = session;
     }
 
     [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -103,7 +124,9 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "capture_region", Title = "Capture Screen Region", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture an arbitrary screen region given in screen coordinates. " + ImageResultDescription + ImageToScreenDescription)]
+    [Description("Capture an arbitrary screen region given in screen coordinates. Only the part on the screen is captured: " +
+                 "a region partly off the screen is cut to it (warning RegionClipped, see capturedRegion), and a region " +
+                 "entirely off it fails with RegionOffScreen. " + ImageResultDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult CaptureRegion(
         [Description("X coordinate of the region's left edge")]
@@ -136,13 +159,15 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "capture_window", Title = "Capture Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized (CaptureFailed). " +
-                 "A window of an app the user's policy denies is refused (TargetDeniedByPolicy). " +
-                 ImageResultDescription +
-                 "capturedRegion and imageToScreen use the window's real screen position: the window's corner, or the client area's corner when includeFrame is false. " +
+    [Description("Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized " +
+                 "(or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, " +
+                 "and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding " +
+                 "is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). " +
+                 ImageResultDescription + WarningsDescription +
+                 "capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. " +
                  ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
-    public CallToolResult CaptureWindow(
+    public async Task<CallToolResult> CaptureWindow(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
         long handle,
         [Description("Whether to include the window frame/decoration (title bar, borders). Default: true")]
@@ -162,27 +187,48 @@ public class ScreenshotTools
         [Description(SaveToFileDescription)]
         bool saveToFile = false,
         [Description(MaxWidthDescription)]
-        int? maxWidth = null)
+        int? maxWidth = null,
+        [Description(RestoreIfMinimizedDescription)]
+        bool restoreIfMinimized = false,
+        CancellationToken cancellationToken = default)
     {
-        if (PolicyRefusal((nint)handle) is { } refusal)
+        var windowHandle = (nint)handle;
+        if (PolicyRefusal(windowHandle) is { } refusal)
         {
-            return ToolImages.Create(
-                new ScreenshotResult(false, null, null, 0, 0, null, null, null, null,
-                    Error: refusal, ErrorCode: nameof(ScreenshotErrorCode.TargetDeniedByPolicy)),
-                image: null,
-                isError: true);
+            return WindowFailure(nameof(ScreenshotErrorCode.TargetDeniedByPolicy), refusal);
         }
 
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
-        return ToolImages.ToCallToolResult(_screenshotService.CaptureWindow((nint)handle, includeFrame, options));
+        var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
+            .ConfigureAwait(false);
+        if (restore.Refusal is { } refused)
+        {
+            return WindowFailure(refused.Code.ToString(), refused.Message);
+        }
+
+        ScreenCapture<ScreenshotResult> capture;
+        using (restore)
+        {
+            capture = _screenshotService.CaptureWindow(windowHandle, includeFrame, options);
+        }
+
+        // Read after the window was minimized again: a failed minimize adds a warning
+        if (capture.Metadata.Success && restore.Warnings.Count > 0)
+        {
+            capture = capture with { Metadata = capture.Metadata with { Warnings = Merge(restore.Warnings, capture.Metadata.Warnings) } };
+        }
+
+        return ToolImages.ToCallToolResult(capture);
     }
 
     [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a window with UI element bounding boxes drawn on it. " + ImageResultDescription +
                  "The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). " +
                  "Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +
-                 "The overlays line up with or without the frame. A minimized window is refused (CaptureFailed), and so is a window of an app the user's policy denies (TargetDeniedByPolicy). " +
-                 ImageToScreenDescription)]
+                 "The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: " +
+                 "then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. " +
+                 "A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). " +
+                 WarningsDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(AnnotatedScreenshotResult))]
     public async Task<CallToolResult> CaptureWithElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows")]
@@ -203,7 +249,7 @@ public class ScreenshotTools
         bool visibleOnly = true,
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
-        [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn; with none found, the call fails with OperationTimedOut. Default: 5000")]
+        [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000")]
         int timeoutMs = 5000,
         [Description(MaxDimensionDescription + " imageBounds are scaled with the image; screenBounds stay in screen pixels.")]
         int? maxDimension = null,
@@ -217,6 +263,8 @@ public class ScreenshotTools
         bool saveToFile = false,
         [Description(MaxWidthDescription)]
         int? maxWidth = null,
+        [Description(RestoreIfMinimizedDescription)]
+        bool restoreIfMinimized = false,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -229,6 +277,7 @@ public class ScreenshotTools
             return AnnotatedFailure(handle, null, invalid.Code.ToString(), invalid.Message);
         }
 
+        // IsWindow only: untitled windows (popups, menus) are captured too
         if (!_windowService.IsValidWindow(windowHandle))
         {
             return AnnotatedFailure(handle, null, ScreenshotErrorCode.InvalidHandle.ToString(),
@@ -245,39 +294,176 @@ public class ScreenshotTools
             return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
         }
 
-        // A minimized window cannot be captured, and its elements are offscreen: refuse before the walk
-        if (windowInfo?.State == WindowState.Minimized)
+        var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
+            .ConfigureAwait(false);
+        if (restore.Refusal is { } refused)
         {
-            return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.CaptureFailed), ScreenshotService.MinimizedMessage);
+            return AnnotatedFailure(handle, windowTitle, refused.Code.ToString(), refused.Message);
         }
 
-        // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync)
-        var filter = new UIElementFilter(
-            ControlTypes: UIElementTools.ParseControlTypes(controlTypes),
-            InteractableOnly: interactableOnly,
-            VisibleOnly: visibleOnly);
-        var elementsResult = await UIElementTools.ReadTreeAsync(
-            _uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
-
-        if (!elementsResult.Success || elementsResult.Elements == null)
+        ScreenCapture<AnnotatedScreenshotResult> capture;
+        using (restore)
         {
-            // Pass the walk's own code on (for example OperationTimedOut), so the agent knows what to change.
-            var code = elementsResult.ErrorCode == UIElementErrorCode.None
-                ? ScreenshotErrorCode.CaptureFailed.ToString()
-                : elementsResult.ErrorCode.ToString();
-            return AnnotatedFailure(handle, windowTitle, code, $"Failed to get UI elements: {elementsResult.Error}");
+            // A minimized, hidden or cloaked window shows nothing and its elements are offscreen: refuse before the walk
+            if (_screenshotService.CheckWindow(windowHandle) is { } unavailable)
+            {
+                return AnnotatedFailure(handle, windowTitle, unavailable.Code.ToString(), unavailable.Message);
+            }
+
+            // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync)
+            var filter = new UIElementFilter(
+                ControlTypes: UIElementTools.ParseControlTypes(controlTypes),
+                InteractableOnly: interactableOnly,
+                VisibleOnly: visibleOnly);
+            var elementsResult = await UIElementTools.ReadTreeAsync(
+                _uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
+
+            // An unknown control type name is the agent's mistake, not a failed walk
+            if (elementsResult.ErrorCode == UIElementErrorCode.InvalidControlType)
+            {
+                return AnnotatedFailure(handle, windowTitle, elementsResult.ErrorCode.ToString(), elementsResult.Error ?? "Unknown control type");
+            }
+
+            // The pixels do not depend on the walk: a failed walk still returns the image, without overlays
+            var walked = elementsResult.Success && elementsResult.Elements != null;
+            capture = _screenshotService.CaptureWindowWithElements(
+                windowHandle,
+                windowTitle ?? elementsResult.WindowTitle,
+                walked ? elementsResult.Elements! : [],
+                includeFrame,
+                highlightInteractable,
+                options);
+
+            if (capture.Metadata.Success)
+            {
+                capture = capture with { Metadata = WithWalk(capture.Metadata, elementsResult, walked) };
+            }
         }
 
-        var capture = _screenshotService.CaptureWindowWithElements(
-            windowHandle,
-            windowTitle,
-            elementsResult.Elements,
-            includeFrame,
-            highlightInteractable,
-            options);
+        // Read after the window was minimized again: a failed minimize adds a warning
+        if (capture.Metadata.Success && restore.Warnings.Count > 0)
+        {
+            capture = capture with { Metadata = capture.Metadata with { Warnings = Merge(restore.Warnings, capture.Metadata.Warnings) } };
+        }
 
         return ToolImages.ToCallToolResult(capture);
     }
+
+    /// <summary>
+    /// Adds what the UI Automation walk left out to a successful capture: the walk's error and code when it failed
+    /// (the image then has no overlays), and truncated with its reason whenever the element list is incomplete.
+    /// </summary>
+    private static AnnotatedScreenshotResult WithWalk(AnnotatedScreenshotResult metadata, UIElementResult walk, bool walked)
+    {
+        if (!walked)
+        {
+            var code = walk.ErrorCode == UIElementErrorCode.None ? nameof(UIElementErrorCode.OperationException) : walk.ErrorCode.ToString();
+            return metadata with
+            {
+                ElementsError = $"The UI elements could not be read, so the image has no overlays: {walk.Error ?? "unknown error"}",
+                ElementsErrorCode = code,
+                Truncated = true,
+                TruncationReason = walk.ErrorCode == UIElementErrorCode.OperationTimedOut
+                    ? nameof(UIElementTruncationReason.Timeout)
+                    : walk.TruncationReason?.ToString()
+            };
+        }
+
+        return walk.Truncated
+            ? metadata with { Truncated = true, TruncationReason = walk.TruncationReason?.ToString() }
+            : metadata;
+    }
+
+    /// <summary>
+    /// The state of a restoreIfMinimized: nothing to restore, a refusal (the policy denies a window the restore would
+    /// show, or the restore failed), or the restored window with the input gate, both released by Dispose.
+    /// </summary>
+    private sealed class RestoreScope : IDisposable
+    {
+        public static readonly RestoreScope None = new(null, null, null);
+
+        private readonly IDisposable? _gate;
+        private readonly MinimizedWindowRestore? _restore;
+
+        public RestoreScope(IDisposable? gate, MinimizedWindowRestore? restore, CaptureRefusal? refusal)
+        {
+            _gate = gate;
+            _restore = restore;
+            Refusal = refusal;
+        }
+
+        public CaptureRefusal? Refusal { get; }
+
+        public IReadOnlyList<string> Warnings => _restore?.Warnings ?? [];
+
+        public void Dispose()
+        {
+            try
+            {
+                _restore?.Dispose();
+            }
+            finally
+            {
+                _gate?.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// For restoreIfMinimized: when the window, or the window it is inside, is minimized, checks the options and the
+    /// target policy of every window the restore would show, takes the input gate (a pause is a PausedByUser tool error,
+    /// a busy gate InputBusy) and restores the window without activating it. A failed restore is minimized again and
+    /// returned as a refusal.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused, or the gate is busy; nothing was restored.</exception>
+    private async Task<RestoreScope> RestoreIfMinimizedAsync(
+        nint windowHandle, bool includeFrame, bool restoreIfMinimized, CaptureOptions options, CancellationToken cancellationToken)
+    {
+        if (!restoreIfMinimized || _screenshotService.FindMinimizedWindow(windowHandle) is not { } minimized)
+        {
+            return RestoreScope.None;
+        }
+
+        // Nothing is restored for a call that would fail anyway
+        if (CaptureRequest.Validate(options) is { } invalid)
+        {
+            return new RestoreScope(null, null, new CaptureRefusal(invalid.Code, invalid.Message));
+        }
+
+        foreach (var shown in _screenshotService.WindowsShownByRestore(minimized))
+        {
+            if (_windowService.EvaluateTargetPolicy(shown) is { Allowed: false } verdict)
+            {
+                return new RestoreScope(null, null, new CaptureRefusal(ScreenshotErrorCode.TargetDeniedByPolicy,
+                    $"The window is minimized, and restoring it would show window {shown}, which the server's target policy " +
+                    $"refuses: {verdict.Reason}. Nothing was restored or captured. The policy is set by the user in the server's " +
+                    "environment; no tool argument changes it."));
+            }
+        }
+
+        var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken).ConfigureAwait(false);
+        MinimizedWindowRestore restore;
+        try
+        {
+            restore = _screenshotService.RestoreForCapture(minimized, windowHandle, includeFrame);
+        }
+        catch
+        {
+            gate.Dispose();
+            throw;
+        }
+
+        if (restore.Failure is { } failure)
+        {
+            new RestoreScope(gate, restore, null).Dispose();
+            return new RestoreScope(null, null, failure);
+        }
+
+        return new RestoreScope(gate, restore, null);
+    }
+
+    private static IReadOnlyList<string> Merge(IReadOnlyList<string> first, IReadOnlyList<string>? second) =>
+        second == null ? first : [.. first, .. second];
 
     /// <summary>
     /// Why the target policy refuses capturing the window, or null. A window that cannot be read is left to
@@ -313,6 +499,12 @@ public class ScreenshotTools
             Overwrite = overwrite,
             SaveToFile = saveToFile
         };
+
+    private static CallToolResult WindowFailure(string errorCode, string error) =>
+        ToolImages.Create(
+            new ScreenshotResult(false, null, null, 0, 0, null, null, null, null, Error: error, ErrorCode: errorCode),
+            image: null,
+            isError: true);
 
     private static CallToolResult AnnotatedFailure(long handle, string? windowTitle, string errorCode, string error) =>
         ToolImages.Create(

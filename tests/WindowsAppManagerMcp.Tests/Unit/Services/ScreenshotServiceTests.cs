@@ -16,6 +16,7 @@ public class ScreenshotServiceTests
     {
         _mockCaptureWrapper = TestDataFactory.CreateMockScreenCaptureWrapper();
         _mockMonitorService = TestDataFactory.CreateMockMonitorService();
+        _windows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns(true);
     }
 
     private ScreenshotService CreateSut() =>
@@ -128,7 +129,7 @@ public class ScreenshotServiceTests
         capture.Image!.Data.Should().NotBeEmpty();
         capture.Metadata.ByteSize.Should().Be(capture.Image.Data.Length);
         capture.Metadata.CoordinateSpace.Should().Be("physical-virtual-screen");
-        capture.Metadata.CaptureMethod.Should().Be("BitBlt");
+        capture.Metadata.CaptureMethod.Should().Be("ScreenBitBlt");
     }
 
     [Fact]
@@ -289,7 +290,8 @@ public class ScreenshotServiceTests
     [Fact]
     public void CaptureRegion_ReportsTheRegionAsOriginAndTransform()
     {
-        // Arrange
+        // Arrange - a monitor left of the primary one
+        _mockCaptureWrapper.Setup(c => c.GetVirtualScreenBounds()).Returns((-1920, 0, 3840, 1080));
         var sut = CreateSut();
 
         // Act
@@ -304,16 +306,15 @@ public class ScreenshotServiceTests
     public void CaptureRegion_DeterminesMonitorFromCenter()
     {
         // Arrange
-        var monitor = TestDataFactory.CreateMonitorInfo();
-        _mockMonitorService.Setup(m => m.GetMonitorAt(It.IsAny<int>(), It.IsAny<int>()))
-            .Returns(monitor);
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns(TestDataFactory.CreateDualMonitorSetup());
         var sut = CreateSut();
 
-        // Act
-        sut.CaptureRegion(100, 100, 400, 300, Defaults);
+        // Act - the center (300, 250) is on the primary monitor
+        var metadata = sut.CaptureRegion(100, 100, 400, 300, Defaults).Metadata;
 
-        // Assert - center would be at (300, 250)
-        _mockMonitorService.Verify(m => m.GetMonitorAt(300, 250), Times.Once);
+        // Assert - the monitor that contains it, never just the nearest one
+        metadata.MonitorIndex.Should().Be(0);
+        _mockMonitorService.Verify(m => m.GetMonitorAt(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     #endregion
@@ -446,7 +447,7 @@ public class ScreenshotServiceTests
     }
 
     [Fact]
-    public void CaptureWindow_WhenTheWindowIsMinimized_ReturnsCaptureFailed_AndCapturesNothing()
+    public void CaptureWindow_WhenTheWindowIsMinimized_ReturnsWindowMinimized_AndCapturesNothing()
     {
         // Arrange - a minimized window's rectangle is the icon's at (-32000, -32000): the capture would succeed
         // with a tiny or black image
@@ -459,14 +460,14 @@ public class ScreenshotServiceTests
 
         // Assert
         capture.Metadata.Success.Should().BeFalse();
-        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        capture.Metadata.ErrorCode.Should().Be("WindowMinimized");
         capture.Metadata.Error.Should().Contain("minimized").And.Contain("set_window_state");
         capture.Image.Should().BeNull();
         _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
-    public void CaptureWindow_OfAChildOfAMinimizedWindow_ReturnsCaptureFailed()
+    public void CaptureWindow_OfAChildOfAMinimizedWindow_ReturnsWindowMinimized()
     {
         // Arrange - a control inside a minimized window is offscreen with it, though it is not iconic itself
         var child = new nint(0x2001);
@@ -478,12 +479,12 @@ public class ScreenshotServiceTests
         var capture = CreateSut().CaptureWindow(child, includeFrame: false, Defaults);
 
         // Assert
-        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        capture.Metadata.ErrorCode.Should().Be("WindowMinimized");
         _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
-    public void CaptureWindowWithElements_WhenTheWindowIsMinimized_ReturnsCaptureFailed()
+    public void CaptureWindowWithElements_WhenTheWindowIsMinimized_ReturnsWindowMinimized()
     {
         // Arrange
         var handle = new nint(12345);
@@ -495,7 +496,7 @@ public class ScreenshotServiceTests
 
         // Assert
         capture.Metadata.Success.Should().BeFalse();
-        capture.Metadata.ErrorCode.Should().Be("CaptureFailed");
+        capture.Metadata.ErrorCode.Should().Be("WindowMinimized");
         capture.Metadata.Error.Should().Contain("minimized");
         _mockCaptureWrapper.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
     }

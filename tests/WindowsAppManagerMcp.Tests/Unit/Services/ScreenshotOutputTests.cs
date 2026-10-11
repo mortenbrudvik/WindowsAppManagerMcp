@@ -30,7 +30,7 @@ public sealed class ScreenshotOutputTests : IDisposable
     }
 
     private ScreenshotService CreateSut() =>
-        new(_mockCaptureWrapper.Object, _mockMonitorService.Object, Mock.Of<INativeWindowWrapper>());
+        new(_mockCaptureWrapper.Object, _mockMonitorService.Object, Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
 
     #region Output modes
 

@@ -97,7 +97,8 @@ public class NativeCallGuardTests
         ["Gdi32.CreateCompatibleBitmap"] = "creates a bitmap in the server",
         ["Gdi32.SelectObject"] = "selects a bitmap into a memory DC of the server",
         ["Gdi32.BitBlt"] = "copies screen pixels into a memory DC of the server",
-        ["Gdi32.GetDIBits"] = "reads the copied pixels",
+        ["Gdi32.CreateDIBSection"] = "creates a bitmap in the server whose pixels the server reads directly",
+        ["Gdi32.GdiFlush"] = "runs the server thread's batched GDI drawing before the pixels are read",
         ["Gdi32.DeleteDC"] = "frees a memory DC of the server",
         ["Gdi32.DeleteObject"] = "frees a bitmap of the server",
 
