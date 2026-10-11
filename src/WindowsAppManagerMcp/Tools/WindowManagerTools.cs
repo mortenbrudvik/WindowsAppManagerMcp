@@ -100,6 +100,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
         }
     }
@@ -130,6 +131,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
         }
     }
@@ -167,6 +169,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowFrame(hwnd, x, y, width, height, bringToFront), settleMs);
         }
     }
@@ -192,6 +195,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), settleMs);
         }
     }
@@ -214,6 +218,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return FocusResult.From(_foregroundService.EnsureForeground(hwnd));
         }
     }
@@ -282,7 +287,7 @@ public class WindowManagerTools
         }
 
         // The selector is resolved before the gate; the close guards check the window it names as they check any handle
-        var hwnd = WindowTargeting.Require(_windowService, handle, window);
+        var hwnd = WindowTargeting.Require(_windowService, handle, window, requireNamedWindow: true);
         var reported = hwnd.ToInt64();
         if (!_windowService.IsValidWindow(hwnd))
         {
@@ -296,6 +301,8 @@ public class WindowManagerTools
         WindowCloseResult sent;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            // The window the selector named must still be that window: it may have changed while the call waited
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             sent = _windowService.CloseWindow(hwnd, force);
         }
 
@@ -324,10 +331,11 @@ public class WindowManagerTools
                  "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
                  "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
-                 "the other windows are still closed. An item that is null fails alone with InvalidArguments. InvalidArguments (the whole " +
-                 "call): waitMs is outside 0-30000.")]
+                 "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
+                 "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
+                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
-        [Description("Array of window handles to close")]
+        [Description("Array of windows to close, each with handle or window (a selector, as close_window takes it)")]
         WindowCloseRequest[] windows,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
@@ -352,7 +360,7 @@ public class WindowManagerTools
 
         // Each item's window, resolved before the question and the gate (roadmap M2.4); an item that names no single window
         // fails alone
-        var items = ResolveItems(windows, nameof(windows), "a handle or a window", w => w.Handle, w => w.Window);
+        var items = ResolveItems(windows, nameof(windows), "a handle or a window", w => w.Handle, w => w.Window, requireNamedWindow: true);
 
         Dictionary<nint, int?>? confirmedOwners = null;
         if (windows.Length > MaxCloseBatchWithoutConfirm)
@@ -392,8 +400,9 @@ public class WindowManagerTools
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             // A window the user was asked about must still belong to the same process; a reused handle is not closed
-            refusals = items.Select(t => t.Refusal ??
-                (confirmedOwners == null ? null : HandleMismatchRefusal(t.Handle.ToInt64(), confirmedOwners))).ToList();
+            refusals = items.Select((t, i) => t.Refusal ??
+                (confirmedOwners == null ? null : HandleMismatchRefusal(t.Handle.ToInt64(), confirmedOwners)) ??
+                ItemRecheck(i, t.Handle, windows[i].Window)).ToList();
             var handles = items.Where((_, i) => refusals[i] == null).Select(t => t.Handle).ToList();
 
             results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
@@ -471,7 +480,7 @@ public class WindowManagerTools
         // before anything is asked or sent, and the window it names goes through the same checks as a handle
         if (window != null)
         {
-            handle = WindowTargeting.Require(_windowService, null, window).ToInt64();
+            handle = WindowTargeting.Require(_windowService, null, window, requireNamedWindow: true).ToInt64();
         }
 
         var appWindows = _windowService.GetApplicationWindows();
@@ -527,6 +536,12 @@ public class WindowManagerTools
         var sent = new List<nint>();
         using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
         {
+            // The window the selector named the application by must still be that window, or nothing is closed
+            if (window != null && handle is { } named)
+            {
+                WindowTargeting.ThrowIfChanged(_windowService, window, (nint)named);
+            }
+
             foreach (var target in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -785,6 +800,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront), settleMs);
         }
     }
@@ -815,6 +831,7 @@ public class WindowManagerTools
         var hwnd = Target(handle, window);
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             return Precheck(hwnd) ??
                    Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront), settleMs);
         }
@@ -843,7 +860,8 @@ public class WindowManagerTools
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             // Items for windows the policy denies get their result here; the others go to the service
-            var refusals = invalid.Select((r, i) => r ?? BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, placements[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
             var servicePlacements = new List<(nint, int, int, int, int, bool)>();
             for (var i = 0; i < placements.Length; i++)
             {
@@ -891,7 +909,8 @@ public class WindowManagerTools
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
-            var refusals = invalid.Select((r, i) => r ?? BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, placements[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
             var servicePlacements = new List<(nint, SnapPosition, int?, bool)>();
             for (var i = 0; i < placements.Length; i++)
             {
@@ -936,7 +955,8 @@ public class WindowManagerTools
 
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
-            var refusals = invalid.Select((r, i) => r ?? BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, changes[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
             var serviceChanges = new List<(nint, WindowStateRequest)>();
             for (var i = 0; i < changes.Length; i++)
             {
@@ -1033,7 +1053,8 @@ public class WindowManagerTools
     /// WindowNotFound, AmbiguousWindow with candidates, HandleMismatch, InvalidHandle) and fails alone.
     /// </summary>
     private List<(nint Handle, WindowResultItem? Refusal)> ResolveItems<T>(
-        T[] items, string array, string fields, Func<T, long?> handleOf, Func<T, WindowSelector?> windowOf) where T : class
+        T[] items, string array, string fields, Func<T, long?> handleOf, Func<T, WindowSelector?> windowOf,
+        bool requireNamedWindow = false) where T : class
     {
         var resolved = new List<(nint, WindowResultItem?)>(items.Length);
         for (var i = 0; i < items.Length; i++)
@@ -1045,7 +1066,7 @@ public class WindowManagerTools
                 continue;
             }
 
-            var target = WindowTargeting.Resolve(_windowService, handleOf(item), windowOf(item));
+            var target = WindowTargeting.Resolve(_windowService, handleOf(item), windowOf(item), requireNamedWindow: requireNamedWindow);
             if (target == null)
             {
                 resolved.Add((nint.Zero, new WindowResultItem(0, false,
@@ -1065,6 +1086,15 @@ public class WindowManagerTools
 
         return resolved;
     }
+
+    /// <summary>
+    /// An item's resolved window checked again inside the input gate (<see cref="WindowTargeting.Recheck"/>): HandleMismatch
+    /// when it no longer matches the item's selector, so that item fails alone; null otherwise.
+    /// </summary>
+    private WindowResultItem? ItemRecheck(int index, nint handle, WindowSelector? window) =>
+        WindowTargeting.Recheck(_windowService, window, handle) is { } refusal
+            ? new WindowResultItem(handle.ToInt64(), false, Error: $"Item {index}: {refusal.Error}", ErrorCode: refusal.ErrorCode)
+            : null;
 
     /// <summary>
     /// Runs a window change and reports its outcome with the window as it is afterwards (roadmap M2.3): its visible frame,

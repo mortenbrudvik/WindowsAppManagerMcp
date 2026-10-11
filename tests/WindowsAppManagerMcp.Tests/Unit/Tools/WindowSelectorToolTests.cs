@@ -140,6 +140,43 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
+    public async Task AWindowThatNoLongerMatchesTheSelectorOnceInsideTheGate_IsHandleMismatch_AndNothingMoves()
+    {
+        // Arrange - the selector resolved to Notepad, then Notepad closed while the call waited for the gate and a
+        // terminal got its handle
+        _windows.Setup(w => w.GetWindowInfo((nint)Notepad))
+            .Returns(TestDataFactory.CreateWindowInfo((int)Notepad, "Windows PowerShell", "WindowsTerminal", 300));
+
+        // Act
+        var act = () => CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+
+        // Assert
+        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        error.Message.Should().Contain("no longer matches").And.Contain("Nothing was done");
+        _windows.Verify(w => w.MoveWindow(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheSelectorIsCheckedAgain_InsideTheGate()
+    {
+        // Arrange - record whether the window was read again while the gate was held
+        var readInsideTheGate = false;
+        _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(() =>
+        {
+            readInsideTheGate |= InputGate.IsHeld;
+            return NotepadWindow;
+        });
+
+        // Act
+        var result = await CreateWindowTools().MoveWindow(10, 20, window: NotepadSelector);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        readInsideTheGate.Should().BeTrue("the resolution ran before the gate wait, so the window is checked again before it is changed");
+    }
+
+    [Fact]
     public async Task WhileInputIsPaused_TheWindowToolsRefuse_BeforeResolvingAnything()
     {
         using var session = new InputSession(new FakeInputWrapper());
@@ -194,6 +231,32 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
+    public async Task ABatchItemWhoseWindowChangedBeforeTheGate_FailsAlone_WithHandleMismatch()
+    {
+        // Arrange - the second item's window was another app's by the time the batch held the gate
+        const long chrome = 0x3001;
+        var chromeSelector = new WindowSelector { ProcessName = "chrome", TitleContains = "Inbox" };
+        _windows.Setup(w => w.ResolveWindow(chromeSelector)).Returns(WindowResolution.Found(ChromeWindows[0]));
+        _windows.Setup(w => w.GetWindowInfo((nint)chrome))
+            .Returns(TestDataFactory.CreateWindowInfo((int)chrome, "Untitled - Paint", "mspaint", 500));
+
+        // Act
+        var result = await CreateWindowTools().SetWindowsStateBatch(
+        [
+            new WindowStateChange("minimize", Window: NotepadSelector),
+            new WindowStateChange("minimize", Window: chromeSelector)
+        ], delayBetweenMs: 0);
+
+        // Assert
+        result.Results[0].Success.Should().BeTrue();
+        result.Results[1].ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        result.Results[1].Error.Should().StartWith("Item 1:");
+        _windows.Verify(w => w.SetWindowStateBatchAsync(
+            It.Is<IReadOnlyList<(nint, WindowStateRequest)>>(changes => changes.Count == 1 && changes[0].Item1 == (nint)Notepad),
+            It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ABatchItemWithNoWindow_IsInvalidArguments()
     {
         var result = await CreateWindowTools().SetWindowsStateBatch([new WindowStateChange("minimize")], delayBetweenMs: 0);
@@ -219,6 +282,60 @@ public class WindowSelectorToolTests
         // Assert
         result.Success.Should().BeTrue();
         result.Handle.Should().Be(Notepad);
+        _windows.Verify(w => w.CloseWindow((nint)Notepad, false), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseWindow_OfAWindowThatChangedWhileTheCallWaitedForTheGate_ClosesNothing()
+    {
+        // Arrange - resolved to Notepad; by the time the gate is held, its handle belongs to a terminal
+        _windows.Setup(w => w.GetWindowInfo((nint)Notepad))
+            .Returns(TestDataFactory.CreateWindowInfo((int)Notepad, "Windows PowerShell", "WindowsTerminal", 300));
+
+        // Act
+        var act = () => CreateWindowTools().CloseWindow(window: NotepadSelector, waitMs: 0);
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        _windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheCloseTools_RefuseABareForegroundSelector_ItNamesNoWindow()
+    {
+        // Arrange - {"foreground": true} is whatever is in front: a close needs the window named
+        var foreground = new WindowSelector { Foreground = true };
+        _windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(WindowCloseResult.Sent).ToList());
+        var tools = CreateWindowTools();
+
+        // Act
+        var closeWindow = () => tools.CloseWindow(window: foreground, force: true, waitMs: 0);
+        var closeApplication = () => tools.CloseApplication(window: foreground);
+        var batch = await tools.CloseWindowsBatch([new WindowCloseRequest(Window: foreground)], delayBetweenMs: 0, waitMs: 0);
+
+        // Assert
+        (await closeWindow.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        (await closeApplication.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        batch.Results[0].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        batch.Results[0].Error.Should().Contain("foreground");
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+        _windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+        _windows.Verify(w => w.CloseWindowsBatchAsync(It.Is<IReadOnlyList<nint>>(h => h.Count > 0), It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindow_WithForegroundAndAFilter_ClosesTheWindowInFront_ThatWasNamed()
+    {
+        // The agent said which window it expects in front: that names a window
+        var notepadInFront = new WindowSelector { Foreground = true, ProcessName = "notepad" };
+        _windows.Setup(w => w.ResolveWindow(notepadInFront)).Returns(WindowResolution.Found(NotepadWindow));
+        _windows.Setup(w => w.CloseWindow((nint)Notepad, false)).Returns(WindowCloseResult.Sent((nint)Notepad));
+
+        var result = await CreateWindowTools().CloseWindow(window: notepadInFront, waitMs: 0);
+
+        result.Success.Should().BeTrue();
         _windows.Verify(w => w.CloseWindow((nint)Notepad, false), Times.Once);
     }
 
@@ -260,7 +377,7 @@ public class WindowSelectorToolTests
     #region The input tools
 
     [Fact]
-    public void Click_WithASelector_TargetsTheResolvedWindow_KeepingAllowHostTarget()
+    public void Click_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
     {
         // Arrange - the resolved window goes to the input service as windowHandle would: its guard checks it there
         var input = new Mock<IInputSimulationService>();
@@ -269,7 +386,73 @@ public class WindowSelectorToolTests
         var tools = new InputSimulationTools(input.Object, _windows.Object);
 
         // Act
-        tools.Click(5, 6, window: NotepadSelector, allowHostTarget: true);
+        tools.Click(5, 6, window: NotepadSelector);
+
+        // Assert
+        input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, false), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendKeys_WithABareForegroundSelector_IsSentAsWithoutWindowHandle_SoTheDestructiveChordRuleApplies()
+    {
+        // Arrange - {"foreground": true} names no window: the guard must see no windowHandle, and so refuse Alt+F4
+        // (DestructiveChordNeedsTarget) as it does without one
+        var input = new Mock<IInputSimulationService>();
+        input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SendKeysResult(false, "%{F4}", Error: "refused", ErrorCode: InputErrorCode.DestructiveChordNeedsTarget));
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+
+        // Act
+        await tools.SendKeys("%{F4}", window: new WindowSelector { Foreground = true });
+
+        // Assert
+        input.Verify(i => i.SendKeysAsync("%{F4}", new InputTarget(null, false), false, It.IsAny<CancellationToken>()), Times.Once);
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TypeText_WithABareForegroundSelectorAndAllowHostTarget_GivesAllowHostTargetNoWindow_SoItHasNoEffect()
+    {
+        var input = new Mock<IInputSimulationService>();
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+
+        await tools.TypeText("hello", window: new WindowSelector { Foreground = true }, allowHostTarget: true);
+
+        // InputTarget.HasWindow is false: the host guard ignores allowHostTarget without a window named by handle
+        input.Verify(i => i.TypeTextAsync("hello", It.IsAny<int>(), new InputTarget(null, true), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AllowHostTarget_WithASelectorThatFindsWindowsByName_IsRefused_NothingIsSent(bool foregroundWithFilter)
+    {
+        // Arrange - a selector by name could resolve to the agent's own terminal without the agent ever seeing it
+        var input = new Mock<IInputSimulationService>(MockBehavior.Strict);
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+        var selector = foregroundWithFilter ? new WindowSelector { Foreground = true, ProcessName = "WindowsTerminal" } : NotepadSelector;
+
+        // Act
+        var act = () => tools.TypeText("hello", window: selector, allowHostTarget: true);
+
+        // Assert
+        var error = (await act.Should().ThrowAsync<ToolErrorException>()).Which;
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("window.handle").And.Contain("Nothing was sent");
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public void AllowHostTarget_WithASelectorThatNamesTheHandle_IsPassedOn()
+    {
+        // Arrange - window.handle with the process it must still be: the window was named on purpose
+        var named = new WindowSelector { Handle = Notepad, ProcessId = 200 };
+        _windows.Setup(w => w.ResolveWindow(named)).Returns(WindowResolution.Found(NotepadWindow));
+        var input = new Mock<IInputSimulationService>();
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+
+        // Act
+        tools.Click(5, 6, window: named, allowHostTarget: true);
 
         // Assert
         input.Verify(i => i.Click(5, 6, new InputTarget((nint)Notepad, true), false, It.IsAny<CancellationToken>()), Times.Once);

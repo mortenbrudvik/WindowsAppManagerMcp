@@ -164,10 +164,14 @@ public sealed record WindowResolution
     };
 }
 
-/// <summary>A window an ambiguous selector matched (roadmap M2.4): enough to name it exactly by its handle.</summary>
-public sealed record WindowCandidateDto(long Handle, string Title, string ProcessName, int ProcessId, string ClassName)
+/// <summary>
+/// A window an ambiguous selector matched (roadmap M2.4): enough to name it exactly by its handle. IsAgentHost is true for
+/// the agent's own terminal, editor or chat window, as find_windows marks it, and omitted for every other window, so an
+/// agent picking a candidate can tell its own host apart.
+/// </summary>
+public sealed record WindowCandidateDto(long Handle, string Title, string ProcessName, int ProcessId, string ClassName, bool? IsAgentHost = null)
 {
     /// <summary>The candidate for a window that was read.</summary>
     public static WindowCandidateDto From(WindowInfo window) =>
-        new(window.Handle.ToInt64(), window.Title, window.ProcessName, window.ProcessId, window.ClassName);
+        new(window.Handle.ToInt64(), window.Title, window.ProcessName, window.ProcessId, window.ClassName, window.IsAgentHost ? true : null);
 }

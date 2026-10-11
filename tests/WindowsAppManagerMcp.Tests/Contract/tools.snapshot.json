@@ -156,7 +156,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -323,7 +323,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -531,7 +531,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -602,7 +602,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -763,7 +763,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -856,12 +856,12 @@
     {
       "name": "close_windows_batch",
       "title": "Close Windows (Batch)",
-      "description": "Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested). A prompt is never answered: ask the user which button to choose, and do not answer it yourself. More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null fails alone with InvalidArguments. InvalidArguments (the whole call): waitMs is outside 0-30000.",
+      "description": "Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested). A prompt is never answered: ask the user which button to choose, and do not answer it yourself. More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "windows": {
-            "description": "Array of window handles to close",
+            "description": "Array of windows to close, each with handle or window (a selector, as close_window takes it)",
             "type": "array",
             "items": {
               "type": "object",
@@ -1032,7 +1032,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -1103,7 +1103,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -1129,7 +1129,7 @@
     {
       "name": "find_windows",
       "title": "Find Windows",
-      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked. The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front; handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
+      "description": "Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked. The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus processId or a title refuses a reused handle (HandleMismatch). Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'. An invalid titleRegex or limit fails with InvalidArguments.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1263,7 +1263,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -1822,7 +1822,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -1955,7 +1955,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -2082,7 +2082,7 @@
     {
       "name": "get_window_info",
       "title": "Get Window Info",
-      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports; 'full' adds visibleBounds (the frame you see), clientBounds (the client area on screen), isForeground, zOrder (0 is the front window), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
+      "description": "Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, title, process and state; 'standard' (default) what find_windows reports; 'full' adds visibleBounds (the frame you see), clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2095,7 +2095,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -2535,7 +2535,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -2606,7 +2606,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -2653,7 +2653,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -2767,7 +2767,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -2920,7 +2920,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -3049,7 +3049,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -3120,7 +3120,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -3207,7 +3207,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -3304,7 +3304,7 @@
             "default": 0
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -3343,7 +3343,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -3414,7 +3414,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },
@@ -3492,7 +3492,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -3616,7 +3616,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -3998,7 +3998,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to handle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
+            "description": "Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates).",
             "type": [
               "object",
               "null"
@@ -4354,7 +4354,7 @@
             "default": null
           },
           "window": {
-            "description": "Alternative to windowHandle: a window selector with find_windows' filters (plus foreground, index), resolved to exactly one window and then used as windowHandle.",
+            "description": "Alternative to windowHandle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window and then used as windowHandle. {\"foreground\": true} alone counts as no windowHandle, and allowHostTarget needs the window named by handle.",
             "type": [
               "object",
               "null"
@@ -4425,7 +4425,7 @@
             "default": null
           },
           "allowHostTarget": {
-            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false",
+            "description": "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false",
             "type": "boolean",
             "default": false
           },

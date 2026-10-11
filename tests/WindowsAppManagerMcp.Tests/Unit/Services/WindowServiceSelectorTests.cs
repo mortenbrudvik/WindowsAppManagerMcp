@@ -115,7 +115,39 @@ public class WindowServiceSelectorTests
         resolution.ErrorCode.Should().Be("AmbiguousWindow");
         resolution.MatchCount.Should().Be(7);
         resolution.Candidates.Select(w => w.Handle).Should().Equal(chrome.Take(5));
-        resolution.Error.Should().Contain("7 windows match").And.Contain("window.handle").And.Contain("index");
+        resolution.Error.Should().Contain("7 windows match").And.Contain("{handle, processId}");
+    }
+
+    [Fact]
+    public void Resolve_Ambiguous_DoesNotOfferACandidatesPositionAsIndex()
+    {
+        // index counts the z-order of the next call, which a focus or a click in between changes: mapping a candidate's
+        // position to index can silently act on another window
+        _desktop.Add("Docs - Google Chrome", processName: "chrome");
+        _desktop.Add("Mail - Google Chrome", processName: "chrome");
+
+        var resolution = CreateSut().ResolveWindow(new WindowSelector { ProcessName = "chrome" });
+
+        resolution.Error.Should().NotContain("pick one in z-order").And.Contain("Do not turn a candidate's position into window.index");
+    }
+
+    [Fact]
+    public void Resolve_Ambiguous_MarksTheAgentsHostAmongTheCandidates()
+    {
+        // Arrange - two terminals, one of them the agent's own
+        var host = _desktop.Add("claude - Windows PowerShell", processName: "WindowsTerminal");
+        var other = _desktop.Add("build - Windows PowerShell", processName: "WindowsTerminal");
+        _desktop.HostGuard.Setup(g => g.IsHostWindow(host)).Returns(true);
+
+        // Act
+        var resolution = CreateSut().ResolveWindow(new WindowSelector { ProcessName = "WindowsTerminal" });
+        var candidates = resolution.Candidates.Select(WindowCandidateDto.From).ToList();
+
+        // Assert
+        resolution.ErrorCode.Should().Be("AmbiguousWindow");
+        resolution.Error.Should().Contain("isAgentHost");
+        candidates.Single(c => c.Handle == host.ToInt64()).IsAgentHost.Should().BeTrue();
+        candidates.Single(c => c.Handle == other.ToInt64()).IsAgentHost.Should().BeNull("only the host is marked; the field is omitted otherwise");
     }
 
     [Fact]
@@ -256,6 +288,15 @@ public class WindowServiceSelectorTests
         new WindowSelector { Handle = 4096, Index = 0 },
         new WindowSelector { Foreground = true, Index = 1 },
         new WindowSelector { TitleRegex = "([a-" },
+        // Text that normalizes to nothing would count as a filter while matching every window
+        new WindowSelector { TitleContains = " " },
+        new WindowSelector { TitleContains = "\u200B" },
+        new WindowSelector { TitleEquals = "  " },
+        new WindowSelector { ProcessName = " " },
+        new WindowSelector { ProcessName = ".exe", ProcessNameContains = true },
+        new WindowSelector { ClassName = " " },
+        new WindowSelector { ProcessName = "notepad", TitleContains = " ", Index = 0 },
+        new WindowSelector { Handle = 4096, TitleContains = " " },
     };
 
     [Theory]
@@ -269,6 +310,35 @@ public class WindowServiceSelectorTests
         resolution.Success.Should().BeFalse();
         resolution.ErrorCode.Should().Be("InvalidArguments");
         resolution.Error.Should().Contain("Nothing was done");
+    }
+
+    [Fact]
+    public void Resolve_AnEmptyFilterString_IsAFilterLeftOut()
+    {
+        // "" is what a client sends for a field it does not use; only text that is blank once normalized is refused
+        var notepad = _desktop.Add("Untitled - Notepad", processName: "notepad");
+
+        CreateSut().ResolveWindow(new WindowSelector { ProcessName = "notepad", TitleContains = "" }).Handle.Should().Be(notepad);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Resolve_ARegexThatTimesOut_CheckingAHandleOrTheForeground_IsInvalidArguments_NotAMismatch(bool foreground)
+    {
+        // Arrange - the pattern's fault is reported as such, never as a reused handle or a different window in front
+        var app = _desktop.Add(new string('a', 5000) + "!", processName: "app");
+        _desktop.SetForeground(app);
+        var selector = foreground
+            ? new WindowSelector { Foreground = true, TitleRegex = "^(a+)+$" }
+            : new WindowSelector { Handle = app, TitleRegex = "^(a+)+$" };
+
+        // Act
+        var resolution = CreateSut().ResolveWindow(selector);
+
+        // Assert
+        resolution.ErrorCode.Should().Be("InvalidArguments");
+        resolution.Error.Should().Contain("100 ms").And.NotContain("reused");
     }
 
     [Fact]

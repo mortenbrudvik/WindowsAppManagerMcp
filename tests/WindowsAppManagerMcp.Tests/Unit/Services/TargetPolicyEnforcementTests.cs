@@ -396,6 +396,27 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
+    public async Task CaptureWindow_AndCaptureWithElements_ByASelector_CheckThePolicyOnTheResolvedWindow()
+    {
+        // Arrange - the selector names KeePass, which the policy denies (roadmap M2.4: a selector never gets past it)
+        var sut = CreateScreenshotTools(0x300, "KeePass");
+        var keePass = new WindowSelector { ProcessName = "KeePass" };
+        _windows.Setup(w => w.ResolveWindow(keePass))
+            .Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(0x300, "KeePass window", "KeePass", 3001)));
+
+        // Act
+        var capture = await sut.CaptureWindow(window: keePass);
+        var annotated = await sut.CaptureWithElements(window: keePass);
+
+        // Assert
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CaptureWindow_AllowedProcess_IsCaptured()
     {
         var sut = CreateScreenshotTools(0x200, "notepad");

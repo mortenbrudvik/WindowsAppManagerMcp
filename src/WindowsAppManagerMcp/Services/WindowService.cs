@@ -153,24 +153,32 @@ public class WindowService : IWindowService
         if (SelectorRefusal(selector) is { } invalid)
             return WindowResolution.Failed(InvalidArgumentsCode, invalid);
 
+        // A pattern that runs too long is the pattern's fault on every path (the listing, a handle's check, the
+        // foreground's check): InvalidArguments, never a mismatch that blames the window
+        try
+        {
+            return Resolve(selector);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return WindowResolution.Failed(InvalidArgumentsCode, RegexTimeoutMessage(selector.TitleRegex));
+        }
+    }
+
+    /// <summary>The InvalidArguments message of a titleRegex that took longer than <see cref="WindowTitles.RegexTimeout"/>.</summary>
+    internal static string RegexTimeoutMessage(string? pattern) =>
+        $"titleRegex '{pattern}' took longer than {WindowTitles.RegexTimeout.TotalMilliseconds:0} ms on a window title, so it was " +
+        "given up. Use a simpler pattern, or titleContains or titleEquals. Nothing was done.";
+
+    private WindowResolution Resolve(WindowSelector selector)
+    {
         if (selector.Handle is { } handle)
             return ResolveHandle((nint)handle, selector);
 
         if (selector.Foreground)
             return ResolveForeground(selector);
 
-        IReadOnlyList<WindowInfo> matches;
-        try
-        {
-            matches = FindWindows(selector.ToQuery());
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            return WindowResolution.Failed(InvalidArgumentsCode,
-                $"titleRegex '{selector.TitleRegex}' took longer than {WindowTitles.RegexTimeout.TotalMilliseconds:0} ms on a window " +
-                "title, so it was given up. Use a simpler pattern, or titleContains or titleEquals. Nothing was done.");
-        }
-
+        var matches = FindWindows(selector.ToQuery());
         if (selector.Index is { } index)
         {
             return index < matches.Count
@@ -187,9 +195,10 @@ public class WindowService : IWindowService
             0 => WindowResolution.Failed(nameof(WindowErrorCode.WindowNotFound), NoMatchMessage(selector)),
             _ => WindowResolution.Failed(nameof(WindowErrorCode.AmbiguousWindow),
                 $"{matches.Count} windows match {selector.Describe()}, so the window cannot be told; nothing was done. candidates " +
-                $"lists {(matches.Count > WindowResolution.MaxCandidates ? $"the first {WindowResolution.MaxCandidates}, front to back" : "them, front to back")}. " +
-                "Call again with one candidate's handle as window.handle (with its processId, so a reused handle is refused), narrow " +
-                "the filters (titleEquals, processId, className), or pick one in z-order with window.index.",
+                $"lists {(matches.Count > WindowResolution.MaxCandidates ? $"the first {WindowResolution.MaxCandidates}, front to back" : "them, front to back")}" +
+                "; isAgentHost marks your own terminal or editor. Call again with the one you mean as window {handle, processId} " +
+                "(a reused handle is then refused), or narrow the filters (titleEquals, processId, className). Do not turn a " +
+                "candidate's position into window.index: index counts the z-order at the time of the next call, which can change.",
                 matches)
         };
     }
@@ -204,6 +213,11 @@ public class WindowService : IWindowService
         {
             return "window names no window: pass at least one of handle, foreground, titleContains, titleEquals, titleRegex, " +
                    "processName, processId and className. An empty selector never matches every window. Nothing was done.";
+        }
+
+        if (BlankFilter(selector) is { } blank)
+        {
+            return $"window.{blank} is blank, so it would match every window; leave it out or give the text to match. Nothing was done.";
         }
 
         if (selector.Handle is <= 0)
@@ -231,6 +245,24 @@ public class WindowService : IWindowService
     }
 
     /// <summary>
+    /// The name of a filter that is given but empty once normalized (a blank title, a process name of only ".exe"): such a
+    /// filter would count as naming a window while matching every one. Null when there is none.
+    /// </summary>
+    private static string? BlankFilter(WindowSelector selector)
+    {
+        // An empty string is a filter left out (HasFilters ignores it); text that normalizes to nothing is refused
+        if (selector.TitleContains is { Length: > 0 } contains && WindowTitles.Normalize(contains).Length == 0)
+            return "titleContains";
+        if (selector.TitleEquals is { Length: > 0 } equals && WindowTitles.Normalize(equals).Length == 0)
+            return "titleEquals";
+        if (selector.ProcessName is { Length: > 0 } processName && WindowMatching.WithoutExe(processName).Length == 0)
+            return "processName";
+        if (selector.ClassName is { Length: > 0 } className && string.IsNullOrWhiteSpace(className))
+            return "className";
+        return null;
+    }
+
+    /// <summary>
     /// A selector's handle, checked against the selector's filters: InvalidHandle when it is no window, HandleMismatch
     /// when the window no longer matches what the caller expected of it (the handle was most likely reused).
     /// </summary>
@@ -243,7 +275,7 @@ public class WindowService : IWindowService
                 "with find_windows, or pass a selector without the handle.");
         }
 
-        if (Mismatches(window, selector) is { Count: > 0 } differences)
+        if (WindowMatching.Mismatches(window, selector) is { Count: > 0 } differences)
         {
             return WindowResolution.Failed(nameof(WindowErrorCode.HandleMismatch),
                 $"Window {handle} is not the window expected: {string.Join("; ", differences)}. The window most likely closed and its " +
@@ -264,7 +296,7 @@ public class WindowService : IWindowService
                 "screen is shown). Nothing was done. Try again shortly, or name the window by its handle.");
         }
 
-        if (Mismatches(window, selector) is { Count: > 0 } differences)
+        if (WindowMatching.Mismatches(window, selector) is { Count: > 0 } differences)
         {
             return WindowResolution.Failed(nameof(WindowErrorCode.WindowNotFound),
                 $"The window in the foreground ({Describe(window)}) does not match {selector.Describe()}: " +
@@ -273,46 +305,6 @@ public class WindowService : IWindowService
         }
 
         return WindowResolution.Found(window);
-    }
-
-    /// <summary>The filters of <paramref name="selector"/> that <paramref name="window"/> does not match, in words.</summary>
-    private static List<string> Mismatches(WindowInfo window, WindowSelector selector)
-    {
-        var differences = new List<string>();
-        if (selector.ProcessId is { } processId && window.ProcessId != processId && window.HostProcessId != processId)
-            differences.Add($"its process is PID {window.ProcessId}, not {processId}");
-
-        if (!string.IsNullOrEmpty(selector.ProcessName) &&
-            !WindowMatching.ProcessNameMatches(window.ProcessName, window.HostProcessName, selector.ProcessName, selector.ProcessNameContains))
-            differences.Add($"its process is '{window.ProcessName}', not '{selector.ProcessName}'");
-
-        if (!string.IsNullOrEmpty(selector.ClassName) &&
-            !string.Equals(window.ClassName, selector.ClassName, StringComparison.OrdinalIgnoreCase))
-            differences.Add($"its class is '{window.ClassName}', not '{selector.ClassName}'");
-
-        if (!string.IsNullOrEmpty(selector.TitleContains) && !WindowTitles.Contains(window.Title, selector.TitleContains))
-            differences.Add($"its title '{window.Title}' does not contain '{selector.TitleContains}'");
-
-        if (!string.IsNullOrEmpty(selector.TitleEquals) && !WindowTitles.AreEqual(window.Title, selector.TitleEquals))
-            differences.Add($"its title is '{window.Title}', not '{selector.TitleEquals}'");
-
-        if (selector.TitleRegex is { Length: > 0 } pattern && WindowTitles.CompileTitleRegex(pattern, out _) is { } regex)
-        {
-            bool matches;
-            try
-            {
-                matches = WindowTitles.Matches(window.Title, regex);
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                matches = false;
-            }
-
-            if (!matches)
-                differences.Add($"its title '{window.Title}' does not match titleRegex '{pattern}'");
-        }
-
-        return differences;
     }
 
     private static string Describe(WindowInfo window) =>

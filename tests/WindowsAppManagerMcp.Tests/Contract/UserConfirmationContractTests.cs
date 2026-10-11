@@ -232,6 +232,35 @@ public sealed class UserConfirmationContractTests : IDisposable
     }
 
     [Fact]
+    public async Task CloseWindowsBatch_OfSelectorItems_AsksAboutTheResolvedWindows_AndClosesThem()
+    {
+        // Arrange - each item names its window as window {handle, processId}; the question must list the windows the
+        // selectors resolved to, and the close must use their handles (roadmap M2.4)
+        var windows = FourWindows.Select(h => TypicalDesktop.Windows.First(w => w.Handle == (nint)h)).ToList();
+        _services.Windows.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>()))
+            .Returns((WindowSelector s) => WindowResolution.Found(windows.First(w => w.Handle == (nint)s.Handle!.Value)));
+        _services.Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(WindowCloseResult.Sent).ToList());
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+        var arguments = new Dictionary<string, object?>
+        {
+            ["windows"] = windows.Select(w => new { window = new { handle = w.Handle.ToInt64(), processId = w.ProcessId } }).ToArray(),
+            ["delayBetweenMs"] = 0,
+            ["waitMs"] = 0
+        };
+
+        // Act
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        // Assert
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        Payload(result).GetProperty("succeeded").GetInt32().Should().Be(4);
+        _questions.Should().ContainSingle().Which.Should().Contain("close 4 windows").And.Contain("'notes.txt - Notepad' (notepad, PID 10244)");
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(
+            It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(windows.Select(w => w.Handle))), false, 0, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CloseWindowsBatch_AWindowThatChangedHandsWhileTheUserWasAsked_IsNotClosed()
     {
         // Arrange - while the question is open, Notepad's handle is reused by another process's window

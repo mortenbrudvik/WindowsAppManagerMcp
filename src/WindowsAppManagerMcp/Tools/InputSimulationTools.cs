@@ -32,7 +32,7 @@ public class InputSimulationTools
 
     internal const string AllowHostTargetDescription =
         "Allow input to the agent's own host window: the terminal, editor or chat app this server was started from. Works only " +
-        "together with windowHandle naming that window; set it only when the user explicitly asked for input there. Default: false";
+        "together with windowHandle (or window.handle) naming that window; set it only when the user explicitly asked for input there. Default: false";
 
     internal const string ReleaseHeldModifiersDescription =
         "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with " +
@@ -261,10 +261,32 @@ public class InputSimulationTools
     /// <summary>
     /// The input's target: windowHandle, or the window selector resolved to one window (roadmap M2.4), before the input
     /// service takes the input gate. The resolved window is passed exactly as a windowHandle would be, so the input guard,
-    /// the host guard (allowHostTarget still needs the user's explicit request) and the target policy check it as they
-    /// check any windowHandle.
+    /// the host guard and the target policy check it as they check any windowHandle.
     /// </summary>
-    /// <exception cref="ToolErrorException">Both were given, or the selector names no single window; nothing is sent.</exception>
-    private InputTarget Target(long? windowHandle, WindowSelector? window, bool allowHostTarget) =>
-        new(WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle"), allowHostTarget);
+    /// <remarks>
+    /// The guard's rules for a window the caller chose do not take a selector that chose nothing: a bare
+    /// <c>{"foreground": true}</c> is the implicit target (whatever is in front) under another name, so it is passed as no
+    /// windowHandle, and destructive chords and the host rule still apply to it as without windowHandle. allowHostTarget
+    /// lifts the host guard only for a window named by its handle (windowHandle or window.handle): a selector that finds
+    /// windows by name could resolve to the agent's own terminal without the caller ever seeing it.
+    /// </remarks>
+    /// <exception cref="ToolErrorException">
+    /// Both were given, allowHostTarget came with a selector that names no handle, or the selector names no single window;
+    /// nothing is sent.
+    /// </exception>
+    private InputTarget Target(long? windowHandle, WindowSelector? window, bool allowHostTarget)
+    {
+        if (windowHandle == null && WindowTargeting.IsBareForeground(window))
+            return new InputTarget(null, allowHostTarget);
+
+        if (windowHandle == null && allowHostTarget && window is { Handle: null })
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "allowHostTarget lifts the guard on the agent's own terminal or chat window only for a window named by its handle " +
+                "(windowHandle, or window.handle), not for a selector that finds windows by name. Find the window with find_windows " +
+                "and pass its handle, only when the user explicitly asked for input there. Nothing was sent.");
+        }
+
+        return new InputTarget(WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle"), allowHostTarget);
+    }
 }

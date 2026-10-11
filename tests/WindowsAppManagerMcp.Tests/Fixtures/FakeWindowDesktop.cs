@@ -39,9 +39,12 @@ public sealed class FakeWindowDesktop
 
     public Mock<INativeWindowWrapper> Native { get; } = new();
 
+    /// <summary>Recognizes the agent's host windows; none unless a test says so.</summary>
+    public Mock<IHostGuard> HostGuard { get; } = new();
+
     /// <summary>A window service over this desktop.</summary>
     public WindowService CreateService() =>
-        new(TestDataFactory.CreateMockMonitorService().Object, Native.Object, Mock.Of<IHostGuard>());
+        new(TestDataFactory.CreateMockMonitorService().Object, Native.Object, HostGuard.Object);
 
     /// <summary>Adds a window behind the ones added before.</summary>
     public nint Add(

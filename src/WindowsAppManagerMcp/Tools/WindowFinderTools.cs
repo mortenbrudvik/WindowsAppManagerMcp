@@ -31,7 +31,8 @@ public class WindowFinderTools
                  " The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must " +
                  "name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 " +
                  "candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: " +
-                 "true is the window in front; handle plus processId or a title refuses a reused handle (HandleMismatch)." + TitleNote +
+                 "true is the window in front (alone, input tools take it as no windowHandle and close tools refuse it); handle plus " +
+                 "processId or a title refuses a reused handle (HandleMismatch)." + TitleNote +
                  " An invalid titleRegex or limit fails with InvalidArguments.")]
     public IReadOnlyList<WindowInfoDto> FindWindows(
         [Description("Partial text to match in window title (case-insensitive)")]
@@ -110,7 +111,8 @@ public class WindowFinderTools
     [McpServerTool(Name = "get_window_info", Title = "Get Window Info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, " +
                  "title, process and state; 'standard' (default) what find_windows reports; 'full' adds visibleBounds (the frame you see), " +
-                 "clientBounds (the client area on screen), isForeground, zOrder (0 is the front window), isTopmost, isEnabled (false: a " +
+                 "clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones " +
+                 "included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a " +
                  "modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked " +
                  "and tool windows are read too when named by handle. errorCode InvalidHandle: the handle is no window; WindowNotFound, " +
                  "AmbiguousWindow (with candidates) or HandleMismatch: the selector named no single window.")]
