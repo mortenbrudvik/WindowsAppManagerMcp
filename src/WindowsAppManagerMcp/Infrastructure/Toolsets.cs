@@ -84,7 +84,8 @@ public static class Toolsets
                 [
                     "find_windows", "get_all_windows", "get_foreground_window", "focus_window", "move_window", "resize_window",
                     "set_window_bounds", "set_window_state", "snap_window", "move_window_to_monitor", "close_window",
-                    "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch", "close_windows_batch"
+                    "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch", "close_windows_batch",
+                    "get_owned_windows"
                 ]),
             new("monitors", OnByDefault: true,
                 "The monitors: bounds, work areas, scale factors.",
@@ -102,8 +103,8 @@ public static class Toolsets
                 "Start applications, optionally waiting for their window.",
                 ["launch_application", "launch_applications_batch"]),
             new("process", OnByDefault: true,
-                "List processes and close or end one.",
-                ["list_processes", "kill_process"]),
+                "List processes and close or end one, or close an application's windows gracefully.",
+                ["list_processes", "kill_process", "close_application"]),
             new("layouts", OnByDefault: true,
                 "Save, apply and manage window layout presets.",
                 ["list_layouts", "get_layout", "save_layout", "apply_layout", "delete_layout"]),

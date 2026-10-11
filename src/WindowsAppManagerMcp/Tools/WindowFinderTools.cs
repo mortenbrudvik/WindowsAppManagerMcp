@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -74,6 +75,39 @@ public class WindowFinderTools
                 "No window is in the foreground right now: windows may be switching, or a UAC prompt or the lock screen is shown. " +
                 "Call get_foreground_window again shortly; do not send keyboard input until a window is in the foreground.");
         return ToDto(window);
+    }
+
+    [McpServerTool(Name = "get_owned_windows", Title = "Get Owned Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("List the windows a window owns, directly or through its other owned windows, in z-order: its dialogs (Save As, " +
+                 "message boxes, 'Save changes?' prompts), popups and palettes. Each has handle, title, className ('#32770' is a " +
+                 "standard dialog, also isDialog), process, ownerHandle, bounds, state and isVisible; isBlocking: true marks the modal " +
+                 "dialog that takes the window's input (the window is disabled), and isBlocked says the window has one. Hidden helper " +
+                 "windows (IME) only with includeHidden. Dialogs drawn inside the window (a WinUI ContentDialog) are not windows: " +
+                 "use get_ui_elements. errorCode InvalidHandle: the handle is not a window.")]
+    public OwnedWindowsResult GetOwnedWindows(
+        [Description("Window handle (as integer) of the owner")]
+        long handle,
+        [Description("Also list hidden owned windows, such as IME and other helper windows (default: false)")]
+        bool includeHidden = false)
+    {
+        if (!_windowService.IsValidWindow((nint)handle))
+        {
+            return new OwnedWindowsResult(false, handle, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(WindowErrorCode.InvalidHandle));
+        }
+
+        var owned = _windowService.GetOwnedWindows((nint)handle, includeHidden);
+        return new OwnedWindowsResult(true, handle, owned.Any(o => o.IsBlocking), owned.Select(o => new OwnedWindowDto(
+            Handle: o.Window.Handle.ToInt64(),
+            Title: o.Window.Title,
+            ClassName: o.Window.ClassName,
+            ProcessName: o.Window.ProcessName,
+            ProcessId: o.Window.ProcessId,
+            OwnerHandle: o.Window.OwnerHandle?.ToInt64(),
+            Bounds: new BoundsDto(o.Window.Bounds.X, o.Window.Bounds.Y, o.Window.Bounds.Width, o.Window.Bounds.Height),
+            State: o.Window.State.ToString().ToLowerInvariant(),
+            IsVisible: o.Window.IsVisible,
+            IsDialog: o.IsDialog,
+            IsBlocking: o.IsBlocking ? true : null)).ToList());
     }
 
     private static WindowInfoDto ToDto(WindowInfo info) => new(

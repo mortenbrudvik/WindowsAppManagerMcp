@@ -38,6 +38,15 @@ public interface IUIAutomationWrapper
     string? GetBrowserContent(nint browserHandle, string browserType, int? maxLength = null);
 
     /// <summary>
+    /// Asks the window to close through UI Automation (WindowPattern.Close), as its title bar's Close button does: the
+    /// application can still prompt to save or refuse. close_application uses it for a packaged app's frame window when
+    /// Windows does not accept the close message (roadmap M2.5). It is an action, not a read: it changes the window.
+    /// </summary>
+    /// <param name="hwnd">The window handle.</param>
+    /// <returns>True when the close was requested; false when the window has no Window pattern, is gone, or the call failed.</returns>
+    bool CloseWindow(nint hwnd);
+
+    /// <summary>
     /// Checks if UI Automation is available on this system.
     /// </summary>
     /// <returns>True if UI Automation is available.</returns>

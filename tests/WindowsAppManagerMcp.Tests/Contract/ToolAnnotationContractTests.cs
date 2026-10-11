@@ -78,7 +78,7 @@ public class ToolAnnotationContractTests
         // the image file at outputPath)
         string[] destructive =
         [
-            "close_window", "close_windows_batch", "kill_process", "delete_layout", "save_layout",
+            "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
             "click", "right_click", "double_click", "type_text", "send_keys",
             "launch_application", "launch_applications_batch",
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements"
@@ -102,7 +102,8 @@ public class ToolAnnotationContractTests
         [
             "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",
             "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
-            "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info"
+            "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info",
+            "get_owned_windows"
         ]);
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only

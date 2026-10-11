@@ -6,7 +6,7 @@ using WindowsAppManagerMcp.Infrastructure;
 namespace WindowsAppManagerMcp.Tests.Contract;
 
 /// <summary>
-/// Contract: kill_process and close_windows_batch ask the user, not the model, to confirm (roadmap M2.10) when the MCP
+/// Contract: kill_process, close_windows_batch and close_application ask the user, not the model, to confirm (roadmap M2.10, M2.5) when the MCP
 /// client can ask (elicitation), with the names, PIDs and titles of what would be closed, and fall back to their confirm
 /// argument when it cannot. The question is asked before the input gate is taken: a user who takes minutes to answer must
 /// not hold up every input and window call (the wave-A review's hazard). Both protocol paths are covered: the SDK
@@ -333,6 +333,94 @@ public sealed class UserConfirmationContractTests : IDisposable
 
         result.IsError.Should().NotBe(true);
         _questions.Should().BeEmpty();
+    }
+
+    /// <summary>Four Notepad windows of one process, as close_application finds them in the Alt-Tab set.</summary>
+    private IReadOnlyList<WindowInfo> FourNotepadWindows()
+    {
+        var windows = TypicalDesktop.Windows.Take(4)
+            .Select((w, i) => w with { Title = $"note{i}.txt - Notepad", ProcessId = TypicalDesktop.NotepadProcessId, ProcessName = "notepad" })
+            .ToList();
+        _services.Windows.Setup(w => w.GetApplicationWindows()).Returns(windows);
+        foreach (var window in windows)
+        {
+            _services.Windows.Setup(w => w.GetWindowInfo(window.Handle)).Returns(window);
+        }
+
+        return windows;
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task CloseApplication_OfMoreThanThreeWindows_AsksTheUser_OutsideTheGate_AndClosesAfterTheirYes(string? revision)
+    {
+        // Arrange
+        var windows = FourNotepadWindows();
+        var gateHeldDuringTheClose = new List<bool>();
+        _services.Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), false))
+            .Callback(() => gateHeldDuringTheClose.Add(InputGate.IsHeld))
+            .Returns((nint h, bool _) => WindowCloseResult.Sent(h));
+        await using var server = await StartAsync(revision, _ =>
+        {
+            // The windows close once the user said yes
+            _services.Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
+            return Answer("accept", confirm: true);
+        });
+
+        // Act - the model did not set confirm
+        var result = await server.CallToolAsync("close_application",
+            new Dictionary<string, object?> { ["processId"] = TypicalDesktop.NotepadProcessId });
+
+        // Assert
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        Payload(result).GetProperty("status").GetString().Should().Be("closed");
+        _questions.Should().ContainSingle().Which.Should()
+            .Contain("close notepad (PID 10244): 4 windows")
+            .And.Contain("'note0.txt - Notepad' (notepad, PID 10244)");
+        _gateWasFreeDuringTheQuestion.Should().BeTrue("a question must never hold the input gate");
+        gateHeldDuringTheClose.Should().HaveCount(4).And.OnlyContain(held => held, "the close messages are sent inside the gate");
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+        windows.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task CloseApplication_TheUserDeclines_IsConfirmationDeclined_AndNothingIsClosed()
+    {
+        // Arrange
+        FourNotepadWindows();
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+
+        // Act
+        var result = await server.CallToolAsync("close_application",
+            new Dictionary<string, object?> { ["processName"] = "notepad" });
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationDeclined));
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseApplication_AWindowThatChangedHandsWhileTheUserWasAsked_IsNotClosed()
+    {
+        // Arrange - while the question is open, the first window's handle is reused by another process
+        var windows = FourNotepadWindows();
+        await using var server = await StartAsync(null, _ =>
+        {
+            _services.Windows.Setup(w => w.GetWindowInfo(windows[0].Handle)).Returns(windows[0] with { ProcessId = 777, ProcessName = "malware" });
+            return Answer("accept", confirm: true);
+        });
+
+        // Act
+        var result = await server.CallToolAsync("close_application",
+            new Dictionary<string, object?> { ["processId"] = TypicalDesktop.NotepadProcessId });
+
+        // Assert
+        var items = Payload(result).GetProperty("windows").EnumerateArray().ToList();
+        items[0].GetProperty("status").GetString().Should().Be("notSent");
+        items[0].GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        _services.Windows.Verify(w => w.CloseWindow(windows[0].Handle, It.IsAny<bool>()), Times.Never);
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), false), Times.Exactly(3));
     }
 
     [Fact]

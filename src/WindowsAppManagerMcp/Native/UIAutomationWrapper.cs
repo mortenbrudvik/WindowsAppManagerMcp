@@ -43,6 +43,28 @@ public class UIAutomationWrapper : IUIAutomationWrapper
     }
 
     /// <inheritdoc />
+    public bool CloseWindow(nint hwnd)
+    {
+        try
+        {
+            UiaClientStartup.Shared.EnsureStarted();
+            var element = AutomationElement.FromHandle(hwnd);
+            if (element == null || !element.TryGetCurrentPattern(WindowPattern.Pattern, out var pattern) || pattern is not WindowPattern window)
+            {
+                return false;
+            }
+
+            window.Close();
+            return true;
+        }
+        catch
+        {
+            // Gone, not a window, or the provider failed: nothing was closed through UI Automation
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public string? GetWindowTitle(nint hwnd)
     {
         try

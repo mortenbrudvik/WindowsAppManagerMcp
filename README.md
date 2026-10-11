@@ -93,11 +93,11 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (48)
+## Available Tools (50)
 
 | Category | Tools |
 |----------|-------|
-| Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window` |
+| Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window`, `get_owned_windows` |
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
@@ -106,7 +106,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
-| App Launch | `launch_application`, `list_processes`, `kill_process` |
+| App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 | Server Info | `get_server_info` |
 <!-- tools:end tool-table -->
@@ -343,7 +343,7 @@ WindowsAppManagerMcp/
 - **Confirmation Required** - Process termination requires explicit confirmation: when your MCP client supports elicitation, the server asks you directly (process name, PID, windows) and does nothing unless you confirm; otherwise the agent must pass `confirm: true`
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
 - **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume, and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
-- **Protected Windows** - `close_window` and `close_windows_batch` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in unless `force` is true, and closing more than 3 windows in one batch requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`)
+- **Protected Windows** - `close_window`, `close_windows_batch` and `close_application` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in (the window tools unless `force` is true; `close_application` always), and closing more than 3 windows at once requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`). Closes are verified: the result says whether the window closed or an app is waiting behind a "Save changes?" prompt, which the agent never answers on its own
 - **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), so a hung app cannot block the other tools
 - **Read-Only Mode** - `WAM_READ_ONLY=1` serves only the tools annotated read-only, and `WAM_TOOLSETS`/`WAM_EXCLUDE_TOOLS` leave out whole groups or single tools; a tool that is not served cannot be called (see [Toolsets](docs/TOOLS.md#toolsets))
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.

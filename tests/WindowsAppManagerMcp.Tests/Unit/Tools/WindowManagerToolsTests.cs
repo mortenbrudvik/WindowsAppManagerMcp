@@ -288,7 +288,7 @@ public class WindowManagerToolsTests
     #region CloseWindow Tests
 
     [Fact]
-    public void CloseWindow_WithInvalidHandle_ReturnsFailure()
+    public async Task CloseWindow_WithInvalidHandle_ReturnsFailure()
     {
         // Arrange
         _mockWindowService.Setup(w => w.IsValidWindow(It.IsAny<nint>()))
@@ -296,7 +296,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(99999);
+        var result = await sut.CloseWindow(99999);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -304,7 +304,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void CloseWindow_WithValidHandle_CallsService()
+    public async Task CloseWindow_WithValidHandle_CallsService()
     {
         // Arrange
         var handle = new nint(12345);
@@ -313,7 +313,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(12345);
+        var result = await sut.CloseWindow(12345, waitMs: 0);
 
         // Assert
         result.Success.Should().BeTrue();
@@ -321,7 +321,7 @@ public class WindowManagerToolsTests
     }
 
     [Fact]
-    public void CloseWindow_WhenServiceReturnsFalse_ReturnsFalse()
+    public async Task CloseWindow_WhenServiceReturnsFalse_ReturnsFalse()
     {
         // Arrange
         var handle = new nint(12345);
@@ -331,7 +331,7 @@ public class WindowManagerToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.CloseWindow(12345);
+        var result = await sut.CloseWindow(12345, waitMs: 0);
 
         // Assert
         result.Success.Should().BeFalse();

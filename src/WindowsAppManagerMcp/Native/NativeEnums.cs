@@ -53,6 +53,7 @@ internal static class NativeEnums
     public const uint WS_MINIMIZE = 0x20000000;
     public const uint WS_MAXIMIZE = 0x01000000;
     public const uint WS_CAPTION = 0x00C00000;
+    public const uint WS_DISABLED = 0x08000000;
 
     // Extended window styles (GWL_EXSTYLE)
     public const long WS_EX_TOOLWINDOW = 0x00000080;

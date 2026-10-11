@@ -34,6 +34,7 @@ public static class ToolDocCatalog
             new("find_windows", "Find windows by criteria", "titleContains", "processName", "processId", "handle", "className"),
             new("get_all_windows", "List user-facing app windows", "includeMinimized"),
             new("get_foreground_window", "Get focused window"),
+            new("get_owned_windows", "Dialogs and popups a window owns; which one blocks it", "handle", "includeHidden"),
         ]),
         new("Window Control",
         [
@@ -42,7 +43,7 @@ public static class ToolDocCatalog
             new("set_window_bounds", "Move + resize combined", "handle", "x", "y", "width", "height"),
             new("set_window_state", "Min/max/restore", "handle", "state"),
             new("focus_window", "Bring to foreground, verified; reports what is in front", "handle"),
-            new("close_window", "Close gracefully (refuses shell and host windows)", "handle", "force"),
+            new("close_window", "Close gracefully and verify: closed, hidden, stillOpen or promptShown", "handle", "waitMs", "force"),
             new("snap_window", "Snap to preset position", "handle", "position", "monitorIndex"),
             new("move_window_to_monitor", "Move to monitor", "handle", "monitorIndex", "positioning"),
         ]),
@@ -51,7 +52,7 @@ public static class ToolDocCatalog
             new("set_windows_bounds_batch", "Move/resize multiple windows", "placements"),
             new("snap_windows_batch", "Snap multiple windows", "placements"),
             new("set_windows_state_batch", "Set state of multiple windows", "changes"),
-            new("close_windows_batch", "Close multiple windows", "windows", "confirm (more than 3 windows)", "force"),
+            new("close_windows_batch", "Close multiple windows and verify each", "windows", "waitMs", "confirm (more than 3 windows)", "force"),
             new("launch_applications_batch", "Launch multiple applications", "applications", "waitForWindows"),
         ]),
         new("Monitor Info",
@@ -105,6 +106,7 @@ public static class ToolDocCatalog
             new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow"),
             new("list_processes", "List running processes", "nameFilter", "includeWindowless"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
+            new("close_application", "Close an app's Alt+Tab windows gracefully; reports prompts and what remains", "processName", "processId", "handle", "timeoutMs"),
         ]),
         new("Layout Presets",
         [

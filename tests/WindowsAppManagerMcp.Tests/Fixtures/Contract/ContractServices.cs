@@ -56,6 +56,7 @@ public sealed class ContractServices : IDisposable
     public Mock<IProcessSecurityProbe> SecurityProbe { get; } = new();
     public Mock<IInputSafetyInfo> Safety { get; } = new();
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
+    public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
@@ -64,6 +65,7 @@ public sealed class ContractServices : IDisposable
     {
         // The SDK creates the tool classes for every call from these registrations
         services.AddSingleton(Windows.Object);
+        services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);
@@ -144,7 +146,27 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, SnapPosition _, int? _, bool _) => WindowChangeResult.Done(handle));
         Windows.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, MonitorPositioning _, bool _) => WindowChangeResult.Done(handle));
-        Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>())).Returns((nint handle, bool _) => new WindowCloseResult(handle, true));
+        // A window that was sent WM_CLOSE leaves the Alt-Tab set, and the verifier reports it closed (roadmap M2.5)
+        var closed = new System.Collections.Concurrent.ConcurrentDictionary<nint, bool>();
+        Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>())).Returns((nint handle, bool _) =>
+        {
+            closed[handle] = true;
+            return new WindowCloseResult(handle, true);
+        });
+        Windows.Setup(w => w.GetApplicationWindows()).Returns(() => windows.Where(w => !closed.ContainsKey(w.Handle)).ToList());
+        Windows.Setup(w => w.GetOwnedWindows((nint)TypicalDesktop.NotepadHandle, It.IsAny<bool>())).Returns(
+        [
+            new OwnedWindowInfo(notepad with
+            {
+                Handle = 0x1A0C00, Title = "Save As", ClassName = "#32770", OwnerHandle = (nint)TypicalDesktop.NotepadHandle,
+                Bounds = new WindowRect(400, 200, 960, 640)
+            }, IsDialog: true, IsBlocking: true)
+        ]);
+        CloseVerifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, TimeSpan _, CancellationToken _) =>
+                handles.Select(h => new CloseObservation(h, CloseStatus.Closed)).ToList());
+        CloseVerifier.Setup(v => v.WaitForProcessesToExitAsync(It.IsAny<IReadOnlyList<int>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(h => new WindowCloseResult(h, true)).ToList());
         Windows.Setup(w => w.SetWindowBoundsBatchAsync(It.IsAny<IReadOnlyList<(nint, int, int, int, int, bool)>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -267,6 +289,8 @@ public sealed class ContractServices : IDisposable
         Windows.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns(new TargetPolicyVerdict(true, null, null));
         Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()))
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
+        Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
+        Windows.Setup(w => w.GetOwnedWindows(It.IsAny<nint>(), It.IsAny<bool>())).Returns([]);
         Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) =>
                 handles.Select(h => new WindowCloseResult(h, false, WindowErrorCode.InvalidHandle, invalid)).ToList());

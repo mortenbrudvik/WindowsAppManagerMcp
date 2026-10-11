@@ -46,13 +46,19 @@ public record BatchWindowResult(
     IReadOnlyList<WindowResultItem> Results
 );
 
+/// <summary>
+/// One window of a window batch. Status and Prompt are close_windows_batch's (roadmap M2.5): what became of the window
+/// after its close message, and the prompt that keeps it open; the other batches leave them out.
+/// </summary>
 public record WindowResultItem(
     long Handle,
     bool Success,
     BoundsDto? NewBounds = null,
     string? NewState = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    string? Status = null,
+    ClosePromptDto? Prompt = null
 );
 
 public record BatchLaunchResult(
