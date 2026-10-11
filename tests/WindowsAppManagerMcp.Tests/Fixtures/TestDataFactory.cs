@@ -133,6 +133,10 @@ public static class TestDataFactory
                 It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>()))
             .Returns((nint handle, int _, int _, int _, int _, bool _) => WindowChangeResult.Done(handle));
+        mock.Setup(w => w.SetWindowState(It.IsAny<nint>(), It.IsAny<WindowStateRequest>()))
+            .Returns((nint handle, WindowStateRequest _) => WindowChangeResult.Done(handle));
+        mock.Setup(w => w.MoveWindowToMonitor(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<MonitorPositioning>(), It.IsAny<bool>()))
+            .Returns((nint handle, int _, MonitorPositioning _, bool _) => WindowChangeResult.Done(handle));
 
         // GetWindowInfo returns the first matching window, or a default for any valid handle
         foreach (var window in testWindows)

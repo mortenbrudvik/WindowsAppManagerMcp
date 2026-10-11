@@ -4,7 +4,7 @@
     {
       "name": "apply_layout",
       "title": "Apply Layout",
-      "description": "Apply a previously saved layout preset. Attempts to match saved windows to current windows and restore their positions. success is true only if every placement was arranged (and focused, for a placement with focus); otherwise errorCode and errors say which placements were not found, launched, arranged or focused. focus lists the outcome of each focus placement that was arranged, with the same fields as focus_window (isForeground, foregroundHandle, blockingPopup, inMenuMode, errorCode). A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).",
+      "description": "Apply a previously saved layout preset. Takes one snapshot of the open windows and gives each placement its own window, never one window to two placements, preferring the window whose title, class and executable match what save_layout recorded. success is true only if every placement was arranged (and focused, for a placement with focus); status is applied, partial or failed, and placements reports each placement in order (status applied, notFound, notApplicable or failed, with window, errorCode and error). A placement matchBy cannot match (title_only on a placement without titleContains) is notApplicable with NoMatchCriterion, and one on a monitor that does not exist fails with InvalidMonitorIndex; neither falls back to another window or monitor. focus lists the outcome of each focus placement that was arranged, with the same fields as focus_window (isForeground, foregroundHandle, blockingPopup, inMenuMode, errorCode). A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -13,7 +13,7 @@
             "type": "string"
           },
           "matchBy": {
-            "description": "How to match saved windows to current windows: 'process_and_title' (default), 'process_only' or 'title_only'. Any other value fails with InvalidMatchBy.",
+            "description": "How to match saved windows to current windows: 'process_and_title' (default), 'process_only' or 'title_only' (only for placements with titleContains; save_layout records none). Any other value fails with InvalidMatchBy.",
             "default": "process_and_title",
             "type": "string",
             "enum": [
@@ -1574,7 +1574,7 @@
     {
       "name": "save_layout",
       "title": "Save Layout",
-      "description": "Save the current window arrangement as a named preset. Captures positions of visible windows relative to their monitors. Saving under an existing name replaces that preset (replaced=true). Fails with NoWindowsCaptured, without touching an existing preset, when no window matches the filters.",
+      "description": "Save the current window arrangement as a named preset. Captures positions of visible windows relative to their monitors. Each placement records the window's exact process name, class, title, executable path, z-order ordinal and state (normal or maximized), so apply_layout can tell several windows of one app apart; minimized windows are not saved, and no launch command is recorded. Saving under an existing name replaces that preset (replaced=true). Fails with NoWindowsCaptured, without touching an existing preset, when no window matches the filters.",
       "inputSchema": {
         "type": "object",
         "properties": {

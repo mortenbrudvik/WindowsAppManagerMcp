@@ -174,6 +174,47 @@ public class ToolResultSerializationTests
         focus.GetProperty("error").GetString().Should().Contain("foreground lock");
     }
 
+    [Fact]
+    public async Task ApplyLayout_ThroughMcpServer_ReturnsTheStatusAndEachPlacement_AsAnError_WhenPartial()
+    {
+        // Arrange - roadmap M2.8: one placement arranged, one not found, one skipped
+        var layoutService = new Mock<ILayoutService>();
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LayoutApplyResult(
+                Success: false,
+                PresetName: "work-setup",
+                WindowsArranged: 1,
+                WindowsNotFound: 1,
+                Errors: ["No open window matched placement 1 (process 'slack')", "Skipped placement 2 (no matcher): ..."],
+                ErrorCode: nameof(LayoutErrorCode.WindowNotFound),
+                Placements:
+                [
+                    new LayoutPlacementResult(0, LayoutPlacementStatus.Applied, new LayoutWindowRef(0x101, "Inbox - Mail - Google Chrome", "chrome")),
+                    new LayoutPlacementResult(1, LayoutPlacementStatus.NotFound, ErrorCode: nameof(LayoutErrorCode.WindowNotFound),
+                        Error: "No open window matched placement 1 (process 'slack')"),
+                    new LayoutPlacementResult(2, LayoutPlacementStatus.NotApplicable, ErrorCode: nameof(LayoutErrorCode.NoMatchCriterion),
+                        Error: "Skipped placement 2 (no matcher): ...")
+                ]));
+        await using var server = await InProcessMcpServer.StartAsync(
+            [], builder => builder.AddToolErrorReporting().WithServerTools(new LayoutPresetTools(layoutService.Object)));
+
+        // Act
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });
+
+        // Assert - a partial apply is not a success, so the client sees isError
+        result.IsError.Should().BeTrue();
+        var json = JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        json.GetProperty("success").GetBoolean().Should().BeFalse();
+        json.GetProperty("status").GetString().Should().Be("partial");
+        var placements = json.GetProperty("placements").EnumerateArray().ToList();
+        placements.Select(p => p.GetProperty("status").GetString()).Should().Equal("applied", "notFound", "notApplicable");
+        placements[0].GetProperty("window").GetProperty("handle").GetInt64().Should().Be(0x101);
+        placements[0].GetProperty("window").GetProperty("processName").GetString().Should().Be("chrome");
+        placements[0].TryGetProperty("errorCode", out _).Should().BeFalse("an applied placement has no error code");
+        placements[1].TryGetProperty("window", out _).Should().BeFalse();
+        placements[2].GetProperty("errorCode").GetString().Should().Be(nameof(LayoutErrorCode.NoMatchCriterion));
+    }
+
     /// <summary>
     /// The type the SDK serializes for the tool: its return type, unwrapped from Task, or for a tool
     /// that returns <see cref="CallToolResult"/> the payload type of its text block. Null when there

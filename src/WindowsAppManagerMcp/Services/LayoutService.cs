@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Models.Results;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -29,7 +30,10 @@ public class LayoutService : ILayoutService
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+
+        // A placement's state is written as "normal", "maximized" or "minimized"; any case is read back
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
     private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
@@ -267,6 +271,8 @@ public class LayoutService : ILayoutService
         var windows = _windowService.GetAllWindows(includeMinimized: false);
         var monitors = _monitorService.GetAllMonitors();
         var placements = new List<WindowPlacement>();
+        var ordinals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var exePaths = new Dictionary<int, string?>();
 
         foreach (var window in windows)
         {
@@ -298,18 +304,34 @@ public class LayoutService : ILayoutService
             relW = Math.Clamp(relW, 0.1, 1);
             relH = Math.Clamp(relH, 0.1, 1);
 
+            // Which of the process's windows this is, in z-order; apply uses it to break ties
+            var ordinal = ordinals.GetValueOrDefault(window.ProcessName);
+            ordinals[window.ProcessName] = ordinal + 1;
+
+            // The title of a window the user's policy denies (a password manager's database name) is not written to disk
+            var denied = _windowService.EvaluateTargetPolicy(window.Handle) is { Allowed: false };
+
             var placement = new WindowPlacement(
                 Matcher: new WindowMatcher(
                     TitleContains: null,
                     ProcessName: window.ProcessName,
-                    ClassName: null
-                ),
+                    ClassName: string.IsNullOrEmpty(window.ClassName) ? null : window.ClassName
+                )
+                {
+                    ExactProcessName = true,
+                    TitlePattern = denied || string.IsNullOrEmpty(window.Title) ? null : Truncate(window.Title, MaxTitlePatternLength),
+                    ExePath = ExePathOf(window.ProcessId, exePaths),
+                    Ordinal = ordinal
+                },
                 MonitorIndex: window.MonitorIndex,
                 Position: new RelativePosition(relX, relY, relW, relH),
                 LaunchCommand: null,
                 Focus: false,
                 Order: placements.Count
-            );
+            )
+            {
+                State = window.State
+            };
 
             placements.Add(placement);
         }
@@ -378,65 +400,102 @@ public class LayoutService : ILayoutService
         }
 
         var monitors = _monitorService.GetAllMonitors();
-        var errors = new List<string>();
-        string? errorCode = null;
-        var arranged = 0;
-        var notFound = 0;
-        var launched = 0;
-        List<FocusResult>? focusResults = null;
-
-        void AddError(LayoutErrorCode code, string message) => AddErrorWithCode(code.ToString(), message);
-
-        void AddErrorWithCode(string code, string message)
-        {
-            errors.Add(message);
-            errorCode ??= code;
-        }
-
-        // Sort placements by order
         var orderedPlacements = preset.Placements.OrderBy(p => p.Order).ToList();
 
-        for (var index = 0; index < orderedPlacements.Count; index++)
+        // One snapshot of the windows get_all_windows lists; every placement is matched against it, so a window is
+        // given to at most one placement
+        var snapshot = _windowService.GetAllWindows(includeMinimized: true);
+        var plans = PlanPlacements(orderedPlacements, snapshot, monitors, matchBy);
+        var assignedTo = plans
+            .Where(plan => plan.Window != null)
+            .ToDictionary(plan => plan.Window!.Handle, plan => plan.Placement.Order);
+
+        var results = new List<LayoutPlacementResult>(plans.Count);
+        List<FocusResult>? focusResults = null;
+
+        for (var index = 0; index < plans.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var placement = orderedPlacements[index];
-            var label = DescribePlacement(placement);
-            var outcome = await ApplyPlacementAsync(placement, label).ConfigureAwait(false);
+            var plan = plans[index];
+            LayoutPlacementResult result;
+            string outcome;
+            try
+            {
+                (result, outcome) = await ApplyPlacementAsync(plan).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // One placement's failure never aborts the others
+                result = new LayoutPlacementResult(
+                    plan.Placement.Order,
+                    LayoutPlacementStatus.Failed,
+                    plan.Window is { } window ? LayoutWindowRef.From(window) : null,
+                    ErrorCode: nameof(LayoutErrorCode.ArrangeFailed),
+                    Error: $"Could not arrange {plan.Label}: {ex.GetType().Name}: {ex.Message}");
+                outcome = "could not be arranged";
+            }
+
+            results.Add(result);
 
             // The client sees each placement's outcome as it happens: a layout that launches applications can take
             // several seconds per placement
-            progress?.Report(new OperationProgress(index + 1, orderedPlacements.Count,
-                $"{index + 1} of {orderedPlacements.Count}: {label} {outcome}"));
+            progress?.Report(new OperationProgress(index + 1, plans.Count,
+                $"{index + 1} of {plans.Count}: {plan.Label} {outcome}"));
         }
 
+        var errors = results.Where(r => r.Error != null).Select(r => r.Error!).ToList();
         return new LayoutApplyResult(
-            Success: errors.Count == 0,
+            Success: results.All(r => r.Status == LayoutPlacementStatus.Applied && r.ErrorCode == null),
             PresetName: name,
-            WindowsArranged: arranged,
-            WindowsNotFound: notFound,
-            WindowsLaunched: launched,
+            WindowsArranged: results.Count(r => r.Status == LayoutPlacementStatus.Applied),
+            WindowsNotFound: results.Count(r =>
+                r.Status == LayoutPlacementStatus.NotFound || r.ErrorCode == nameof(LayoutErrorCode.LaunchFailed)),
+            WindowsLaunched: results.Count(r => r.Launched == true),
             Errors: errors.Count > 0 ? errors : null,
-            ErrorCode: errorCode,
-            Focus: focusResults
+            ErrorCode: results.FirstOrDefault(r => r.ErrorCode != null)?.ErrorCode,
+            Focus: focusResults,
+            Placements: results
         );
 
-        // Arranges one placement and returns what happened to it, for the progress report
-        async Task<string> ApplyPlacementAsync(WindowPlacement placement, string label)
+        // Arranges one placement and returns what happened to it, and the outcome in words for the progress report
+        async Task<(LayoutPlacementResult Result, string Outcome)> ApplyPlacementAsync(PlacementPlan plan)
         {
-            // Find matching window
-            var window = FindMatchingWindows(placement.Matcher, matchBy).FirstOrDefault();
+            var placement = plan.Placement;
+            var label = plan.Label;
 
+            LayoutPlacementResult Result(string status, WindowInfo? window, string? errorCode = null, string? error = null,
+                bool launched = false, bool? focused = null) =>
+                new(placement.Order, status, window == null ? null : LayoutWindowRef.From(window),
+                    launched ? true : null, focused, errorCode, error);
+
+            if (plan.NotApplicable is { } notApplicable)
+            {
+                return (Result(LayoutPlacementStatus.NotApplicable, null, nameof(LayoutErrorCode.NoMatchCriterion), notApplicable),
+                    "was skipped: it has no criterion matchBy can use");
+            }
+
+            if (plan.MonitorError is { } monitorError)
+            {
+                return (Result(LayoutPlacementStatus.Failed, null, nameof(WindowErrorCode.InvalidMonitorIndex), monitorError),
+                    "was not arranged: its monitor does not exist");
+            }
+
+            var window = plan.Window;
+            var launched = false;
             if (window == null)
             {
                 if (!launchMissing || string.IsNullOrEmpty(placement.LaunchCommand))
                 {
-                    notFound++;
                     var hint = string.IsNullOrEmpty(placement.LaunchCommand)
                         ? string.Empty
                         : $"; set launchMissing=true to launch '{placement.LaunchCommand}'";
-                    AddError(LayoutErrorCode.WindowNotFound, $"No open window matched {label}{hint}");
-                    return "was not found";
+                    return (Result(LayoutPlacementStatus.NotFound, null, nameof(LayoutErrorCode.WindowNotFound),
+                        $"No open window matched {label}{hint}"), "was not found");
                 }
 
                 // Try to launch the application; a cancelled call stops waiting for its window
@@ -448,20 +507,27 @@ public class LayoutService : ILayoutService
 
                 if (!launchResult.Success)
                 {
-                    notFound++;
-                    AddError(LayoutErrorCode.LaunchFailed,
-                        $"Failed to launch '{placement.LaunchCommand}' for {label}: {launchResult.ErrorMessage ?? "unknown error"}");
-                    return "could not be launched";
+                    return (Result(LayoutPlacementStatus.Failed, null, nameof(LayoutErrorCode.LaunchFailed),
+                        $"Failed to launch '{placement.LaunchCommand}' for {label}: {launchResult.ErrorMessage ?? "unknown error"}"),
+                        "could not be launched");
                 }
 
-                launched++;
+                launched = true;
                 window = launchResult.WindowHandle is { } handle ? _windowService.GetWindowInfo(handle) : null;
                 if (window == null)
                 {
-                    notFound++;
-                    AddError(LayoutErrorCode.LaunchFailed,
-                        $"Launched '{placement.LaunchCommand}' for {label}, but its window could not be found");
-                    return "was launched, but its window was not found";
+                    return (Result(LayoutPlacementStatus.Failed, null, nameof(LayoutErrorCode.LaunchFailed),
+                        $"Launched '{placement.LaunchCommand}' for {label}, but its window could not be found", launched: true),
+                        "was launched, but its window was not found");
+                }
+
+                // A single-instance application can hand the launch to a window it already has open
+                if (!assignedTo.TryAdd(window.Handle, placement.Order))
+                {
+                    return (Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.LaunchFailed),
+                        $"Launched '{placement.LaunchCommand}' for {label}, but the window it brought up, '{window.Title}', " +
+                        $"was already given to placement {assignedTo[window.Handle]}", launched: true),
+                        "was launched, but its window belongs to another placement");
                 }
             }
 
@@ -469,102 +535,247 @@ public class LayoutService : ILayoutService
             // on screen, where a screenshot shows it)
             if (_windowService.EvaluateTargetPolicy(window.Handle) is { Allowed: false } verdict)
             {
-                AddErrorWithCode(nameof(WindowErrorCode.TargetDeniedByPolicy),
-                    $"Did not arrange window '{window.Title}' for {label}: {WindowService.WindowChangeRefusal(window.Handle, verdict)}");
-                return "was not arranged: the user's policy denies its window";
+                return (Result(LayoutPlacementStatus.Failed, window, nameof(WindowErrorCode.TargetDeniedByPolicy),
+                    $"Did not arrange window '{window.Title}' for {label}: {WindowService.WindowChangeRefusal(window.Handle, verdict)}",
+                    launched),
+                    "was not arranged: the user's policy denies its window");
             }
 
-            // Apply placement to the first matching window
-            var targetMonitor = monitors.ElementAtOrDefault(placement.MonitorIndex) ?? monitors[0];
-            var workArea = targetMonitor.WorkArea;
-
-            var x = (int)(workArea.X + placement.Position.X * workArea.Width);
-            var y = (int)(workArea.Y + placement.Position.Y * workArea.Height);
-            var w = (int)(placement.Position.Width * workArea.Width);
-            var h = (int)(placement.Position.Height * workArea.Height);
-
-            bool placed;
-            string? notPlaced = null;
+            string? notPlaced;
             try
             {
-                var change = _windowService.SetWindowBounds(window.Handle, x, y, w, h);
-                placed = change.Success;
+                var change = Arrange(window, placement, plan.Target!);
                 notPlaced = change.Success ? null : $"{change.ErrorCode}: {change.Error}";
             }
             catch (WindowNotRespondingException ex)
             {
                 // The application is hung or busy: this placement fails, and the others still run
-                placed = false;
                 notPlaced = $"{nameof(WindowErrorCode.NotResponding)}: {ex.Message}";
             }
 
-            string outcome;
-            if (placed)
+            if (notPlaced != null)
             {
-                arranged++;
-                outcome = "was arranged";
+                return (Result(LayoutPlacementStatus.Failed, window, nameof(LayoutErrorCode.ArrangeFailed),
+                    $"Failed to arrange window '{window.Title}' for {label}: {notPlaced}", launched),
+                    "could not be arranged");
+            }
 
-                if (placement.Focus)
+            var outcome = "was arranged";
+            string? errorCode = null;
+            string? error = null;
+            bool? focused = null;
+
+            if (placement.State == WindowState.Minimized)
+            {
+                var minimized = _windowService.SetWindowState(window.Handle, WindowStateRequest.Minimize);
+                if (!minimized.Success)
                 {
-                    var focus = _foregroundService.EnsureForeground(window.Handle);
-                    (focusResults ??= []).Add(FocusResult.From(focus));
-                    if (focus.IsForeground)
-                    {
-                        outcome = "was arranged and brought to the front";
-                    }
-                    else
-                    {
-                        outcome = "was arranged, but could not be brought to the front";
-                        AddError(LayoutErrorCode.ArrangeFailed,
-                            $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground " +
-                            $"({focus.ErrorCode}): {focus.Error}");
-                    }
+                    outcome = "was arranged, but could not be minimized";
+                    errorCode = nameof(LayoutErrorCode.ArrangeFailed);
+                    error = $"Arranged window '{window.Title}' for {label}, but could not minimize it ({minimized.ErrorCode}): {minimized.Error}";
                 }
             }
-            else
+
+            if (placement.Focus)
             {
-                outcome = "could not be arranged";
-                AddError(LayoutErrorCode.ArrangeFailed,
-                    $"Failed to arrange window '{window.Title}' for {label}{(notPlaced == null ? string.Empty : $": {notPlaced}")}");
+                var focus = _foregroundService.EnsureForeground(window.Handle);
+                (focusResults ??= []).Add(FocusResult.From(focus));
+                focused = focus.IsForeground;
+                if (focus.IsForeground)
+                {
+                    outcome = "was arranged and brought to the front";
+                }
+                else
+                {
+                    outcome = "was arranged, but could not be brought to the front";
+                    errorCode ??= nameof(LayoutErrorCode.ArrangeFailed);
+                    error ??= $"Arranged window '{window.Title}' for {label}, but could not bring it to the foreground " +
+                              $"({focus.ErrorCode}): {focus.Error}";
+                }
             }
 
             // Small delay between window operations
             await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-            return outcome;
+            return (Result(LayoutPlacementStatus.Applied, window, errorCode, error, launched, focused), outcome);
         }
     }
 
-    private IReadOnlyList<WindowInfo> FindMatchingWindows(WindowMatcher matcher, LayoutMatchBy matchBy)
+    /// <summary>
+    /// Puts the window where the placement says, through the window service's verified geometry: a maximized placement
+    /// maximizes the window on its monitor; otherwise a maximized window is restored first (a maximized window moved with
+    /// SetWindowPos stays maximized in name, at the wrong size), then given the placement's rectangle.
+    /// </summary>
+    private WindowChangeResult Arrange(WindowInfo window, WindowPlacement placement, WindowRect target)
     {
-        var windows = _windowService.GetAllWindows(includeMinimized: true);
-        var results = new List<WindowInfo>();
+        if (placement.State == WindowState.Maximized)
+            return _windowService.MoveWindowToMonitor(window.Handle, placement.MonitorIndex, MonitorPositioning.Maximize);
 
-        foreach (var window in windows)
+        if (window.State == WindowState.Maximized)
         {
-            var matches = matchBy switch
-            {
-                LayoutMatchBy.ProcessOnly => MatchesProcessName(window, matcher),
-                LayoutMatchBy.TitleOnly => MatchesTitle(window, matcher),
-                LayoutMatchBy.ProcessAndTitle => MatchesProcessName(window, matcher) && MatchesTitle(window, matcher),
-                _ => throw new ArgumentOutOfRangeException(nameof(matchBy), matchBy, "Not a matchBy value.")
-            };
+            var restored = _windowService.SetWindowState(window.Handle, WindowStateRequest.Restore);
+            if (!restored.Success)
+                return restored;
+        }
 
-            if (matches)
+        return _windowService.SetWindowBounds(window.Handle, target.X, target.Y, target.Width, target.Height);
+    }
+
+    #region Matching
+
+    // How much each identity signal counts when ranking the windows that pass a placement's matchBy filter. The title is
+    // the strongest identity, the class tells a main window from a dialog, the exe path two installations apart; the
+    // distance from the placement's rectangle and the z-order ordinal only break ties.
+    private const double TitleWeight = 40;
+    private const double ClassWeight = 20;
+    private const double ExePathWeight = 10;
+    private const double DistanceWeight = 8;
+    private const double OrdinalWeight = 4;
+
+    /// <summary>The longest title save_layout records.</summary>
+    private const int MaxTitlePatternLength = 260;
+
+    private static readonly string[] TitleSeparators = [" - ", " – ", " — ", " | ", " · "];
+
+    /// <summary>A placement on its way to being applied: the window it was given and where it goes.</summary>
+    private sealed class PlacementPlan(WindowPlacement placement, string label)
+    {
+        public WindowPlacement Placement { get; } = placement;
+        public string Label { get; } = label;
+
+        /// <summary>Why the placement cannot be matched under the chosen matchBy; null when it can.</summary>
+        public string? NotApplicable { get; set; }
+
+        /// <summary>Why the placement's monitor cannot be used; null when it can.</summary>
+        public string? MonitorError { get; set; }
+
+        /// <summary>The placement's rectangle on its monitor; null when it is not applicable or its monitor does not exist.</summary>
+        public WindowRect? Target { get; set; }
+
+        /// <summary>The work area of the placement's monitor; null when the monitor does not exist.</summary>
+        public MonitorRect? WorkArea { get; set; }
+
+        /// <summary>The window the placement was given from the snapshot; null when none matched.</summary>
+        public WindowInfo? Window { get; set; }
+    }
+
+    /// <summary>
+    /// Gives each placement at most one window of <paramref name="snapshot"/>, and each window to at most one placement.
+    /// Every (placement, window) pair that passes the matchBy filter is scored on the recorded identity (title pattern,
+    /// class name, exe path, ordinal) and the distance from the placement's rectangle; the pairs are taken best first,
+    /// so a placement that recognizes its window by title is not robbed of it by an earlier placement that would take
+    /// any window of the process. Ties go to the earlier placement, then the window higher in the z-order.
+    /// </summary>
+    private List<PlacementPlan> PlanPlacements(
+        IReadOnlyList<WindowPlacement> placements,
+        IReadOnlyList<WindowInfo> snapshot,
+        IReadOnlyList<MonitorInfo> monitors,
+        LayoutMatchBy matchBy)
+    {
+        var plans = placements.Select(p => new PlacementPlan(p, DescribePlacement(p))).ToList();
+        foreach (var plan in plans)
+        {
+            var placement = plan.Placement;
+            if (MissingCriterion(placement.Matcher, matchBy) is { } missing)
             {
-                results.Add(window);
+                plan.NotApplicable = $"Skipped {plan.Label}: {missing}";
+                continue;
+            }
+
+            // A saved monitor that is gone is reported, not swapped for the primary one: the window would land on the
+            // wrong screen with success
+            if (placement.MonitorIndex < 0 || placement.MonitorIndex >= monitors.Count)
+            {
+                plan.MonitorError = $"Did not arrange {plan.Label}: {WindowService.MonitorIndexMessage(placement.MonitorIndex, monitors.Count)}";
+                continue;
+            }
+
+            var workArea = monitors[placement.MonitorIndex].WorkArea;
+            plan.WorkArea = workArea;
+            plan.Target = new WindowRect(
+                (int)(workArea.X + placement.Position.X * workArea.Width),
+                (int)(workArea.Y + placement.Position.Y * workArea.Height),
+                (int)(placement.Position.Width * workArea.Width),
+                (int)(placement.Position.Height * workArea.Height));
+        }
+
+        // The position of each window among the snapshot's windows of its process, as save_layout counted it
+        var ordinals = new int[snapshot.Count];
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            ordinals[i] = seen.GetValueOrDefault(snapshot[i].ProcessName);
+            seen[snapshot[i].ProcessName] = ordinals[i] + 1;
+        }
+
+        var exePaths = new Dictionary<int, string?>();
+        var pairs = new List<(double Score, int Plan, int Window)>();
+        for (var p = 0; p < plans.Count; p++)
+        {
+            if (plans[p].Target is not { } target)
+                continue;
+
+            var matcher = plans[p].Placement.Matcher;
+            for (var w = 0; w < snapshot.Count; w++)
+            {
+                if (Matches(snapshot[w], matcher, matchBy))
+                    pairs.Add((Score(matcher, snapshot[w], ordinals[w], target, plans[p].WorkArea!, exePaths), p, w));
             }
         }
 
-        return results;
+        var taken = new bool[snapshot.Count];
+        foreach (var (_, p, w) in pairs.OrderByDescending(pair => pair.Score).ThenBy(pair => pair.Plan).ThenBy(pair => pair.Window))
+        {
+            if (plans[p].Window != null || taken[w])
+                continue;
+
+            plans[p].Window = snapshot[w];
+            taken[w] = true;
+        }
+
+        return plans;
     }
 
-    private static bool MatchesProcessName(WindowInfo window, WindowMatcher matcher)
+    /// <summary>
+    /// Why <paramref name="matcher"/> has nothing <paramref name="matchBy"/> can match on, or null when it has. An empty
+    /// criterion used to match every window, so title_only on a captured layout moved arbitrary windows.
+    /// </summary>
+    private static string? MissingCriterion(WindowMatcher matcher, LayoutMatchBy matchBy)
     {
-        if (string.IsNullOrEmpty(matcher.ProcessName))
-            return true;
-
-        return ProcessNameContains(window, matcher.ProcessName);
+        var hasProcess = !string.IsNullOrEmpty(matcher.ProcessName);
+        var hasTitle = !string.IsNullOrEmpty(matcher.TitleContains);
+        return matchBy switch
+        {
+            LayoutMatchBy.TitleOnly when !hasTitle =>
+                "matchBy title_only needs titleContains, and this placement has none (save_layout records the process, " +
+                "not title text); use process_and_title or process_only",
+            LayoutMatchBy.ProcessOnly when !hasProcess =>
+                "matchBy process_only needs a processName, and this placement has none; use process_and_title or title_only",
+            LayoutMatchBy.ProcessAndTitle when !hasProcess && !hasTitle =>
+                "the placement has neither a processName nor titleContains, so it would match any window",
+            _ => null
+        };
     }
+
+    private static bool Matches(WindowInfo window, WindowMatcher matcher, LayoutMatchBy matchBy) => matchBy switch
+    {
+        LayoutMatchBy.ProcessOnly => MatchesProcessName(window, matcher),
+        LayoutMatchBy.TitleOnly => MatchesTitle(window, matcher),
+        LayoutMatchBy.ProcessAndTitle =>
+            (string.IsNullOrEmpty(matcher.ProcessName) || MatchesProcessName(window, matcher)) &&
+            (string.IsNullOrEmpty(matcher.TitleContains) || MatchesTitle(window, matcher)),
+        _ => throw new ArgumentOutOfRangeException(nameof(matchBy), matchBy, "Not a matchBy value.")
+    };
+
+    /// <summary>
+    /// A captured process name (<see cref="WindowMatcher.ExactProcessName"/>) must be the window's whole process name,
+    /// so "Code" does not match "Code - Insiders"; a hand-written one may be part of it. Either may name a UWP window's
+    /// frame host.
+    /// </summary>
+    private static bool MatchesProcessName(WindowInfo window, WindowMatcher matcher) =>
+        matcher.ExactProcessName
+            ? string.Equals(window.ProcessName, matcher.ProcessName, StringComparison.OrdinalIgnoreCase) ||
+              string.Equals(window.HostProcessName, matcher.ProcessName, StringComparison.OrdinalIgnoreCase)
+            : ProcessNameContains(window, matcher.ProcessName!);
 
     /// <summary>
     /// True when <paramref name="name"/> is part of the window's process name or, for a UWP window, of
@@ -575,13 +786,83 @@ public class LayoutService : ILayoutService
         window.ProcessName.Contains(name, StringComparison.OrdinalIgnoreCase) ||
         window.HostProcessName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
 
-    private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher)
-    {
-        if (string.IsNullOrEmpty(matcher.TitleContains))
-            return true;
+    private static bool MatchesTitle(WindowInfo window, WindowMatcher matcher) =>
+        window.Title.Contains(matcher.TitleContains!, StringComparison.OrdinalIgnoreCase);
 
-        return window.Title.Contains(matcher.TitleContains, StringComparison.OrdinalIgnoreCase);
+    private double Score(
+        WindowMatcher matcher, WindowInfo window, int ordinal, WindowRect target, MonitorRect workArea, Dictionary<int, string?> exePaths)
+    {
+        var score = DistanceWeight * Closeness(window.Bounds, target, workArea);
+
+        if (!string.IsNullOrEmpty(matcher.TitlePattern))
+            score += TitleWeight * TitleSimilarity(matcher.TitlePattern, window.Title);
+
+        if (!string.IsNullOrEmpty(matcher.ClassName) && !string.IsNullOrEmpty(window.ClassName))
+            score += string.Equals(matcher.ClassName, window.ClassName, StringComparison.OrdinalIgnoreCase) ? ClassWeight : -ClassWeight;
+
+        if (!string.IsNullOrEmpty(matcher.ExePath) && ExePathOf(window.ProcessId, exePaths) is { } exePath)
+            score += string.Equals(matcher.ExePath, exePath, StringComparison.OrdinalIgnoreCase) ? ExePathWeight : -ExePathWeight;
+
+        if (matcher.Ordinal == ordinal)
+            score += OrdinalWeight;
+
+        return score;
     }
+
+    /// <summary>
+    /// 1 when the titles are equal (ignoring case); otherwise up to 0.8 for the share of the pattern's parts (split at
+    /// " - ", " | " and dashes, so "Inbox - Mail - Google Chrome" has three) that are also parts of the title.
+    /// </summary>
+    private static double TitleSimilarity(string pattern, string title)
+    {
+        if (string.Equals(pattern, title, StringComparison.OrdinalIgnoreCase))
+            return 1;
+
+        var patternParts = SplitTitle(pattern);
+        if (patternParts.Length == 0)
+            return 0;
+
+        var titleParts = new HashSet<string>(SplitTitle(title), StringComparer.OrdinalIgnoreCase);
+        return 0.8 * patternParts.Count(titleParts.Contains) / patternParts.Length;
+    }
+
+    private static string[] SplitTitle(string title) =>
+        title.Split(TitleSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>1 when the window is exactly at the target rectangle, falling to 0 as its edges move a work area away.</summary>
+    private static double Closeness(WindowRect bounds, WindowRect target, MonitorRect workArea)
+    {
+        double scale = 2L * (workArea.Width + workArea.Height);
+        if (scale <= 0)
+            return 0;
+
+        double offset = Math.Abs((long)bounds.X - target.X) + Math.Abs((long)bounds.Y - target.Y) +
+                        Math.Abs((long)bounds.Width - target.Width) + Math.Abs((long)bounds.Height - target.Height);
+        return 1 - Math.Min(1, offset / scale);
+    }
+
+    /// <summary>The process's executable path, read once per process; null when it cannot be read.</summary>
+    private string? ExePathOf(int processId, Dictionary<int, string?> cache)
+    {
+        if (cache.TryGetValue(processId, out var cached))
+            return cached;
+
+        string? path;
+        try
+        {
+            path = _processService.GetProcessPath(processId);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException
+                                       or UnauthorizedAccessException or NotSupportedException)
+        {
+            path = null;
+        }
+
+        cache[processId] = string.IsNullOrEmpty(path) ? null : path;
+        return cache[processId];
+    }
+
+    private static string Truncate(string text, int maxLength) => text.Length <= maxLength ? text : text[..maxLength];
 
     private static string DescribePlacement(WindowPlacement placement)
     {
@@ -593,6 +874,8 @@ public class LayoutService : ILayoutService
 
         return $"placement {placement.Order} ({(criteria.Count > 0 ? string.Join(", ", criteria) : "no matcher")})";
     }
+
+    #endregion
 
     #region Storage (callers must hold _gate)
 
