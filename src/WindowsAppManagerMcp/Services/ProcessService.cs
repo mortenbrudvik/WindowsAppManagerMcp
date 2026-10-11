@@ -269,18 +269,59 @@ public class ProcessService : IProcessService
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
     /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
     /// other's windows by name and path; the started process decides between them. Such a window is this launch's after
-    /// all once that other launch has its window and this launch's own process is gone (<paramref name="handedOff"/>): a
-    /// single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
+    /// all once that other launch has its window and this launch's launcher really handed off (<paramref name="handoff"/>):
+    /// a single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
     /// Terminal launches) opens its window in that instance. The shared claim still gives each window to one launch.
     /// </summary>
     private static Func<WindowCandidate, bool> BatchOwner(
-        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, Func<bool> handedOff) =>
-        window => owner.Matches(window) &&
-                  (owner.StartedProcess(window.ProcessId) ||
-                   !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff())));
+        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, LauncherHandoff handoff) =>
+        window =>
+        {
+            if (!owner.Matches(window))
+                return false;
 
-    /// <summary>True when the launch started no process, or the process it started has exited.</summary>
-    private static bool LauncherGone(StartedLaunch launch) => launch.Process == null || HasExitedSafe(launch.Process);
+            if (owner.StartedProcess(window.ProcessId))
+                return true;
+
+            // Read for every candidate, so the handoff sees which windows were there while the launcher still ran
+            var handedOff = handoff.HandedOff(window.Handle);
+            return !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff));
+        };
+
+    /// <summary>
+    /// Whether a batch launch's launcher handed its request to a running instance, so that a window of that instance can
+    /// be the launch's (M2 follow-up F3). A launch that started no process has no launcher to judge (Windows handed it
+    /// over). Otherwise the launcher must have exited: with exit code 0, which a single-instance launcher returns once it
+    /// handed off; a non-zero code means it failed, and nothing it did opens a window. When the code cannot be read, only
+    /// a window that was not there while the launcher still ran counts.
+    /// </summary>
+    private sealed class LauncherHandoff(IProcessHandle? launcher)
+    {
+        private readonly HashSet<nint> _seenWhileRunning = [];
+
+        /// <summary>True when the launcher handed off and <paramref name="window"/> can be what it handed off.</summary>
+        public bool HandedOff(nint window)
+        {
+            if (launcher == null)
+                return true;
+
+            lock (_seenWhileRunning)
+            {
+                if (!HasExitedSafe(launcher))
+                {
+                    _seenWhileRunning.Add(window);
+                    return false;
+                }
+
+                return launcher.ExitCode switch
+                {
+                    0 => true,
+                    null => !_seenWhileRunning.Contains(window),
+                    _ => false
+                };
+            }
+        }
+    }
 
     /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
     private WindowInfo? MainWindowOf(IProcessHandle process)
@@ -751,7 +792,7 @@ public class ProcessService : IProcessService
                 var others = owners.Select((other, index) => (Owner: other, HasWindow: (Func<bool>)(() => HasWindow(index))))
                     .Where((_, index) => index != position).ToList();
                 results[item.Index] = await WaitForWindowAsync(
-                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, () => LauncherGone(item.Launch)), waitTimeoutMs,
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, new LauncherHandoff(item.Launch.Process)), waitTimeoutMs,
                     handle => Claim(position, handle), cancellationToken).ConfigureAwait(false);
                 Report(item.Index);
             })).ConfigureAwait(false);

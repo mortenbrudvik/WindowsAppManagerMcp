@@ -560,6 +560,7 @@ public class ProcessServiceTests
         second.SetupGet(p => p.Id).Returns(502);
         var secondExited = false;
         second.SetupGet(p => p.HasExited).Returns(() => secondExited);
+        second.SetupGet(p => p.ExitCode).Returns(() => secondExited ? 0 : null);
         _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
             .Returns(first.Object)
             .Returns(second.Object);
@@ -577,8 +578,82 @@ public class ProcessServiceTests
         ownsB(handedOffWindow).Should().BeFalse("launch 2's own process still runs: its window may still come");
 
         secondExited = true;
-        ownsB(handedOffWindow).Should().BeTrue("launch 1 has its window, and launch 2's launcher handed off and exited");
+        ownsB(handedOffWindow).Should().BeTrue("launch 1 has its window, and launch 2's launcher handed off and exited with 0");
         _ownerPredicates[0](handedOffWindow).Should().BeTrue("the shared claim still decides which launch gets a window");
+    }
+
+    /// <summary>
+    /// M2 follow-up F3: a launcher that failed (a non-zero exit code) handed nothing off, so it is never credited with a
+    /// window of another item's instance, even one that appears after it exited: its launch ends without a window.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_ALauncherThatFailed_IsNotCreditedWithAWindowOfAnotherItemsInstance()
+    {
+        // Arrange
+        var (_, second) = SetUpTwoCodeLaunches();
+        second.SetupGet(p => p.HasExited).Returns(true);
+        second.SetupGet(p => p.ExitCode).Returns(1);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest("code", ["a"]), new LaunchRequest("code", ["b"])], waitForWindows: true);
+
+        // Assert - the window appears after the failed launcher exited, and is still not its
+        _waitOptions[0].TryClaim!(0x600).Should().BeTrue();
+        _ownerPredicates[1](new WindowCandidate(0x700, 600, null, "a - Visual Studio Code")).Should()
+            .BeFalse("launch 2's launcher failed: the window of launch 1's instance is not its");
+    }
+
+    /// <summary>
+    /// M2 follow-up F3: when the launcher's exit code cannot be read, only a window that appears after its exit was seen
+    /// can be the one it handed off; a window of the other item's instance that was already there is not.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_ALauncherWithoutAnExitCode_GetsOnlyAWindowThatAppearedAfterItExited()
+    {
+        // Arrange
+        var (_, second) = SetUpTwoCodeLaunches();
+        var secondExited = false;
+        second.SetupGet(p => p.HasExited).Returns(() => secondExited);
+        second.SetupGet(p => p.ExitCode).Returns((int?)null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest("code", ["a"]), new LaunchRequest("code", ["b"])], waitForWindows: true);
+
+        // Assert
+        var ownsB = _ownerPredicates[1];
+        var earlier = new WindowCandidate(0x700, 600, null, "Welcome - Visual Studio Code");
+        _waitOptions[0].TryClaim!(0x600).Should().BeTrue();
+        ownsB(earlier).Should().BeFalse("launch 2's own process still runs");
+
+        secondExited = true;
+        ownsB(earlier).Should().BeFalse("this window was there while launch 2's launcher still ran: it was not handed off");
+        ownsB(new WindowCandidate(0x800, 600, null, "b - Visual Studio Code")).Should()
+            .BeTrue("this window appeared after the launcher exited");
+    }
+
+    /// <summary>Two launches of Code: launch 1 starts 501, whose child 600 is the single instance; launch 2 starts 502.</summary>
+    private (Mock<IProcessHandle> First, Mock<IProcessHandle> Second) SetUpTwoCodeLaunches()
+    {
+        const string app = @"C:\Apps\Code\Code.exe";
+        var launchedAt = DateTime.UtcNow;
+        _mockResolver.Setup(r => r.Resolve("code", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(app, LaunchTargetKind.NativeExecutable));
+        _mockProcessWrapper.Setup(w => w.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [501] = (10, "Code.exe"),
+            [502] = (10, "Code.exe"),
+            [600] = (501, "Code.exe")
+        });
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns(app);
+        _mockProcessWrapper.Setup(w => w.GetProcessStartTime(It.IsAny<int>())).Returns(launchedAt.AddSeconds(1));
+        var first = new Mock<IProcessHandle>();
+        first.SetupGet(p => p.Id).Returns(501);
+        var second = new Mock<IProcessHandle>();
+        second.SetupGet(p => p.Id).Returns(502);
+        _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(first.Object)
+            .Returns(second.Object);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+        return (first, second);
     }
 
     [Fact]

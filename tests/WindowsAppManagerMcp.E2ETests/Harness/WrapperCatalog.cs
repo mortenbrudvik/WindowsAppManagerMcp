@@ -265,6 +265,7 @@ public static class WrapperCatalog
                 ["get_" + nameof(IProcessHandle.Id)] = WrapperMember.Read,
                 ["get_" + nameof(IProcessHandle.ProcessName)] = WrapperMember.Read,
                 ["get_" + nameof(IProcessHandle.HasExited)] = WrapperMember.Read,
+                ["get_" + nameof(IProcessHandle.ExitCode)] = WrapperMember.Read,
                 [nameof(IProcessHandle.RefreshMainWindowHandle)] = WrapperMember.Read,
                 [nameof(IProcessHandle.WaitForExitAsync)] = WrapperMember.Read,
                 // Releases the handle the server holds; the process is not affected
