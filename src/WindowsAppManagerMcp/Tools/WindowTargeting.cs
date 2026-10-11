@@ -124,9 +124,9 @@ internal static class WindowTargeting
     /// <summary>
     /// The resolved window checked again inside the input gate, just before the tool acts (roadmap M2.4): a selector with
     /// filters was resolved before the tool waited for the gate, and the window may have changed meanwhile, or closed and
-    /// had its handle reused. HandleMismatch when it no longer matches the filters; null when it still does, when the
-    /// selector has no filters (a bare handle or foreground), or when the handle is no window any more (the tool's own
-    /// check reports InvalidHandle).
+    /// had its handle reused. HandleMismatch when it no longer matches the filters; InvalidArguments when titleRegex times
+    /// out against the window's title; null when it still matches, when the selector has no filters (a bare handle or
+    /// foreground), or when the handle is no window any more (the tool's own check reports InvalidHandle).
     /// </summary>
     public static Refusal? Recheck(IWindowService windows, WindowSelector? window, nint handle)
     {
