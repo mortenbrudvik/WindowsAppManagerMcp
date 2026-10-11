@@ -145,6 +145,13 @@ public interface INativeWindowWrapper
     bool IsCloaked(nint hWnd);
 
     /// <summary>
+    /// Why DWM cloaks the window (the DWMWA_CLOAKED value): 0 when it is not cloaked or the attribute cannot be read,
+    /// DWM_CLOAKED_APP (1) when its app cloaked it, DWM_CLOAKED_SHELL (2) when the shell did, as for a window on another
+    /// virtual desktop, DWM_CLOAKED_INHERITED (4) when it inherits its owner's cloak.
+    /// </summary>
+    int GetCloakReason(nint hWnd);
+
+    /// <summary>
     /// Gets the visible frame of the window (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible
     /// resize borders that GetWindowRect includes, in physical screen pixels. Returns null when the
     /// attribute cannot be read.

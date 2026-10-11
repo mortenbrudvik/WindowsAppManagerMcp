@@ -520,11 +520,23 @@ public class WindowService : IWindowService
     /// restore), and a minimized one is measured as its 160x28 icon. SW_SHOWNOACTIVATE restores without activating the
     /// window, unlike SW_RESTORE, so keyboard input stays where it was. A window minimized from maximized comes back
     /// maximized first, so the command is sent at most twice. Null when the window is normal; MoveFailed or ResizeFailed
-    /// (<paramref name="failure"/>) when it stays minimized or maximized.
+    /// (<paramref name="failure"/>) when it stays minimized or maximized. A hidden window that is minimized or maximized (a
+    /// tray app hides its window after minimizing it) is not restored: SW_SHOWNOACTIVATE would show it behind its app's
+    /// back, as the capture restore refuses to (<see cref="MinimizedWindowRestore"/>); it fails with
+    /// <paramref name="failure"/> and nothing is sent.
     /// </summary>
     /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
     private WindowChangeResult? RestoreForPlacement(nint handle, WindowErrorCode failure)
     {
+        if (IsMinimizedOrMaximized(handle) && !_nativeWrapper.IsWindowVisible(handle))
+        {
+            var state = _nativeWrapper.IsIconic(handle) ? "minimized" : "maximized";
+            return WindowChangeResult.Failed(handle, failure,
+                $"The window is hidden and {state}: its application hid it (for example in the notification area), and restoring " +
+                $"it to place it would show it, so it was not shown and not {(failure == WindowErrorCode.ResizeFailed ? "resized" : "moved")}. " +
+                "Show it through its application, or ask the user.");
+        }
+
         for (var i = 0; i < 2 && IsMinimizedOrMaximized(handle); i++)
         {
             var before = (_nativeWrapper.IsIconic(handle), _nativeWrapper.IsZoomed(handle));
@@ -679,6 +691,11 @@ public class WindowService : IWindowService
             maximize ? NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE : PlacementFlags(bringToFront));
         if (!moved.Success)
             return moved;
+
+        // An app that keeps or restores its own position is still on the old monitor: SW_MAXIMIZE would maximize it there,
+        // and activate it, so it is sent only once the window is on the target monitor
+        if (maximize && _monitorService.GetMonitorIndex(handle) != monitorIndex)
+            return OnMonitor(handle, moved, monitorIndex, maximized: false);
 
         return OnMonitor(handle, maximize ? ApplyState(handle, WindowStateRequest.Maximize) : moved, monitorIndex, maximize);
     }
@@ -929,7 +946,15 @@ public class WindowService : IWindowService
         return null;
     }
 
-    public IReadOnlyList<WindowInfo> GetApplicationWindows()
+    public IReadOnlyList<WindowInfo> GetApplicationWindows() => ApplicationWindows(otherDesktops: false);
+
+    public IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops() => ApplicationWindows(otherDesktops: true);
+
+    /// <summary>
+    /// The Alt-Tab set: the windows that are not cloaked, or with <paramref name="otherDesktops"/> those the shell cloaks
+    /// (on another virtual desktop) and that would be in it otherwise.
+    /// </summary>
+    private List<WindowInfo> ApplicationWindows(bool otherDesktops)
     {
         var topLevelWindows = EnumerateTopLevelWindows(_nativeWrapper);
         var session = new ReadSession(_nativeWrapper, topLevelWindows);
@@ -953,8 +978,16 @@ public class WindowService : IWindowService
                 (!appWindow && _nativeWrapper.GetWindow(window, NativeEnums.GW_OWNER) != nint.Zero))
                 continue;
 
-            if (_nativeWrapper.IsCloaked(window))
+            if (otherDesktops)
+            {
+                // Cloaked by the shell: on another virtual desktop (an app's own cloak is a suspended or hidden window)
+                if ((_nativeWrapper.GetCloakReason(window) & NativeEnums.DWM_CLOAKED_SHELL) == 0)
+                    continue;
+            }
+            else if (_nativeWrapper.IsCloaked(window))
+            {
                 continue;
+            }
 
             var windowProcessId = _nativeWrapper.GetWindowThreadProcessId(window);
             if (windowProcessId == session.CurrentProcessId)
@@ -970,7 +1003,7 @@ public class WindowService : IWindowService
 
             var title = _nativeWrapper.GetWindowText(window) ?? string.Empty;
             var process = ResolveProcess(window, className, title, windowProcessId, session);
-            if (BuildWindowInfo(window, title, className, isCloaked: false, process, session) is { } info)
+            if (BuildWindowInfo(window, title, className, isCloaked: otherDesktops, process, session) is { } info)
                 windows.Add(info);
         }
 

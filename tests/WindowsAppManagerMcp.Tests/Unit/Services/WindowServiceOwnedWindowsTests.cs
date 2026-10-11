@@ -219,6 +219,28 @@ public class WindowServiceOwnedWindowsTests
     }
 
     [Fact]
+    public void GetApplicationWindowsOnOtherDesktops_AreTheAltTabWindowsTheShellCloaks()
+    {
+        // Arrange - DWM_CLOAKED_SHELL (2): on another virtual desktop; DWM_CLOAKED_APP (1): the app cloaked it (a suspended frame)
+        _desktop.Add("notes.txt - Notepad", "Notepad", processId: 700, processName: "notepad");
+        var elsewhere = _desktop.Add("draft.txt - Notepad", "Notepad", cloaked: true, processId: 700, processName: "notepad");
+        _desktop.Native.Setup(n => n.GetCloakReason(elsewhere)).Returns(2);
+        var suspended = _desktop.Add("Calculator", "Notepad", cloaked: true, processId: 701, processName: "calc");
+        _desktop.Native.Setup(n => n.GetCloakReason(suspended)).Returns(1);
+        var tool = _desktop.Add("Layers", "Palette", extendedStyle: WsExToolWindow, cloaked: true, processId: 700, processName: "notepad");
+        _desktop.Native.Setup(n => n.GetCloakReason(tool)).Returns(2);
+
+        // Act
+        var windows = CreateSut().GetApplicationWindowsOnOtherDesktops();
+
+        // Assert
+        var window = windows.Should().ContainSingle().Which;
+        window.Handle.Should().Be(elsewhere);
+        window.IsCloaked.Should().BeTrue();
+        CreateSut().GetApplicationWindows().Select(w => w.Handle).Should().NotContain(elsewhere);
+    }
+
+    [Fact]
     public void GetApplicationWindows_LeavesOutNoActivateWindows_UnlessTheyAreAppWindows()
     {
         // Arrange - Alt+Tab skips WS_EX_NOACTIVATE windows (overlays, on-screen keyboards) without WS_EX_APPWINDOW

@@ -65,6 +65,9 @@ internal static class NativeEnums
     public const uint DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     public const uint DWMWA_CLOAKED = 14;
 
+    // DWMWA_CLOAKED values: why a window is cloaked (a window on another virtual desktop is cloaked by the shell)
+    public const int DWM_CLOAKED_SHELL = 0x2;
+
     // Monitor flags
     public const uint MONITOR_DEFAULTTONULL = 0;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;

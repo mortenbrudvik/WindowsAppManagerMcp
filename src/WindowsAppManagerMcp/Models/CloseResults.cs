@@ -37,6 +37,8 @@ public record RemainingWindowDto(long Handle, string Title, int ProcessId, strin
 /// waits for an answer: PromptDetected and Prompt) or stillOpen (windows remain without a prompt); it is left out when
 /// nothing was sent. Exited says whether every target process ended once its windows were gone (null while windows
 /// remain); RunningProcessIds lists the ones still running then, for example an app that stays in the notification area.
+/// OtherDesktopWindows lists the application's windows on other virtual desktops, which are not closed (left out when
+/// there are none): status closed covers the windows on the current desktop only.
 /// </summary>
 public record CloseApplicationResult(
     bool Success,
@@ -49,7 +51,8 @@ public record CloseApplicationResult(
     bool? Exited = null,
     IReadOnlyList<int>? RunningProcessIds = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    IReadOnlyList<RemainingWindowDto>? OtherDesktopWindows = null
 );
 
 /// <summary>A window another window owns (get_owned_windows). IsBlocking is true for the modal dialog that takes the owner's input, and left out otherwise.</summary>

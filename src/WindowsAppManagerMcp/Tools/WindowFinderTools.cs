@@ -27,7 +27,7 @@ public class WindowFinderTools
         " Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'.";
 
     [McpServerTool(Name = "find_windows", Title = "Find Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked." +
+    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds and move_window take) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked." +
                  " The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must " +
                  "name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 " +
                  "candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: " +
@@ -110,7 +110,7 @@ public class WindowFinderTools
 
     [McpServerTool(Name = "get_window_info", Title = "Get Window Info", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Read one window, named by handle or by a window selector, without listing every window. detail 'compact' gives handle, " +
-                 "title, process and state; 'standard' (default) what find_windows reports; 'full' adds visibleBounds (the frame you see), " +
+                 "title, process and state; 'standard' (default) what find_windows reports, visibleBounds (the frame you see) included; 'full' adds " +
                  "clientBounds (the client area on screen), isForeground, zOrder (position among all top-level windows, hidden ones " +
                  "included, front to back; not window.index, and isForeground tells what is in front), isTopmost, isEnabled (false: a " +
                  "modal dialog takes its input), isResponding (false: Windows reports it hung) and dpi (96 is 100%). Untitled, cloaked " +
@@ -211,7 +211,8 @@ public class WindowFinderTools
         OwnerHandle: info.OwnerHandle?.ToInt64(),
         HostProcessName: info.HostProcessName,
         HostProcessId: info.HostProcessId,
-        IsAgentHost: info.IsAgentHost ? true : null
+        IsAgentHost: info.IsAgentHost ? true : null,
+        VisibleBounds: info.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null
     );
 }
 
@@ -219,7 +220,9 @@ public class WindowFinderTools
 /// A window as the window tools return it. OwnerHandle, HostProcessName and HostProcessId are
 /// omitted when null: an unowned window, or a window that is not a UWP frame. IsAgentHost is true for
 /// the agent's own host window (its terminal, editor or chat app, or a window it owns) and omitted
-/// for every other window.
+/// for every other window. Bounds is the window rect (GetWindowRect, with the invisible resize borders of about 7 px left,
+/// right and bottom); VisibleBounds is the visible frame, the rect set_window_bounds, move_window and the geometry
+/// results use (omitted when DWM cannot report it).
 /// </summary>
 public record WindowInfoDto(
     long Handle,
@@ -235,13 +238,14 @@ public record WindowInfoDto(
     long? OwnerHandle = null,
     string? HostProcessName = null,
     int? HostProcessId = null,
-    bool? IsAgentHost = null
+    bool? IsAgentHost = null,
+    BoundsDto? VisibleBounds = null
 );
 
 /// <summary>
 /// get_window_info's result (roadmap M2.4): one window at the detail asked for. Compact has handle, title, processName,
-/// processId and state; standard adds what find_windows reports; full adds the fields after IsAgentHost. Fields a detail
-/// level does not report are left out.
+/// processId and state; standard adds what find_windows reports (VisibleBounds included); full adds the fields after
+/// VisibleBounds. Fields a detail level does not report are left out.
 /// </summary>
 public sealed record WindowDetailsResult(
     bool Success,
@@ -277,7 +281,8 @@ public sealed record WindowDetailsResult(
     {
         var dto = WindowFinderTools.ToDto(info);
         return new WindowDetailsResult(true, dto.Handle, dto.Title, dto.ProcessName, dto.ProcessId, dto.State, dto.Bounds, dto.IsVisible,
-            dto.MonitorIndex, dto.ClassName, dto.IsCloaked, dto.OwnerHandle, dto.HostProcessName, dto.HostProcessId, dto.IsAgentHost);
+            dto.MonitorIndex, dto.ClassName, dto.IsCloaked, dto.OwnerHandle, dto.HostProcessName, dto.HostProcessId, dto.IsAgentHost,
+            VisibleBounds: dto.VisibleBounds);
     }
 
     internal static WindowDetailsResult Full(WindowDetails details, WindowRect? clientArea) => Standard(details.Window) with

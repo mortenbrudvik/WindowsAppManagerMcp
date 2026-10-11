@@ -56,6 +56,8 @@ public sealed class ReadOnlyNativeWindowWrapper(INativeWindowWrapper inner) : IN
 
     public bool IsCloaked(nint hWnd) => inner.IsCloaked(hWnd);
 
+    public int GetCloakReason(nint hWnd) => inner.GetCloakReason(hWnd);
+
     public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd) => inner.GetExtendedFrameBounds(hWnd);
 
     public bool IsHungAppWindow(nint hWnd) => inner.IsHungAppWindow(hWnd);

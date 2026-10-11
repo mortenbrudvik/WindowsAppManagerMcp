@@ -105,6 +105,7 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.GetWindowLongPtr)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsCloaked)] = WrapperMember.Read,
+                [nameof(INativeWindowWrapper.GetCloakReason)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
