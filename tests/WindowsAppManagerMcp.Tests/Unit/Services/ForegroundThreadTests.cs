@@ -189,23 +189,24 @@ public class ForegroundThreadTests
     [Fact]
     public void RetireCurrentThread_FromTheWork_LetsTheWorkFinishAndTheNextCallGetsANewThread()
     {
-        // Arrange - for example after a detach that Windows refused
+        // Arrange - for example after a detach that Windows refused. The threads are compared as objects, not by
+        // ManagedThreadId: the retired thread exits once its work is done, and .NET can give its id to the new one.
         using var sut = new ForegroundThread();
-        var retiredThread = 0;
+        Thread? retiredThread = null;
 
         // Act
         var result = sut.Run(_ =>
         {
-            retiredThread = Environment.CurrentManagedThreadId;
+            retiredThread = Thread.CurrentThread;
             sut.RetireCurrentThread();
             return 42;
         }, Long);
-        var next = sut.Run(_ => Environment.CurrentManagedThreadId, Long);
+        var next = sut.Run(_ => Thread.CurrentThread, Long);
 
         // Assert
         result.Should().Be(42);
-        next.Should().NotBe(retiredThread);
-        sut.Run(_ => Environment.CurrentManagedThreadId, Long).Should().Be(next, "the new thread is the long-lived one now");
+        next.Should().NotBeSameAs(retiredThread);
+        sut.Run(_ => Thread.CurrentThread, Long).Should().BeSameAs(next, "the new thread is the long-lived one now");
     }
 
     [Fact]
