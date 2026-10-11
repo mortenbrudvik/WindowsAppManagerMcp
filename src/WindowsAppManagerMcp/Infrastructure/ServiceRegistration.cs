@@ -81,7 +81,17 @@ public static class ServiceRegistration
         // The effective DPI awareness (from app.manifest), the foreground lock timeout and the session, for
         // get_server_info and the log at start
         services.AddSingleton<INativeSystemInfoWrapper, NativeSystemInfoWrapper>();
-        services.AddHostedService<ServerStartupLog>(); // logs the versions and the DPI awareness in force
+        services.AddHostedService<ServerStartupLog>(); // logs the versions, the DPI awareness and the toolsets in force
+        services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
+            sp.GetRequiredService<INativeSystemInfoWrapper>(),
+            sp.GetRequiredService<IProcessSecurityProbe>(),
+            sp.GetRequiredService<IMonitorService>(),
+            sp.GetRequiredService<IInputSafetyInfo>(),
+            sp.GetRequiredService<IInputSession>(),
+            sp.GetRequiredService<IPauseHotkey>(),
+            sp.GetRequiredService<ILayoutService>(),
+            sp.GetRequiredService<INativeWindowWrapper>(),
+            sp.GetService<ToolsetSelection>())); // registered by AddWindowsAppManagerTools
 
         // The input guard (every input call, inside the input gate) and the target policy (input, close,
         // kill and window captures), both configured by the user in the server's environment
@@ -110,6 +120,7 @@ public static class ServiceRegistration
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
+        services.AddSingleton<ServerInfoTools>();
 
         return services;
     }
@@ -171,6 +182,7 @@ public static class ServiceRegistration
             .WithTools<UIElementTools>()
             .WithTools<InputSimulationTools>()
             .WithTools<InputControlTools>()
+            .WithTools<ServerInfoTools>()
             // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
             .WithToolsets(toolsets ?? ToolsetSelection.All());
     }

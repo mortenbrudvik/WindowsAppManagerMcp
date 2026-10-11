@@ -28,6 +28,7 @@ public sealed class ContractServices : IDisposable
         Mode = mode;
         Session = new InputSession(new FakeInputWrapper());
         Hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, PauseHotkeyOptions.DefaultSource));
+        SetUpServerInfoSources();
 
         if (mode == ContractMode.Typical)
         {
@@ -51,6 +52,10 @@ public sealed class ContractServices : IDisposable
     public Mock<IElementInspectionService> Inspection { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
     public Mock<IPauseHotkey> Hotkey { get; } = new();
+    public Mock<INativeSystemInfoWrapper> SystemInfo { get; } = new();
+    public Mock<IProcessSecurityProbe> SecurityProbe { get; } = new();
+    public Mock<IInputSafetyInfo> Safety { get; } = new();
+    public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
@@ -71,9 +76,49 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
         services.AddSingleton<ITargetPolicy>(new TargetPolicy(TargetPolicySettings.Default));
+        // get_server_info: the real report over mocked sources, with the toolsets the server was registered with
+        services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
+            SystemInfo.Object, SecurityProbe.Object, Monitors.Object, Safety.Object, Session, Hotkey.Object, Layouts.Object,
+            NativeWindows.Object, sp.GetService<ToolsetSelection>()));
     }
 
     public void Dispose() => Session.Dispose();
+
+    /// <summary>
+    /// The sources of get_server_info: a medium-integrity, per-monitor v2 server started from Windows Terminal (Typical),
+    /// or one whose DPI awareness cannot be read on a locked session (Failing). The report itself never fails.
+    /// </summary>
+    private void SetUpServerInfoSources()
+    {
+        var typical = Mode == ContractMode.Typical;
+        SystemInfo.Setup(s => s.GetDpiAwareness()).Returns(typical ? DpiAwareness.PerMonitorV2 : DpiAwareness.Unknown);
+        SystemInfo.Setup(s => s.GetForegroundLockTimeout()).Returns(typical ? 200_000 : null);
+        SystemInfo.Setup(s => s.GetSessionId()).Returns(1);
+        SecurityProbe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(31_000, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        SecurityProbe.Setup(p => p.IsInputDesktopAvailable()).Returns(typical);
+        SecurityProbe.Setup(p => p.IsSessionLocked()).Returns(!typical);
+
+        // claude.exe in pwsh in Windows Terminal, as the host guard records it
+        var terminal = new HostWindow(0x30_0D1E, new HostProcess(30_100, null));
+        var host = new HostSnapshot(31_000, [new HostProcess(30_900, null), new HostProcess(30_500, null), new HostProcess(30_100, null)],
+            ConsoleWindow: 0x30_0A10, ConsoleHostWindow: terminal, StartupForegroundWindow: terminal, ShellProcessId: 5_120)
+        {
+            ConsoleServerProcesses = [new HostProcess(30_700, null)]
+        };
+        Safety.Setup(s => s.Read()).Returns(new InputSafetySnapshot(
+            host, TargetPolicySettings.Default, InputGuardOptions.Default.DestructiveChords.Select(c => c.Spec).ToList(),
+            InputGuardOptions.Default.DestructiveChordSource));
+        NativeWindows.Setup(w => w.GetProcessName(It.IsAny<uint>())).Returns((uint id) => id switch
+        {
+            31_000 => "WindowsAppManagerMcp",
+            30_900 => "claude",
+            30_500 => "pwsh",
+            30_100 => "WindowsTerminal",
+            30_700 => "OpenConsole",
+            _ => null
+        });
+        Layouts.Setup(l => l.LayoutsPath).Returns(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
+    }
 
     private void SetUpTypical()
     {

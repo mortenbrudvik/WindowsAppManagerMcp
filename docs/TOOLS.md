@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 47 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 48 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -18,6 +18,7 @@ A comprehensive guide to all 47 MCP tools for managing Windows applications, win
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
 | [App Launch](#app-launch) | [launch_application](#launch_application), [list_processes](#list_processes), [kill_process](#kill_process) | 3 |
 | [Layout Presets](#layout-presets) | [list_layouts](#list_layouts), [get_layout](#get_layout), [save_layout](#save_layout), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | 5 |
+| [Server Info](#server-info) | [get_server_info](#get_server_info) | 1 |
 <!-- tools:end summary -->
 
 ---
@@ -130,7 +131,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 <!-- tools:begin toolsets (generated from Toolsets.Server: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
 | Toolset | Default | What it covers | Tools |
 |---------|---------|----------------|-------|
-| `server` | always on | The server's state and the user's control over it: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
+| `server` | always on | The server's build, environment and toolsets, and the user's control over its input: whether input is paused, resuming it with the user's consent, releasing stuck keys. | [get_server_info](#get_server_info), [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) |
 | `windows` | on | Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
@@ -3426,6 +3427,87 @@ Delete a layout preset. If no preset has that name, the call fails with `PresetN
   "errorCode": "PresetNotFound"
 }
 ```
+
+---
+
+## Server Info
+
+### get_server_info
+
+Reports the server's build and the environment its tools work in, in one read-only call: which build is running, whether its coordinates are physical pixels, whether input can reach the desktop, which windows are the agent's own host, whether the user paused input, the user's safety settings, and which tools are served. `warnings` lists everything that will make tools fail or coordinates wrong, so read it first. Call it at the start of a task, and whenever tools behave unexpectedly; it changes nothing and is served in read-only mode.
+
+<!-- tools:begin params:get_server_info -->
+**Parameters:** None
+<!-- tools:end params:get_server_info -->
+
+**Response:**
+```json
+{
+  "server": {
+    "name": "windows-app-manager",
+    "version": "1.13.0+3f9c2a1e5b7d4c6f8a0b1c2d3e4f5a6b7c8d9e0f",
+    "gitSha": "3f9c2a1e5b7d4c6f8a0b1c2d3e4f5a6b7c8d9e0f",
+    "sdkVersion": "2.2.0",
+    "runtime": ".NET 8.0.21",
+    "os": "Microsoft Windows 10.0.26200"
+  },
+  "connection": { "protocolVersion": "2025-11-25", "clientName": "claude-code", "clientVersion": "2.1.0" },
+  "process": { "processId": 31000, "sessionId": 1, "integrityLevel": "Medium", "elevated": false, "dpiAwareness": "PerMonitorV2" },
+  "desktop": { "inputDesktopAvailable": true, "sessionLocked": false, "foregroundLockTimeoutMs": 200000 },
+  "monitors": [
+    { "index": 0, "name": "\\\\.\\DISPLAY1", "isPrimary": true, "bounds": { "x": 0, "y": 0, "width": 2560, "height": 1440 }, "dpi": 120, "scaleFactor": 1.25 }
+  ],
+  "host": {
+    "windows": [
+      { "handle": 3149086, "role": "console", "processId": 30100, "processName": "WindowsTerminal" },
+      { "handle": 3149086, "role": "startupForeground", "processId": 30100, "processName": "WindowsTerminal" }
+    ],
+    "processes": [
+      { "processId": 31000, "role": "server", "processName": "WindowsAppManagerMcp" },
+      { "processId": 30900, "role": "ancestor", "processName": "claude" },
+      { "processId": 30500, "role": "ancestor", "processName": "pwsh" },
+      { "processId": 30100, "role": "ancestor", "processName": "WindowsTerminal" },
+      { "processId": 30700, "role": "consoleServer", "processName": "OpenConsole" }
+    ]
+  },
+  "input": {
+    "paused": false,
+    "hotkey": { "chord": "Ctrl+Alt+Shift+Pause", "state": "Registered", "source": "default" },
+    "sharedPause": true
+  },
+  "safety": {
+    "deniedProcesses": ["1Password", "Bitwarden", "KeePass", "..."],
+    "denyListSource": "default",
+    "destructiveChords": ["%{F4}", "^w", "^q", "^{F4}", "^+{ESC}", "#l"],
+    "destructiveChordSource": "default"
+  },
+  "paths": { "layouts": "C:\\Users\\user\\AppData\\Local\\WindowsAppManagerMcp\\layouts" },
+  "toolsets": {
+    "enabled": ["server", "windows", "monitors", "capture", "elements", "input", "launch", "process", "layouts", "browser"],
+    "disabled": [],
+    "source": "default",
+    "readOnly": false,
+    "excludedTools": [],
+    "servedTools": 48
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `server` | The build: `version` is the product version with the commit it was built from (also `serverInfo.version` in the MCP handshake), `gitSha` that commit, `sdkVersion` the MCP C# SDK, `runtime` the .NET runtime, `os` the Windows version |
+| `connection` | The MCP session this call came in on: the negotiated `protocolVersion` and the client's `clientName` and `clientVersion` (each left out when the client did not send it) |
+| `process` | The server process: `integrityLevel` and `elevated` (Windows drops input to windows of a higher integrity level: `TargetElevated`), and `dpiAwareness`, the awareness in force. The app manifest declares `PerMonitorV2`, which makes every coordinate a physical pixel; anything else is a warning |
+| `desktop` | `inputDesktopAvailable` is false while a UAC prompt, the lock screen or Ctrl+Alt+Del is shown or the session is disconnected (`DesktopUnavailable`); `sessionLocked` (`SessionLocked`); `foregroundLockTimeoutMs`, how long Windows keeps other processes from taking the foreground after the user's last input ([focus_window](#focus_window) works around it) |
+| `monitors` | The monitors, as [get_monitors](#get_monitors) indexes them, with their effective `dpi` (96 at 100%). `scaleFactor` is for information only: never multiply coordinates by it |
+| `host` | What the server recorded at start as the agent's host, which input never reaches (`TargetIsAgentHost`, see [Input guard](#input-guard)): the window that shows its console and the window in front at start, and the server, its ancestors (parent first) and its console servers. `processName` is the process's name now, or left out when it has exited |
+| `input` | Whether the user paused input with the pause hotkey (`paused`, `pausedBy`, `pausedAt`), the `hotkey` (as in [get_control_status](#get_control_status)) and `sharedPause` |
+| `safety` | The [target policy](#target-policy) (`deniedProcesses`, `denyListSource`, `allowedProcesses` when the user set an allow list) and the `destructiveChords` that need `windowHandle` |
+| `paths` | `layouts`, the [layout presets](#layout-presets) folder. `auditLog` will name the audit log once it exists |
+| `toolsets` | The [toolsets](#toolsets) served (`enabled`) and not served (`disabled`), where the choice came from (`source`: `default`, `WAM_TOOLSETS`, or `all`), `readOnly` mode, the `excludedTools`, and how many tools are served (`servedTools`) |
+| `warnings` | One sentence for each thing that will make tools fail or coordinates wrong: a DPI awareness other than `PerMonitorV2`, a locked session or unreachable input desktop, a server below medium integrity, input paused by the user, a pause hotkey that is not registered or does not pause this server, and every `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` or `WAM_READ_ONLY` entry that was ignored. Left out when there is nothing to warn about |
+
+The report itself never fails: a value that cannot be read is `Unknown`, null or left out, and a warning says what that means.
 
 ---
 

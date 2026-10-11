@@ -67,7 +67,7 @@ public static class InputGateToolFilter
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_control_status"
+        "get_control_status", "get_server_info"
     };
 
     /// <summary>

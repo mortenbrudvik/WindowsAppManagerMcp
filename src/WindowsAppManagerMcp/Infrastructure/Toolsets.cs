@@ -76,9 +76,9 @@ public static class Toolsets
         ServerToolset,
         [
             new(ServerToolset, OnByDefault: true,
-                "The server's state and the user's control over it: whether input is paused, resuming it with the user's " +
-                "consent, releasing stuck keys.",
-                ["get_control_status", "resume_input", "release_all_input"]),
+                "The server's build, environment and toolsets, and the user's control over its input: whether input is " +
+                "paused, resuming it with the user's consent, releasing stuck keys.",
+                ["get_server_info", "get_control_status", "resume_input", "release_all_input"]),
             new("windows", OnByDefault: true,
                 "Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches.",
                 [
