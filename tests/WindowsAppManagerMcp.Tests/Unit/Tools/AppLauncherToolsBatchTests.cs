@@ -19,14 +19,14 @@ public class AppLauncherToolsBatchTests
         // Arrange
         _mockProcessService
             .Setup(p => p.LaunchApplicationsBatchAsync(
-                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(),
+                It.IsAny<IReadOnlyList<LaunchRequest>>(),
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LaunchResult>
             {
-                new(true, ProcessId: 100),
+                new(true, ProcessId: 100, Status: LaunchStatus.Started),
                 new(false, ErrorMessage: "cmd.exe would interpret '&'", ErrorCode: nameof(LaunchErrorCode.UnsafeBatchArguments))
             });
         var sut = CreateSut();
@@ -42,6 +42,8 @@ public class AppLauncherToolsBatchTests
         result.Succeeded.Should().Be(1);
         result.Failed.Should().Be(1);
         result.Results[0].ErrorCode.Should().BeNull();
+        result.Results[0].LaunchStatus.Should().Be("started");
+        result.Results[1].LaunchStatus.Should().BeNull();
         result.Results[1].Executable.Should().Be("code");
         result.Results[1].ErrorCode.Should().Be("UnsafeBatchArguments");
         result.Results[1].Error.Should().Contain("cmd.exe");
@@ -55,12 +57,12 @@ public class AppLauncherToolsBatchTests
         CancellationToken serviceToken = default;
         _mockProcessService
             .Setup(p => p.LaunchApplicationsBatchAsync(
-                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(),
+                It.IsAny<IReadOnlyList<LaunchRequest>>(),
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback((IReadOnlyList<(string, string[]?, string?)> _, bool _, int _, IProgress<OperationProgress>? progress, CancellationToken token) =>
+            .Callback((IReadOnlyList<LaunchRequest> _, bool _, int _, IProgress<OperationProgress>? progress, CancellationToken token) =>
             {
                 serviceToken = token;
                 progress!.Report(new OperationProgress(1, 1, "1 of 1: notepad started"));

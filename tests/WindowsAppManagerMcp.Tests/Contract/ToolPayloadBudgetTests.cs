@@ -58,7 +58,7 @@ public class ToolPayloadBudgetTests
         ["snap_windows_batch"] = 160, // 104
         ["set_windows_state_batch"] = 160, // 104
         ["close_windows_batch"] = 100, // 41: each window with its status
-        ["launch_applications_batch"] = 100, // 54
+        ["launch_applications_batch"] = 320, // 212 (with each window found)
 
         // Monitor Info: 2 monitors
         ["get_monitors"] = 150, // 98
@@ -96,7 +96,7 @@ public class ToolPayloadBudgetTests
         ["release_all_input"] = 100, // 21
 
         // App Launch
-        ["launch_application"] = 100, // 15
+        ["launch_application"] = 140, // 89 (with the window it found)
         ["list_processes"] = 2_000, // 1,328: 40 processes
         ["kill_process"] = 100, // 28
         ["close_application"] = 100, // 49: one Notepad window

@@ -91,8 +91,10 @@ public class ServerHarnessTests : IDisposable
         var processLeaks = NativeReferenceWalker.FindUnguardedWrappers(processService, nameof(ProcessService));
         var monitorLeaks = NativeReferenceWalker.FindUnguardedWrappers(monitorService, nameof(MonitorService));
 
-        // Assert
-        processLeaks.Should().ContainSingle().Which.Should().Contain(nameof(NativeProcessWrapper));
+        // Assert - without IWindowWaitService, ProcessService builds a WindowWaitService over a NativeWindowWrapper of its own
+        processLeaks.Should().HaveCount(2);
+        processLeaks.Should().ContainSingle(leak => leak.Contains(nameof(NativeProcessWrapper)));
+        processLeaks.Should().ContainSingle(leak => leak.Contains(nameof(NativeWindowWrapper)));
         monitorLeaks.Should().ContainSingle().Which.Should().Contain(nameof(NativeMonitorWrapper));
     }
 

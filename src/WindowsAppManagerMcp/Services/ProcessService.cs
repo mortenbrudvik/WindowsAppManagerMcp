@@ -22,6 +22,7 @@ public class ProcessService : IProcessService
     private readonly INativeProcessWrapper _processWrapper;
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
+    private readonly IWindowWaitService _windowWait;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -32,6 +33,10 @@ public class ProcessService : IProcessService
     /// processes, and a forced kill whose process tree contains one. The server always passes it; without
     /// it only this server and its live ancestors count as the host.
     /// </param>
+    /// <param name="windowWait">
+    /// Finds the window a launch opens (roadmap M2.6). The server always passes it; without it a wait reads the real
+    /// desktop through a <see cref="NativeWindowWrapper"/> created here (eagerly, so that the E2E reference walk sees it).
+    /// </param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -39,7 +44,8 @@ public class ProcessService : IProcessService
         IExecutableResolver? executableResolver = null,
         INativeProcessWrapper? processWrapper = null,
         ITargetPolicy? targetPolicy = null,
-        IHostGuard? hostGuard = null)
+        IHostGuard? hostGuard = null,
+        IWindowWaitService? windowWait = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -48,61 +54,292 @@ public class ProcessService : IProcessService
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
+        _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
     }
 
-    /// <summary>How often the wait for a launched application's window looks for it.</summary>
-    private const int WindowPollIntervalMs = 100;
+    /// <summary>
+    /// How long a start may take before the launch reports <see cref="LaunchStatus.AwaitingUserConsent"/>: ShellExecute does
+    /// not return while Windows asks the user something (a UAC prompt for an elevated program, SmartScreen, a security
+    /// warning, an Open with dialog), which can take any time.
+    /// </summary>
+    public static readonly TimeSpan DefaultStartTimeout = TimeSpan.FromSeconds(5);
 
-    public async Task<LaunchResult> LaunchApplicationAsync(
+    /// <summary>How long a start may take (default <see cref="DefaultStartTimeout"/>); tests shorten it.</summary>
+    public TimeSpan StartTimeout { get; init; } = DefaultStartTimeout;
+
+    /// <summary>ERROR_CANCELLED: the user declined or cancelled a prompt of the start (most likely UAC).</summary>
+    private const int ErrorCancelled = 1223;
+
+    public Task<LaunchResult> LaunchApplicationAsync(
         string executable,
         string[]? arguments = null,
         string? workingDirectory = null,
         bool waitForWindow = false,
         int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default) =>
+        LaunchApplicationAsync(new LaunchRequest(executable, arguments, workingDirectory), waitForWindow, waitTimeoutMs, cancellationToken);
+
+    public async Task<LaunchResult> LaunchApplicationAsync(
+        LaunchRequest request,
+        bool waitForWindow,
+        int waitTimeoutMs,
         CancellationToken cancellationToken = default)
     {
-        var plan = PlanLaunch(executable, arguments, workingDirectory);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
         if (!plan.IsValid)
         {
-            return new LaunchResult(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+            return Rejected(plan);
         }
-
-        var warning = plan.Warning;
 
         // A call cancelled before the start starts nothing
         cancellationToken.ThrowIfCancellationRequested();
 
+        var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
+        if (launch.Outcome is { } ended)
+        {
+            return ended;
+        }
+
+        using (launch.Process)
+        {
+            // Cancelled while waiting for the window: the program was started and keeps running, and the call throws
+            if (!waitForWindow)
+            {
+                return StartedWithoutWait(launch);
+            }
+
+            var owner = OwnerOf(launch, request);
+            return await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static LaunchResult Rejected(LaunchPlan plan) =>
+        new(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+
+    /// <summary>
+    /// A launch whose start was requested: the started process (null when Windows started none), the windows before the
+    /// start (with a window wait) and when it was requested; or, when it ended there, its <see cref="Outcome"/>.
+    /// </summary>
+    private sealed record StartedLaunch(
+        LaunchPlan Plan, IProcessHandle? Process, WindowBaseline? Baseline, DateTime LaunchedAtUtc, LaunchResult? Outcome = null);
+
+    /// <summary>
+    /// Starts a planned launch. The start runs on a thread of its own and is waited for at most <see cref="StartTimeout"/>:
+    /// ShellExecute blocks while Windows asks the user to approve an elevated program, so a longer start is reported as
+    /// <see cref="LaunchStatus.AwaitingUserConsent"/> (the program starts later if the user approves; its handle is then
+    /// released). A declined prompt is <see cref="LaunchErrorCode.ElevationCancelled"/>, any other failure
+    /// <see cref="LaunchErrorCode.LaunchException"/>.
+    /// </summary>
+    private async Task<StartedLaunch> StartAsync(LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken)
+    {
+        var baseline = takeBaseline ? _windowWait.TakeBaseline() : null;
+        var launchedAt = DateTime.UtcNow;
+        // On a thread of its own, not the thread pool: a start that waits for the user's answer to a UAC prompt can take
+        // minutes, and a busy thread pool must not delay a start into looking like one
+        var start = Task.Factory.StartNew(
+            () => _processWrapper.StartProcess(plan.StartInfo!),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task finished;
+        using (var stopTimer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            finished = await Task.WhenAny(start, Task.Delay(StartTimeout, stopTimer.Token)).ConfigureAwait(false);
+            stopTimer.Cancel();
+        }
+
+        if (finished != start)
+        {
+            ReleaseWhenStarted(start);
+            cancellationToken.ThrowIfCancellationRequested();
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
+                Success: true,
+                Warning: CombineWarnings(plan.Warning,
+                    $"The start did not return within {StartTimeout.TotalSeconds:0.#} seconds: Windows is most likely showing a consent " +
+                    "or security prompt (UAC, SmartScreen, a security warning for a downloaded or network file, or 'How do you want to " +
+                    "open this file?'). Only the user may answer it: do not click or type into it. The program starts only if the user " +
+                    "approves, its process ID is not known, and a later decline is not reported. Ask the user to answer the prompt, then " +
+                    "look for its window with find_windows; do not launch it again."),
+                Status: LaunchStatus.AwaitingUserConsent));
+        }
+
         try
         {
-            using var process = _processWrapper.StartProcess(plan.StartInfo!);
-            if (process == null)
-            {
-                return new LaunchResult(false, ErrorMessage: "Failed to start process", ErrorCode: nameof(LaunchErrorCode.ProcessStartFailed), Warning: warning);
-            }
-
-            nint? windowHandle = null;
-
-            if (waitForWindow)
-            {
-                windowHandle = await WaitForMainWindowAsync(process, waitTimeoutMs, cancellationToken).ConfigureAwait(false);
-            }
-
-            return new LaunchResult(
-                Success: true,
-                ProcessId: process.Id,
-                WindowHandle: windowHandle,
-                Warning: warning
-            );
+            return new StartedLaunch(plan, await start.ConfigureAwait(false), baseline, launchedAt);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
         {
-            // Cancelled while waiting for the window: the program was started and keeps running
-            throw;
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
+                ErrorMessage: "The user declined or cancelled a prompt Windows showed for the start (most likely a UAC prompt for a " +
+                              "program that needs administrator rights). Nothing was started. Ask the user before trying again.",
+                ErrorCode: nameof(LaunchErrorCode.ElevationCancelled), Warning: plan.Warning));
         }
         catch (Exception ex)
         {
-            return new LaunchResult(false, ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: warning);
+            return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
+                ErrorMessage: ex.Message, ErrorCode: nameof(LaunchErrorCode.LaunchException), Warning: plan.Warning));
         }
+    }
+
+    /// <summary>A start that was not waited for: its process handle is released when it comes, and a failure is observed.</summary>
+    private static void ReleaseWhenStarted(Task<IProcessHandle?> start) =>
+        start.ContinueWith(
+            static t =>
+            {
+                if (t.Status == TaskStatus.RanToCompletion)
+                    t.Result?.Dispose();
+                else
+                    _ = t.Exception;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private static LaunchResult StartedWithoutWait(StartedLaunch launch) => launch.Process == null
+        ? new LaunchResult(
+            Success: true,
+            Warning: CombineWarnings(launch.Plan.Warning,
+                "Windows started no new process: the request went to an app that was already running, or a packaged app was " +
+                "activated, so processId is null. Find its window with find_windows, or launch with waitForWindow=true."),
+            Status: LaunchStatus.PossibleHandoff)
+        : new LaunchResult(Success: true, ProcessId: launch.Process.Id, Warning: launch.Plan.Warning, Status: LaunchStatus.Started);
+
+    /// <summary>
+    /// Waits for the window of a started launch (<see cref="IWindowWaitService"/>) and turns the outcome into the launch
+    /// result. When no window was found, a visible main window of the started process (which may be untitled) still counts.
+    /// </summary>
+    /// <param name="isOwner">Whether a window belongs to the launch: <paramref name="owner"/>'s match, narrowed in a batch.</param>
+    private async Task<LaunchResult> WaitForWindowAsync(
+        StartedLaunch launch,
+        LaunchRequest request,
+        LaunchWindowOwner owner,
+        Func<WindowCandidate, bool> isOwner,
+        int waitTimeoutMs,
+        Func<nint, bool>? tryClaim,
+        CancellationToken cancellationToken)
+    {
+        var target = launch.Plan.Target!;
+        var options = new WindowWaitOptions
+        {
+            TimeoutMs = waitTimeoutMs,
+            DocumentHints = DocumentHints(target, request.Arguments),
+            TryClaim = tryClaim
+        };
+
+        var wait = await _windowWait.WaitForNewWindowAsync(launch.Baseline!, isOwner, options, cancellationToken).ConfigureAwait(false);
+        var window = wait.Window;
+        var status = wait.Outcome switch
+        {
+            WindowWaitOutcome.NewWindow => LaunchStatus.WindowObserved,
+            WindowWaitOutcome.ReusedExistingWindow => LaunchStatus.ReusedExistingWindow,
+            WindowWaitOutcome.OpenedInTab => LaunchStatus.OpenedInTab,
+            _ => LaunchStatus.TimedOut
+        };
+
+        if (status == LaunchStatus.TimedOut && launch.Process != null && MainWindowOf(launch.Process) is { } mainWindow)
+        {
+            window = mainWindow;
+            status = LaunchStatus.WindowObserved;
+        }
+
+        bool? launcherExited = launch.Process == null ? null : HasExitedSafe(launch.Process);
+        if (status == LaunchStatus.TimedOut)
+        {
+            status = launch.Process == null ? LaunchStatus.PossibleHandoff
+                : launcherExited == true ? LaunchStatus.ExitedWithoutWindow
+                : LaunchStatus.TimedOut;
+        }
+
+        return new LaunchResult(
+            Success: true,
+            ProcessId: launch.Process?.Id,
+            WindowHandle: window?.Handle,
+            Warning: CombineWarnings(launch.Plan.Warning, NoWindowNote(status, waitTimeoutMs)),
+            Status: status,
+            Window: window,
+            LauncherExited: launcherExited);
+    }
+
+    private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
+        LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow);
+
+    /// <summary>
+    /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
+    /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
+    /// other's windows by name and path; the started process decides between them.
+    /// </summary>
+    private static Func<WindowCandidate, bool> BatchOwner(LaunchWindowOwner owner, IReadOnlyList<LaunchWindowOwner> others) =>
+        window => owner.Matches(window) &&
+                  (owner.StartedProcess(window.ProcessId) || !others.Any(other => other.StartedProcess(window.ProcessId)));
+
+    /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
+    private WindowInfo? MainWindowOf(IProcessHandle process)
+    {
+        try
+        {
+            var handle = process.RefreshMainWindowHandle();
+            return handle != nint.Zero && _windowService.GetWindowInfo(handle) is { IsVisible: true } window ? window : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>What to do when the wait found no window; null when it found one.</summary>
+    private static string? NoWindowNote(LaunchStatus status, int waitTimeoutMs) => status switch
+    {
+        LaunchStatus.PossibleHandoff =>
+            "Windows started no new process (the request went to an app that was already running, or a packaged app was activated), " +
+            $"and no window of it was recognised within {waitTimeoutMs} ms. Look for it with find_windows, or launch with expectWindow " +
+            "(processName or titleContains) so the wait can recognise it. Do not launch it again.",
+        LaunchStatus.ExitedWithoutWindow =>
+            "The started process exited without a window of its own, and no window of an app it may have handed off to was " +
+            $"recognised within {waitTimeoutMs} ms. Look for it with find_windows, or launch with expectWindow (processName or " +
+            "titleContains). Do not launch it again.",
+        LaunchStatus.TimedOut =>
+            $"The program is running, but no window of it appeared within {waitTimeoutMs} ms: it may still be starting, or run " +
+            "without a window. Check with find_windows; do not launch it again.",
+        _ => null
+    };
+
+    /// <summary>
+    /// The texts that show a launched document or URL in an existing window's title: the file or folder names among the
+    /// arguments (and a document launched directly), and the host names of web addresses. Options (-x, --x) are skipped.
+    /// </summary>
+    public static IReadOnlyList<string> DocumentHints(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    {
+        var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
+        if (target.Kind == LaunchTargetKind.Other)
+            values.Add(target.FileName);
+
+        var hints = new List<string>();
+        foreach (var value in values)
+        {
+            string? hint = null;
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                hint = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+            }
+            else if (value.IndexOfAny(['\\', '/']) >= 0 || Path.HasExtension(value))
+            {
+                try
+                {
+                    hint = Path.GetFileName(value.TrimEnd('\\', '/'));
+                }
+                catch (ArgumentException)
+                {
+                    hint = null;
+                }
+            }
+
+            if (hint is { Length: >= 3 } && !hints.Contains(hint, StringComparer.OrdinalIgnoreCase))
+                hints.Add(hint);
+        }
+
+        return hints;
     }
 
     /// <summary>
@@ -155,8 +392,9 @@ public class ProcessService : IProcessService
             }
         }
 
-        var effectiveWorkingDirectory = workingDirValidation.SanitizedPath ?? workingDirectory ?? Environment.CurrentDirectory;
-        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, effectiveWorkingDirectory);
+        // The resolver checks the server's current directory itself; the working directory is checked when one was given
+        var requestedWorkingDirectory = workingDirValidation.SanitizedPath ?? (string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory);
+        var target = _executableResolver.Resolve(executableValidation.SanitizedExecutable ?? executable, requestedWorkingDirectory);
 
         if (target.FoundOnlyInWorkingDirectory != null)
         {
@@ -166,6 +404,16 @@ public class ProcessService : IProcessService
                 "never resolved from the working directory, to avoid running a planted program. Pass the full path " +
                 "if you intend to run that file.",
                 nameof(LaunchErrorCode.ExecutableInWorkingDirectory),
+                warning);
+        }
+
+        if (target.NotFound)
+        {
+            return LaunchPlan.Rejected(
+                $"'{executable}' was not found in the Windows directory, System32, the PATH entries or App Paths. A bare name " +
+                "is never passed to Windows unresolved, because Windows would also search the server's current directory. Pass " +
+                @"the program's full path, or a URI such as ms-settings: or shell:AppsFolder\<AppUserModelID> for a Store app.",
+                nameof(LaunchErrorCode.ExecutableNotFound),
                 warning);
         }
 
@@ -186,7 +434,7 @@ public class ProcessService : IProcessService
         {
             FileName = target.FileName,
             UseShellExecute = true,
-            WorkingDirectory = effectiveWorkingDirectory
+            WorkingDirectory = requestedWorkingDirectory ?? DefaultWorkingDirectory(target)
         };
 
         if (arguments?.Length > 0)
@@ -194,7 +442,30 @@ public class ProcessService : IProcessService
             startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
         }
 
-        return new LaunchPlan(startInfo, target.Kind, warning);
+        return new LaunchPlan(startInfo, target.Kind, warning, Target: target);
+    }
+
+    /// <summary>
+    /// The working directory of a launch that names none: the folder of the program or document, never the server's
+    /// current directory (a repository the agent works in, from which the program could load planted files). A URI gets
+    /// the user's profile folder, as the Run dialog would.
+    /// </summary>
+    private static string DefaultWorkingDirectory(ResolvedLaunchTarget target)
+    {
+        try
+        {
+            if (Path.IsPathFullyQualified(target.FileName) && Path.GetDirectoryName(target.FileName) is { Length: > 0 } folder)
+            {
+                return folder;
+            }
+        }
+        catch (ArgumentException)
+        {
+            // Not a path: a URI
+        }
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.IsNullOrEmpty(profile) ? Environment.SystemDirectory : profile;
     }
 
     private static bool ContainsCmdMetacharacters(string argument)
@@ -378,40 +649,115 @@ public class ProcessService : IProcessService
         "its console or the console server behind it (conhost or OpenConsole), or the app that was in front when the server started";
 
     public async Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
-        IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
+        IReadOnlyList<LaunchRequest> applications,
         bool waitForWindows = false,
         int waitTimeoutMs = 5000,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var results = new List<LaunchResult>(applications.Count);
+        ArgumentNullException.ThrowIfNull(applications);
 
-        for (var i = 0; i < applications.Count; i++)
+        var results = new LaunchResult?[applications.Count];
+        var waiting = new List<(int Index, StartedLaunch Launch)>();
+        var finished = 0;
+        var reportLock = new object();
+
+        // "i of n" when an application is done: refused or started (without a wait), or its window wait ended. The waits
+        // end concurrently: counting and reporting under one lock keeps the reported values increasing
+        void Report(int index)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var app = applications[i];
-            var result = await LaunchApplicationAsync(
-                app.Executable,
-                app.Arguments,
-                app.WorkingDirectory,
-                waitForWindows,
-                waitTimeoutMs,
-                cancellationToken).ConfigureAwait(false);
-
-            results.Add(result);
-            progress?.Report(new OperationProgress(i + 1, applications.Count,
-                $"{i + 1} of {applications.Count}: {app.Executable} {DescribeLaunch(result, waitForWindows)}"));
+            lock (reportLock)
+            {
+                finished++;
+                progress?.Report(new OperationProgress(finished, applications.Count,
+                    $"{finished} of {applications.Count}: {applications[index].Executable} {DescribeLaunch(results[index]!)}"));
+            }
         }
 
-        return results;
+        try
+        {
+            // Start every application first, in order; a cancelled call starts no more
+            for (var i = 0; i < applications.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var request = applications[i];
+                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+                if (!plan.IsValid)
+                {
+                    results[i] = Rejected(plan);
+                    Report(i);
+                    continue;
+                }
+
+                var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
+                if (launch.Outcome is { } ended)
+                {
+                    results[i] = ended;
+                    Report(i);
+                }
+                else if (!waitForWindows)
+                {
+                    using (launch.Process)
+                    {
+                        results[i] = StartedWithoutWait(launch);
+                    }
+
+                    Report(i);
+                }
+                else
+                {
+                    waiting.Add((i, launch));
+                }
+            }
+
+            // Then wait for all the windows at once, against one deadline; a new window goes to one launch only. A window
+            // of a process that one launch started (or that process's child) is that launch's: the other launches' looser
+            // matches (same program name or path, handoff names, hint) leave it alone, whichever wait sees it first
+            var owners = waiting.Select(item => OwnerOf(item.Launch, applications[item.Index])).ToList();
+            var claimed = new HashSet<nint>();
+            bool Claim(nint handle)
+            {
+                lock (claimed)
+                {
+                    return claimed.Add(handle);
+                }
+            }
+
+            await Task.WhenAll(waiting.Select(async (item, position) =>
+            {
+                var owner = owners[position];
+                var others = owners.Where((_, other) => other != position).ToList();
+                results[item.Index] = await WaitForWindowAsync(
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others), waitTimeoutMs, Claim,
+                    cancellationToken).ConfigureAwait(false);
+                Report(item.Index);
+            })).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var (_, launch) in waiting)
+            {
+                launch.Process?.Dispose();
+            }
+        }
+
+        return results!;
     }
 
-    private static string DescribeLaunch(LaunchResult result, bool waitedForWindow) =>
-        !result.Success ? $"was not started ({result.ErrorCode})"
-        : !waitedForWindow ? "started"
-        : result.WindowHandle != null ? "started, its window appeared"
-        : "started, no window appeared in time";
+    private static string DescribeLaunch(LaunchResult result) => !result.Success
+        ? $"was not started ({result.ErrorCode})"
+        : result.Status switch
+        {
+            LaunchStatus.WindowObserved => "started, its window appeared",
+            LaunchStatus.ReusedExistingWindow => "started, it reused a window that was already open",
+            LaunchStatus.OpenedInTab => "started, it opened in a window that was already open",
+            LaunchStatus.PossibleHandoff => "was handed to an app that was already running",
+            LaunchStatus.ExitedWithoutWindow => "started, but it exited without a window",
+            LaunchStatus.TimedOut => "started, no window appeared in time",
+            LaunchStatus.AwaitingUserConsent => "is waiting for the user to answer a prompt (most likely UAC)",
+            _ => "started"
+        };
 
     public async Task<KillResult> KillProcessAsync(
         int processId,
@@ -954,42 +1300,6 @@ public class ProcessService : IProcessService
         ProcessId: processId,
         ErrorMessage: "Process not found. It may have already exited.",
         ErrorCode: nameof(ProcessErrorCode.ProcessNotFound));
-
-    /// <summary>
-    /// Looks for the launched process's window every <see cref="WindowPollIntervalMs"/> until
-    /// <paramref name="timeoutMs"/> has passed. Null when none appeared, or when the process can no longer be read.
-    /// </summary>
-    private async Task<nint?> WaitForMainWindowAsync(IProcessHandle process, int timeoutMs, CancellationToken cancellationToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-
-        while (stopwatch.ElapsedMilliseconds < timeoutMs)
-        {
-            try
-            {
-                var mainWindowHandle = process.RefreshMainWindowHandle();
-                if (mainWindowHandle != nint.Zero)
-                {
-                    return mainWindowHandle;
-                }
-
-                // Also try to find windows belonging to this process
-                var windows = _windowService.FindWindows(processId: process.Id);
-                if (windows.Count > 0)
-                {
-                    return windows[0].Handle;
-                }
-            }
-            catch
-            {
-                break;
-            }
-
-            await Task.Delay(WindowPollIntervalMs, cancellationToken).ConfigureAwait(false);
-        }
-
-        return null;
-    }
 
     // Browser executable paths for common browsers
     private static readonly Dictionary<string, string[]> BrowserPaths = new(StringComparer.OrdinalIgnoreCase)

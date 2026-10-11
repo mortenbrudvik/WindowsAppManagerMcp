@@ -189,7 +189,11 @@ public static class WrapperCatalog
                 [nameof(INativeProcessWrapper.GetAncestorsOf)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetDescendantsOf)] = WrapperMember.Read,
                 [nameof(INativeProcessWrapper.GetProcessStartTime)] = WrapperMember.Read,
-                [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read
+                [nameof(INativeProcessWrapper.GetConsoleWindow)] = WrapperMember.Read,
+                // Launch-to-window resolution: a process snapshot, an image path, and a bounded wait that changes nothing
+                [nameof(INativeProcessWrapper.GetProcessList)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.GetProcessImagePath)] = WrapperMember.Read,
+                [nameof(INativeProcessWrapper.WaitForInputIdle)] = WrapperMember.Read
             },
             [typeof(INativeThreadInputWrapper)] = new Dictionary<string, WrapperMember>
             {

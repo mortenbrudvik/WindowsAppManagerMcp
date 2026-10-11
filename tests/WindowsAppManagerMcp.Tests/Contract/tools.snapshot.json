@@ -1183,12 +1183,12 @@
     {
       "name": "launch_application",
       "title": "Launch Application",
-      "description": "Launch an application by executable path, name, or protocol URI. Returns process ID and optionally the window handle if waitForWindow is true.",
+      "description": "Launch an application by executable path, name, or protocol URI (http/https, mailto, tel, ms-settings: Settings pages, shell:AppsFolder\\<AppUserModelID> for Store apps, and the schemes the user allows). Returns launchStatus and the process ID. With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab (single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. Never launch again just because no window was found: look for it with find_windows.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "executable": {
-            "description": "Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com')",
+            "description": "Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound",
             "type": "string"
           },
           "arguments": {
@@ -1206,7 +1206,7 @@
             "default": null
           },
           "workingDirectory": {
-            "description": "Working directory for the application",
+            "description": "Working directory for the application (default: the program's own folder)",
             "type": [
               "string",
               "null"
@@ -1222,6 +1222,32 @@
             "description": "Maximum time in milliseconds to wait for the window (0-30000, default: 5000)",
             "type": "integer",
             "default": 5000
+          },
+          "expectWindow": {
+            "description": "With waitForWindow: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it. A new window that matches every field set counts as the launch's window",
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "processName": {
+                "description": "Part of the name of the process that will own the window, case-insensitive (e.g. 'CalculatorApp', 'SystemSettings', 'WINWORD')",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
+              "titleContains": {
+                "description": "Part of the title of the window, case-insensitive",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              }
+            },
+            "default": null
           }
         },
         "required": [
@@ -1239,12 +1265,12 @@
     {
       "name": "launch_applications_batch",
       "title": "Launch Applications (Batch)",
-      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls. An item that is null fails alone with InvalidArguments; the others are still launched.",
+      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "applications": {
-            "description": "Array of applications to launch with executable, optional arguments, and optional workingDirectory",
+            "description": "Array of applications to launch with executable, optional arguments, optional workingDirectory and optional expectWindow",
             "type": "array",
             "items": {
               "type": "object",
@@ -1268,6 +1294,31 @@
                     "null"
                   ],
                   "default": null
+                },
+                "expectWindow": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "processName": {
+                      "description": "Part of the name of the process that will own the window, case-insensitive (e.g. 'CalculatorApp', 'SystemSettings', 'WINWORD')",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "default": null
+                    },
+                    "titleContains": {
+                      "description": "Part of the title of the window, case-insensitive",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "default": null
+                    }
+                  },
+                  "default": null
                 }
               },
               "required": [
@@ -1281,7 +1332,7 @@
             "default": false
           },
           "waitTimeoutMs": {
-            "description": "Maximum time in milliseconds to wait for each window (0-30000, default: 5000)",
+            "description": "Maximum time in milliseconds to wait for the windows, all together (0-30000, default: 5000)",
             "type": "integer",
             "default": 5000
           }

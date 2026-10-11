@@ -7,7 +7,8 @@ public interface IProcessService
 {
     /// <summary>
     /// Launches an application, and with <paramref name="waitForWindow"/> waits up to
-    /// <paramref name="waitTimeoutMs"/> for its window.
+    /// <paramref name="waitTimeoutMs"/> for its window: <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>
+    /// without a window hint.
     /// </summary>
     /// <param name="cancellationToken">
     /// Cancels the call: before the start nothing is started; during the wait for the window the started program keeps
@@ -19,6 +20,25 @@ public interface IProcessService
         string? workingDirectory = null,
         bool waitForWindow = false,
         int waitTimeoutMs = 5000,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Launches an application (roadmap M2.6/M2.7). Bare names are resolved to an absolute path, never from the working
+    /// directory, and an unresolved one is refused (ExecutableNotFound); the working directory defaults to the program's
+    /// folder. The start is waited for at most <see cref="ProcessService.StartTimeout"/>; a longer one is reported as
+    /// <see cref="LaunchStatus.AwaitingUserConsent"/> (a UAC prompt). When Windows starts no process (the request went to
+    /// a running app), the launch still succeeds, with no process ID.
+    /// <para>
+    /// With <paramref name="waitForWindow"/>, waits up to <paramref name="waitTimeoutMs"/> (at most 60000) for the window
+    /// the launch opens, whichever process owns it (<see cref="IWindowWaitService"/>, <see cref="LaunchWindowOwner"/>),
+    /// and reports it in <see cref="LaunchResult.Window"/> with a <see cref="LaunchResult.Status"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="cancellationToken">As for the other overload.</param>
+    Task<LaunchResult> LaunchApplicationAsync(
+        LaunchRequest request,
+        bool waitForWindow,
+        int waitTimeoutMs,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -74,18 +94,22 @@ public interface IProcessService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Launches multiple applications in batch, one after another.
+    /// Launches multiple applications: each one is checked and started in order, as by
+    /// <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>; with <paramref name="waitForWindows"/>
+    /// the windows are then waited for together, against one deadline (<paramref name="waitTimeoutMs"/> after the last
+    /// start), and a new window is reported for one launch only.
     /// </summary>
-    /// <param name="applications">List of applications to launch with their arguments and working directories.</param>
-    /// <param name="waitForWindows">Whether to wait for each application window to appear.</param>
-    /// <param name="waitTimeoutMs">Maximum time in milliseconds to wait for each window.</param>
-    /// <param name="progress">Receives "i of n" after each application, started or not. Optional.</param>
+    /// <param name="applications">The applications to launch.</param>
+    /// <param name="waitForWindows">Whether to wait for each application's window.</param>
+    /// <param name="waitTimeoutMs">How long to wait for the windows, in milliseconds.</param>
+    /// <param name="progress">Receives "i of n" each time an application is done: refused, started, or its window wait ended. Optional.</param>
     /// <param name="cancellationToken">
-    /// Cancels the batch: no further application is started, and the call throws <see cref="OperationCanceledException"/>.
+    /// Cancels the batch: no further application is started, the window waits end, and the call throws
+    /// <see cref="OperationCanceledException"/>.
     /// </param>
-    /// <returns>Results for each launch attempt.</returns>
+    /// <returns>A result for each application, in request order.</returns>
     Task<IReadOnlyList<LaunchResult>> LaunchApplicationsBatchAsync(
-        IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)> applications,
+        IReadOnlyList<LaunchRequest> applications,
         bool waitForWindows = false,
         int waitTimeoutMs = 5000,
         IProgress<OperationProgress>? progress = null,

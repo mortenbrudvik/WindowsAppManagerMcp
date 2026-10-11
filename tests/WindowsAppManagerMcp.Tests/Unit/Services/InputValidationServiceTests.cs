@@ -11,7 +11,8 @@ public class InputValidationServiceTests
 
     public InputValidationServiceTests()
     {
-        _sut = new InputValidationService();
+        // The built-in protocols only, whatever WAM_ALLOWED_PROTOCOLS the test run has
+        _sut = new InputValidationService(ProtocolAllowlist.BuiltIn);
     }
 
     #region ValidateExecutable - Valid Inputs
@@ -112,7 +113,6 @@ public class InputValidationServiceTests
     #region ValidateExecutable - Dangerous Protocols
 
     [Theory]
-    [InlineData("ms-settings:display")]
     [InlineData("ms-windows-store:apps")]
     [InlineData("powershell://command")]
     [InlineData("cmd://command")]
@@ -139,7 +139,193 @@ public class InputValidationServiceTests
 
         // Assert
         result.IsValid.Should().BeFalse();
-        result.Error.Should().Contain("Unknown protocol");
+        result.Error.Should().Contain("Unknown protocol").And.Contain(ProtocolAllowlist.Variable);
+    }
+
+    #endregion
+
+    #region ValidateExecutable - Settings pages, Store apps and WAM_ALLOWED_PROTOCOLS (roadmap M2.7)
+
+    [Theory]
+    [InlineData("ms-settings:")]
+    [InlineData("ms-settings:display")]
+    [InlineData("MS-SETTINGS:network-wifi")]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    [InlineData(@"shell:appsfolder\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App")]
+    [InlineData(@"shell:AppsFolder\Microsoft.Windows.Explorer")]
+    [InlineData(@"shell:AppsFolder\MSEdge")]
+    public void ValidateExecutable_SettingsPagesAndAppsFolderApps_AreAllowed(string uri)
+    {
+        // Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeTrue(result.Error);
+        result.SanitizedExecutable.Should().Be(uri);
+    }
+
+    [Theory]
+    [InlineData("shell:startup")]
+    [InlineData("shell:AppsFolder")]
+    [InlineData(@"shell:AppsFolder\")]
+    [InlineData(@"shell:AppsFolder\..\..\Windows\System32\cmd.exe")]
+    [InlineData(@"shell:AppsFolder\{6D809377-6AF0-444B-8957-A3773F02200E}\Tool\tool.exe")]
+    [InlineData(@"shell:AppsFolder\App!Id!Extra")]
+    [InlineData(@"shell:AppsFolder\App Id")]
+    [InlineData(@"shell:::{2559a1f3-21d7-11d4-bdaf-00c04f60b9f0}")]
+    public void ValidateExecutable_OtherShellLocations_AreBlocked(string uri)
+    {
+        // Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert - only shell:AppsFolder\<AppUserModelID> starts an app; the rest of shell: opens any shell location
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.BlockedProtocol));
+        result.Error.Should().Contain(@"shell:AppsFolder\");
+    }
+
+    [Theory]
+    [InlineData("ms-settings:display\r\ncalc")]
+    [InlineData("https://example.com/\npath")]
+    [InlineData("https://example.com/\0")]
+    public void ValidateExecutable_UriWithControlCharacters_IsInvalidUri(string uri)
+    {
+        // Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidUri));
+    }
+
+    /// <summary>
+    /// A handler registered as app.exe "%1" (Outlook's mailto: is OUTLOOK.EXE -c IPM.Note /m "%1") would take a raw quote
+    /// as the end of its argument, and the rest as more switches; a space or another character a URI cannot hold may split
+    /// an unquoted %1.
+    /// </summary>
+    [Theory]
+    [InlineData("mailto:x\" /a \"C:\\secret.txt")]
+    [InlineData("mailto:a\"b@example.com")]
+    [InlineData("mailto:a@example.com?subject=hello world")]
+    [InlineData("tel:+1 234")]
+    [InlineData("ms-settings:display|calc")]
+    [InlineData("vscode://file/C:/repo/a b.md")]
+    [InlineData("vscode://file/C:\\repo\\a.md")]
+    [InlineData("vscode://file/<x>")]
+    [InlineData("vscode://file/^x")]
+    [InlineData("vscode://file/`x`")]
+    [InlineData("vscode://file/{x}")]
+    [InlineData("https://example.com/\"--foo")]
+    public void ValidateExecutable_UriWithAQuoteOrACharacterOutsideUris_IsInvalidUri(string uri)
+    {
+        // Arrange
+        var sut = new InputValidationService(ProtocolAllowlist.Parse("vscode"));
+
+        // Act
+        var result = sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidUri));
+        result.Error.Should().Contain("Percent-encode");
+    }
+
+    [Theory]
+    [InlineData("https://example.com/search?q=two words")]
+    [InlineData("mailto:a@example.com?subject=hello%20world")]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    public void ValidateExecutable_WebAddressesWithSpacesAndEncodedOrAppsFolderUris_StayValid(string uri)
+    {
+        // Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert - browsers take the whole URI as one argument; shell:AppsFolder has its own strict check
+        result.IsValid.Should().BeTrue(result.Error);
+    }
+
+    [Theory]
+    [InlineData("vscode://file/C:/repo/README.md")]
+    [InlineData("ms-teams:l/chat/0/0")]
+    [InlineData("SPOTIFY:track:123")]
+    [InlineData("ms-windows-store://pdp/?productid=9NBLGGH4NNS1")]
+    public void ValidateExecutable_SchemesTheUserAllows_AreAllowed(string uri)
+    {
+        // Arrange
+        var sut = new InputValidationService(ProtocolAllowlist.Parse("vscode, ms-teams:;Spotify ms-windows-store"));
+
+        // Act
+        var result = sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeTrue(result.Error);
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("vbscript:msgbox")]
+    [InlineData("data:text/html,x")]
+    [InlineData("mshta:x")]
+    [InlineData("shell:startup")]
+    [InlineData("ms-msdt:/id PCWDiagnostic")]
+    [InlineData("search-ms:query=x")]
+    [InlineData("ms-appinstaller:?source=https://example.com/x.msix")]
+    [InlineData("ms-officecmd:{}")]
+    [InlineData("its:C:/x.chm::/a.htm")]
+    [InlineData("ms-its:C:/x.chm::/a.htm")]
+    [InlineData("mk:@MSITStore:C:/x.chm::/a.htm")]
+    [InlineData("hcp://system/x")]
+    [InlineData("ms-cxh:x")]
+    [InlineData("ms-cxh-full:x")]
+    public void ValidateExecutable_BlockedSchemes_StayBlockedWhenTheUserListsThem(string uri)
+    {
+        // Arrange
+        var sut = new InputValidationService(ProtocolAllowlist.Parse(
+            "javascript,vbscript,data,mshta,shell,ms-msdt,search-ms,ms-appinstaller,ms-officecmd,its,ms-its,mk,hcp,ms-cxh,ms-cxh-full"));
+
+        // Act
+        var result = sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.BlockedProtocol));
+    }
+
+    [Fact]
+    public void ProtocolAllowlist_Parse_ReportsTheEntriesItIgnores()
+    {
+        // Act
+        var allowlist = ProtocolAllowlist.Parse("vscode, javascript, not_a_scheme, 1abc, file, https, zoommtg:");
+
+        // Assert - a blocked or malformed scheme is ignored, and so is file (always checked as a path); https is built in
+        allowlist.ExtraSchemes.Should().BeEquivalentTo("vscode", "zoommtg");
+        allowlist.IgnoredEntries.Should().Equal("javascript", "not_a_scheme", "1abc", "file");
+    }
+
+    [Fact]
+    public void ProtocolAllowlist_FromEnvironment_ReadsTheVariable()
+    {
+        // Act
+        var allowlist = ProtocolAllowlist.FromEnvironment(name => name == ProtocolAllowlist.Variable ? "vscode" : null);
+        var unset = ProtocolAllowlist.FromEnvironment(_ => null);
+
+        // Assert
+        allowlist.ExtraSchemes.Should().Equal("vscode");
+        unset.ExtraSchemes.Should().BeEmpty();
+        unset.IgnoredEntries.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ValidateExecutable_UnknownProtocol_ListsTheAllowedSchemes()
+    {
+        // Arrange
+        var sut = new InputValidationService(ProtocolAllowlist.Parse("vscode"));
+
+        // Act
+        var result = sut.ValidateExecutable("zoommtg://join");
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnknownProtocol));
+        result.Error.Should().Contain("ms-settings").And.Contain(@"shell:AppsFolder\").And.Contain("vscode");
     }
 
     #endregion
@@ -285,9 +471,9 @@ public class InputValidationServiceTests
     #region ValidateExecutable - Error Codes on Every Rejection (PAL-15)
 
     [Theory]
-    [InlineData("ms-settings:display")]
     [InlineData("javascript:alert(1)")]
     [InlineData("shell:appsfolder")]
+    [InlineData("cmd://command")]
     public void ValidateExecutable_DangerousProtocol_ReturnsBlockedProtocolErrorCode(string uri)
     {
         // Arrange & Act

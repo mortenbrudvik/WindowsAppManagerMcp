@@ -153,7 +153,10 @@ public enum LaunchErrorCode
     /// <summary>Invalid path format.</summary>
     InvalidPath = 8,
 
-    /// <summary>Failed to start the process.</summary>
+    /// <summary>
+    /// Failed to start the process. No longer returned (roadmap M2.6): when ShellExecute starts no process, the request
+    /// went to a running app, and the launch succeeds with launchStatus possibleHandoff. Kept so the number is not reused.
+    /// </summary>
     ProcessStartFailed = 9,
 
     /// <summary>An exception occurred during launch.</summary>
@@ -175,7 +178,19 @@ public enum LaunchErrorCode
     /// A bare executable name was found only in the working directory. Bare names are never resolved
     /// from the working directory, to avoid running a planted program.
     /// </summary>
-    ExecutableInWorkingDirectory = 13
+    ExecutableInWorkingDirectory = 13,
+
+    /// <summary>
+    /// The user declined or cancelled a prompt Windows showed for the start, most likely a UAC prompt for a program that
+    /// needs administrator rights (Win32 error 1223, within the start timeout). Nothing was started.
+    /// </summary>
+    ElevationCancelled = 14,
+
+    /// <summary>
+    /// A bare name was not found in the Windows directory, System32, the absolute PATH entries or App Paths. It is not
+    /// passed to Windows unresolved, because Windows would also search the current directory.
+    /// </summary>
+    ExecutableNotFound = 15
 }
 
 /// <summary>

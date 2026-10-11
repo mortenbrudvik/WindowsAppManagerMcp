@@ -308,7 +308,7 @@ public sealed class ToolArgumentContractTests : IDisposable
 
         result.IsError.Should().BeTrue();
         Payload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        _services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(),
+        _services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(),
             It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -333,7 +333,7 @@ public sealed class ToolArgumentContractTests : IDisposable
         items[1].GetProperty("error").GetString().Should().Contain("Item 1 of applications is null");
         items[2].GetProperty("processId").GetInt32().Should().Be(20_001, "the service's results stay with their own items");
         _services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(
-            It.Is<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(a =>
+            It.Is<IReadOnlyList<LaunchRequest>>(a =>
                 a.Count == 2 && a[0].Executable == "notepad" && a[1].Executable == "calc"),
             false, 5000, It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
     }

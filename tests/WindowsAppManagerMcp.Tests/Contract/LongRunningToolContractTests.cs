@@ -58,13 +58,13 @@ public class LongRunningToolContractTests
         // Arrange - the service reports each application it started
         using var services = new ContractServices(ContractMode.Typical);
         services.Processes.Setup(p => p.LaunchApplicationsBatchAsync(
-                It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<(string, string[]?, string?)> apps, bool _, int _, IProgress<OperationProgress>? progress, CancellationToken _) =>
+            .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? progress, CancellationToken _) =>
             {
                 for (var i = 0; i < apps.Count; i++)
                 {
-                    progress?.Report(new OperationProgress(i + 1, apps.Count, $"{i + 1} of {apps.Count}: {apps[i].Item1} started"));
+                    progress?.Report(new OperationProgress(i + 1, apps.Count, $"{i + 1} of {apps.Count}: {apps[i].Executable} started"));
                 }
 
                 return apps.Select((_, i) => new LaunchResult(true, ProcessId: 100 + i)).ToList();

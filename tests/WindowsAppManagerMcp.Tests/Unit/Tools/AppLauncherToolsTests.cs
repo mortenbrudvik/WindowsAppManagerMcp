@@ -19,19 +19,18 @@ public class AppLauncherToolsTests
 
     #region LaunchApplication Tests
 
+    /// <summary>The service returns <paramref name="result"/> for any launch request.</summary>
+    private void LaunchReturns(LaunchResult result) =>
+        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+
     [Fact]
     public async Task LaunchApplication_CallsServiceWithAllParameters()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
+        var hint = new LaunchWindowHint(ProcessName: "Notepad", TitleContains: "file.txt");
 
         // Act
         await sut.LaunchApplication(
@@ -39,13 +38,13 @@ public class AppLauncherToolsTests
             arguments: new[] { "file.txt" },
             workingDirectory: @"C:\Temp",
             waitForWindow: true,
-            waitTimeoutMs: 10000);
+            waitTimeoutMs: 10000,
+            expectWindow: hint);
 
         // Assert
         _mockProcessService.Verify(p => p.LaunchApplicationAsync(
-            "notepad.exe",
-            new[] { "file.txt" },
-            @"C:\Temp",
+            It.Is<LaunchRequest>(r => r.Executable == "notepad.exe" && r.Arguments!.SequenceEqual(new[] { "file.txt" }) &&
+                                      r.WorkingDirectory == @"C:\Temp" && r.ExpectWindow == hint),
             true,
             10000,
             It.IsAny<CancellationToken>()), Times.Once);
@@ -55,14 +54,7 @@ public class AppLauncherToolsTests
     public async Task LaunchApplication_WithDefaults_UsesDefaultValues()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
 
         // Act
@@ -70,50 +62,67 @@ public class AppLauncherToolsTests
 
         // Assert
         _mockProcessService.Verify(p => p.LaunchApplicationAsync(
-            "notepad.exe",
-            null,
-            null,
+            new LaunchRequest("notepad.exe", null, null, null),
             false,
             5000,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task LaunchApplication_ReturnsSuccessResult()
+    public async Task LaunchApplication_ReturnsTheStatusAndTheWholeWindowItFound()
     {
-        // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(true, 1234, new nint(5678), null));
+        // Arrange - the window belongs to the process the launcher handed off to
+        var window = TestDataFactory.CreateWindowInfo(handleValue: 5678, title: "Calculator", processName: "CalculatorApp", processId: 4321) with
+        {
+            ClassName = "ApplicationFrameWindow",
+            HostProcessName = "ApplicationFrameHost",
+            HostProcessId = 900
+        };
+        LaunchReturns(new LaunchResult(true, 1234, window.Handle, Status: LaunchStatus.WindowObserved, Window: window, LauncherExited: true));
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchApplication("notepad.exe", waitForWindow: true);
+        var result = await sut.LaunchApplication("calc", waitForWindow: true);
 
         // Assert
         result.Success.Should().BeTrue();
         result.ProcessId.Should().Be(1234);
         result.WindowHandle.Should().Be(5678);
+        result.LaunchStatus.Should().Be("windowObserved");
+        result.LauncherExited.Should().BeTrue();
+        result.Window!.Handle.Should().Be(5678);
+        result.Window.ProcessName.Should().Be("CalculatorApp");
+        result.Window.ProcessId.Should().Be(4321);
+        result.Window.HostProcessName.Should().Be("ApplicationFrameHost");
         result.Error.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(LaunchStatus.Started, "started")]
+    [InlineData(LaunchStatus.WindowObserved, "windowObserved")]
+    [InlineData(LaunchStatus.ReusedExistingWindow, "reusedExistingWindow")]
+    [InlineData(LaunchStatus.OpenedInTab, "openedInTab")]
+    [InlineData(LaunchStatus.PossibleHandoff, "possibleHandoff")]
+    [InlineData(LaunchStatus.ExitedWithoutWindow, "exitedWithoutWindow")]
+    [InlineData(LaunchStatus.TimedOut, "timedOut")]
+    [InlineData(LaunchStatus.AwaitingUserConsent, "awaitingUserConsent")]
+    public async Task LaunchApplication_ReportsEveryStatusByItsCamelCaseName(LaunchStatus status, string expected)
+    {
+        // Arrange
+        LaunchReturns(new LaunchResult(true, Status: status));
+
+        // Act
+        var result = await CreateSut().LaunchApplication("notepad.exe");
+
+        // Assert
+        result.LaunchStatus.Should().Be(expected);
     }
 
     [Fact]
     public async Task LaunchApplication_ReturnsFailureResult()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(false, null, null, "File not found"));
+        LaunchReturns(new LaunchResult(false, null, null, "File not found", nameof(LaunchErrorCode.ExecutableNotFound)));
         var sut = CreateSut();
 
         // Act
@@ -123,21 +132,17 @@ public class AppLauncherToolsTests
         result.Success.Should().BeFalse();
         result.ProcessId.Should().BeNull();
         result.WindowHandle.Should().BeNull();
+        result.Window.Should().BeNull();
+        result.LaunchStatus.Should().BeNull();
         result.Error.Should().Be("File not found");
+        result.ErrorCode.Should().Be("ExecutableNotFound");
     }
 
     [Fact]
     public async Task LaunchApplication_WithNullWindowHandle_ReturnsNullHandle()
     {
         // Arrange
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(
-            It.IsAny<string>(),
-            It.IsAny<string[]?>(),
-            It.IsAny<string?>(),
-            It.IsAny<bool>(),
-            It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started));
         var sut = CreateSut();
 
         // Act
@@ -145,6 +150,7 @@ public class AppLauncherToolsTests
 
         // Assert
         result.WindowHandle.Should().BeNull();
+        result.Window.Should().BeNull();
     }
 
     [Theory]
@@ -154,13 +160,12 @@ public class AppLauncherToolsTests
     [InlineData(-5, 0)]
     public async Task LaunchApplication_WaitsForTheWindowAtMostMaxWaitTimeoutMs(int waitTimeoutMs, int expected)
     {
-        _mockProcessService.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LaunchResult(true, 1234, null, null));
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.TimedOut));
         var sut = CreateSut();
 
         await sut.LaunchApplication("notepad.exe", waitForWindow: true, waitTimeoutMs: waitTimeoutMs);
 
-        _mockProcessService.Verify(p => p.LaunchApplicationAsync("notepad.exe", null, null, true, expected, It.IsAny<CancellationToken>()), Times.Once);
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), true, expected, It.IsAny<CancellationToken>()), Times.Once);
         AppLauncherTools.MaxWaitTimeoutMs.Should().Be(30000);
     }
 
@@ -168,7 +173,7 @@ public class AppLauncherToolsTests
     public async Task LaunchApplicationsBatch_WaitsForEachWindowAtMostMaxWaitTimeoutMs()
     {
         _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(
-                It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
                 It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([new LaunchResult(true, 1234, null, null)]);
@@ -177,9 +182,38 @@ public class AppLauncherToolsTests
         await sut.LaunchApplicationsBatch([new ApplicationLaunchRequest("notepad.exe")], waitForWindows: true, waitTimeoutMs: int.MaxValue);
 
         _mockProcessService.Verify(p => p.LaunchApplicationsBatchAsync(
-            It.IsAny<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(), true, AppLauncherTools.MaxWaitTimeoutMs,
+            It.IsAny<IReadOnlyList<LaunchRequest>>(), true, AppLauncherTools.MaxWaitTimeoutMs,
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_PassesEachItemsExpectWindow_AndReturnsEachItemsStatusAndWindow()
+    {
+        // Arrange
+        IReadOnlyList<LaunchRequest>? requested = null;
+        var window = TestDataFactory.CreateWindowInfo(handleValue: 777, title: "Settings", processName: "SystemSettings", processId: 55);
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) => requested = apps)
+            .ReturnsAsync([
+                new LaunchResult(true, null, window.Handle, Status: LaunchStatus.WindowObserved, Window: window),
+                new LaunchResult(true, 99, Status: LaunchStatus.TimedOut, LauncherExited: false)
+            ]);
+        var hint = new LaunchWindowHint(ProcessName: "SystemSettings");
+
+        // Act
+        var result = await CreateSut().LaunchApplicationsBatch(
+            [new ApplicationLaunchRequest("ms-settings:display", ExpectWindow: hint), new ApplicationLaunchRequest("notepad")], waitForWindows: true);
+
+        // Assert
+        requested!.Select(r => r.ExpectWindow).Should().Equal(hint, null);
+        result.Results[0].LaunchStatus.Should().Be("windowObserved");
+        result.Results[0].Window!.ProcessName.Should().Be("SystemSettings");
+        result.Results[0].WindowHandle.Should().Be(777);
+        result.Results[1].LaunchStatus.Should().Be("timedOut");
+        result.Results[1].LauncherExited.Should().BeFalse();
     }
 
     #endregion

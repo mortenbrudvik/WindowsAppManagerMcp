@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -26,33 +27,39 @@ public partial class InputValidationService : IInputValidationService
     // Characters that can never appear in a Windows file system path (besides control characters).
     private static readonly char[] InvalidPathCharacters = ['"', '<', '>', '|', '*', '?'];
 
-    // Dangerous protocols that could execute arbitrary code
-    private static readonly string[] DangerousProtocols =
-    [
-        "ms-settings:",
-        "ms-windows-store:",
-        "powershell:",
-        "cmd:",
-        "javascript:",
-        "vbscript:",
-        "wscript:",
-        "cscript:",
-        "mshta:",
-        "shell:",
-        "data:"
-    ];
-
-    // Safe protocols that are passed to their registered handler unchanged.
-    // file:// is not listed here: it is converted to a local path and validated as one.
-    private static readonly string[] SafeProtocols =
-    [
-        "http://",
-        "https://",
-        "mailto:",
-        "tel:"
-    ];
-
     private const string FileProtocol = "file:";
+
+    // Store and packaged apps start through the Applications folder by their AppUserModelID: a package family name and
+    // an app ID ("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"), or a plain ID that a desktop app registered
+    // ("MSEdge"). Nothing else of shell: is allowed, since it opens any shell location.
+    private const string AppsFolderPrefix = @"shell:AppsFolder\";
+
+    private readonly ProtocolAllowlist _protocols;
+
+    /// <param name="protocols">
+    /// The URI schemes that are handed to their app; default the built-in ones plus WAM_ALLOWED_PROTOCOLS
+    /// (<see cref="ProtocolAllowlist.FromEnvironment"/>).
+    /// </param>
+    /// <param name="logger">Logs the schemes the user added, and as a warning the entries that were ignored, once.</param>
+    public InputValidationService(ProtocolAllowlist? protocols = null, ILogger<InputValidationService>? logger = null)
+    {
+        _protocols = protocols ?? ProtocolAllowlist.FromEnvironment();
+
+        if (_protocols.ExtraSchemes.Count > 0)
+        {
+            logger?.LogInformation("launch_application also opens these URI schemes ({Variable}): {Schemes}",
+                ProtocolAllowlist.Variable, string.Join(", ", _protocols.ExtraSchemes));
+        }
+
+        if (_protocols.IgnoredEntries.Count > 0)
+        {
+            logger?.LogWarning("{Variable} entries that are blocked, file, or not a URI scheme name are ignored: {Entries}",
+                ProtocolAllowlist.Variable, string.Join(", ", _protocols.IgnoredEntries));
+        }
+    }
+
+    /// <summary>The URI schemes this service allows.</summary>
+    public ProtocolAllowlist Protocols => _protocols;
 
     // Suspicious executables that warrant a warning
     private static readonly string[] SuspiciousExecutables =
@@ -153,17 +160,7 @@ public partial class InputValidationService : IInputValidationService
 
     private ExecutableValidationResult ValidateProtocolUri(string uri)
     {
-        // Check for dangerous protocols
-        foreach (var protocol in DangerousProtocols)
-        {
-            if (uri.StartsWith(protocol, StringComparison.OrdinalIgnoreCase))
-            {
-                return new ExecutableValidationResult(
-                    false,
-                    Error: $"Protocol '{protocol.TrimEnd(':')}' is blocked for security reasons",
-                    ErrorCode: nameof(LaunchErrorCode.BlockedProtocol));
-            }
-        }
+        var scheme = uri[..uri.IndexOf(':')];
 
         // file:// URIs name a local or UNC path. ShellExecuteEx opens or executes that path, so it
         // gets exactly the same checks as a plain path instead of bypassing them.
@@ -172,27 +169,92 @@ public partial class InputValidationService : IInputValidationService
             return ValidateFileUri(uri);
         }
 
-        // Check if it's a safe protocol
-        foreach (var protocol in SafeProtocols)
+        // A line break or other control character has no place in a URI, and the receiving app may split on it
+        if (uri.Any(char.IsControl))
         {
-            if (uri.StartsWith(protocol, StringComparison.OrdinalIgnoreCase))
-            {
-                return new ExecutableValidationResult(true, SanitizedExecutable: uri);
-            }
+            return new ExecutableValidationResult(false, Error: "The URI contains control characters (such as line breaks)",
+                ErrorCode: nameof(LaunchErrorCode.InvalidUri));
         }
 
-        // Unknown protocol - block it
-        var colonIndex = uri.IndexOf(':');
-        if (colonIndex > 0)
+        if (scheme.Equals("shell", StringComparison.OrdinalIgnoreCase))
         {
-            var protocolName = uri[..colonIndex];
+            return AppsFolderApp().IsMatch(uri)
+                ? new ExecutableValidationResult(true, SanitizedExecutable: uri)
+                : new ExecutableValidationResult(
+                    false,
+                    Error: $"Only '{AppsFolderPrefix}<AppUserModelID>' is allowed of the shell: protocol (for example " +
+                           $"'{AppsFolderPrefix}Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'); other shell locations are blocked for " +
+                           "security reasons. Launch a desktop app by its .exe path.",
+                    ErrorCode: nameof(LaunchErrorCode.BlockedProtocol));
+        }
+
+        if (ProtocolAllowlist.IsBlocked(scheme))
+        {
             return new ExecutableValidationResult(
                 false,
-                Error: $"Unknown protocol '{protocolName}' is blocked for security reasons. Allowed: http, https, file, mailto, tel",
-                ErrorCode: nameof(LaunchErrorCode.UnknownProtocol));
+                Error: $"Protocol '{scheme}' is blocked for security reasons, and {ProtocolAllowlist.Variable} cannot allow it",
+                ErrorCode: nameof(LaunchErrorCode.BlockedProtocol));
         }
 
-        return new ExecutableValidationResult(false, Error: "Invalid URI format", ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        // Many handlers are registered as app.exe "%1" (or %1 unquoted): a raw quote would end the argument and let the
+        // rest of the URI become more switches, and a space or another character a URI cannot hold may split it. Web
+        // addresses may keep spaces (browsers take the whole URI as one argument), but never a quote.
+        if (UnsafeUriCharacter(uri, allowSpaces: IsWebScheme(scheme)) is { } unsafeCharacter)
+        {
+            return new ExecutableValidationResult(false,
+                Error: $"The URI contains {unsafeCharacter}, which a URI cannot hold and which could split it into more arguments " +
+                       "for the app that opens it. Percent-encode it (for example %22 for a quote, %20 for a space).",
+                ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
+        // http and https must name a host (http://...); "http:x" is not a web address
+        if (IsWebScheme(scheme) && !uri.AsSpan(scheme.Length).StartsWith("://", StringComparison.Ordinal))
+        {
+            return new ExecutableValidationResult(false, Error: $"Invalid {scheme.ToLowerInvariant()} URI: expected {scheme.ToLowerInvariant()}://host/...",
+                ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
+        if (_protocols.Allows(scheme))
+        {
+            return new ExecutableValidationResult(true, SanitizedExecutable: uri);
+        }
+
+        return new ExecutableValidationResult(
+            false,
+            Error: $"Unknown protocol '{scheme}' is blocked for security reasons. Allowed: {string.Join(", ", _protocols.AllowedSchemes)}, " +
+                   $"file (a local path), and {AppsFolderPrefix}<AppUserModelID>. The user can allow more schemes with the " +
+                   $"{ProtocolAllowlist.Variable} environment variable of the server.",
+            ErrorCode: nameof(LaunchErrorCode.UnknownProtocol));
+    }
+
+    private static bool IsWebScheme(string scheme) =>
+        scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Characters RFC 3986 does not allow in a URI, besides control characters (checked before) and whitespace.</summary>
+    private const string CharactersNotInUris = "\"<>`{}|\\^";
+
+    /// <summary>
+    /// A description of the first character that has no place in a URI handed to its app (a quote, whitespace, or
+    /// <see cref="CharactersNotInUris"/>), or null. With <paramref name="allowSpaces"/>, only the quote is refused.
+    /// </summary>
+    private static string? UnsafeUriCharacter(string uri, bool allowSpaces)
+    {
+        foreach (var c in uri)
+        {
+            if (c == '"')
+                return "a quote (\")";
+
+            if (allowSpaces)
+                continue;
+
+            if (char.IsWhiteSpace(c))
+                return "whitespace";
+
+            if (CharactersNotInUris.Contains(c))
+                return $"'{c}'";
+        }
+
+        return null;
     }
 
     private ExecutableValidationResult ValidateFileUri(string uri)
@@ -328,6 +390,9 @@ public partial class InputValidationService : IInputValidationService
             return newWarning;
         return $"{existing}; {newWarning}";
     }
+
+    [GeneratedRegex(@"^shell:AppsFolder\\[A-Za-z0-9][A-Za-z0-9._-]*(![A-Za-z0-9][A-Za-z0-9._-]*)?$", RegexOptions.IgnoreCase)]
+    private static partial Regex AppsFolderApp();
 
     // Matches URIs with scheme:// or scheme: (but not single-letter drive like C:\)
     // Examples: https://example.com, ms-settings:display, mailto:test@example.com

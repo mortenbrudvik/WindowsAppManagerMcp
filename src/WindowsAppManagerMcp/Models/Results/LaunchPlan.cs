@@ -10,12 +10,14 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// <param name="Warning">Validation warnings to report with the launch result.</param>
 /// <param name="ErrorMessage">Why the request was rejected.</param>
 /// <param name="ErrorCode">A LaunchErrorCode name when the request was rejected.</param>
+/// <param name="Target">The resolved target (null when rejected before resolution): what the window wait looks for.</param>
 public record LaunchPlan(
     ProcessStartInfo? StartInfo,
     LaunchTargetKind? TargetKind = null,
     string? Warning = null,
     string? ErrorMessage = null,
-    string? ErrorCode = null)
+    string? ErrorCode = null,
+    ResolvedLaunchTarget? Target = null)
 {
     public bool IsValid => StartInfo != null;
 
