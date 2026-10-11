@@ -8,7 +8,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// </summary>
 public class WindowServiceOutcomeTests
 {
-    private const int SwMaximize = 3, SwRestore = 9;
+    private const int SwMaximize = 3, SwShowNoActivate = 4, SwRestore = 9;
     private static readonly nint Window = 0x1001;
 
     private readonly Mock<INativeWindowWrapper> _native = new();
@@ -23,10 +23,15 @@ public class WindowServiceOutcomeTests
         _native.Setup(n => n.IsWindow(Window)).Returns(true);
         _native.Setup(n => n.IsWindowVisible(Window)).Returns(true);
         _native.Setup(n => n.GetWindowRect(Window)).Returns((100, 100, 900, 700));
+        // The window is on the monitor its last placement took it to (move_window_to_monitor checks it, roadmap M2.3)
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
+            .Callback<nint, int, int, int, int, uint>((_, x, _, _, _, _) => _onMonitor = x >= 1920 ? 1 : 0)
             .Returns(Win32CallResult.Ok);
+        _monitors.Setup(m => m.GetMonitorIndex(Window)).Returns(() => _onMonitor);
         _monitors.Setup(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>())).Returns(new MonitorRect(0, 0, 960, 1040));
     }
+
+    private int _onMonitor;
 
     private WindowService CreateSut() =>
         new(_monitors.Object, _native.Object, Mock.Of<IHostGuard>(), stateChangeTimeout: TimeSpan.Zero);
@@ -230,25 +235,24 @@ public class WindowServiceOutcomeTests
     {
         // Arrange - maximized on monitor 0; SW_MAXIMIZE alone would maximize it there again
         var state = TestDataFactory.SimulateShowStates(_native, Window, WindowState.Maximized);
-        var onMonitor = 0;
-        _monitors.Setup(m => m.GetMonitorIndex(Window)).Returns(() => onMonitor);
         var calls = new List<string>();
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
             .Callback<nint, int, int, int, int, uint>((_, x, _, _, _, _) =>
             {
                 calls.Add($"move to {x} while {state()}");
-                onMonitor = x >= 1920 ? 1 : 0;
+                _onMonitor = x >= 1920 ? 1 : 0;
             })
             .Returns(Win32CallResult.Ok);
 
         // Act
         var result = CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Maximize);
 
-        // Assert
+        // Assert - restored without activation (roadmap M2.3), centred in the target work area, then maximized there
         result.Success.Should().BeTrue(result.Error);
-        calls.Should().Equal("move to 1920 while Normal");
+        calls.Should().Equal($"move to {1920 + (1920 - 800) / 2} while Normal");
         state().Should().Be(WindowState.Maximized);
-        _native.Verify(n => n.ShowWindow(Window, SwRestore), Times.Once);
+        _native.Verify(n => n.ShowWindow(Window, SwShowNoActivate), Times.Once);
+        _native.Verify(n => n.ShowWindow(Window, SwRestore), Times.Never);
         _native.Verify(n => n.ShowWindow(Window, SwMaximize), Times.Once);
     }
 

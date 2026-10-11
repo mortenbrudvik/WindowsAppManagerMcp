@@ -22,7 +22,7 @@ public class WindowServiceHangTests
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
     private const nint Hung = 0x1001, Responsive = 0x2001;
-    private const int SwRestore = 9;
+    private const int SwShowNoActivate = 4; // the placements restore without activating (roadmap M2.3)
 
     private readonly Mock<INativeWindowWrapper> _native = new();
 
@@ -96,7 +96,7 @@ public class WindowServiceHangTests
     {
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.IsIconic(Hung)).Returns(true);
-        _native.Setup(n => n.ShowWindow(Hung, SwRestore)).Returns(() => answer.Wait(Long));
+        _native.Setup(n => n.ShowWindow(Hung, SwShowNoActivate)).Returns(() => answer.Wait(Long));
         var sut = CreateSut(BlockedDeadline);
 
         var act = () => sut.SetWindowBounds(Hung, 0, 0, 640, 480);

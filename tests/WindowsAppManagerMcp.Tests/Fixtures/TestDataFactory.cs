@@ -703,8 +703,9 @@ public static class TestDataFactory
     /// <summary>
     /// Makes ShowWindow on <paramref name="handle"/> change what IsIconic, IsZoomed and IsWindowVisible report, as
     /// Windows does: SW_MINIMIZE minimizes (remembering whether the window was maximized), SW_MAXIMIZE maximizes, and
-    /// SW_RESTORE returns a minimized window to its previous state and makes any other window normal. The window is
-    /// visible. Returns the state as it is now, for assertions.
+    /// SW_RESTORE returns a minimized window to its previous state and makes any other window normal. SW_SHOWNOACTIVATE
+    /// is simulated like SW_RESTORE, so a window minimized from maximized needs it twice to become normal (the worst case
+    /// the geometry placements allow for). The window is visible. Returns the state as it is now, for assertions.
     /// </summary>
     public static Func<WindowState> SimulateShowStates(Mock<INativeWindowWrapper> native, nint handle, WindowState initial = WindowState.Normal)
     {
@@ -729,6 +730,7 @@ public static class TestDataFactory
                     maximized = true;
                     break;
                 case 9: // SW_RESTORE
+                case 4: // SW_SHOWNOACTIVATE: restores like SW_RESTORE, without activating
                     maximized = minimized && restoresToMaximized;
                     minimized = false;
                     break;

@@ -20,11 +20,30 @@ public class WindowManagerTools
         "do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still " +
         "take effect once the app answers, so check the window before acting on it).";
 
+    /// <summary>What the single-window geometry tools return (roadmap M2.3).</summary>
+    private const string GeometryResult =
+        " Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds " +
+        "(its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this " +
+        "rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex.";
+
+    /// <summary>How the placements read their coordinates and treat the window's state (roadmap M2.3).</summary>
+    private const string PlacementRules =
+        " Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. " +
+        "A minimized or maximized window is restored to normal first, without activating it.";
+
+    private const string SettleDescription =
+        "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads " +
+        "20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.";
+
+    private const string BringToFrontDescription =
+        "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true";
+
     /// <summary>The per-window errors of the window batches.</summary>
     private const string BatchErrors =
         " Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is " +
         "null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), " +
-        "AccessDenied, NotResponding (the window's app does not answer within 5 s).";
+        "AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
+        "failed or not: bounds (visible frame), outerBounds, state and monitorIndex.";
 
     private readonly IWindowService _windowService;
     private readonly IForegroundService _foregroundService;
@@ -52,62 +71,76 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "move_window", Title = "Move Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move a window to a specific position. Returns success and the window's newBounds." + WindowChangeErrors +
-                 " MoveFailed: Windows did not move it (error has the reason).")]
+    [Description("Move a window so that its visible frame's top-left corner is at x, y; it keeps its size." + PlacementRules +
+                 GeometryResult + WindowChangeErrors +
+                 " MoveFailed: Windows did not move it, or it did not return to normal from minimized or maximized (error has the reason).")]
     public WindowOperationResult MoveWindow(
         [Description("Window handle (as integer) from find_windows")]
         long handle,
-        [Description("X coordinate (left edge)")]
+        [Description("X coordinate of the visible frame's left edge")]
         int x,
-        [Description("Y coordinate (top edge)")]
+        [Description("Y coordinate of the visible frame's top edge")]
         int y,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true")]
-        bool bringToFront = true)
+        [Description(BringToFrontDescription)]
+        bool bringToFront = true,
+        [Description(SettleDescription)]
+        int settleMs = 0)
     {
         var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront));
+        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
     }
 
     [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Resize a window to specific dimensions. Returns success and the window's newBounds." + WindowChangeErrors +
-                 " ResizeFailed: Windows did not resize it (error has the reason). InvalidArguments: width or height is not positive.")]
+    [Description("Resize a window's visible frame; its top-left corner stays where it is and it is not raised." + PlacementRules +
+                 GeometryResult + WindowChangeErrors +
+                 " ResizeFailed: Windows did not resize it, or it did not return to normal from minimized or maximized (error has the reason). " +
+                 "InvalidArguments: width or height is not positive. An app can keep a minimum or maximum size: compare bounds with what you asked for.")]
     public WindowOperationResult ResizeWindow(
         [Description("Window handle (as integer)")]
         long handle,
-        [Description("New width in pixels (at least 1)")]
+        [Description("New width of the visible frame in pixels (at least 1)")]
         int width,
-        [Description("New height in pixels (at least 1)")]
-        int height)
-    {
-        var hwnd = (nint)handle;
-        return SizeRefusal(width, height) ?? Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height));
-    }
-
-    [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move and resize a window in a single operation. Returns success and the window's newBounds." + WindowChangeErrors +
-                 " MoveFailed: Windows did not place it (error has the reason). InvalidArguments: width or height is not positive.")]
-    public WindowOperationResult SetWindowBounds(
-        [Description("Window handle (as integer)")]
-        long handle,
-        [Description("X coordinate (left edge)")]
-        int x,
-        [Description("Y coordinate (top edge)")]
-        int y,
-        [Description("New width in pixels (at least 1)")]
-        int width,
-        [Description("New height in pixels (at least 1)")]
+        [Description("New height of the visible frame in pixels (at least 1)")]
         int height,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true")]
-        bool bringToFront = true)
+        [Description(SettleDescription)]
+        int settleMs = 0)
     {
         var hwnd = (nint)handle;
         return SizeRefusal(width, height) ?? Precheck(hwnd) ??
-               Change(hwnd, () => _windowService.SetWindowBounds(hwnd, x, y, width, height, bringToFront));
+               Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
+    }
+
+    [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Move and resize a window in a single operation: x, y, width and height are its visible frame." + PlacementRules +
+                 " A window moved to a monitor with another scale is placed again once the app has rescaled itself." +
+                 GeometryResult + WindowChangeErrors +
+                 " MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). " +
+                 "InvalidArguments: width or height is not positive.")]
+    public WindowOperationResult SetWindowBounds(
+        [Description("Window handle (as integer)")]
+        long handle,
+        [Description("X coordinate of the visible frame's left edge")]
+        int x,
+        [Description("Y coordinate of the visible frame's top edge")]
+        int y,
+        [Description("New width of the visible frame in pixels (at least 1)")]
+        int width,
+        [Description("New height of the visible frame in pixels (at least 1)")]
+        int height,
+        [Description(BringToFrontDescription)]
+        bool bringToFront = true,
+        [Description(SettleDescription)]
+        int settleMs = 0)
+    {
+        var hwnd = (nint)handle;
+        return SizeRefusal(width, height) ?? Precheck(hwnd) ??
+               Change(hwnd, () => _windowService.SetWindowFrame(hwnd, x, y, width, height, bringToFront), settleMs);
     }
 
     [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state " +
-                 "afterwards (within 300 ms); newState reports the state it is in (minimized, maximized or normal)." + WindowChangeErrors +
+                 "afterwards (within 300 ms); state reports the state it is in (minimized, maximized or normal)." + GeometryResult +
+                 WindowChangeErrors +
                  " StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). " +
                  "An unknown state fails with InvalidState and the allowed values.")]
     public WindowOperationResult SetWindowState(
@@ -115,10 +148,12 @@ public class WindowManagerTools
         long handle,
         [Description("Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' are accepted too). " +
                      "Restore returns a minimized window to its previous state (normal, or maximized if it was maximized before) and makes a maximized window normal.")]
-        WindowStateRequest state)
+        WindowStateRequest state,
+        [Description(SettleDescription)]
+        int settleMs = 0)
     {
         var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), reportsState: true);
+        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), settleMs);
     }
 
     [McpServerTool(Name = "focus_window", Title = "Focus Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -239,8 +274,11 @@ public class WindowManagerTools
     }
 
     [McpServerTool(Name = "snap_window", Title = "Snap Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds." + WindowChangeErrors +
-                 " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it.")]
+    [Description("Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. " +
+                 "The visible frames of snapped windows tile the work area exactly: no gap from the invisible borders, no pixel lost on odd sizes." +
+                 PlacementRules + GeometryResult + WindowChangeErrors +
+                 " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
+                 "or it did not return to normal from minimized or maximized.")]
     public WindowOperationResult SnapWindow(
         [Description("Window handle (as integer)")]
         long handle,
@@ -248,36 +286,46 @@ public class WindowManagerTools
         SnapPosition position,
         [Description("Target monitor index (0-based, see get_monitors). Defaults to the window's current monitor. An index that is not a monitor fails with InvalidMonitorIndex.")]
         int? monitorIndex = null,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true")]
-        bool bringToFront = true)
+        [Description(BringToFrontDescription)]
+        bool bringToFront = true,
+        [Description(SettleDescription)]
+        int settleMs = 0)
     {
         var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront));
+        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront), settleMs);
     }
 
     [McpServerTool(Name = "move_window_to_monitor", Title = "Move Window to Monitor", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds." + WindowChangeErrors +
+    [Description("Move a window to a specific monitor, optionally positioning it. The window keeps its normal size, made smaller when " +
+                 "needed so that it fits the monitor's work area. To a monitor with other scaling it is moved first, and sized after " +
+                 "the app has rescaled itself. success requires the window to be on that monitor afterwards." + PlacementRules +
+                 GeometryResult + WindowChangeErrors +
                  " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
-                 "or with positioning 'maximize' it was not maximized on that monitor. An unknown positioning fails with InvalidPositioning.")]
+                 "it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not " +
+                 "maximized there). An unknown positioning fails with InvalidPositioning.")]
     public WindowOperationResult MoveWindowToMonitor(
         [Description("Window handle (as integer)")]
         long handle,
         [Description("Target monitor index (0-based, see get_monitors)")]
         int monitorIndex,
-        [Description("Position on the monitor: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's current size), 'maximize' (moved there, then maximized) or 'restore' (current size, at the work area's top-left corner)")]
+        [Description("Position on the monitor's work area: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's normal size, fitted to the work area), 'maximize' (moved there, then maximized) or 'restore' (normal size, at the work area's top-left corner)")]
         MonitorPositioning positioning = MonitorPositioning.Center,
-        [Description("Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it; positioning 'maximize' ignores bringToFront and can activate it too. Default: true")]
-        bool bringToFront = true)
+        [Description(BringToFrontDescription + ". Positioning 'maximize' ignores it and activates the window: Windows has no maximize that does not activate.")]
+        bool bringToFront = true,
+        [Description(SettleDescription)]
+        int settleMs = 0)
     {
         var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront));
+        return Precheck(hwnd) ??
+               Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront), settleMs);
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch", Title = "Set Window Bounds (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls." + BatchErrors +
-                 " MoveFailed: Windows did not place the window.")]
+    [Description("Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are " +
+                 "each window's visible frame. More efficient than multiple individual calls." + PlacementRules + BatchErrors +
+                 " MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SetWindowsBoundsBatch(
-        [Description("Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
+        [Description("Array of window placements with handle, x, y, width, height (the visible frame), and optional bringToFront (raises the window without activating it)")]
         WindowBoundsPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
@@ -299,9 +347,10 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "snap_windows_batch", Title = "Snap Windows (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls." + BatchErrors +
-                 " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window.")]
+                 " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. " +
+                 "MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SnapWindowsBatch(
-        [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)")]
+        [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized or maximized window is restored first, without activating it)")]
         WindowSnapPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
@@ -331,7 +380,7 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "set_windows_state_batch", Title = "Set Window States (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only " +
-                 "when its window was seen in that state afterwards, and newState reports the state it is in." + BatchErrors +
+                 "when its window was seen in that state afterwards, and state reports the state it is in." + BatchErrors +
                  " InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.")]
     public async Task<BatchWindowResult> SetWindowsStateBatch(
         [Description("Array of state changes with handle and state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' are accepted too)")]
@@ -358,7 +407,7 @@ public class WindowManagerTools
 
         var results = await _windowService.SetWindowStateBatchAsync(serviceChanges, delayBetweenMs, cancellationToken).ConfigureAwait(false);
 
-        return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r, reportsState: true))));
+        return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r))));
     }
 
     /// <summary>The question close_windows_batch asks the user: every window, with its title, process and PID.</summary>
@@ -413,46 +462,65 @@ public class WindowManagerTools
     }
 
     /// <summary>
-    /// Runs a window change and reports its outcome with the window as it is afterwards: its bounds, or with
-    /// <paramref name="reportsState"/> its state. A window that did not answer in time (<see cref="WindowNotRespondingException"/>,
-    /// from the service's <see cref="IWindowCallRunner"/>) is NotResponding: the application is hung or busy, and the
-    /// tool returns instead of holding the input gate until it answers.
+    /// Runs a window change and reports its outcome with the window as it is afterwards (roadmap M2.3): its visible frame,
+    /// window rect, state and monitor, read after waiting up to <paramref name="settleMs"/> for it to stop moving. A window
+    /// that did not answer in time (<see cref="WindowNotRespondingException"/>, from the service's <see cref="IWindowCallRunner"/>)
+    /// is NotResponding: the application is hung or busy, and the tool returns instead of holding the input gate until it
+    /// answers. The reads afterwards never wait for the window's thread.
     /// </summary>
-    private WindowOperationResult Change(nint handle, Func<WindowChangeResult> change, bool reportsState = false)
+    private WindowOperationResult Change(nint handle, Func<WindowChangeResult> change, int settleMs)
     {
+        WindowChangeResult result;
         try
         {
-            var result = change();
-            var window = _windowService.GetWindowInfo(handle);
-            return new WindowOperationResult(
-                Success: result.Success,
-                NewBounds: reportsState ? null : Bounds(window),
-                NewState: reportsState ? State(window) : null,
-                Error: result.Error,
-                ErrorCode: result.ErrorCodeName);
+            result = change();
         }
         catch (WindowNotRespondingException ex)
         {
-            return new WindowOperationResult(false, Error: ex.Message, ErrorCode: nameof(NotResponding));
+            result = WindowChangeResult.Failed(handle, NotResponding, ex.Message);
         }
+
+        if (result.Success)
+        {
+            _windowService.WaitForSettledFrame(handle, WindowService.SettleDelay(settleMs));
+        }
+
+        var window = result.ErrorCode == InvalidHandle ? null : _windowService.GetWindowInfo(handle);
+        return new WindowOperationResult(
+            Success: result.Success,
+            Bounds: Bounds(window),
+            OuterBounds: OuterBounds(window),
+            State: State(window),
+            MonitorIndex: window?.MonitorIndex,
+            Error: result.Error,
+            ErrorCode: result.ErrorCodeName);
     }
 
-    /// <summary>A batch item for the service's result, with the window's bounds (or state) as it is afterwards.</summary>
-    private WindowResultItem Item(WindowChangeResult result, bool reportsState = false)
+    /// <summary>A batch item for the service's result, with the window as it is afterwards.</summary>
+    private WindowResultItem Item(WindowChangeResult result)
     {
         // An invalid handle has nothing to read; any other window is read, failed or not, so the agent sees where it is
         var window = result.ErrorCode == InvalidHandle ? null : _windowService.GetWindowInfo(result.Handle);
         return new WindowResultItem(
             Handle: result.Handle.ToInt64(),
             Success: result.Success,
-            NewBounds: reportsState ? null : Bounds(window),
-            NewState: reportsState ? State(window) : null,
+            Bounds: Bounds(window),
+            OuterBounds: OuterBounds(window),
+            State: State(window),
+            MonitorIndex: window?.MonitorIndex,
             Error: result.Error,
             ErrorCode: result.ErrorCodeName);
     }
 
+    /// <summary>The visible frame (the window rect when DWM cannot report it); none for a minimized window, which is off screen.</summary>
     private static BoundsDto? Bounds(WindowInfo? window) =>
-        window == null ? null : new BoundsDto(window.Bounds.X, window.Bounds.Y, window.Bounds.Width, window.Bounds.Height);
+        window is null || window.State == WindowState.Minimized ? null : Dto(window.VisibleBounds ?? window.Bounds);
+
+    /// <summary>The window rect (GetWindowRect, as find_windows reports it); none for a minimized window.</summary>
+    private static BoundsDto? OuterBounds(WindowInfo? window) =>
+        window is null || window.State == WindowState.Minimized ? null : Dto(window.Bounds);
+
+    private static BoundsDto Dto(WindowRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
 
     private static string? State(WindowInfo? window) => window?.State.ToString().ToLowerInvariant();
 
@@ -523,10 +591,18 @@ public class WindowManagerTools
         Results: items);
 }
 
+/// <summary>
+/// The result of a single-window tool. The geometry tools (roadmap M2.3) report the window as it is afterwards, failed or
+/// not (left out for an invalid handle): Bounds is its visible frame, OuterBounds its window rect with the invisible
+/// resize borders (the bounds find_windows reports), State normal, minimized or maximized, MonitorIndex its monitor. A
+/// minimized window has no bounds. close_window reports only success and the error.
+/// </summary>
 public record WindowOperationResult(
     bool Success,
-    BoundsDto? NewBounds = null,
-    string? NewState = null,
+    BoundsDto? Bounds = null,
+    BoundsDto? OuterBounds = null,
+    string? State = null,
+    int? MonitorIndex = null,
     string? Error = null,
     string? ErrorCode = null
 );

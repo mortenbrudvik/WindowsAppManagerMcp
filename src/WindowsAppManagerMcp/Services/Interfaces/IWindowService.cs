@@ -47,12 +47,37 @@ public interface IWindowService
     // The window changes (roadmap M2.2). Each refuses an invalid handle (InvalidHandle) and a window the target policy
     // denies (TargetDeniedByPolicy) before anything is sent, and reports a refused SetWindowPos with its Win32 error
     // (5: AccessDenied). A window that does not answer throws WindowNotRespondingException (IWindowCallRunner).
+    //
+    // The placements (roadmap M2.3) restore a minimized or maximized window to normal first, without activating it
+    // (SW_SHOWNOACTIVATE, at most twice, for a window minimized from maximized), and fail with MoveFailed or ResizeFailed
+    // when it stays minimized or maximized. They place the visible frame (BoundsFrame.Visible) unless stated otherwise,
+    // never activate the window (bringToFront only raises it), and place it a second time when the first placement took
+    // it to a monitor with another scale, after the application has applied its own DPI change.
 
+    /// <summary>Moves the window's visible frame to (x, y), keeping its size (SWP_NOSIZE).</summary>
     WindowChangeResult MoveWindow(nint handle, int x, int y, bool bringToFront = true);
 
+    /// <summary>Resizes the window's visible frame, keeping its top-left corner (SWP_NOMOVE). Never raises it.</summary>
     WindowChangeResult ResizeWindow(nint handle, int width, int height);
 
+    /// <summary>
+    /// Moves and resizes the window rect (GetWindowRect, with the invisible borders: <see cref="BoundsFrame.Outer"/>), the
+    /// rect layouts save and apply. set_window_bounds uses <see cref="SetWindowFrame"/>.
+    /// </summary>
     WindowChangeResult SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true);
+
+    /// <summary>
+    /// Moves and resizes the window's visible frame (<see cref="BoundsFrame.Visible"/>): the window rect becomes the
+    /// target grown by the invisible borders, so the frame the user sees is exactly the target.
+    /// </summary>
+    WindowChangeResult SetWindowFrame(nint handle, int x, int y, int width, int height, bool bringToFront = true);
+
+    /// <summary>
+    /// Waits up to <paramref name="timeout"/> until two reads of the window's frame, one poll interval apart, are equal:
+    /// the application has stopped moving or resizing it (an animation, an app that applies its own saved bounds).
+    /// Returns at once for zero, and when the window is gone. Only reads; never blocks on the window's thread.
+    /// </summary>
+    void WaitForSettledFrame(nint handle, TimeSpan timeout);
 
     /// <summary>
     /// Minimizes, maximizes or restores the window, and succeeds only when the window is seen in that state within
@@ -69,7 +94,11 @@ public interface IWindowService
 
     /// <summary>
     /// Moves the window to monitor <paramref name="monitorIndex"/> (InvalidMonitorIndex with the valid range when it is not
-    /// one). Maximize moves the window there first, then maximizes it, and succeeds only when it is maximized there.
+    /// one), at its normal size clamped to the target work area, and succeeds only when the window is on that monitor
+    /// afterwards. To a monitor with another scale the window is moved in two steps: onto the monitor at its size
+    /// (SWP_NOSIZE), where the application rescales itself for the new DPI, then sized and positioned from the size it
+    /// chose; the size is never scaled in advance. Maximize moves the window there first, then maximizes it, and succeeds
+    /// only when it is maximized there.
     /// </summary>
     WindowChangeResult MoveWindowToMonitor(nint handle, int monitorIndex, MonitorPositioning positioning = MonitorPositioning.Center, bool bringToFront = true);
 
@@ -97,7 +126,8 @@ public interface IWindowService
     // Batch operations. Each changes one window after another, with delayBetweenMs (clamped to 0-5000) between two
     // windows; the cancellation token ends the batch between windows and during that delay: the windows already
     // changed stay changed, and the call throws OperationCanceledException. Each window gets its own result, in order:
-    // a window that fails, or does not answer (NotResponding), does not stop the batch.
+    // a window that fails, or does not answer (NotResponding), does not stop the batch. The bounds batch places the
+    // visible frame, as set_window_bounds does.
     Task<IReadOnlyList<WindowChangeResult>> SetWindowBoundsBatchAsync(
         IReadOnlyList<(nint Handle, int X, int Y, int Width, int Height, bool BringToFront)> placements,
         int delayBetweenMs = 50,

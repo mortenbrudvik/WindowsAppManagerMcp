@@ -194,7 +194,7 @@ Listings ([find_windows](#find_windows) and [get_all_windows](#get_all_windows))
 - shell windows: the desktop (`Progman`, `WorkerW`) and the taskbars (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`)
 - untitled windows, and the server's own windows
 
-Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the `newBounds`/`newState` reads after window actions never apply it.
+Owned windows such as dialogs are listed; `ownerHandle` names the window that owns them. A `find_windows` call with a `handle` or a `className`, or with `includeShell: true`, skips this filter and applies only the filters you pass, so the taskbar, the tray and untitled popups stay reachable. [get_foreground_window](#get_foreground_window) and the reads of the window after a window action (`bounds`, `state`) never apply it.
 
 Every window reports its `className` and `isCloaked`. A UWP app's frame window (class `ApplicationFrameWindow`) belongs to `ApplicationFrameHost.exe`, so it is reported under the app's own process (for example `processName: "CalculatorApp"`), with `hostProcessName: "ApplicationFrameHost"` and `hostProcessId`. `processName` and `processId` filters match both processes. `ownerHandle`, `hostProcessName` and `hostProcessId` are left out when they do not apply. `isAgentHost: true` marks a window of the agent's own host (the terminal, editor or chat app this server was started from, or a window it owns, as recorded when the server started); it is left out for every other window. The [Input guard](#input-guard) refuses input to such a window unless it is named as `windowHandle` with `allowHostTarget: true`, and [close_window](#close_window) refuses it without `force`.
 
@@ -408,7 +408,22 @@ Tools for manipulating window position, size, and state.
 
 A window that the user's [target policy](#target-policy) denies is not changed at all (`TargetDeniedByPolicy`, per window in the batches): these tools do not restore, raise or move it. That does not keep it off the screen by itself; see [Target policy](#target-policy).
 
-Two cases can still activate the window, whatever `bringToFront` says: set_window_bounds, snap_window, move_window_to_monitor and their batches restore a minimized window first (`SW_RESTORE`), and move_window_to_monitor with `positioning: "maximize"` maximizes the window with `SW_MAXIMIZE`, which also activates and ignores `bringToFront`. move_window never activates. Either way, check [get_foreground_window](#get_foreground_window) before typing.
+**The visible frame.** On Windows 10 and 11 a window's rect (GetWindowRect) includes invisible resize borders, about 7 px on the left, right and bottom at 100% scale (more at higher scales), and a maximized window's rect overhangs its monitor by them. The placements (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and the bounds and snap batches) take `x`, `y`, `width` and `height` as the **visible frame** (DWMWA_EXTENDED_FRAME_BOUNDS) and add the borders themselves, so snapped windows meet the work area's edges and each other without a gap. Their results, and those of set_window_state and the batches, report the window as it is afterwards, also when the change failed:
+
+| Field | Meaning |
+|-------|---------|
+| `bounds` | The visible frame. The window rect when DWM cannot report the frame |
+| `outerBounds` | The window rect with the invisible borders: the rect [find_windows](#find_windows) reports as `bounds` (find_windows is unchanged) |
+| `state` | `normal`, `minimized` or `maximized`. A minimized window has no `bounds` or `outerBounds`: its rect is an off-screen icon |
+| `monitorIndex` | The monitor the window is on |
+
+An application can keep a minimum or maximum size or move itself: compare `bounds` with what you asked for. `settleMs` (0-5000, default 0) waits until two reads of the frame 20 ms apart agree before the window is read, for an application that animates or re-applies its own size. (These fields replace `newBounds` and `newState`; `newBounds` was the window rect.)
+
+**State before placing.** A minimized or maximized window is restored to normal before it is measured or placed, with `SW_SHOWNOACTIVATE` (at most twice, for a window minimized from maximized), which does not activate it. A maximized window used to be placed while still maximized, and a minimized one measured as its 160x28 icon. When the window stays minimized or maximized, the placement fails with `MoveFailed` or `ResizeFailed` and places nothing. move_window keeps the window's size and resize_window its top-left corner, and resize_window never raises it.
+
+**Monitors with different scaling.** A placement that takes a window to a monitor with another scale lets the application rescale itself for the new DPI, waits for the window to settle (up to 500 ms) and places the same target again, measured anew, as PowerToys FancyZones does; move_window keeps the size the application chose. move_window_to_monitor moves the window onto the target monitor first without changing its size, then sizes it from the size the application chose there. The size is never scaled by the ratio of the scales in advance: a per-monitor-aware application would scale it a second time.
+
+Only move_window_to_monitor with `positioning: "maximize"` can still activate the window, whatever `bringToFront` says: it maximizes the window with `SW_MAXIMIZE`, and Windows has no maximize that does not activate. Check [get_foreground_window](#get_foreground_window) before typing.
 
 **Errors.** move_window, resize_window, set_window_bounds, set_window_state, snap_window and move_window_to_monitor return `success: false` with `error` and `errorCode`, and `isError: true`:
 
@@ -419,9 +434,9 @@ Two cases can still activate the window, whatever `bringToFront` says: set_windo
 | `InvalidMonitorIndex` | snap_window, move_window_to_monitor: `monitorIndex` is not a monitor; `error` gives the valid range. Nothing was changed (it is never put on another monitor instead) |
 | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was changed. Ask the user |
 | `AccessDenied` | Windows refused the move or resize (Win32 error 5): the window belongs to a more privileged app, for example one running as administrator, and User Interface Privilege Isolation blocks this server. Ask the user |
-| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason; `error` gives the Win32 error. move_window_to_monitor with `positioning: "maximize"` also returns `MoveFailed` when the window ended up maximized on another monitor |
-| `StateChangeFailed` | set_window_state: the window was not seen in the requested state within 300 ms (the application refused or delayed it, or it runs as administrator); `newState` and `error` say which state it is in |
-| `NotResponding` | The window's application did not answer: Windows reports the window as hung (refused at once, nothing was tried), it did not answer within 5 seconds, an earlier call to the same application is still blocked (refused at once), or 8 earlier window calls to applications that do not answer are still blocked, whichever applications they are (refused at once). A call refused at once before its first window call changed nothing. Otherwise the window may have changed: set_window_bounds, snap_window and move_window_to_monitor restore a minimized window before they place it, so it can already be restored when the placement is given up on, and a call that timed out can still take effect once the application answers. So check the window (for example with [find_windows](#find_windows) and its `handle`) before you act on it. Try again later, or ask the user |
+| `MoveFailed`, `ResizeFailed` | Windows refused the move or resize for another reason (`error` gives the Win32 error), or a minimized or maximized window did not return to normal, so nothing was placed. move_window_to_monitor also returns `MoveFailed` when the window is not on the target monitor afterwards (with `positioning: "maximize"`: not maximized there) |
+| `StateChangeFailed` | set_window_state: the window was not seen in the requested state within 300 ms (the application refused or delayed it, or it runs as administrator); `state` and `error` say which state it is in |
+| `NotResponding` | The window's application did not answer: Windows reports the window as hung (refused at once, nothing was tried), it did not answer within 5 seconds, an earlier call to the same application is still blocked (refused at once), or 8 earlier window calls to applications that do not answer are still blocked, whichever applications they are (refused at once). A call refused at once before its first window call changed nothing. Otherwise the window may have changed: the placements restore a minimized or maximized window before they place it, so it can already be restored when the placement is given up on, and a call that timed out can still take effect once the application answers. So check the window (the result's `state` and `bounds`, or [find_windows](#find_windows) with its `handle`) before you act on it. Try again later, or ask the user |
 
 An unknown `state` (set_window_state), `position` (snap_window) or `positioning` (move_window_to_monitor) is refused before the tool runs, as a tool error with `InvalidState`, `InvalidSnapPosition` or `InvalidPositioning` that lists the allowed values; the input schema lists them too. Such a value used to fall back to another action (restore, center) that was reported as success. [focus_window](#focus_window) and [close_window](#close_window) have their own error tables below.
 
@@ -429,16 +444,17 @@ These tools, focus_window, close_window, the [Batch Operations](#batch-operation
 
 ### move_window
 
-Move a window to a specific screen position.
+Move a window so that its visible frame's top-left corner is at `x`, `y`. It keeps its size (`SWP_NOSIZE`); see [Window Control](#window-control) for the visible frame, the state before placing and other scaling.
 
 <!-- tools:begin params:move_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | Yes | - | Window handle from find_windows |
-| x | integer | Yes | - | X coordinate (left edge) |
-| y | integer | Yes | - | Y coordinate (top edge) |
+| x | integer | Yes | - | X of the visible frame's left edge |
+| y | integer | Yes | - | Y of the visible frame's top edge |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:move_window -->
 
 **Example:**
@@ -459,7 +475,10 @@ Move a window to a specific screen position.
 ```json
 {
   "success": true,
-  "newBounds": { "x": 100, "y": 200, "width": 800, "height": 600 }
+  "bounds": { "x": 100, "y": 200, "width": 800, "height": 600 },
+  "outerBounds": { "x": 93, "y": 200, "width": 814, "height": 607 },
+  "state": "normal",
+  "monitorIndex": 0
 }
 ```
 
@@ -467,15 +486,16 @@ Move a window to a specific screen position.
 
 ### resize_window
 
-Resize a window to specific dimensions.
+Resize a window's visible frame. Its top-left corner stays where it is (`SWP_NOMOVE`) and it is not raised.
 
 <!-- tools:begin params:resize_window -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | Yes | - | Window handle |
-| width | integer | Yes | - | New width in pixels |
-| height | integer | Yes | - | New height in pixels |
+| width | integer | Yes | - | New width of the visible frame in pixels |
+| height | integer | Yes | - | New height of the visible frame in pixels |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:resize_window -->
 
 **Example:**
@@ -496,7 +516,10 @@ Resize a window to specific dimensions.
 ```json
 {
   "success": true,
-  "newBounds": { "x": 100, "y": 100, "width": 1200, "height": 800 }
+  "bounds": { "x": 100, "y": 100, "width": 1200, "height": 800 },
+  "outerBounds": { "x": 93, "y": 100, "width": 1214, "height": 807 },
+  "state": "normal",
+  "monitorIndex": 0
 }
 ```
 
@@ -504,18 +527,19 @@ Resize a window to specific dimensions.
 
 ### set_window_bounds
 
-Move and resize a window in a single operation.
+Move and resize a window in a single operation: `x`, `y`, `width` and `height` are its visible frame (see [Window Control](#window-control)).
 
 <!-- tools:begin params:set_window_bounds -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | handle | integer | Yes | - | Window handle |
-| x | integer | Yes | - | X coordinate (left edge) |
-| y | integer | Yes | - | Y coordinate (top edge) |
-| width | integer | Yes | - | New width in pixels |
-| height | integer | Yes | - | New height in pixels |
+| x | integer | Yes | - | X of the visible frame's left edge |
+| y | integer | Yes | - | Y of the visible frame's top edge |
+| width | integer | Yes | - | Width of the visible frame in pixels |
+| height | integer | Yes | - | Height of the visible frame in pixels |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:set_window_bounds -->
 
 **Example:**
@@ -538,7 +562,10 @@ Move and resize a window in a single operation.
 ```json
 {
   "success": true,
-  "newBounds": { "x": 50, "y": 50, "width": 1000, "height": 700 }
+  "bounds": { "x": 50, "y": 50, "width": 1000, "height": 700 },
+  "outerBounds": { "x": 43, "y": 50, "width": 1014, "height": 707 },
+  "state": "normal",
+  "monitorIndex": 0
 }
 ```
 
@@ -546,7 +573,7 @@ Move and resize a window in a single operation.
 
 ### set_window_state
 
-Minimize, maximize, or restore a window. `success` is true only when the window was seen in the requested state afterwards (the state is read for up to 300 ms, for applications that animate the change), and `newState` is the state it is in. `restore` is the Windows Restore command: a minimized window returns to the state it had before it was minimized (normal, or maximized), and a maximized window becomes normal.
+Minimize, maximize, or restore a window. `success` is true only when the window was seen in the requested state afterwards (the state is read for up to 300 ms, for applications that animate the change), and `state` is the state it is in, with the window's `bounds`, `outerBounds` and `monitorIndex`. `restore` is the Windows Restore command: a minimized window returns to the state it had before it was minimized (normal, or maximized), and a maximized window becomes normal.
 
 <!-- tools:begin params:set_window_state -->
 **Parameters:**
@@ -554,6 +581,7 @@ Minimize, maximize, or restore a window. `success` is true only when the window 
 |-----------|------|----------|---------|-------------|
 | handle | integer | Yes | - | Window handle |
 | state | string (one of: `"minimize"`, `"maximize"`, `"restore"`, `"minimized"`, `"maximized"`, `"normal"`) | Yes | - | Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' also work, in any case). Any other value fails with `InvalidState` |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:set_window_state -->
 
 **Example:**
@@ -573,7 +601,10 @@ Minimize, maximize, or restore a window. `success` is true only when the window 
 ```json
 {
   "success": true,
-  "newState": "maximized"
+  "bounds": { "x": 0, "y": 0, "width": 1920, "height": 1040 },
+  "outerBounds": { "x": -8, "y": -8, "width": 1936, "height": 1056 },
+  "state": "maximized",
+  "monitorIndex": 0
 }
 ```
 
@@ -750,6 +781,7 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 | position | string (one of: `"left_half"`, `"right_half"`, `"top_half"`, `"bottom_half"`, `"top_left_quarter"`, `"top_right_quarter"`, `"bottom_left_quarter"`, `"bottom_right_quarter"`, `"left_third"`, `"center_third"`, `"right_third"`, `"left_two_thirds"`, `"right_two_thirds"`, `"fullscreen"`) | Yes | - | Snap position (see table below) |
 | monitorIndex | integer | No | current | Target monitor (0-based index) |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:snap_window -->
 
 **Snap Positions:**
@@ -788,7 +820,10 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 ```json
 {
   "success": true,
-  "newBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 }
+  "bounds": { "x": 0, "y": 0, "width": 960, "height": 1040 },
+  "outerBounds": { "x": -7, "y": 0, "width": 974, "height": 1047 },
+  "state": "normal",
+  "monitorIndex": 0
 }
 ```
 
@@ -810,7 +845,7 @@ Snap a window to predefined screen positions (like Windows Snap Assist).
 
 ### move_window_to_monitor
 
-Move a window to a specific monitor.
+Move a window to a specific monitor. The window keeps its normal size, made smaller when needed so that its whole visible frame fits the target work area, and `success` requires it to be on that monitor afterwards (`MoveFailed` otherwise). A minimized or maximized window is restored first, without activation, and measured only then. To a monitor with other scaling the window is moved in two steps (see [Window Control](#window-control)).
 
 <!-- tools:begin params:move_window_to_monitor -->
 **Parameters:**
@@ -820,16 +855,17 @@ Move a window to a specific monitor.
 | monitorIndex | integer | Yes | - | Target monitor (0-based index) |
 | positioning | string (one of: `"center"`, `"topleft"`, `"topright"`, `"bottomleft"`, `"bottomright"`, `"maximize"`, `"restore"`) | No | "center" | Position on monitor (see below) |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
+| settleMs | integer | No | 0 | Wait up to this many milliseconds (clamped to 0-5000) for the window to stop moving before it is read: until two reads 20 ms apart agree |
 <!-- tools:end params:move_window_to_monitor -->
 
 **Positioning Options:**
-- `center` - Center of monitor
-- `topleft` - Top-left corner
-- `topright` - Top-right corner
-- `bottomleft` - Bottom-left corner
-- `bottomright` - Bottom-right corner
-- `maximize` - Maximize on the target monitor: a maximized or minimized window is restored, moved into the target monitor's work area and then maximized, and `success` is true only when it is maximized there. This can activate the window, and `bringToFront` is ignored (see [Window Control](#window-control))
-- `restore` - Keep current size, move to the work area's top-left corner
+- `center` - Center of the work area
+- `topleft` - Top-left corner of the work area
+- `topright` - Top-right corner of the work area
+- `bottomleft` - Bottom-left corner of the work area
+- `bottomright` - Bottom-right corner of the work area
+- `maximize` - Maximize on the target monitor: a maximized or minimized window is restored without activation, moved into the target monitor's work area and then maximized, and `success` is true only when it is maximized there. Maximizing activates the window, and `bringToFront` is ignored (see [Window Control](#window-control))
+- `restore` - The work area's top-left corner, at the window's normal size
 
 `top_left`, `top-right` and other spellings with separators, in any case, are accepted too. Any other value fails with `InvalidPositioning`, and a `monitorIndex` that is not a monitor with `InvalidMonitorIndex` and the valid range.
 
@@ -851,7 +887,10 @@ Move a window to a specific monitor.
 ```json
 {
   "success": true,
-  "newBounds": { "x": 2240, "y": 320, "width": 1200, "height": 800 }
+  "bounds": { "x": 2240, "y": 320, "width": 1200, "height": 800 },
+  "outerBounds": { "x": 2233, "y": 320, "width": 1214, "height": 807 },
+  "state": "normal",
+  "monitorIndex": 1
 }
 ```
 
@@ -866,7 +905,7 @@ The window batches handle each window on its own, and a window that fails does n
 - Each item is checked on its own: an item that is null, misses its size or has a size below 1 fails with `InvalidArguments`, an unknown or missing snap `position` with `InvalidSnapPosition`, and an unknown or missing `state` with `InvalidState`, each with the allowed values in `error`. The other items still run. (A malformed item used to abort the whole batch.)
 - A window that the user's [target policy](#target-policy) denies fails with `errorCode: "TargetDeniedByPolicy"` and is not changed.
 - An invalid handle fails with `InvalidHandle`, a `monitorIndex` that is not a monitor with `InvalidMonitorIndex`, a change Windows refuses with `AccessDenied` (an app running as administrator), `MoveFailed` or `StateChangeFailed`, and a window whose application does not answer with `NotResponding` (see [Window Control](#window-control): refused at once when Windows reports it hung, an earlier call to it is still blocked or 8 earlier window calls to applications that do not answer are, otherwise given up on after 5 seconds). A placement given up on can still take effect once the application answers.
-- Every item reports where its window is afterwards (`newBounds`, or `newState` for set_windows_state_batch), failed or not, unless the handle is invalid.
+- Every item reports its window as it is afterwards, failed or not, unless the handle is invalid: `bounds` (the visible frame), `outerBounds`, `state` and `monitorIndex`, as the single-window tools do (see [Window Control](#window-control)).
 - close_windows_batch gives every failed item an `errorCode` too (see [close_windows_batch](#close_windows_batch)).
 - A batch array that is null fails the call with `InvalidArguments`, and nothing is done.
 
@@ -887,10 +926,10 @@ Each item of `placements` contains:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | handle | integer | Yes | - | Window handle |
-| x | integer | Yes | - | X coordinate |
-| y | integer | Yes | - | Y coordinate |
-| width | integer | Yes | - | Width in pixels |
-| height | integer | Yes | - | Height in pixels |
+| x | integer | Yes | - | X of the visible frame's left edge |
+| y | integer | Yes | - | Y of the visible frame's top edge |
+| width | integer | Yes | - | Width of the visible frame in pixels |
+| height | integer | Yes | - | Height of the visible frame in pixels |
 | bringToFront | boolean | No | true | Raise the window to the top of the z-order without activating it (see [Window Control](#window-control)) |
 <!-- tools:end params:set_windows_bounds_batch -->
 
@@ -916,8 +955,8 @@ Each item of `placements` contains:
   "succeeded": 2,
   "failed": 0,
   "results": [
-    { "handle": 12345, "success": true, "newBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 } },
-    { "handle": 67890, "success": true, "newBounds": { "x": 960, "y": 0, "width": 960, "height": 1040 } }
+    { "handle": 12345, "success": true, "bounds": { "x": 0, "y": 0, "width": 960, "height": 1040 }, "outerBounds": { "x": -7, "y": 0, "width": 974, "height": 1047 }, "state": "normal", "monitorIndex": 0 },
+    { "handle": 67890, "success": true, "bounds": { "x": 960, "y": 0, "width": 960, "height": 1040 }, "outerBounds": { "x": 953, "y": 0, "width": 974, "height": 1047 }, "state": "normal", "monitorIndex": 0 }
   ]
 }
 ```
@@ -966,8 +1005,8 @@ Each item of `placements` contains:
   "succeeded": 2,
   "failed": 0,
   "results": [
-    { "handle": 12345, "success": true, "newBounds": { "x": 0, "y": 0, "width": 960, "height": 1040 } },
-    { "handle": 67890, "success": true, "newBounds": { "x": 960, "y": 0, "width": 960, "height": 1040 } }
+    { "handle": 12345, "success": true, "bounds": { "x": 0, "y": 0, "width": 960, "height": 1040 }, "outerBounds": { "x": -7, "y": 0, "width": 974, "height": 1047 }, "state": "normal", "monitorIndex": 0 },
+    { "handle": 67890, "success": true, "bounds": { "x": 960, "y": 0, "width": 960, "height": 1040 }, "outerBounds": { "x": 953, "y": 0, "width": 974, "height": 1047 }, "state": "normal", "monitorIndex": 0 }
   ]
 }
 ```
@@ -1014,8 +1053,8 @@ Each item of `changes` contains:
   "succeeded": 2,
   "failed": 0,
   "results": [
-    { "handle": 12345, "success": true, "newState": "minimized" },
-    { "handle": 67890, "success": true, "newState": "minimized" }
+    { "handle": 12345, "success": true, "state": "minimized", "monitorIndex": 0 },
+    { "handle": 67890, "success": true, "state": "minimized", "monitorIndex": 0 }
   ]
 }
 ```
@@ -3710,13 +3749,25 @@ sees now.
   `ResizeFailed` with the Win32 error, where it used to be a bare `success: false`. move_window_to_monitor with
   `positioning: "maximize"` now moves the window to the requested monitor before it maximizes it (it maximized the
   window on the monitor it was on).
+- **Geometry places and reports the visible frame.** The window tools' results replace `newBounds` and `newState`
+  with `bounds` (the visible frame, without the invisible resize borders), `outerBounds` (the window rect, which
+  `newBounds` was and find_windows still reports as `bounds`), `state` and `monitorIndex`, on every geometry tool,
+  set_window_state and the batch items. The `x`, `y`, `width` and `height` of move_window, resize_window,
+  set_window_bounds and set_windows_bounds_batch are now the visible frame too, so a window lands about 7 px (at
+  100%) from where the same numbers put it before; snapped windows meet without gaps, and thirds of an odd width no
+  longer lose the last pixel. A minimized or maximized window is restored to normal without activation before it is
+  placed (a maximized one used to stay maximized at the new size, a minimized one could shrink to 160x28, and the
+  restore activated it). move_window keeps the size and resize_window the position (`SWP_NOSIZE`, `SWP_NOMOVE`).
+  move_window_to_monitor fits the window into the target work area, moves it in two steps
+  across a scale change, and fails with `MoveFailed` when the window is not on the target monitor afterwards. The
+  single-window tools gain `settleMs`. See [Window Control](#window-control).
 - **Batches check every item.** A null item, an item without a size, position or state, or an unknown value fails
   that item alone with an `errorCode` (`InvalidArguments`, `InvalidSnapPosition`, `InvalidState`), where it used to
   abort the whole call with an internal error; in launch_applications_batch a null item fails alone with
   `InvalidArguments`. A value of the wrong JSON type (a string `handle`, say) still fails the whole call with
   `InvalidArguments`, before any item runs. The window batches give every failed item an `errorCode`
   (`InvalidHandle`, `NotResponding`, `AccessDenied`, `MoveFailed`, `StateChangeFailed`, ...), and every item reports
-  its window's `newBounds` or `newState`, also when it failed.
+  its window's `bounds`, `outerBounds`, `state` and `monitorIndex`, also when it failed.
 - **Titles and hints.** Every tool has a `title` and the four hints `readOnlyHint`, `destructiveHint`,
   `idempotentHint` and `openWorldHint` in tools/list (see [Tool annotations](#tool-annotations)). A client that
   auto-approves read-only tools, or asks before destructive ones, now has what it needs. Before, no tool had hints,

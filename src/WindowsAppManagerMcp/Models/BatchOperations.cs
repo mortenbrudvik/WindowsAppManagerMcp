@@ -46,11 +46,19 @@ public record BatchWindowResult(
     IReadOnlyList<WindowResultItem> Results
 );
 
+/// <summary>
+/// One window of a batch. For the geometry batches (roadmap M2.3) the window as it is afterwards, failed or not (left out
+/// for an invalid handle): Bounds is its visible frame, OuterBounds its window rect with the invisible resize borders (the
+/// bounds find_windows reports), State normal, minimized or maximized, MonitorIndex its monitor. A minimized window has no
+/// bounds.
+/// </summary>
 public record WindowResultItem(
     long Handle,
     bool Success,
-    BoundsDto? NewBounds = null,
-    string? NewState = null,
+    BoundsDto? Bounds = null,
+    BoundsDto? OuterBounds = null,
+    string? State = null,
+    int? MonitorIndex = null,
     string? Error = null,
     string? ErrorCode = null
 );

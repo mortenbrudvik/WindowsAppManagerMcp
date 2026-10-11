@@ -68,7 +68,7 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 
 ### 5. Verify
 
-- Read the result: `success`, `errorCode`, `receivingWindow`, `foregroundAfter`, `charactersTyped`, `newBounds`, `newState`, `windowHandle`.
+- Read the result: `success`, `errorCode`, `receivingWindow`, `foregroundAfter`, `charactersTyped`, `bounds` and `state` (a window tool reports the window afterwards: `bounds` is its visible frame), `windowHandle`.
 - Then check the new state with a read tool or a capture before the next step: the dialog opened, the text is in the field, the window is where it should be. A `close_window` success means the message was sent; check with `find_windows` that the window is gone (the app may be asking to save).
 
 ## When Something Fails
@@ -363,12 +363,12 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 ### Launch and Position an App
 1. **Locate:** `launch_application` with `waitForWindow: true`; take its `windowHandle`. If it is null, find the window with `find_windows` (`processName` or `titleContains`)
 2. **Act:** `snap_window` or `set_window_bounds` with the handle (and `monitorIndex` from `get_monitors` for another monitor)
-3. **Verify:** check `newBounds` in the result
+3. **Verify:** check `bounds` (the visible frame) and `state` in the result
 
 ### Arrange Windows for Development
 1. **Locate:** `find_windows` for VS Code and Terminal
 2. **Act:** `snap_window` VS Code to `left_two_thirds`, Terminal to `right_third`
-3. **Verify:** check `newBounds` in each result
+3. **Verify:** check `bounds` in each result: snapped windows meet edge to edge
 
 ### Save and Restore a Workspace
 1. Arrange the windows, then `save_layout` with a descriptive name
@@ -378,7 +378,7 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 ### Multi-Monitor Setup
 1. **Locate:** `get_monitors` for the displays and `primaryIndex`
 2. **Act:** `move_window_to_monitor`, or `snap_window` with `monitorIndex`
-3. **Verify:** check `newBounds`; monitors left of or above the primary one have negative coordinates
+3. **Verify:** check `monitorIndex` and `bounds`; monitors left of or above the primary one have negative coordinates
 
 ### See What Is in a Window
 1. **Locate:** `find_windows` for the window
