@@ -40,7 +40,8 @@ public sealed class E2ESession : IDisposable
     /// Starts the fixture, builds the guarded server and finds the fixture's main window through the
     /// server. Refuses unless <paramref name="tier"/> is opted in.
     /// </summary>
-    public static E2ESession Start(DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null)
+    /// <param name="uiaEngine">The UI Automation engine of the server (roadmap M3.2), or null for its default.</param>
+    public static E2ESession Start(DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null, UiaEngine? uiaEngine = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         DesktopTestGate.ThrowIfNotAllowed(tier);
@@ -49,7 +50,7 @@ public sealed class E2ESession : IDisposable
         var fixture = FixtureAppSession.Launch(tier, launch, output);
         try
         {
-            var server = ServerHarness.Create(tier, fixture.ProcessId);
+            var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine);
             try
             {
                 var mainWindow = Wait.ForValue(

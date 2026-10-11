@@ -1942,7 +1942,7 @@
     {
       "name": "get_ui_elements",
       "title": "Get UI Element Tree",
-      "description": "Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true (OperationTimedOut when no element matching the filters was found yet).",
+      "description": "Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2068,6 +2068,21 @@
             "description": "Timeout in milliseconds (default: 10000, max: 30000). When it passes, the elements read so far are returned with truncated=true.",
             "type": "integer",
             "default": 10000
+          },
+          "maxElements": {
+            "description": "Stop once this many elements are returned (default: 300, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes, interactableOnly or a smaller maxDepth rather than raising this.",
+            "type": "integer",
+            "default": 300
+          },
+          "format": {
+            "description": "Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (@x,y wxh are the bounds in physical screen pixels; flags [disabled], [offscreen]).",
+            "default": "tree",
+            "type": "string",
+            "enum": [
+              "tree",
+              "flat",
+              "text"
+            ]
           }
         }
       },

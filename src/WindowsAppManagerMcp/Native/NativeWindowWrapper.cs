@@ -179,6 +179,13 @@ public class NativeWindowWrapper : INativeWindowWrapper
         return NativeMethods.User32.IsHungAppWindow(hWnd);
     }
 
+    public bool RespondsWithin(nint hWnd, uint timeoutMs)
+    {
+        // WM_NULL only: the window does nothing with it, so this reads whether its thread pumps messages
+        return NativeMethods.User32.SendMessageTimeoutW(
+            hWnd, NativeEnums.WM_NULL, 0, 0, NativeEnums.SMTO_ABORTIFHUNG, timeoutMs, out _) != 0;
+    }
+
     public uint GetDpiForWindow(nint hWnd)
     {
         return NativeMethods.User32.GetDpiForWindow(hWnd);

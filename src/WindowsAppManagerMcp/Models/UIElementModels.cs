@@ -7,6 +7,10 @@ namespace WindowsAppManagerMcp.Models;
 /// no position on screen (UI Automation reports an empty rectangle for it).</param>
 /// <param name="Children">The returned elements inside this one, or null when there are none. Elements that
 /// fail a filter are left out, and the elements inside them that pass are listed here instead.</param>
+/// <param name="Depth">format=flat only: the element's level in the returned tree (1 for the elements listed directly under
+/// the window). Null in the tree format, where the nesting shows it.</param>
+/// <param name="Parent">format=flat only: the index in the flat list of the returned element this one is inside, or null
+/// when it is listed directly under the window.</param>
 public record UIElementInfo(
     string? Name,
     string ControlType,
@@ -14,7 +18,9 @@ public record UIElementInfo(
     BoundsDto? Bounds,
     bool IsEnabled,
     bool IsOffscreen,
-    IReadOnlyList<UIElementInfo>? Children = null
+    IReadOnlyList<UIElementInfo>? Children = null,
+    int? Depth = null,
+    int? Parent = null
 );
 
 /// <summary>
@@ -27,12 +33,14 @@ public record UIElementInfo(
 /// provider failed while the tree was walked. Greater than zero means the tree may be incomplete.</param>
 /// <param name="DepthReached">The deepest level the walk read (the window's children are level 1). When it
 /// equals <paramref name="Depth"/>, there may be elements below the limit.</param>
-/// <param name="Truncated">True when the tree is incomplete because the walk timed out or elements could
-/// not be read. <paramref name="TruncationReason"/> says which. The maxDepth limit does not set it.</param>
+/// <param name="Truncated">True when the tree is incomplete because the walk timed out, stopped at maxElements, or
+/// elements could not be read. <paramref name="TruncationReason"/> says which. The maxDepth limit does not set it.</param>
 /// <param name="TruncationReason">Why the tree is incomplete, or null when it is not.</param>
 /// <param name="WindowState">The state of the window's top-level window when the walk ended (roadmap M2.9): a
 /// Minimized window's elements are offscreen, so visibleOnly leaves them all out and the tree is empty. Null when the
 /// window could not be read.</param>
+/// <param name="Text">format=text only: the elements as one compact line each, indented two spaces per level (see
+/// Tools.UIElementTextFormat); <paramref name="Elements"/> is null then.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -47,7 +55,8 @@ public record UIElementResult(
     int DepthReached = 0,
     bool Truncated = false,
     UIElementTruncationReason? TruncationReason = null,
-    WindowState? WindowState = null
+    WindowState? WindowState = null,
+    string? Text = null
 );
 
 /// <summary>
@@ -59,7 +68,13 @@ public enum UIElementTruncationReason
     Timeout = 1,
 
     /// <summary>Some elements, or the children of some elements, could not be read (see SkippedElementCount).</summary>
-    ElementsSkipped = 2
+    ElementsSkipped = 2,
+
+    /// <summary>
+    /// The walk stopped once maxElements elements were returned (roadmap M3.1). It reads breadth first, so the
+    /// elements left out are deeper in the tree, or later in the level where it stopped.
+    /// </summary>
+    MaxElements = 3
 }
 
 /// <summary>
@@ -71,12 +86,15 @@ public enum UIElementTruncationReason
 /// <param name="InteractableOnly">Keep only elements that are enabled and either keyboard-focusable or support
 /// an action pattern (Invoke, Toggle, Value, SelectionItem, ExpandCollapse, RangeValue).</param>
 /// <param name="VisibleOnly">Leave out elements reported as offscreen, together with everything inside them.</param>
+/// <param name="MaxElements">Stop the walk once this many elements are returned (truncationReason MaxElements), or null
+/// for no limit. Not a filter: it bounds the walk, which reads breadth first so the levels nearest the window are kept.</param>
 public record UIElementFilter(
     string[]? ControlTypes = null,
     bool InteractableOnly = false,
     bool VisibleOnly = true,
     int? MinWidth = null,
-    int? MinHeight = null
+    int? MinHeight = null,
+    int? MaxElements = null
 );
 
 /// <summary>
@@ -99,7 +117,13 @@ public enum UIElementErrorCode
     ElementNotFound = 8,
 
     /// <summary>The point is not on any monitor.</summary>
-    CoordinatesOutOfBounds = 9
+    CoordinatesOutOfBounds = 9,
+
+    /// <summary>
+    /// The window does not respond: Windows reports it hung, or it did not answer a message within 500 ms. Nothing
+    /// was read, because a UI Automation read would block until it recovers (roadmap M3.1).
+    /// </summary>
+    NotResponding = 10
 }
 
 /// <summary>

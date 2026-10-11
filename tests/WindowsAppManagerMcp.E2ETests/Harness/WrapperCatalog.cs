@@ -42,7 +42,16 @@ public enum WrapperCallKind
     /// that read it could pull a password the user copied into the test output, and one that set it would replace what
     /// the user copied. No E2E tier allows it; reading the sequence number, which opens nothing, is a read.
     /// </summary>
-    Clipboard
+    Clipboard,
+
+    /// <summary>
+    /// Acts on an element of an application through a UI Automation control pattern (roadmap M3.2): invokes, toggles,
+    /// sets a value, expands, selects, scrolls, realizes, closes or changes a window's state, or runs the element's MSAA
+    /// default action. Like input, it changes the target application, and it does so without the input guard's
+    /// foreground and hit-test checks. No E2E tier allows it yet; the action tools (roadmap M3.6) come with a fixture
+    /// rule for it.
+    /// </summary>
+    UiaAction
 }
 
 /// <summary>
@@ -69,6 +78,8 @@ public sealed record WrapperMember(
     public static WrapperMember GlobalHotkey { get; } = new(WrapperCallKind.GlobalHotkey, [], []);
 
     public static WrapperMember Clipboard { get; } = new(WrapperCallKind.Clipboard, [], []);
+
+    public static WrapperMember UiaAction { get; } = new(WrapperCallKind.UiaAction, [], []);
 
     public static WrapperMember WindowAction(params string[] windowParameters) =>
         new(WrapperCallKind.WindowAction, windowParameters, []);
@@ -108,6 +119,8 @@ public static class WrapperCatalog
                 [nameof(INativeWindowWrapper.GetCloakReason)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetExtendedFrameBounds)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.IsHungAppWindow)] = WrapperMember.Read,
+                // SendMessageTimeout with WM_NULL, which the window ignores: reads whether its thread answers
+                [nameof(INativeWindowWrapper.RespondsWithin)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.GetDpiForWindow)] = WrapperMember.Read,
                 [nameof(INativeWindowWrapper.SetWindowPos)] = WrapperMember.WindowAction("hWnd"),
                 [nameof(INativeWindowWrapper.ShowWindow)] = WrapperMember.WindowAction("hWnd"),
@@ -244,8 +257,11 @@ public static class WrapperCatalog
             },
             [typeof(IUiaTree)] = new Dictionary<string, WrapperMember>
             {
-                // Tree reads only: acting UIA pattern calls are forbidden outside the Native wrappers by
-                // NativeCallGuardTests, and IUiaTree exposes none
+                // Tree reads only: acting UIA pattern calls are forbidden outside the engine adapters by
+                // NativeCallGuardTests, and the tree's own members only read. GetPattern hands out a pattern object,
+                // which the guard wraps in turn (its return type is a wrapper interface), so its actions are checked
+                // below as UiaAction
+                ["get_" + nameof(IUiaTree.Engine)] = WrapperMember.Read,
                 [nameof(IUiaTree.IsAvailable)] = WrapperMember.Read,
                 [nameof(IUiaTree.FromHandle)] = WrapperMember.Read,
                 [nameof(IUiaTree.FromPoint)] = WrapperMember.Read,
@@ -258,7 +274,99 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadValue)] = WrapperMember.Read,
                 // WindowPattern.Current.IsModal: a property read (verified close looks for an in-window prompt)
-                [nameof(IUiaTree.ReadIsModal)] = WrapperMember.Read
+                [nameof(IUiaTree.ReadIsModal)] = WrapperMember.Read,
+                // Cached reads of a level, a search and a small subtree (roadmap M3.1/M3.2): they only read
+                [nameof(IUiaTree.GetChildElements)] = WrapperMember.Read,
+                [nameof(IUiaTree.FindAll)] = WrapperMember.Read,
+                [nameof(IUiaTree.ReadSubtree)] = WrapperMember.Read,
+                [nameof(IUiaTree.GetRuntimeId)] = WrapperMember.Read,
+                [nameof(IUiaTree.AreSameElement)] = WrapperMember.Read,
+                // Getting a pattern object reads only whether the element supports it
+                [nameof(IUiaTree.GetPattern)] = WrapperMember.Read
+            },
+            // The pattern objects of IUiaTree.GetPattern: their state reads are reads, their actions UiaAction
+            [typeof(IUiaInvokePattern)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IUiaInvokePattern.Invoke)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaTogglePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaTogglePattern.ToggleState)] = WrapperMember.Read,
+                [nameof(IUiaTogglePattern.Toggle)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaValuePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaValuePattern.Value)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaValuePattern.IsReadOnly)] = WrapperMember.Read,
+                [nameof(IUiaValuePattern.SetValue)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaExpandCollapsePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaExpandCollapsePattern.ExpandCollapseState)] = WrapperMember.Read,
+                [nameof(IUiaExpandCollapsePattern.Expand)] = WrapperMember.UiaAction,
+                [nameof(IUiaExpandCollapsePattern.Collapse)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaSelectionItemPattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaSelectionItemPattern.IsSelected)] = WrapperMember.Read,
+                [nameof(IUiaSelectionItemPattern.Select)] = WrapperMember.UiaAction,
+                [nameof(IUiaSelectionItemPattern.AddToSelection)] = WrapperMember.UiaAction,
+                [nameof(IUiaSelectionItemPattern.RemoveFromSelection)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaScrollItemPattern)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IUiaScrollItemPattern.ScrollIntoView)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaScrollPattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaScrollPattern.State)] = WrapperMember.Read,
+                [nameof(IUiaScrollPattern.Scroll)] = WrapperMember.UiaAction,
+                [nameof(IUiaScrollPattern.SetScrollPercent)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaRangeValuePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaRangeValuePattern.State)] = WrapperMember.Read,
+                [nameof(IUiaRangeValuePattern.SetValue)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaWindowPattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaWindowPattern.State)] = WrapperMember.Read,
+                // Waits until the window's thread is idle; changes nothing
+                [nameof(IUiaWindowPattern.WaitForInputIdle)] = WrapperMember.Read,
+                [nameof(IUiaWindowPattern.SetVisualState)] = WrapperMember.UiaAction,
+                [nameof(IUiaWindowPattern.Close)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaTextPattern)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(IUiaTextPattern.GetText)] = WrapperMember.Read,
+                [nameof(IUiaTextPattern.GetSelectedText)] = WrapperMember.Read
+            },
+            [typeof(IUiaGridPattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaGridPattern.RowCount)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaGridPattern.ColumnCount)] = WrapperMember.Read,
+                [nameof(IUiaGridPattern.GetItem)] = WrapperMember.Read
+            },
+            [typeof(IUiaTablePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaTablePattern.RowOrColumnMajor)] = WrapperMember.Read,
+                [nameof(IUiaTablePattern.GetColumnHeaders)] = WrapperMember.Read,
+                [nameof(IUiaTablePattern.GetRowHeaders)] = WrapperMember.Read
+            },
+            [typeof(IUiaItemContainerPattern)] = new Dictionary<string, WrapperMember>
+            {
+                // Finds an item, realized or not, without realizing it
+                [nameof(IUiaItemContainerPattern.FindItemByProperty)] = WrapperMember.Read
+            },
+            [typeof(IUiaVirtualizedItemPattern)] = new Dictionary<string, WrapperMember>
+            {
+                // Makes the container create the item's UI, which can scroll it
+                [nameof(IUiaVirtualizedItemPattern.Realize)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaLegacyIAccessiblePattern)] = new Dictionary<string, WrapperMember>
+            {
+                ["get_" + nameof(IUiaLegacyIAccessiblePattern.State)] = WrapperMember.Read,
+                [nameof(IUiaLegacyIAccessiblePattern.DoDefaultAction)] = WrapperMember.UiaAction
             },
             [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>
             {

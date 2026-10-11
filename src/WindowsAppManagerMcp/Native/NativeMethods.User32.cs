@@ -105,6 +105,10 @@ internal static partial class NativeMethods
         [return: MarshalAs(UnmanagedType.Bool)]
         public static partial bool IsHungAppWindow(nint hwnd);
 
+        // NativeWindowWrapper.RespondsWithin sends only WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG
+        [LibraryImport("user32.dll", SetLastError = true)]
+        public static partial nint SendMessageTimeoutW(nint hWnd, uint Msg, nint wParam, nint lParam, uint fuFlags, uint uTimeout, out nint lpdwResult);
+
         [LibraryImport("user32.dll", SetLastError = true)]
         public static partial int SetWindowLongW(nint hWnd, int nIndex, int dwNewLong);
 

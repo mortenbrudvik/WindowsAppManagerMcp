@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Architecture;
 /// <summary>
 /// Keeps the rule of <see cref="RealUiAutomationCollection"/>: every test class that reaches the real
 /// UI Automation client runs in that serial collection. These tests scan the test assembly's IL for
-/// the entry points to the real client: the production UiaTree and UIAutomationWrapper (which start
+/// the entry points to the real client: the production UiaTree, Uia3Tree (the COM client) and UIAutomationWrapper (which start
 /// the client through UiaClientStartup.Shared), UiaClientStartup.Shared itself, and AutomationElement.
 /// UiaTree with a test start gate does not count: that gate never calls the client.
 /// </summary>
@@ -103,6 +103,10 @@ public class RealUiAutomationCollectionTests
 
     private static bool StartsTheRealClient(MethodBase callee) => callee.DeclaringType is { } type && (
         (type == typeof(UiaTree) && callee is ConstructorInfo { IsStatic: false } ctor && ctor.GetParameters().Length == 0) ||
+        // The UIA3 engine: its production constructor creates the COM client on first use; and the COM client's classes
+        // themselves (mocks of its interfaces do not count)
+        (type == typeof(Uia3Tree) && callee is ConstructorInfo { IsStatic: false } uia3 && uia3.GetParameters().Length == 0) ||
+        (type.Namespace == "Interop.UIAutomationClient" && type.Name.StartsWith("CUIAutomation", StringComparison.Ordinal)) ||
         (type == typeof(UIAutomationWrapper) && callee is ConstructorInfo { IsStatic: false }) ||
         (type == typeof(UiaClientStartup) && callee.Name == "get_" + nameof(UiaClientStartup.Shared)) ||
         type.FullName == "System.Windows.Automation.AutomationElement");

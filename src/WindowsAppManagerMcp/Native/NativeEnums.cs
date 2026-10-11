@@ -82,6 +82,12 @@ internal static class NativeEnums
     // Window messages
     public const uint WM_CLOSE = 0x0010;
 
+    // A message every window ignores: sent with SendMessageTimeout to see whether a window's thread answers
+    public const uint WM_NULL = 0x0000;
+
+    // SendMessageTimeout: return at once, without waiting, when Windows reports the receiving thread hung
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
     // Win32 error codes that a wrapper returns in a Win32CallResult
     public const int ERROR_ACCESS_DENIED = 5;
     public const int ERROR_INVALID_WINDOW_HANDLE = 1400;

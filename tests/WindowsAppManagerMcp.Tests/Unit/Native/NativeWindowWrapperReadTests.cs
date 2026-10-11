@@ -31,6 +31,7 @@ public class NativeWindowWrapperReadTests
         _sut.GetExtendedFrameBounds(InvalidHandle).Should().BeNull();
         _sut.IsHungAppWindow(InvalidHandle).Should().BeFalse();
         _sut.GetDpiForWindow(InvalidHandle).Should().Be(0u);
+        _sut.RespondsWithin(InvalidHandle, 100u).Should().BeFalse("SendMessageTimeout fails for a handle that is not a window");
     }
 
     [Fact]

@@ -49,6 +49,24 @@ public class ServerHarnessTests : IDisposable
     }
 
     [Theory]
+    [InlineData(UiaEngine.Uia3)]
+    [InlineData(UiaEngine.Uia2)]
+    public void CreateServices_WithAnEngine_BuildsTheTreeOfThatEngine_BehindTheGuard(UiaEngine engine)
+    {
+        // Act - resolving creates the adapter; neither adapter touches UI Automation before its first read
+        var services = ServerHarness.CreateServices(
+            DesktopTier.NoInput, FixturePid, new FakeDesktop(), _layoutsPath, wrapperSubstitute: null, out var guarded, engine);
+        using var provider = services.BuildServiceProvider();
+        var tree = provider.GetRequiredService<IUiaTree>();
+
+        // Assert - a scenario can read the fixture with both engines (roadmap M3.2)
+        guarded.Should().Contain(typeof(IUiaTree));
+        provider.GetRequiredService<WindowsAppManagerMcp.Services.UiaEngineOptions>().Engine.Should().Be(engine);
+        tree.Should().BeAssignableTo<GuardProxy>();
+        tree.Engine.Should().Be(engine);
+    }
+
+    [Theory]
     [InlineData(DesktopTier.NoInput)]
     [InlineData(DesktopTier.Input)]
     public void EveryServerService_ReachesNativeWrappersOnlyThroughTheGuard(DesktopTier tier)

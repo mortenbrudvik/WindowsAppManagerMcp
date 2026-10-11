@@ -148,3 +148,20 @@ public enum WindowDetail
     [JsonStringEnumMemberName("full")]
     Full
 }
+
+/// <summary>The shape of get_ui_elements' result (roadmap M3.1).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "format", NullMeans = "tree")]
+public enum UIElementFormat
+{
+    /// <summary>Elements nested under the element they are inside (children).</summary>
+    [JsonStringEnumMemberName("tree")]
+    Tree,
+
+    /// <summary>Every element once, in reading order, with its depth and the index of its parent in the list.</summary>
+    [JsonStringEnumMemberName("flat")]
+    Flat,
+
+    /// <summary>One compact line per element in text, indented by depth; elements is left out.</summary>
+    [JsonStringEnumMemberName("text")]
+    Text
+}

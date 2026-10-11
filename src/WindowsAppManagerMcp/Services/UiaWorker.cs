@@ -12,8 +12,10 @@ namespace WindowsAppManagerMcp.Services;
 /// applications go on. <see cref="MaxStuckCalls"/> bounds the abandoned threads over all targets.
 /// </summary>
 /// <remarks>
-/// <para>A thread per read costs far less than the cross-process calls it makes. M3.1 may replace this
-/// with a long-lived worker and a bounded queue behind the same interface.</para>
+/// <para>A thread per read costs far less than the cross-process calls it makes. M3.1 kept it rather than one
+/// long-lived worker with a bounded queue: a shared worker would let a read stuck in one hung application delay the
+/// reads of every other application, while the stuck counts here bound the threads such reads hold, and the UIA3
+/// engine's transaction timeout returns a stuck read within about 5 s.</para>
 /// <para>Reads with an unknown target (process 0) share one count.</para>
 /// </remarks>
 public sealed class UiaWorker : IUiaWorker

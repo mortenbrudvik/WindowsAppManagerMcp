@@ -61,8 +61,13 @@ public static class ServiceRegistration
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,
-        // get_element_at_point); UiaWorker runs every UI Automation read under a deadline
-        services.AddSingleton<IUiaTree, UiaTree>();
+        // get_element_at_point); UiaWorker runs every UI Automation read under a deadline. The engine (roadmap M3.2):
+        // the COM client (Uia3Tree) unless WAM_UIA_ENGINE=uia2 chooses the managed one (UiaTree); neither touches UI
+        // Automation before its first read
+        services.AddSingleton(_ => UiaEngineOptions.FromEnvironment());
+        services.AddSingleton<IUiaTree>(sp => sp.GetRequiredService<UiaEngineOptions>().Engine == UiaEngine.Uia2
+            ? new UiaTree()
+            : new Uia3Tree());
         services.AddSingleton<IUiaWorker, UiaWorker>();
         services.AddSingleton<INativeHitTestWrapper, NativeHitTestWrapper>();
         services.AddSingleton<IElementInspectionService, ElementInspectionService>();
@@ -113,7 +118,8 @@ public static class ServiceRegistration
             sp.GetService<ToolsetSelection>(), // registered by AddWindowsAppManagerTools
             sp.GetRequiredService<IAuditLog>(),
             sp.GetService<ClipboardOptions>(),
-            ProtocolAllowlist.FromEnvironment()));
+            ProtocolAllowlist.FromEnvironment(),
+            sp.GetService<UiaEngineOptions>()));
 
         // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
         services.AddSingleton<IAuditLog>(sp => new AuditLog(
