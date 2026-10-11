@@ -533,6 +533,54 @@ public class ProcessServiceTests
         ownsB(Window(700, "Notepad")).Should().BeTrue();
     }
 
+    /// <summary>
+    /// A single-instance app (Code, Windows Terminal, an Electron app) started twice in one batch: the second launcher hands
+    /// its request to the instance the first launch started and exits, so its window belongs to the first launch's process.
+    /// Once the first launch has its window, and the second launcher is gone, the second launch may take that process's
+    /// next window; before that, or while the second launcher still runs, it may not.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_ALaunchThatHandedOffToAnEarlierItemsInstance_GetsItsWindow_OnceThatItemHasOne()
+    {
+        // Arrange - launch 1 starts 501, whose child 600 is the app's single instance; launch 2's 502 forwards to it and exits
+        const string app = @"C:\Apps\Code\Code.exe";
+        var launchedAt = DateTime.UtcNow;
+        _mockResolver.Setup(r => r.Resolve("code", It.IsAny<string?>())).Returns(new ResolvedLaunchTarget(app, LaunchTargetKind.NativeExecutable));
+        _mockProcessWrapper.Setup(w => w.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [501] = (10, "Code.exe"),
+            [502] = (10, "Code.exe"),
+            [600] = (501, "Code.exe")
+        });
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns(app);
+        _mockProcessWrapper.Setup(w => w.GetProcessStartTime(It.IsAny<int>())).Returns(launchedAt.AddSeconds(1));
+        var first = new Mock<IProcessHandle>();
+        first.SetupGet(p => p.Id).Returns(501);
+        var second = new Mock<IProcessHandle>();
+        second.SetupGet(p => p.Id).Returns(502);
+        var secondExited = false;
+        second.SetupGet(p => p.HasExited).Returns(() => secondExited);
+        _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(first.Object)
+            .Returns(second.Object);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync([new LaunchRequest("code", ["a"]), new LaunchRequest("code", ["b"])], waitForWindows: true);
+
+        // Assert
+        var ownsB = _ownerPredicates[1];
+        var handedOffWindow = new WindowCandidate(0x700, 600, null, "b - Visual Studio Code");
+        ownsB(handedOffWindow).Should().BeFalse("launch 1 has no window yet: this one may be its own");
+
+        _waitOptions[0].TryClaim!(0x600).Should().BeTrue();
+        ownsB(handedOffWindow).Should().BeFalse("launch 2's own process still runs: its window may still come");
+
+        secondExited = true;
+        ownsB(handedOffWindow).Should().BeTrue("launch 1 has its window, and launch 2's launcher handed off and exited");
+        _ownerPredicates[0](handedOffWindow).Should().BeTrue("the shared claim still decides which launch gets a window");
+    }
+
     [Fact]
     public async Task LaunchApplicationsBatch_ProgressValues_OnlyIncrease_WhenWaitsEndTogether()
     {

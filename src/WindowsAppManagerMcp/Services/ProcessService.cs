@@ -268,11 +268,19 @@ public class ProcessService : IProcessService
     /// <summary>
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
     /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
-    /// other's windows by name and path; the started process decides between them.
+    /// other's windows by name and path; the started process decides between them. Such a window is this launch's after
+    /// all once that other launch has its window and this launch's own process is gone (<paramref name="handedOff"/>): a
+    /// single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
+    /// Terminal launches) opens its window in that instance. The shared claim still gives each window to one launch.
     /// </summary>
-    private static Func<WindowCandidate, bool> BatchOwner(LaunchWindowOwner owner, IReadOnlyList<LaunchWindowOwner> others) =>
+    private static Func<WindowCandidate, bool> BatchOwner(
+        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, Func<bool> handedOff) =>
         window => owner.Matches(window) &&
-                  (owner.StartedProcess(window.ProcessId) || !others.Any(other => other.StartedProcess(window.ProcessId)));
+                  (owner.StartedProcess(window.ProcessId) ||
+                   !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff())));
+
+    /// <summary>True when the launch started no process, or the process it started has exited.</summary>
+    private static bool LauncherGone(StartedLaunch launch) => launch.Process == null || HasExitedSafe(launch.Process);
 
     /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
     private WindowInfo? MainWindowOf(IProcessHandle process)
@@ -716,21 +724,35 @@ public class ProcessService : IProcessService
             // matches (same program name or path, handoff names, hint) leave it alone, whichever wait sees it first
             var owners = waiting.Select(item => OwnerOf(item.Launch, applications[item.Index])).ToList();
             var claimed = new HashSet<nint>();
-            bool Claim(nint handle)
+            var hasWindow = new bool[waiting.Count];
+            bool Claim(int position, nint handle)
             {
                 lock (claimed)
                 {
-                    return claimed.Add(handle);
+                    if (!claimed.Add(handle))
+                        return false;
+
+                    hasWindow[position] = true;
+                    return true;
+                }
+            }
+
+            bool HasWindow(int position)
+            {
+                lock (claimed)
+                {
+                    return hasWindow[position];
                 }
             }
 
             await Task.WhenAll(waiting.Select(async (item, position) =>
             {
                 var owner = owners[position];
-                var others = owners.Where((_, other) => other != position).ToList();
+                var others = owners.Select((other, index) => (Owner: other, HasWindow: (Func<bool>)(() => HasWindow(index))))
+                    .Where((_, index) => index != position).ToList();
                 results[item.Index] = await WaitForWindowAsync(
-                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others), waitTimeoutMs, Claim,
-                    cancellationToken).ConfigureAwait(false);
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, () => LauncherGone(item.Launch)), waitTimeoutMs,
+                    handle => Claim(position, handle), cancellationToken).ConfigureAwait(false);
                 Report(item.Index);
             })).ConfigureAwait(false);
         }
