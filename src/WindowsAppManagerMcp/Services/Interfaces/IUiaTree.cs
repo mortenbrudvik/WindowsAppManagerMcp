@@ -16,7 +16,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para>Errors: a node that disappeared, or whose window is gone, throws
 /// <see cref="UiaElementUnavailableException"/>. A provider that does not answer in time can throw
 /// <see cref="TimeoutException"/>. Other failures surface as the provider's exception.</para>
-/// <para>The tree's own methods only read. Acting is done through the pattern objects of
+/// <para>The tree's own methods only read, except <see cref="SetFocus"/>. Acting is done through the pattern objects of
 /// <see cref="GetPattern{TPattern}"/> (see <see cref="IUiaPattern"/>).</para>
 /// </remarks>
 public interface IUiaTree
@@ -142,6 +142,14 @@ public interface IUiaTree
     /// pattern (the managed client has no LegacyIAccessible).
     /// </summary>
     TPattern? GetPattern<TPattern>(IUiaNode node) where TPattern : class, IUiaPattern;
+
+    /// <summary>
+    /// Gives the node keyboard focus (UI Automation SetFocus). The one member of the tree that acts: it changes the
+    /// application's focus and can bring its window to the front. Only element_action calls it, inside the input gate and
+    /// after the target checks (roadmap M3.6), as it calls the pattern actions.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The element cannot take focus (it is not focusable or not enabled).</exception>
+    void SetFocus(IUiaNode node);
 }
 
 /// <summary>An element of the UI Automation tree. Only the <see cref="IUiaTree"/> that returned it can read it.</summary>

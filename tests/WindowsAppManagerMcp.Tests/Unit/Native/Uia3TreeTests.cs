@@ -664,4 +664,57 @@ public class Uia3TreeTests
     }
 
     #endregion
+
+    #region Acting (roadmap M3.6)
+
+    [Fact]
+    public void FirstUse_TurnsOffAutoSetFocus_SoPatternActionsDoNotMoveFocusOrTheForeground()
+    {
+        // Arrange - a Windows 10 1809+ client (IUIAutomation6), where AutoSetFocus is on by default
+        var six = _automation.As<IUIAutomation6>();
+        six.SetupProperty(a => a.AutoSetFocus, 1);
+        var sut = CreateSut();
+
+        // Act
+        sut.IsAvailable().Should().BeTrue();
+
+        // Assert
+        six.Object.AutoSetFocus.Should().Be(0);
+    }
+
+    [Fact]
+    public void FirstUse_OfAClientWithoutIUIAutomation6_StillStarts()
+    {
+        CreateSut().IsAvailable().Should().BeTrue();
+    }
+
+    [Fact]
+    public void SetFocus_ReachesTheElement()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var box = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, box);
+
+        // Act
+        sut.SetFocus(node);
+
+        // Assert
+        box.Verify(e => e.SetFocus(), Times.Once);
+    }
+
+    [Fact]
+    public void SetFocus_OfAnElementThatCannotTakeFocus_ThrowsInvalidOperation()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var label = new Mock<IUIAutomationElement>();
+        label.Setup(e => e.SetFocus()).Throws(new COMException("not enabled", UiaComErrors.ElementNotEnabled));
+        var node = NodeOf(sut, label);
+
+        // Act & Assert
+        sut.Invoking(t => t.SetFocus(node)).Should().Throw<InvalidOperationException>();
+    }
+
+    #endregion
 }

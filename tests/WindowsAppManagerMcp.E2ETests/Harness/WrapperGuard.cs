@@ -22,7 +22,11 @@ public sealed class E2EGuardException : Exception
 /// <param name="Args">The arguments, which the policy must not change.</param>
 /// <param name="Target">The object behind the guard (for example the process handle a call acts on), or null.</param>
 /// <param name="Member">How <see cref="WrapperCatalog"/> classifies the member; null when it does not.</param>
-public sealed record WrapperCall(Type ServiceType, MethodInfo Method, object?[] Args, object? Target, WrapperMember? Member)
+/// <param name="Origin">For a wrapper another wrapper handed out (a pattern object from IUiaTree.GetPattern, a process handle
+/// from OpenProcess): the call that handed it out, whose arguments say what it belongs to (the element of a pattern); null
+/// otherwise.</param>
+public sealed record WrapperCall(
+    Type ServiceType, MethodInfo Method, object?[] Args, object? Target, WrapperMember? Member, WrapperCall? Origin = null)
 {
     public string Name => $"{ServiceType.Name}.{Method.Name}";
 }
@@ -156,10 +160,14 @@ public static class WrapperGuard
         }
     }
 
-    private static object CreateProxy(Type serviceType, object? inner, IWrapperCallPolicy policy)
+    /// <summary>Guards a wrapper that the call <paramref name="origin"/> handed out; its calls carry that origin.</summary>
+    internal static object CreateHandedOut(Type serviceType, object inner, IWrapperCallPolicy policy, WrapperCall origin) =>
+        CreateProxy(serviceType, inner, policy, origin);
+
+    private static object CreateProxy(Type serviceType, object? inner, IWrapperCallPolicy policy, WrapperCall? origin = null)
     {
         var proxy = (GuardProxy)CreateProxyMethod.MakeGenericMethod(serviceType, typeof(GuardProxy)).Invoke(null, null)!;
-        proxy.Initialize(serviceType, inner, policy);
+        proxy.Initialize(serviceType, inner, policy, origin);
         return proxy;
     }
 
@@ -209,18 +217,20 @@ public class GuardProxy : DispatchProxy
     private Type _serviceType = typeof(object);
     private object? _inner;
     private IWrapperCallPolicy? _policy;
+    private WrapperCall? _origin;
 
-    internal void Initialize(Type serviceType, object? inner, IWrapperCallPolicy policy)
+    internal void Initialize(Type serviceType, object? inner, IWrapperCallPolicy policy, WrapperCall? origin = null)
     {
         _serviceType = serviceType;
         _inner = inner;
         _policy = policy;
+        _origin = origin;
     }
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
         ArgumentNullException.ThrowIfNull(targetMethod);
-        var call = new WrapperCall(_serviceType, targetMethod, args ?? [], _inner, WrapperCatalog.Find(_serviceType, targetMethod));
+        var call = new WrapperCall(_serviceType, targetMethod, args ?? [], _inner, WrapperCatalog.Find(_serviceType, targetMethod), _origin);
 
         var refusal = _policy == null ? "the guard has no policy." : _policy.Check(call);
         if (refusal != null)
@@ -243,9 +253,10 @@ public class GuardProxy : DispatchProxy
             throw;
         }
 
-        // A wrapper handed out by a wrapper (the process handle from OpenProcess) is guarded in turn
+        // A wrapper handed out by a wrapper (the process handle from OpenProcess, a pattern from GetPattern) is guarded in
+        // turn, and its calls carry this call, which says what it belongs to
         return result != null && WrapperGuard.IsNativeWrapper(targetMethod.ReturnType)
-            ? WrapperGuard.Create(targetMethod.ReturnType, result, _policy!)
+            ? WrapperGuard.CreateHandedOut(targetMethod.ReturnType, result, _policy!, call)
             : result;
     }
 }
@@ -291,6 +302,9 @@ public sealed class ReadOnlyCallPolicy : IWrapperCallPolicy
 /// moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server
 /// may attach its own calling thread's input to another thread (never two other threads to each other),
 /// because the window calls it makes while attached are checked as window actions.
+/// UI Automation actions (a pattern's Invoke, Toggle, SetValue, ..., and IUiaTree.SetFocus, roadmap M3.6) only on an
+/// element of the fixture's process, read through the tree that handed out the pattern; an element whose process cannot
+/// be read is refused.
 /// It is a second, independent layer under the server's own input guard (M1.1, M1.5, InputTargetGuard), so a bug in
 /// that guard cannot send input to a window outside the fixture.
 /// </summary>
@@ -333,6 +347,7 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         WrapperCallKind.WindowAction => CheckWindows(call, call.Member!),
         WrapperCallKind.ProcessAction => CheckProcess(call),
         WrapperCallKind.ThreadInputAttach => CheckThreadInputAttach(call),
+        WrapperCallKind.UiaAction => CheckUiaAction(call),
         WrapperCallKind.ProcessStart =>
             $"an E2E test may not start processes; teach {nameof(FixtureOnlyCallPolicy)} which starts are safe first.",
         var kind => $"{nameof(FixtureOnlyCallPolicy)} has no rule for {kind} calls."
@@ -451,6 +466,41 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
         return attachToThreadId == 0 || attachToThreadId == callingThreadId
             ? $"AttachThreadInput to thread {attachToThreadId} is not an attach to another thread."
             : null;
+    }
+
+    /// <summary>
+    /// A UI Automation action acts on one element: allowed only when that element belongs to the fixture's process. The
+    /// element is the argument of IUiaTree.SetFocus, or, for a pattern's action, the argument of the GetPattern call that
+    /// handed the pattern out; its process is read through that (unguarded) tree, a read.
+    /// </summary>
+    private string? CheckUiaAction(WrapperCall call)
+    {
+        (IUiaTree? Tree, IUiaNode? Node) element = call switch
+        {
+            { ServiceType: var type, Method.Name: nameof(IUiaTree.SetFocus) } when type == typeof(IUiaTree) =>
+                (call.Target as IUiaTree, call.Args.Length > 0 ? call.Args[0] as IUiaNode : null),
+            { Origin: { Method.Name: nameof(IUiaTree.GetPattern) } origin } when origin.ServiceType == typeof(IUiaTree) =>
+                (origin.Target as IUiaTree, origin.Args.Length > 0 ? origin.Args[0] as IUiaNode : null),
+            _ => (null, null)
+        };
+        if (element.Tree is not { } tree || element.Node is not { } node)
+        {
+            return $"{call.Name} acts on an element the E2E guard cannot identify; teach {nameof(FixtureOnlyCallPolicy)} about it.";
+        }
+
+        int processId;
+        try
+        {
+            processId = tree.ReadIdentity(node).ProcessId;
+        }
+        catch (Exception ex)
+        {
+            return $"{call.Name}: the guard cannot tell which process the element belongs to ({ex.GetType().Name}: {ex.Message}).";
+        }
+
+        return processId == _fixtureProcessId
+            ? null
+            : $"{call.Name} on an element of process {processId} is not the fixture (process {_fixtureProcessId}).";
     }
 
     private static bool IsZeroDistanceMove(InputEvent e) =>

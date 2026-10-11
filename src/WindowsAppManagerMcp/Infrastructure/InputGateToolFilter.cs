@@ -64,13 +64,16 @@ public static class InputGateToolFilter
     /// close, and kill_process sends its close request or termination inside it and releases it before it waits for the
     /// process to exit: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
     /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
-    /// selector (roadmap M2.4) before they take the gate, and act inside it.
+    /// selector (roadmap M2.4) before they take the gate, and act inside it. element_action (roadmap M3.6) searches for its
+    /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
+    /// which takes it again through the input service, and before it waits for the state after the action.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "kill_process", "close_window", "close_windows_batch", "close_application",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
-        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch"
+        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
+        "element_action"
     };
 
     /// <summary>

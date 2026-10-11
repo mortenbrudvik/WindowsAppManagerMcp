@@ -240,6 +240,31 @@ public sealed class FakeUiaTree : IUiaTree
         return fake.PatternObjects.TryGetValue(typeof(TPattern), out var pattern) ? (TPattern)pattern : null;
     }
 
+    /// <summary>
+    /// The one acting member of the tree: logged as "SetFocus:Name"; fails with the node's
+    /// <see cref="FakeUiaNode.SetFocusException"/>; otherwise, when <see cref="SetFocusMovesFocus"/> (the default), the node becomes
+    /// <see cref="Focused"/> and has keyboard focus.
+    /// </summary>
+    public void SetFocus(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"SetFocus:{fake.Name}");
+        ThrowIfSet(fake.SetFocusException);
+        if (SetFocusMovesFocus)
+        {
+            if (Focused != null)
+            {
+                Focused.HasKeyboardFocus = false;
+            }
+
+            Focused = fake;
+            fake.HasKeyboardFocus = true;
+        }
+    }
+
+    /// <summary>Whether <see cref="SetFocus"/> moves focus to its node (false: an application that ignores it).</summary>
+    public bool SetFocusMovesFocus { get; set; } = true;
+
     /// <summary>Every <see cref="FindAll"/> call as "RootName:Scope", in call order.</summary>
     public IReadOnlyList<string> Finds => _finds.ToList();
 
@@ -344,10 +369,10 @@ public sealed class FakeUiaNode : IUiaNode
     public string? AutomationId { get; init; }
     public UiaRect Bounds { get; init; } = new(0, 0, 100, 30);
     public bool IsEnabled { get; init; } = true;
-    public bool IsOffscreen { get; init; }
+    public bool IsOffscreen { get; set; }
 
     public bool IsKeyboardFocusable { get; init; }
-    public bool HasKeyboardFocus { get; init; }
+    public bool HasKeyboardFocus { get; set; }
     public IReadOnlyList<string> ActionPatterns { get; init; } = [];
 
     public string? ClassName { get; init; }
@@ -377,6 +402,9 @@ public sealed class FakeUiaNode : IUiaNode
     public Action<UiaCondition>? OnFindAll { get; set; }
 
     public Exception? ReadException { get; set; }
+
+    /// <summary>Thrown by <see cref="FakeUiaTree.SetFocus"/> for this node.</summary>
+    public Exception? SetFocusException { get; set; }
     public Exception? InteractionException { get; set; }
     public Exception? IdentityException { get; set; }
     public Exception? ChildrenException { get; set; }

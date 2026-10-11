@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 56 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 57 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ A comprehensive guide to all 56 MCP tools for managing Windows applications, win
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
 | [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
-| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | 4 |
+| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | 5 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
 | [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) | 7 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
@@ -38,6 +38,7 @@ The input tools send real mouse and keyboard input to the user's desktop. Every 
 - The user can deny windows of chosen apps (password managers and credential prompts by default) to the agent; such calls return `TargetDeniedByPolicy`, which no tool argument overrides. See [Target policy](#target-policy).
 - The user can pause the input of every Windows App Manager server on the desktop at any time with the pause hotkey (Ctrl+Alt+Shift+Pause by default). While input is paused, every input tool and every tool that changes windows or starts or stops processes ([focus_window](#focus_window), [close_window](#close_window), [launch_application](#launch_application), ...) return `PausedByUser` and do nothing, and a running input call stops; tools that only read keep working. Then stop and ask the user; never try to resume input yourself or send the hotkey's keys. See [Input Control](#input-control).
 - Input is refused while a modifier key (Shift, Ctrl, Alt, Windows) is held down (`ModifiersHeld`): the user is using the keyboard, or a key is stuck. Clicks and mouse moves are also refused while a mouse button is held down or another window has captured the mouse (`MouseInUse`): the user is dragging, selecting or has a menu open. No key or mouse button the server presses stays down after a call.
+- [element_action](#element_action) acts on UI elements through UI Automation patterns, without input: the same pause, target policy, host and modal checks apply to its element's window, and its mouse and keyboard paths go through the input guard like the tools above.
 - After each action, check the result (`success`, `receivingWindow`, `foregroundAfter`) before the next step.
 
 ### Target policy
@@ -92,7 +93,7 @@ to do anything for it, and cannot turn it off.
 - **Kept:** 7 days. The first line a server writes on a day deletes the day files that are 7 or more days old. Only
   files named like a day's file are deleted; nothing else in the folder is touched.
 - **Audited tools:** click, right_click, double_click, mouse_move, type_text, send_keys, release_all_input,
-  scroll, close_window, close_windows_batch, close_application, kill_process, launch_application,
+  scroll, element_action, close_window, close_windows_batch, close_application, kill_process, launch_application,
   launch_applications_batch, launch_browser_with_debug, apply_layout, save_layout, delete_layout, set_clipboard and
   get_clipboard (the one read that can return the user's own clipboard; its line keeps `format` and the result's
   `origin` and `length`, never the content).
@@ -102,8 +103,9 @@ to do anything for it, and cannot turn it off.
   command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
     (`argumentsCount`). Only the strings that name a process, a layout preset or a fixed value (`processName`,
-    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`) are
-    kept; a mouse tool's `captureId` is recorded as its length, and its `x` and `y` and the result's converted `x` and `y`
+    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`, and
+    element_action's `ref`, `action`, `mode`, `direction`, `amount` and `fallback`) are kept; element_action's `value` is
+    recorded as `valueLength`; a mouse tool's `captureId` is recorded as its length, and its `x` and `y` and the result's converted `x` and `y`
     as numbers.
   - `executable` is kept as a program name or file path. A URL keeps only its scheme, host and port
     (`https://hooks.example.com`, `mailto:example.com`, `data:`), and a URL without a scheme only its host
@@ -246,7 +248,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
 | `elements` | on | UI Automation: element trees, searches that return element refs, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
-| `input` | on | Guarded mouse and keyboard input to a named window. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) |
+| `input` | on | Guarded mouse and keyboard input to a named window, and actions on UI elements through UI Automation patterns. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) |
 | `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
 | `process` | on | List processes and close or end one, or close an application's windows gracefully. | [list_processes](#list_processes), [kill_process](#kill_process), [close_application](#close_application) |
@@ -2171,9 +2173,9 @@ Each element carries its [ref](#ui-automation), the same one get_ui_elements and
 
 ## UI Automation
 
-Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
+Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. [element_action](#element_action) acts on an element they found, through its UI Automation patterns. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
-**Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search (the element actions and waits of roadmap M3 take it; today [find_ui_elements](#find_ui_elements)' `withinRef` does). The rules:
+**Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search ([element_action](#element_action) and [find_ui_elements](#find_ui_elements)' `withinRef` take it). The rules:
 - The same element keeps its ref in every read of the server session, whichever tool read it: a ref is tied to the element's UI Automation runtime id and its window, and checked against its control type, automation id and class. A list, tree or grid item without an automation id is also checked against its name, because a scrolling list reuses an item's element for another row: the row it shows now gets a new ref.
 - A ref never names a different element that the server can tell apart. When its element is gone, the server looks for the same runtime id in the window. A ref from find_ui_elements whose criteria fit only that element in the whole window (no `withinRef`, and no look-alike, visible or not) is also followed to the element re-created with the same automation id (or the same name when it has none), type and class, when exactly one fits. A ref from a tree walk, the focused element or the element at a point, or one whose criteria fit look-alikes (every row's Delete button), is never moved to a look-alike. Otherwise a call that takes the ref fails with `ElementStale` (gone, its window closed, or the ref expired) or `AmbiguousElement` (several elements now fit), and you find the element again with [find_ui_elements](#find_ui_elements).
 - Refs are per server session and opaque: after a restart the server numbers windows from a new random start (refs carry a seven-digit window number), so an old ref is `ElementStale` ("not issued by this server session") unless the new session happens to number the same window, which is about 1 in 80,000 for a session that has numbered 100 windows. Do not keep refs across a restart. The server keeps the 10,000 most recently used refs, twice the most one read returns. An element without a runtime id (rare) has no `ref`.
@@ -2444,6 +2446,112 @@ Find elements in a window by name, automation id, control type and class, in one
 | `OperationTimedOut` | The timeout passed before any element matched, or UI Automation stopped answering before one did. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 | `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read. Wait, then try again |
+
+---
+
+### element_action
+
+Act on one UI element through its UI Automation patterns: invoke a button, toggle a check box, set a text box's value, select an item, expand a combo box, scroll a list, move a slider. A pattern acts on the element in its application, so it works on a window that is in the background or covered, needs no coordinates and does not move the mouse. The result has the element's state before and after and whether the action's effect shows (`outcomeVerified`), so one call acts and verifies. It returns the `ref` it acted on.
+
+<!-- tools:begin params:element_action -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| action | string (one of: `"invoke"`, `"click"`, `"double_click"`, `"right_click"`, `"focus"`, `"set_value"`, `"append_text"`, `"toggle"`, `"select"`, `"add_to_selection"`, `"remove_from_selection"`, `"expand"`, `"collapse"`, `"scroll_into_view"`, `"scroll"`, `"set_range_value"`, `"realize"`, `"window_close"`, `"window_minimize"`, `"window_maximize"`) | Yes | - | What to do: invoke, click, double_click, right_click, focus, set_value, append_text, toggle, select, add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, window_close, window_minimize, window_maximize. |
+| ref | string | No | - | The element: a ref from an earlier read, such as 'w4120035e17'. Or leave it out and pass handle or window with element criteria. |
+| handle | integer | No | - | Window handle (as integer) whose element the criteria name. Pass handle or window, with criteria, instead of ref. |
+| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| name | string | No | - | Element criteria, as find_ui_elements: the element's name, compared as nameMatch says. |
+| nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | How name is compared: 'exact' (default), 'contains' or 'regex', as find_ui_elements. |
+| automationId | string | No | - | Element criteria: the element's AutomationId. |
+| controlType | string | No | - | Element criteria: control type, or several separated by commas, e.g. 'Button' or 'Edit,ComboBox'. |
+| className | string | No | - | Element criteria: the element's class name. |
+| value | string | No | - | set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, 'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. Never echoed back. |
+| mode | string (one of: `"value"`, `"type"`, `"paste"`) | No | "value" | set_value and append_text: 'value' (default: the Value pattern, no keyboard input), 'type' (focus the element, select all or go to the end, type the text, with every input check; for web and React inputs that ignore the Value pattern) or 'paste' (as type, but pasted from the clipboard, which it replaces). |
+| direction | string (one of: `"up"`, `"down"`, `"left"`, `"right"`) | No | - | scroll: 'up', 'down', 'left' or 'right'. The element's Scroll pattern, or its nearest scrollable ancestor's, is used; the result's scroll has the percent and atEnd. |
+| amount | string (one of: `"page"`, `"line"`) | No | "page" | scroll: 'page' (default) or 'line'. |
+| fallback | string (one of: `"none"`, `"mouse"`) | No | "none" | When no pattern does invoke, click or select: 'none' (default: PatternNotSupported, nothing is done) or 'mouse' (bring the window to the front and send a guarded click at the element's click point, with every input check; it moves the pointer and takes the foreground). |
+| allowHostTarget | boolean | No | false | Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
+| timeoutMs | integer | No | 5000 | How long the action may block, for example on a dialog it opened, and the bound of each read, in milliseconds (default: 5000, min: 1000, max: 30000). |
+<!-- tools:end params:element_action -->
+
+**Naming the element.** Pass `ref` from an earlier read ([find_ui_elements](#find_ui_elements), [get_ui_elements](#get_ui_elements), ...). Or pass `handle` or `window` with element criteria (`name`, `nameMatch`, `automationId`, `controlType`, `className`), which find_ui_elements' search resolves, offscreen and disabled elements included; they must match exactly one element of the window: several are `AmbiguousElement` (with the first refs), none is `ElementNotFound`, and a search that did not cover the whole window in time is `OperationTimedOut` (nothing was done in each case). A stale ref is `ElementStale` or `AmbiguousElement` (see [Element refs](#ui-automation)): find the element again, never act on a look-alike. An element inside a recycled list row whose own identity does not change (a row's check box) can still resolve after the row changed, so check `before` (or read the row) before a destructive action.
+
+**Actions:**
+| Action | Pattern (method) | Notes |
+|--------|------------------|-------|
+| `invoke` | Invoke; else the MSAA default action (`LegacyIAccessible`, UIA3 engine) | A button, menu item or link |
+| `click` | Invoke, Toggle, SelectionItem (select), ExpandCollapse (expand or collapse), MSAA default action | What a click would do, through the first pattern the element has |
+| `double_click`, `right_click` | `Mouse` | Always a guarded mouse click at the element's click point, after its window is brought to the front (no pattern does these) |
+| `focus` | `Focus` | Brings the window to the front (verified, as [focus_window](#focus_window)), then gives the element keyboard focus |
+| `set_value` | Value; `mode: "type"` or `"paste"`: `Keyboard` | Replaces the value with `value` (`""` empties it); read back afterwards |
+| `append_text` | Value; `Keyboard` | Adds `value` at the end (the Value pattern sets the whole value read just before) |
+| `toggle` | Toggle | Once, or with `value` `on`, `off` or `indeterminate` until it is in that state, at most three toggles (`ActionFailed` if it never gets there) |
+| `select`, `add_to_selection`, `remove_from_selection` | SelectionItem | A list item, tab or radio button |
+| `expand`, `collapse` | ExpandCollapse | A combo box, tree item, menu or split button; a leaf node is `PatternNotSupported` |
+| `scroll_into_view` | ScrollItem | Works on an offscreen element |
+| `scroll` | Scroll, of the element or its nearest scrollable ancestor (up to 16 levels) | `direction` (`up`, `down`, `left`, `right`) and `amount` (`page` or `line`); the result's `scroll` has the percentages, `atEnd` and the container's `containerRef` |
+| `set_range_value` | RangeValue | `value` is a number within the element's range (`InvalidArguments` outside it) |
+| `realize` | VirtualizedItem | An item of a virtualized list; one that is real already needs nothing |
+| `window_close`, `window_minimize`, `window_maximize` | Window | Only for windows inside an application (an MDI child, a dialog drawn in the app). A top-level window is refused (`InvalidArguments`): close it with [close_window](#close_window), which refuses the shell and your own host, asks the user where needed and verifies the close, and change its state with [set_window_state](#set_window_state) |
+
+An action whose state is already reached (`toggle` to its state, `expand` an expanded element, `scroll` at the end) does nothing and returns `method: "None"`.
+
+**Before acting**, every call:
+- waits for the input gate (`InputBusy` after 30 s) and refuses while the user has paused input (`PausedByUser`: stop and ask the user);
+- checks the element's window as the [input guard](#input-guard) checks a target window: the user's [target policy](#target-policy) (`TargetDeniedByPolicy`; password managers and credential prompts by default), the agent's own host (`TargetIsAgentHost`; `allowHostTarget: true` lifts it only with `ref` or a window named by handle), elevation (`TargetElevated`), a modal dialog that disables it (`BlockedByModal`: a pattern would act behind the dialog's back), a locked session (`SessionLocked`, `DesktopUnavailable`), and a window that does not respond (`NotResponding`);
+- refuses a disabled element (`ElementNotEnabled`) and an offscreen one (`ElementOffscreen`: use `scroll_into_view` first, or `realize`), except for `scroll_into_view`, `scroll`, `realize` and the `window_*` actions; and a read-only one for `set_value`, `append_text` and `set_range_value` (`ElementReadOnly`);
+- needs the pattern: without it the call is `PatternNotSupported` and lists the patterns the element has. `fallback: "mouse"` (only for `invoke`, `click` and `select`) then sends a guarded mouse click at the element's click point instead.
+
+**Mouse and keyboard.** `double_click`, `right_click`, `fallback: "mouse"` and `set_value`/`append_text` with `mode` `type` or `paste` send real input, only through the guarded input path of [click](#click), [type_text](#type_text) and [send_keys](#send_keys): the window is brought to the front first (verified activation), every input guard check applies (`TargetOccluded`, `ModifiersHeld`, `MouseInUse`, `TargetLostFocus`, `PasteNotAllowed`, ...), and `receivingWindow` says where the input went. The keyboard path gives the element focus and checks that keyboard focus is on it (or inside it) before it sends Ctrl+A (`set_value`) or Ctrl+End (`append_text`), and again before it types; otherwise it sends nothing more and fails with `FocusNotOnElement`. `mode: "paste"` puts the text on the clipboard first (it replaces the user's clipboard, as [set_clipboard](#set_clipboard) does) and pastes it with Ctrl+V. Use `type` for web and React inputs that ignore the Value pattern (`outcomeVerified: false` after `mode: "value"` hints at it).
+
+**Actions that wait for a dialog.** A Win32 Invoke, Toggle, Expand or a close returns only when a modal dialog it opened closes. Every pattern call runs on a thread of its own, apart from the UI Automation reads, so the dialog can still be read; when the call has not returned after `timeoutMs`, the result has `status: "InvokedPendingModal"` and the new window of the application as `openedPopup`: read and answer it (find_ui_elements with its handle), then read the element again. When no new window appeared, the call fails with `ActionTimedOut`: the action may still take effect, so read the element's state before you repeat it. While two actions on an application (six over all) are still blocked, a new one on it is refused (`ActionsPending`).
+
+**Focus and the foreground.** Pattern actions do not move keyboard focus or the foreground: under the default UIA3 engine the server turns UI Automation's AutoSetFocus off, so an Invoke on a background window leaves the user's window in front. `focus`, the mouse paths and the keyboard paths bring the window to the front on purpose. With `WAM_UIA_ENGINE=uia2` (the managed client has no such switch) a provider may still move focus.
+
+**Example:**
+> "Turn on word wrap in the editor"
+
+```json
+{
+  "name": "element_action",
+  "arguments": {
+    "window": { "processName": "notepad" },
+    "name": "Word wrap",
+    "controlType": "CheckBox",
+    "action": "toggle",
+    "value": "on"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "action": "toggle",
+  "ref": "w4120035e23",
+  "windowHandle": 12345,
+  "status": "Done",
+  "method": "Toggle",
+  "before": { "name": "Word wrap", "isEnabled": true, "isOffscreen": false, "hasKeyboardFocus": false, "toggleState": "Off" },
+  "after": { "name": "Word wrap", "isEnabled": true, "isOffscreen": false, "hasKeyboardFocus": false, "toggleState": "On" },
+  "outcomeVerified": true,
+  "elapsedMilliseconds": 64.2,
+  "errorCode": null
+}
+```
+
+**Response fields:**
+- `method`: how the action was done: the pattern (`Invoke`, `Toggle`, `Value`, `SelectionItem`, `ExpandCollapse`, `ScrollItem`, `Scroll`, `RangeValue`, `VirtualizedItem`, `Window`, `LegacyIAccessible`), `Focus`, `Mouse`, `Keyboard`, or `None` (nothing needed doing).
+- `before` and `after`: `name`, `isEnabled`, `isOffscreen`, `hasKeyboardFocus`, and where the element has the pattern: `value` (at most 200 characters, `valueTruncated`), `toggleState`, `expandCollapseState`, `isSelected`, `rangeValue`, the scroll percentages and `windowVisualState`. A password field has `isPassword: true` and never a `value`: its value is never read, before or after, and the value set is never echoed (the audit log keeps only its length). `after` is absent when the element is gone after the action (a closed window; or a dialog the action rebuilt: then its ref is stale).
+- `outcomeVerified`: `true` when the state read afterwards shows the action's effect (the toggle state reached, the value read back equal to the value set, the item selected, the element on screen, the window gone), `false` when it does not yet (the server reads up to three times, 100 ms apart; a warning says what to do), and absent when the action has no state to check (`invoke`, a mouse click) or it cannot be read (a password field).
+- `openedPopup`: a new top-level window of the element's application that appeared during the action (a dialog, a menu, a dropdown list): `handle`, `title`, `className`, `processId`, `processName`; the topmost when several did.
+- `scroll`: for `scroll`: `horizontalPercent` and `verticalPercent` (absent for an axis that cannot scroll), `atEnd` in the direction asked, and `containerRef` when the scrolled container is an ancestor.
+- `receivingWindow`: for a mouse or keyboard path, the window the input went to.
+- `warnings`: what was done differently or could not be checked (the MSAA default action used, a value read back different, a new window, ...).
+
+**Error Codes:** besides those above, `ActionFailed` (the application refused the action; `before` shows the state), `InvalidArguments` (a missing or unfit `value`, `mode` or `direction`, both `ref` and criteria, a top-level window for a `window_*` action), and the input path's codes for the mouse and keyboard paths.
 
 ---
 
@@ -5090,6 +5198,12 @@ Since 1.14.0 (roadmap M3):
   and its result has no `requested`. With them, `x` and `y` in the result are the converted screen point and
   `requested` echoes the point as given; two new input error codes, `StaleCapture` and `CaptureNotFound`, refuse a
   point whose capture changed or is gone. The audit log keeps a mouse call's `space`.
+- **element_action (roadmap M3.6).** A new tool in the `input` toolset (read-only mode leaves it out) acts on an element
+  named by its ref, or by a window and element criteria, through UI Automation patterns, and returns the state before
+  and after. It is destructive, runs inside the input gate like the window tools, and is audited (its `value` as a
+  length only). New errorCodes `PatternNotSupported`, `ElementNotEnabled`, `ElementOffscreen`, `ElementReadOnly`,
+  `FocusNotOnElement`, `ActionFailed`, `ActionTimedOut` and `ActionsPending`. Under the UIA3 engine the server now turns
+  off UI Automation's AutoSetFocus, so pattern calls do not move focus; the read tools are unchanged by it.
 
 ## Error Codes
 
@@ -5168,11 +5282,14 @@ table, it gives more detail.
 | Code | Returned by | Meaning |
 |------|-------------|---------|
 | `AccessDenied` | [kill_process](#kill_process), [close_window](#close_window), close_windows_batch and [close_application](#close_application) (per window), the window changes (move_window, resize_window, set_window_bounds, snap_window, move_window_to_monitor and their batches, per window) | kill_process: the process runs elevated, as another user or is protected; the server needs at least the same privileges. close_window and the window changes: Windows refused the message or the move (Win32 error 5), because the window belongs to a more privileged app, for example one running as administrator; ask the user |
-| `AmbiguousElement` | [find_ui_elements](#find_ui_elements) (`withinRef`), and the tools that take an element ref | An element ref's element is gone and several elements now fit it (its automation id, or its name, type and class), so the ref was not moved to any of them; nothing was done. Find the element you mean with find_ui_elements and use its ref. See [Element refs](#ui-automation) |
+| `ActionFailed` | [element_action](#element_action) | The application refused the action (the element did not allow it in its state, or a toggle never reached the state asked for after three toggles); `before` and `after` show the state. Read the element again before you retry |
+| `ActionsPending` | [element_action](#element_action) | Two earlier actions on the application (six over all) are still blocked, each waiting for a dialog it opened; this one was not started. Answer or close the dialog first |
+| `ActionTimedOut` | [element_action](#element_action) | The action was sent but had not returned after `timeoutMs`, and no new window of the application appeared. It may still take effect: read the element before you repeat it |
+| `AmbiguousElement` | [find_ui_elements](#find_ui_elements) (`withinRef`), [element_action](#element_action) (also its criteria matched several elements), and the tools that take an element ref | An element ref's element is gone and several elements now fit it (its automation id, or its name, type and class), so the ref was not moved to any of them; nothing was done. Find the element you mean with find_ui_elements and use its ref. See [Element refs](#ui-automation) |
 | `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized (its placement is `applied` with this code); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
-| `BlockedByModal` | [Input Simulation](#input-simulation) tools | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
+| `BlockedByModal` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |
@@ -5201,11 +5318,14 @@ table, it gives more detail.
 | `CursorPositionFailed` | [click](#click), right_click, double_click, mouse_move | Windows did not move the mouse pointer to the point (SetCursorPos failed), for example because the input desktop cannot be reached; nothing was clicked |
 | `DebugLaunchFailed` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser could not be started. A launch_application error code can appear instead |
 | `DeleteFailed` | [delete_layout](#delete_layout) | The preset file could not be deleted |
-| `DesktopUnavailable` | [Input Simulation](#input-simulation) tools | The input desktop cannot be reached: a UAC prompt or the Ctrl+Alt+Del screen is shown, or the session is disconnected; nothing was sent |
+| `DesktopUnavailable` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The input desktop cannot be reached: a UAC prompt or the Ctrl+Alt+Del screen is shown, or the session is disconnected; nothing was sent |
 | `DestructiveChordNeedsTarget` | [send_keys](#send_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
 | `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | An element that was being read is no longer available |
-| `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | No element has keyboard focus, or there is no element at the point |
-| `ElementStale` | [find_ui_elements](#find_ui_elements) (`withinRef`), and the tools that take an element ref | An element ref no longer names an element: it is gone and could not be found again for certain, its window closed, the ref expired (the server keeps the 10,000 most recently used), or this server session did not issue it (refs do not survive a restart); nothing was done. Find the element again with find_ui_elements. See [Element refs](#ui-automation) |
+| `ElementNotEnabled` | [element_action](#element_action) | The element is disabled; nothing was done |
+| `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [element_action](#element_action) (its criteria matched no element) | No element has keyboard focus, or there is no element at the point |
+| `ElementOffscreen` | [element_action](#element_action) | The element is offscreen (scrolled out of view, or in a collapsed or hidden part); nothing was done. Use `scroll_into_view` first (or `realize`) |
+| `ElementReadOnly` | [element_action](#element_action) | `set_value`, `append_text` or `set_range_value` on a read-only element; nothing was done |
+| `ElementStale` | [find_ui_elements](#find_ui_elements) (`withinRef`), [element_action](#element_action), and the tools that take an element ref | An element ref no longer names an element: it is gone and could not be found again for certain, its window closed, the ref expired (the server keeps the 10,000 most recently used), or this server session did not issue it (refs do not survive a restart); nothing was done. Find the element again with find_ui_elements. See [Element refs](#ui-automation) |
 | `ElevationCancelled` | [launch_application](#launch_application), launch_applications_batch | The user declined or cancelled a prompt Windows showed for the start (most likely UAC, for a program that needs administrator rights); nothing was started. Ask the user before trying again |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
@@ -5215,11 +5335,12 @@ table, it gives more detail.
 | `FileExists` | [Screenshot](#screenshot) tools | `outputPath` names an existing file and `overwrite` was not true; nothing was captured |
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
 | `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
+| `FocusNotOnElement` | [element_action](#element_action) (`mode` `type` or `paste`) | After focusing the element, keyboard focus was not on it, so no key was sent (or no more than Ctrl+A or Ctrl+End). Use `mode: "value"`, or click the element first |
 | `FormatNotAvailable` | [get_clipboard](#get_clipboard) | The clipboard holds nothing in the format asked for; `availableFormats` lists what it holds |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
 | `HandleMismatch` | [close_window](#close_window) (`force` after the user's yes), [close_windows_batch](#close_windows_batch), [close_application](#close_application) (per window); every tool that takes a `window` selector (tool error; per item in the window batches; in the result of the [Input Simulation](#input-simulation) tools) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; close_application: to another process than when the window was listed, asked or not; it was not closed. A selector's `handle` came with `processId`, `processName`, a title or `className` that the window no longer matches (its handle was most likely reused), or the selector's window no longer matched it once the call held the input gate (the window and input tools check it again just before they act or send); nothing was done |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
-| `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
+| `InputBusy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
@@ -5261,8 +5382,9 @@ table, it gives more detail.
 | `OperationTimedOut` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation did not answer in time (the application may be hung). get_ui_elements returns a partial tree with `truncated: true` instead when it read some elements. A read that misses its deadline keeps running in the background; while two such reads of one application have not returned, further reads of that application fail at once, and reads of other applications go on (all reads fail at once only while 16 reads are stuck). A Store (UWP) app counts as its own application, not as the `ApplicationFrameHost` that hosts every UWP app's window |
 | `PasteNotAllowed` | [send_keys](#send_keys), [type_text](#type_text) (the SYN character), [right_click](#right_click) (in a terminal) | The input pastes (Ctrl+V, Shift+Insert, Win+V, the SYN character, or a right click in a terminal), and the clipboard holds content [get_clipboard](#get_clipboard) would not return: the user's (not allowed by the user), content marked private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes, or copy keys sent moments ago have not copied yet. Nothing (more) was sent. Put the text on the clipboard with set_clipboard, or type it; send a copy and its paste in separate calls; see [Clipboard](#clipboard) |
 | `PathTraversal` | [launch_application](#launch_application), launch_applications_batch | A path contains `..` |
+| `PatternNotSupported` | [element_action](#element_action) | The element has none of the patterns the action needs (`error` lists the ones it has), and no mouse fallback was allowed; nothing was done. `fallback: "mouse"` sends a guarded click for `invoke`, `click` and `select` |
 | `PauseChordNotAllowed` | [send_keys](#send_keys) | The keys contain the user's [pause hotkey](#pause-hotkey) chord, which only the user may press; nothing was sent |
-| `PausedByUser` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
+| `PausedByUser` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [release_all_input](#release_all_input) (`releaseHeldModifiers`); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized`; [focus_window](#focus_window) when the pause comes during the activation, and [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) when it comes during a `focus` placement's activation | The user paused the input of the servers on the desktop with the [pause hotkey](#pause-hotkey); nothing (more) was sent, activated or changed. Stop and ask the user; never try to resume input yourself |
 | `PortInUse` | [launch_browser_with_debug](#launch_browser_with_debug) | The port is already in use; pick another port |
 | `PresetNotFound` | [get_layout](#get_layout) (tool error), [apply_layout](#apply_layout), [delete_layout](#delete_layout) | No preset has that name |
 | `ProcessNameMismatch` | [kill_process](#kill_process) | The PID belongs to a different process than `expectedProcessName`, or, after the user confirmed, to a process that started at another time (its PID was reused); nothing was done |
@@ -5278,15 +5400,15 @@ table, it gives more detail.
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
 | `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
-| `SessionLocked` | [Input Simulation](#input-simulation) tools | The session is locked; nothing was sent |
+| `SessionLocked` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The session is locked; nothing was sent |
 | `StaleCapture` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
-| `TargetElevated` | [Input Simulation](#input-simulation) tools | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
+| `TargetElevated` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
-| `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
+| `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |
 | `TargetLostFocus` | [type_text](#type_text), [send_keys](#send_keys) | Another window came to the front after the check and before or while the keys were sent; `charactersTyped` says how much was typed before typing stopped |
 | `TargetNotForeground` | [type_text](#type_text), [send_keys](#send_keys) | The target window could not be brought to the foreground, or no window is in the foreground; nothing was sent |
 | `TargetOccluded` | [click](#click), right_click, double_click, mouse_move, [scroll](#scroll) | Another window, not the target or a popup of it, is at the point, or no window can be found there; nothing was sent (double_click: the result says when the first click was sent) |

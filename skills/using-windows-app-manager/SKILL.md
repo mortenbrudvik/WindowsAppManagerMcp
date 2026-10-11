@@ -23,7 +23,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 56 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 57 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -64,6 +64,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 3. Act
 
+- **Elements first:** `element_action` acts on a control through UI Automation, by `ref` (from `find_ui_elements`) or by `window` plus `name`/`automationId`/`controlType` (exactly one match, else `AmbiguousElement`). `invoke` a button, `toggle` a check box (`value: "on"` reaches that state), `set_value` a text box, `select` an item, `expand` a combo box, `scroll_into_view` or `scroll` a list, `set_range_value` a slider, `focus` a field. It needs no coordinates and works on a background or covered window without moving the mouse, so prefer it to a click. Read `before`, `after` and `outcomeVerified`: `false` means the effect does not show (a web or React input that ignores `set_value`: repeat with `mode: "type"`, which focuses the field, selects all and types through the guarded input). `openedPopup` is a window of the app the action opened; `status: "InvokedPendingModal"` means the action waits for that dialog: answer it, then read again. A password field's value is never read or returned. `fallback: "mouse"` (invoke, click, select) clicks instead when the element has no pattern; `double_click` and `right_click` are always guarded clicks. Close and resize top-level windows with `close_window` and `set_window_state`, not `window_close`.
 - **Input:** always with `windowHandle`, or `window` (a selector, resolved to one window and then guarded exactly like `windowHandle`). Click at a match's `clickPoint` from `find_ui_elements`, at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, pass it with the capture's `captureId` (`{"x": 392, "y": 196, "captureId": "c7-3fa91c"}`): the server converts it, targets the captured window and refuses a stale capture (see [Coordinates](#coordinates)).
 - **Windows:** the window tools take `window` (a selector) or the exact `handle`, never both (`snap_window`, `set_window_bounds`, `set_window_state`, `move_window_to_monitor`, ...); their result's `handle` is the window they acted on. Close with `close_window`.
 - **Keys:** `type_text` for text, `send_keys` for keys and chords. A chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, the Windows key, Alt+Space) must be the last key of a call (`KeysAfterFocusChange`); better, pass the other window's handle instead of switching.
@@ -115,6 +116,14 @@ The condition must hold for `stableMs` (300 by default, which skips splash scree
 - `StaleCapture`: the point came with a `captureId` (or `space` `window`/`client`), and the captured window moved, resized, closed or was minimized since, or the monitors changed; nothing was sent. Capture again and use the new `captureId` with a point from the new image. `CaptureNotFound`: the `captureId` is unknown or older than 10 minutes: capture again.
 - `HandleMismatch`: the `window` selector's window no longer matched it once the call's turn came (another document or tab, a reused handle); nothing was sent. Locate the window again. `InvalidArguments` there means the selector's `titleRegex` took longer than 100 ms on the window's title: use a simpler pattern or `titleContains`.
 - `InputBusy`: another call held the input for 30 seconds. Retry when your other calls have finished. The window tools (`focus_window`, move, resize, state, snap, close, the batches, `close_application`, `apply_layout`, `launch_application`, `kill_process`) and `set_clipboard` return it too, as an error result, when they waited 30 seconds; they did nothing.
+
+**Element actions** (`element_action`; nothing was done unless the code says otherwise):
+
+- `ElementNotEnabled`, `ElementOffscreen`, `ElementReadOnly`: the control is disabled, scrolled out of view (`scroll_into_view` first) or read-only. `PatternNotSupported`: it has none of the patterns the action needs (`error` lists them): use another action (`click`), `fallback: "mouse"`, or `mode: "type"`.
+- `ElementStale`, `AmbiguousElement`, `ElementNotFound`: find the element again with `find_ui_elements`; never act on a look-alike.
+- `FocusNotOnElement`: `mode: "type"` could not put keyboard focus in the field, so no keys were sent; click it first or use `mode: "value"`.
+- `ActionTimedOut`: the action was sent and has not returned; it may still happen. Read the element before you repeat it. `ActionsPending`: earlier actions wait for open dialogs; answer them first. `ActionFailed`: the app refused it; read the state.
+- The input refusals below (`TargetDeniedByPolicy`, `TargetIsAgentHost`, `BlockedByModal`, `PausedByUser`, ...) mean the same for `element_action`.
 
 **Close results** (`close_window`, `close_windows_batch`, `close_application`):
 
@@ -198,7 +207,7 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (56)
+## Available Tools (57)
 
 ### Window Discovery (6 tools)
 
@@ -255,12 +264,13 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` (with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`.
 
-### UI Automation (4 tools)
+### UI Automation (5 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, timeoutMs |
 | `find_ui_elements` | Find elements by name, automationId, controlType or className; refs, click points | window (or handle), name, nameMatch, automationId, controlType, withinRef, detail |
+| `element_action` | Act on an element through UI Automation patterns; state before and after | action, ref (or window + criteria), value, mode, direction, fallback |
 | `get_focused_element` | Element with keyboard focus, its window and process | timeoutMs |
 | `get_element_at_point` | Element at a screen point, its ancestors and window | x, y, ancestors |
 

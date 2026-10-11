@@ -87,6 +87,11 @@ public static class ServiceRegistration
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here
         services.AddSingleton<IElementRegistry, ElementRegistry>();
         services.AddSingleton<IElementSearchService, ElementSearchService>();
+        // element_action (roadmap M3.6): pattern calls on threads of their own (a blocked Invoke never stops the reads of the
+        // dialog it opened), the application's new windows, and the action itself behind the input guard's target checks
+        services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
+        services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
+        services.AddSingleton<IElementActionService, ElementActionService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -177,6 +182,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
+        services.AddSingleton<ElementActionTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -246,6 +252,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
+            .WithServerTools<ElementActionTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

@@ -132,6 +132,22 @@ public static class TypicalDesktop
             ["Invoke"]),
     ];
 
+    /// <summary>
+    /// What element_action returns for a typical set_value through the Value pattern (roadmap M3.6): the state before and
+    /// after, verified. The value set is not echoed; the state shows the field's value.
+    /// </summary>
+    public static ElementActionResult ElementActionDone(ElementActionRequest request) => new(
+        Success: true,
+        Action: "set_value",
+        Ref: request.Ref,
+        WindowHandle: NotepadHandle,
+        Status: ElementActionStatus.Done,
+        Method: ElementActionMethod.Value,
+        Before: new ElementState("Search", IsEnabled: true, IsOffscreen: false, HasKeyboardFocus: false, Value: "window layout"),
+        After: new ElementState("Search", IsEnabled: true, IsOffscreen: false, HasKeyboardFocus: false, Value: "window layout presets"),
+        OutcomeVerified: true,
+        ElapsedMilliseconds: 48.5);
+
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
 

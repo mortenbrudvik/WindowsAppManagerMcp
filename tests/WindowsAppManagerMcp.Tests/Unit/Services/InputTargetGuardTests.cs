@@ -1544,4 +1544,60 @@ public class InputTargetGuardTests
     }
 
     #endregion
+
+    #region CheckTarget: UI Automation pattern actions (roadmap M3.6)
+
+    [Fact]
+    public void CheckTarget_OfAnOrdinaryWindow_IsAllowed_WithoutBringingItToTheFront()
+    {
+        // Act
+        var result = CreateSut().CheckTarget(To(NotepadEdit));
+
+        // Assert - a pattern acts wherever its element is: no activation, no point
+        result.Allowed.Should().BeTrue(result.Error);
+        result.Receiving.Should().Be(Notepad);
+        result.ReceivingWindow!.Title.Should().Be("Untitled - Notepad");
+        _foreground.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(0x300, InputErrorCode.TargetDeniedByPolicy)] // KeePass: a password manager on the default deny list
+    [InlineData(0x400, InputErrorCode.TargetElevated)]       // Task Manager, elevated
+    [InlineData(0x100, InputErrorCode.TargetIsAgentHost)]    // the agent host's terminal
+    [InlineData(0x999, InputErrorCode.InvalidHandle)]        // no window
+    public void CheckTarget_RefusesWhatTheInputGuardRefusesForATarget(long handle, InputErrorCode expected)
+    {
+        CreateSut().CheckTarget(To((nint)handle)).ErrorCode.Should().Be(expected);
+    }
+
+    [Fact]
+    public void CheckTarget_OfTheHostWindow_NamedWithAllowHostTarget_IsAllowed()
+    {
+        CreateSut().CheckTarget(To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CheckTarget_OfAWindowAModalDialogDisables_IsBlockedByModal()
+    {
+        // Arrange - a pattern action on it would act behind the dialog's back
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        _windows.Setup(w => w.GetWindow(Notepad, GwEnabledPopup)).Returns(NotepadDialog);
+
+        // Act
+        var result = CreateSut().CheckTarget(To(Notepad));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+        result.BlockingWindow!.Handle.Should().Be(NotepadDialog);
+    }
+
+    [Fact]
+    public void CheckTarget_WhileTheSessionIsLocked_IsSessionLocked()
+    {
+        _security.Setup(s => s.IsSessionLocked()).Returns(true);
+
+        CreateSut().CheckTarget(To(Notepad)).ErrorCode.Should().Be(InputErrorCode.SessionLocked);
+    }
+
+    #endregion
 }

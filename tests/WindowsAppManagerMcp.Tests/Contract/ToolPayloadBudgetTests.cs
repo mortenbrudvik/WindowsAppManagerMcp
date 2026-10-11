@@ -76,6 +76,7 @@ public class ToolPayloadBudgetTests
         // UI Automation
         ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
         ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
+        ["element_action"] = 150, // 99: a set_value with the state before and after (roadmap M3.6)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
 

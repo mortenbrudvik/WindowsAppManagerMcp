@@ -47,9 +47,9 @@ public enum WrapperCallKind
     /// <summary>
     /// Acts on an element of an application through a UI Automation control pattern (roadmap M3.2): invokes, toggles,
     /// sets a value, expands, selects, scrolls, realizes, closes or changes a window's state, or runs the element's MSAA
-    /// default action. Like input, it changes the target application, and it does so without the input guard's
-    /// foreground and hit-test checks. No E2E tier allows it yet; the action tools (roadmap M3.6) come with a fixture
-    /// rule for it.
+    /// default action; or gives an element keyboard focus (IUiaTree.SetFocus, roadmap M3.6). Like input, it changes the
+    /// target application, and it does so without the input guard's foreground and hit-test checks. The no-input tier
+    /// refuses it; the input tier allows it only on an element of the fixture's process (FixtureOnlyCallPolicy).
     /// </summary>
     UiaAction
 }
@@ -262,10 +262,10 @@ public static class WrapperCatalog
             },
             [typeof(IUiaTree)] = new Dictionary<string, WrapperMember>
             {
-                // Tree reads only: acting UIA pattern calls are forbidden outside the engine adapters by
-                // NativeCallGuardTests, and the tree's own members only read. GetPattern hands out a pattern object,
-                // which the guard wraps in turn (its return type is a wrapper interface), so its actions are checked
-                // below as UiaAction
+                // Tree reads, and SetFocus: acting UIA pattern calls are forbidden outside the engine adapters by
+                // NativeCallGuardTests, and the tree's own members only read, except SetFocus (roadmap M3.6, below).
+                // GetPattern hands out a pattern object, which the guard wraps in turn (its return type is a wrapper
+                // interface), so its actions are checked below as UiaAction
                 ["get_" + nameof(IUiaTree.Engine)] = WrapperMember.Read,
                 [nameof(IUiaTree.IsAvailable)] = WrapperMember.Read,
                 [nameof(IUiaTree.FromHandle)] = WrapperMember.Read,
@@ -292,7 +292,9 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.GetRuntimeId)] = WrapperMember.Read,
                 [nameof(IUiaTree.AreSameElement)] = WrapperMember.Read,
                 // Getting a pattern object reads only whether the element supports it
-                [nameof(IUiaTree.GetPattern)] = WrapperMember.Read
+                [nameof(IUiaTree.GetPattern)] = WrapperMember.Read,
+                // Gives the element keyboard focus, which can bring its window to the front (element_action, roadmap M3.6)
+                [nameof(IUiaTree.SetFocus)] = WrapperMember.UiaAction
             },
             // The pattern objects of IUiaTree.GetPattern: their state reads are reads, their actions UiaAction
             [typeof(IUiaInvokePattern)] = new Dictionary<string, WrapperMember>

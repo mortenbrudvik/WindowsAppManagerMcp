@@ -54,7 +54,7 @@ public class AuditLogContractTests
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
             "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
-            "close_window", "close_windows_batch", "close_application", "kill_process",
+            "element_action", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
     }
@@ -141,6 +141,28 @@ public class AuditLogContractTests
     }
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
+
+    [Fact]
+    public async Task ElementAction_RecordsTheRefActionAndElementsWindow_AndTheValuesLengthOnly()
+    {
+        // Act
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["ref"] = "w4120035e17", ["action"] = "set_value", ["value"] = "hunter2 is the password", ["mode"] = "type"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2");
+        var args = line.GetProperty("args");
+        args.GetProperty("valueLength").GetInt32().Should().Be(23);
+        args.GetProperty("ref").GetString().Should().Be("w4120035e17");
+        args.GetProperty("action").GetString().Should().Be("set_value");
+        args.GetProperty("mode").GetString().Should().Be("type");
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("target").GetProperty("process").GetString().Should().Be("notepad", "the tool notes the element's window before it acts");
+        line.GetProperty("result").GetProperty("outcomeVerified").GetBoolean().Should().BeTrue();
+    }
 
     [Fact]
     public async Task TypeText_RecordsTheTargetAndReceivingWindow_AndTheTextsLengthOnly()

@@ -76,6 +76,16 @@ public interface IInputTargetGuard
 
     /// <summary>The foreground window now, for the results' ForegroundAfter; null when there is none.</summary>
     WindowSummary? DescribeForeground();
+
+    /// <summary>
+    /// Checks a window that is acted on without mouse or keyboard input (element_action's UI Automation pattern actions,
+    /// roadmap M3.6): the desktop probes (SessionLocked, DesktopUnavailable), then the explicit target's checks as for any
+    /// input (InvalidHandle, its selector's recheck, TargetElevated, TargetDeniedByPolicy, TargetIsAgentHost unless
+    /// allowHostTarget, BlockedByModal: a pattern action on a window a modal dialog disables would act behind the dialog's
+    /// back). There is no receiving window: a pattern acts on its element wherever it is. Reads only.
+    /// </summary>
+    /// <param name="target">The element's window; a target without a window is InvalidHandle.</param>
+    InputGuardResult CheckTarget(InputTarget target);
 }
 
 /// <summary>
