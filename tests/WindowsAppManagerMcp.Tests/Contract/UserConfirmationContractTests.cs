@@ -598,6 +598,32 @@ public sealed class UserConfirmationContractTests : IDisposable
     }
 
     [Fact]
+    public async Task CloseWindowsBatch_WithForce_NamesEveryProtectedWindow_EvenPastTheListsCap()
+    {
+        // Arrange - 25 windows, the protected one last: past the 20 the question lists in full
+        _services.Windows.Setup(w => w.CheckClose((nint)TypicalDesktop.NotepadHandle, false))
+            .Returns(WindowCloseResult.Failed((nint)TypicalDesktop.NotepadHandle, WindowErrorCode.ProtectedWindow, HostProtection));
+        var others = Enumerable.Range(0, 24).Select(i => 0x400000L + i * 0x10).ToArray();
+        foreach (var handle in others)
+        {
+            _services.Windows.Setup(w => w.GetWindowInfo((nint)handle))
+                .Returns(TypicalDesktop.Windows[1] with { Handle = (nint)handle, Title = $"page {handle:X} - Browser" });
+        }
+
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+        var arguments = new Dictionary<string, object?>(CloseArguments([.. others, TypicalDesktop.NotepadHandle])) { ["force"] = true };
+
+        // Act
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        // Assert - the protected window is named, with its process and PID, and marked; the rest are summed up
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationDeclined));
+        var question = _questions.Should().ContainSingle().Subject;
+        question.Should().Contain($"25. '{TypicalDesktop.Notepad.Title}' (notepad, PID 10244)")
+            .And.Contain("protected").And.Contain("... and 4 more").And.NotContain("page 400170");
+    }
+
+    [Fact]
     public async Task CloseWindowsBatch_WithForceOnWindowsThatAreNotProtected_AsksNothing_AndOverridesNothing()
     {
         // Arrange - no window is protected when the call checks: force would override nothing, so the user is not asked,
