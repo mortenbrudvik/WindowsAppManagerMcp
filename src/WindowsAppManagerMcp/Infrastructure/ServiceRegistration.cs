@@ -130,7 +130,7 @@ public static class ServiceRegistration
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
     /// and the agent host that <see cref="HostGuard"/> records, the safety settings that
     /// <see cref="InputSafetyStartup"/> reports once at start, the pause hotkey that
-    /// <see cref="InputSessionStartup"/> registers and the versions and DPI awareness that
+    /// <see cref="InputSessionStartup"/> registers and the versions, DPI awareness and toolsets that
     /// <see cref="ServerStartupLog"/> reports, at Information.
     /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
