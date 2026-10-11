@@ -2166,12 +2166,12 @@ The largest typical results, measured in October 2026:
 
 | Tool | Typical result | Tokens | Budget |
 |------|----------------|-------:|-------:|
-| `capture_with_elements` | Metadata of 120 elements (the image is budgeted separately) | 6,026 | 9,500 |
+| `capture_with_elements` | Metadata of 120 elements (the image is budgeted separately) | 6,052 | 9,500 |
 | `get_ui_elements` | 120 elements at the default depth | 5,397 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
-| `find_windows`, `get_all_windows` | 15 windows | 989 | 1,500 |
-| `get_server_info` | The default deny list, five host processes, two monitors | 543 | 850 |
+| `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
+| `get_server_info` | The default deny list, five host processes, two monitors | 598 | 850 |
 
 Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
