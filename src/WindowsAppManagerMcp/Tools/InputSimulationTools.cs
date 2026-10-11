@@ -301,7 +301,9 @@ public class InputSimulationTools
         // The selector is checked again inside the gate, by the input guard, as the window tools check theirs
         return new InputTarget(handle, allowHostTarget)
         {
-            SelectorRecheck = () => WindowTargeting.Recheck(windows, window, resolved)?.Error
+            SelectorRecheck = () => WindowTargeting.Recheck(windows, window, resolved) is { } refusal
+                ? new SelectorRefusal(refusal.ErrorCode, refusal.Error)
+                : null
         };
     }
 }

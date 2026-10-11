@@ -413,7 +413,32 @@ public class WindowSelectorToolTests
         passed!.Value.SelectorRecheck.Should().NotBeNull();
         passed.Value.SelectorRecheck!().Should().BeNull();
         _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(NotepadWindow with { Title = "draft.txt - Notepad" });
-        passed.Value.SelectorRecheck!().Should().Contain("no longer matches").And.Contain("notes.txt");
+        var refusal = passed.Value.SelectorRecheck!();
+        refusal!.ErrorCode.Should().Be("HandleMismatch");
+        refusal.Error.Should().Contain("no longer matches").And.Contain("notes.txt");
+    }
+
+    [Fact]
+    public void AnInputTool_WhoseTitleRegexTimesOutInTheRecheck_GetsInvalidArguments_NotHandleMismatch()
+    {
+        // Arrange - resolved while the title was short; inside the gate the title makes the pattern time out
+        var input = new Mock<IInputSimulationService>();
+        InputTarget? passed = null;
+        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+            .Returns(new ClickResult(true, 5, 6, "left"));
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+        var selector = new WindowSelector { ProcessName = "notepad", TitleRegex = "^(a+)+$" };
+        _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow with { Title = "aaa" }));
+        tools.Click(5, 6, window: selector);
+        _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(NotepadWindow with { Title = new string('a', 5000) + "!" });
+
+        // Act
+        var refusal = passed!.Value.SelectorRecheck!();
+
+        // Assert - the window tools' code for the same timeout
+        refusal!.ErrorCode.Should().Be("InvalidArguments");
+        refusal.Error.Should().Contain("100 ms");
     }
 
     [Fact]
