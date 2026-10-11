@@ -475,6 +475,13 @@ public class WindowService : IWindowService
     private static readonly HashSet<string> HelperWindowClasses =
         new(StringComparer.OrdinalIgnoreCase) { "IME", "MSCTFIME UI", "GDI+ Hook Window Class" };
 
+    /// <summary>
+    /// The classes of File Explorer's windows (CabinetWClass, and ExploreWClass of older versions): the only application
+    /// windows of the shell's process, which draws the desktop, the taskbars and their flyouts too.
+    /// </summary>
+    private static readonly HashSet<string> FileExplorerWindowClasses =
+        new(StringComparer.OrdinalIgnoreCase) { "CabinetWClass", "ExploreWClass" };
+
     /// <summary>The longest prompt text the close results carry; longer text is cut with an ellipsis.</summary>
     public const int MaxPromptTextLength = 1000;
 
@@ -486,7 +493,8 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return [];
 
-        var blocking = EnabledPopupOfDisabled(handle);
+        // The same dialog FindBlockingDialog reports as the prompt, so isBlocking agrees with the close tools
+        var blocking = FindBlockingWindow(handle)?.Window;
         var session = new ReadSession(_nativeWrapper, topLevelWindows: null);
         var owned = new List<OwnedWindowInfo>();
         foreach (var window in OwnedTopLevelWindows(handle))
@@ -509,9 +517,15 @@ public class WindowService : IWindowService
         if (!IsValidWindow(handle))
             return null;
 
+        return FindBlockingWindow(handle) is { } blocking ? ReadDialog(blocking.Window, blocking.Kind) : null;
+    }
+
+    /// <summary>The window of the prompt that blocks <paramref name="handle"/>, and how it was found, or null.</summary>
+    private (nint Window, ClosePromptKind Kind)? FindBlockingWindow(nint handle)
+    {
         // A modal dialog disables its owner and is the owner's enabled popup
         if (EnabledPopupOfDisabled(handle) is { } popup && IsShownPopup(popup))
-            return ReadDialog(popup, ClosePromptKind.ModalPopup);
+            return (popup, ClosePromptKind.ModalPopup);
 
         // A dialog of an owned window (the app's hidden owner or a tool window) disables that window instead
         var windowDisabled = IsDisabled(handle);
@@ -520,7 +534,7 @@ public class WindowService : IWindowService
             if (WindowClassification.IsDialogClass(_nativeWrapper.GetClassName(window)) && IsShownPopup(window) &&
                 (windowDisabled || IsDisabled(_nativeWrapper.GetWindow(window, NativeEnums.GW_OWNER))))
             {
-                return ReadDialog(window, ClosePromptKind.OwnedDialog);
+                return (window, ClosePromptKind.OwnedDialog);
             }
         }
 
@@ -532,6 +546,7 @@ public class WindowService : IWindowService
         var topLevelWindows = EnumerateTopLevelWindows(_nativeWrapper);
         var session = new ReadSession(_nativeWrapper, topLevelWindows);
         var windows = new List<WindowInfo>();
+        uint? shellProcessId = null;
         foreach (var window in topLevelWindows)
         {
             if (!_nativeWrapper.IsWindowVisible(window))
@@ -542,10 +557,12 @@ public class WindowService : IWindowService
                 WindowClassification.IsCoreWindow(className))
                 continue;
 
-            // Alt-Tab: an owned window only with WS_EX_APPWINDOW, and no tool window
+            // Alt-Tab: no tool window, and an owned or no-activate window only with WS_EX_APPWINDOW
             var extendedStyle = (long)_nativeWrapper.GetWindowLongPtr(window, NativeEnums.GWL_EXSTYLE);
+            var appWindow = (extendedStyle & NativeEnums.WS_EX_APPWINDOW) != 0;
             if (WindowClassification.IsToolWindow((nint)extendedStyle) ||
-                (_nativeWrapper.GetWindow(window, NativeEnums.GW_OWNER) != nint.Zero && (extendedStyle & NativeEnums.WS_EX_APPWINDOW) == 0))
+                (!appWindow && (extendedStyle & NativeEnums.WS_EX_NOACTIVATE) != 0) ||
+                (!appWindow && _nativeWrapper.GetWindow(window, NativeEnums.GW_OWNER) != nint.Zero))
                 continue;
 
             if (_nativeWrapper.IsCloaked(window))
@@ -553,6 +570,14 @@ public class WindowService : IWindowService
 
             var windowProcessId = _nativeWrapper.GetWindowThreadProcessId(window);
             if (windowProcessId == session.CurrentProcessId)
+                continue;
+
+            // The shell's own process (explorer.exe) also draws the taskbar's flyouts and other shell surfaces: of its
+            // windows only File Explorer's are application windows
+            shellProcessId ??= _nativeWrapper.GetShellWindow() is var shell && shell != nint.Zero
+                ? _nativeWrapper.GetWindowThreadProcessId(shell)
+                : 0;
+            if (windowProcessId == shellProcessId && !FileExplorerWindowClasses.Contains(className))
                 continue;
 
             var title = _nativeWrapper.GetWindowText(window) ?? string.Empty;
@@ -779,6 +804,11 @@ public class WindowService : IWindowService
             "Privilege Isolation blocks messages to it from this server. Nothing was closed."),
         NativeEnums.ERROR_INVALID_WINDOW_HANDLE => WindowCloseResult.Failed(handle, WindowErrorCode.InvalidHandle,
             $"The window no longer exists (Win32 error {win32Error}): it closed before the close message was sent."),
+        // A full message queue: the application has stopped reading its messages
+        NativeEnums.ERROR_NOT_ENOUGH_QUOTA => WindowCloseResult.Failed(handle, WindowErrorCode.NotResponding,
+            $"Windows did not accept the close message (Win32 error {win32Error}): the window's message queue is full, so " +
+            "the application is not responding. Nothing was closed. Wait and try again, or ask the user; kill_process ends " +
+            "an app that stays hung, losing its unsaved work."),
         _ => WindowCloseResult.Failed(handle, WindowErrorCode.CloseFailed,
             $"Windows did not accept the close message (Win32 error {win32Error}: {new System.ComponentModel.Win32Exception(win32Error).Message}). " +
             "Nothing was closed.")

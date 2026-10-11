@@ -162,8 +162,9 @@ public sealed class ContractServices : IDisposable
                 Bounds = new WindowRect(400, 200, 960, 640)
             }, IsDialog: true, IsBlocking: true)
         ]);
-        CloseVerifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<nint> handles, TimeSpan _, CancellationToken _) =>
+        CloseVerifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
+        CloseVerifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
                 handles.Select(h => new CloseObservation(h, CloseStatus.Closed)).ToList());
         CloseVerifier.Setup(v => v.WaitForProcessesToExitAsync(It.IsAny<IReadOnlyList<int>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);

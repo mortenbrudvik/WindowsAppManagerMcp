@@ -43,13 +43,19 @@ public class UIAutomationWrapper : IUIAutomationWrapper
     }
 
     /// <inheritdoc />
-    public bool CloseWindow(nint hwnd)
+    public bool CloseWindow(nint hwnd, CancellationToken cancellationToken)
     {
         try
         {
             UiaClientStartup.Shared.EnsureStarted();
             var element = AutomationElement.FromHandle(hwnd);
             if (element == null || !element.TryGetCurrentPattern(WindowPattern.Pattern, out var pattern) || pattern is not WindowPattern window)
+            {
+                return false;
+            }
+
+            // A caller that has given up (the lookup above took too long) must not have the window closed after all
+            if (cancellationToken.IsCancellationRequested)
             {
                 return false;
             }

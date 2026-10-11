@@ -71,10 +71,18 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<CloseObservation>> WaitForCloseAsync(
-        IReadOnlyList<nint> handles, TimeSpan wait, CancellationToken cancellationToken)
+    public IReadOnlySet<nint> ShownWindows(IReadOnlyList<nint> handles)
     {
         ArgumentNullException.ThrowIfNull(handles);
+        return handles.Distinct().Where(h => _windows.GetWindowInfo(h) is { IsVisible: true, IsCloaked: false }).ToHashSet();
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CloseObservation>> WaitForCloseAsync(
+        IReadOnlyList<nint> handles, IReadOnlySet<nint> shownBefore, TimeSpan wait, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(handles);
+        ArgumentNullException.ThrowIfNull(shownBefore);
 
         var pending = handles.Distinct().ToList();
         var closed = new HashSet<nint>();
@@ -125,22 +133,30 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
                 .ConfigureAwait(false);
         }
 
-        var observations = new Dictionary<nint, CloseObservation>();
-        foreach (var handle in handles.Distinct())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            observations[handle] = closed.Contains(handle)
-                ? new CloseObservation(handle, CloseStatus.Closed)
-                : settled.TryGetValue(handle, out var prompt)
-                    ? new CloseObservation(handle, CloseStatus.PromptShown, await CompleteAsync(prompt, handle, cancellationToken).ConfigureAwait(false))
-                    : await ObserveAsync(handle, cancellationToken).ConfigureAwait(false);
-        }
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return handles.Select(h => observations[h]).ToList();
+        // The windows still open are looked at all at the same time: each UI Automation read has its own deadline, so the
+        // call ends about one deadline after the wait, however many windows there are
+        var observations = await Task.WhenAll(handles.Distinct().Select(handle => closed.Contains(handle)
+                ? Task.FromResult(new CloseObservation(handle, CloseStatus.Closed))
+                : settled.TryGetValue(handle, out var prompt)
+                    ? PromptShownAsync(handle, prompt, cancellationToken)
+                    : ObserveAsync(handle, shownBefore.Contains(handle), cancellationToken)))
+            .ConfigureAwait(false);
+        var byHandle = observations.ToDictionary(o => o.Handle);
+
+        return handles.Select(h => byHandle[h]).ToList();
     }
 
-    /// <summary>What became of a window that did not close or show a prompt during the wait, read once more now.</summary>
-    private async Task<CloseObservation> ObserveAsync(nint handle, CancellationToken cancellationToken)
+    private async Task<CloseObservation> PromptShownAsync(nint handle, ClosePrompt prompt, CancellationToken cancellationToken) =>
+        new(handle, CloseStatus.PromptShown, await CompleteAsync(prompt, handle, cancellationToken).ConfigureAwait(false));
+
+    /// <summary>
+    /// What became of a window that did not close or show a prompt during the wait, read once more now. Hidden needs a
+    /// window the user could see before the close: one that was already hidden or cloaked (on another virtual desktop) and
+    /// still exists did not react to the close, so it is StillOpen.
+    /// </summary>
+    private async Task<CloseObservation> ObserveAsync(nint handle, bool wasShown, CancellationToken cancellationToken)
     {
         if (await FindPromptAsync(handle, cancellationToken).ConfigureAwait(false) is { } prompt)
             return new CloseObservation(handle, CloseStatus.PromptShown, prompt);
@@ -148,7 +164,7 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
         return _windows.GetWindowInfo(handle) switch
         {
             null => new CloseObservation(handle, CloseStatus.Closed),
-            { IsVisible: false } or { IsCloaked: true } => new CloseObservation(handle, CloseStatus.Hidden),
+            { IsVisible: false } or { IsCloaked: true } when wasShown => new CloseObservation(handle, CloseStatus.Hidden),
             _ => new CloseObservation(handle, CloseStatus.StillOpen)
         };
     }
@@ -293,10 +309,34 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
     }
 
     /// <inheritdoc />
-    public Task<bool> CloseWithUiAutomationAsync(nint window, CancellationToken cancellationToken) =>
-        _automation == null
-            ? Task.FromResult(false)
-            : RunUiaAsync(window, _ => _automation.CloseWindow(window), false, cancellationToken, needsTree: false);
+    public async Task<bool?> CloseWithUiAutomationAsync(nint window, CancellationToken cancellationToken)
+    {
+        if (_automation == null || _worker == null)
+            return false;
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(UiaReadTimeout);
+        try
+        {
+            // The wrapper checks the deadline right before it asks for the close, so a lookup that took too long asks nothing
+            return await _worker.RunAsync(_windows.GetWindowInfo(window)?.ProcessId ?? 0,
+                token => _automation.CloseWindow(window, token), deadline.Token, UiaGrace).ConfigureAwait(false);
+        }
+        catch (UiaReadRefusedException)
+        {
+            // Not started: earlier calls into the app are still stuck
+            return false;
+        }
+        catch (TimeoutException)
+        {
+            // Given up on, but a close already under way may still happen
+            return null;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<int>> WaitForProcessesToExitAsync(
@@ -323,10 +363,9 @@ public sealed class WindowCloseVerifier : IWindowCloseVerifier
     /// A read that fails, times out or is refused (the app is not responding) returns <paramref name="fallback"/>: UI
     /// Automation only adds detail to a close result and must never fail it. Cancelling the call still cancels.
     /// </summary>
-    private async Task<T> RunUiaAsync<T>(
-        nint window, Func<CancellationToken, T> read, T fallback, CancellationToken cancellationToken, bool needsTree = true)
+    private async Task<T> RunUiaAsync<T>(nint window, Func<CancellationToken, T> read, T fallback, CancellationToken cancellationToken)
     {
-        if (_worker == null || (needsTree && _tree == null))
+        if (_worker == null || _tree == null)
             return fallback;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

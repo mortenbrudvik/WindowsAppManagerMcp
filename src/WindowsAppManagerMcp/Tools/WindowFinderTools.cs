@@ -81,7 +81,7 @@ public class WindowFinderTools
     [Description("List the windows a window owns, directly or through its other owned windows, in z-order: its dialogs (Save As, " +
                  "message boxes, 'Save changes?' prompts), popups and palettes. Each has handle, title, className ('#32770' is a " +
                  "standard dialog, also isDialog), process, ownerHandle, bounds, state and isVisible; isBlocking: true marks the modal " +
-                 "dialog that takes the window's input (the window is disabled), and isBlocked says the window has one. Hidden helper " +
+                 "dialog that takes the window's input (the prompt close_window reports), and isBlocked says the window has one. Hidden helper " +
                  "windows (IME) only with includeHidden. Dialogs drawn inside the window (a WinUI ContentDialog) are not windows: " +
                  "use get_ui_elements. errorCode InvalidHandle: the handle is not a window.")]
     public OwnedWindowsResult GetOwnedWindows(

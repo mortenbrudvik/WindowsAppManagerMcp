@@ -26,6 +26,7 @@ public class WindowManagerToolsCloseTests
         _windowService.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(WindowCloseResult.Sent).ToList());
         WindowsReport(_ => CloseStatus.Closed);
+        _verifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
         _verifier.Setup(v => v.WaitForProcessesToExitAsync(It.IsAny<IReadOnlyList<int>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
     }
@@ -37,8 +38,8 @@ public class WindowManagerToolsCloseTests
 
     /// <summary>The verifier reports each window with <paramref name="status"/>, and records whether the input gate was free meanwhile.</summary>
     private void WindowsReport(Func<nint, CloseStatus> status) =>
-        _verifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<nint> handles, TimeSpan _, CancellationToken _) =>
+        _verifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
             {
                 // The tool must have released the gate: taking it here would time out otherwise
                 using (var gate = InputGate.TryEnter(TimeSpan.FromSeconds(5), CancellationToken.None))
@@ -76,7 +77,7 @@ public class WindowManagerToolsCloseTests
         _windowService.Verify(w => w.CloseWindow(12345, false), Times.Once);
         _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
         _verifier.Verify(v => v.WaitForCloseAsync(
-            It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 12345 })), TimeSpan.FromSeconds(2), It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 12345 })), It.IsAny<IReadOnlySet<nint>>(), TimeSpan.FromSeconds(2), It.IsAny<CancellationToken>()), Times.Once);
         _gateFreeDuringTheWait.Should().Equal(true);
     }
 
@@ -94,7 +95,7 @@ public class WindowManagerToolsCloseTests
 
         // Assert
         result.Should().Be(new CloseWindowResult(Success: false, Error: "why", ErrorCode: code.ToString()));
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -103,7 +104,7 @@ public class WindowManagerToolsCloseTests
         var result = await CreateSut().CloseWindow(12345, waitMs: 0);
 
         result.Should().Be(new CloseWindowResult(Success: true, Status: "requested"));
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -164,6 +165,35 @@ public class WindowManagerToolsCloseTests
         // Assert
         (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindow_TellsTheWaitWhetherTheWindowWasShownBeforeTheClose()
+    {
+        // Arrange - the window was already hidden (or on another virtual desktop): if it stays, the app did not hide it
+        _verifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns(new HashSet<nint>());
+
+        // Act
+        await CreateSut().CloseWindow(12345);
+
+        // Assert
+        _verifier.Verify(v => v.ShownWindows(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 12345 }))), Times.Once);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.Is<IReadOnlySet<nint>>(shown => shown.Count == 0),
+            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ThePromptShownError_TellsTheAgentToAskTheUser_NotToAnswerItself()
+    {
+        WindowsReport(_ => CloseStatus.PromptShown);
+
+        var single = await CreateSut().CloseWindow(12345);
+        var batch = await CreateSut().CloseWindowsBatch(Requests(1));
+
+        foreach (var error in new[] { single.Error, batch.Results[0].Error })
+        {
+            error.Should().Contain("Do not answer it yourself").And.Contain("ask which to choose").And.Contain("discards their unsaved work");
+        }
     }
 
     #endregion
@@ -243,7 +273,7 @@ public class WindowManagerToolsCloseTests
             new WindowResultItem(1, true, Status: "closed"),
             new WindowResultItem(2, false, Error: "the desktop", ErrorCode: "ProtectedWindow"),
             new WindowResultItem(3, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle"));
-        _verifier.Verify(v => v.WaitForCloseAsync(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1 })),
+        _verifier.Verify(v => v.WaitForCloseAsync(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1 })), It.IsAny<IReadOnlySet<nint>>(),
             TimeSpan.FromSeconds(2), It.IsAny<CancellationToken>()), Times.Once);
         _gateFreeDuringTheWait.Should().Equal(true);
     }
@@ -263,7 +293,7 @@ public class WindowManagerToolsCloseTests
             (2L, false, "promptShown", nameof(WindowErrorCode.PromptShown)),
             (3L, false, "stillOpen", nameof(WindowErrorCode.StillOpen)));
         result.Results[1].Prompt!.Title.Should().Be("Editor");
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), TimeSpan.FromMilliseconds(500), It.IsAny<CancellationToken>()), Times.Once);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), TimeSpan.FromMilliseconds(500), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -272,7 +302,7 @@ public class WindowManagerToolsCloseTests
         var result = await CreateSut().CloseWindowsBatch(Requests(1, 2), waitMs: 0);
 
         result.Results.Should().OnlyContain(r => r.Success && r.Status == "requested");
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -294,7 +324,7 @@ public class WindowManagerToolsCloseTests
 
         // Assert
         _windowService.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), false, 50, call.Token), Times.Once);
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<TimeSpan>(), call.Token), Times.Once);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), call.Token), Times.Once);
     }
 
     #endregion
@@ -395,7 +425,7 @@ public class WindowManagerToolsCloseTests
         result.Status.Should().Be("stillOpen");
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.StillOpen));
         result.Error.Should().Contain("1000 ms");
-        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), TimeSpan.FromSeconds(1), It.IsAny<CancellationToken>()), Times.Once);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), TimeSpan.FromSeconds(1), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -489,8 +519,8 @@ public class WindowManagerToolsCloseTests
     public async Task CloseApplication_APackagedAppsFrameThatRefusesTheMessage_IsClosedThroughUiAutomation()
     {
         // Arrange - Windows did not take WM_CLOSE for the frame (CloseFailed)
-        Desktop(AppWindow(1, 600, "CalculatorApp", "Calculator", "ApplicationFrameWindow"));
-        _windowService.Setup(w => w.CloseWindow(1, false)).Returns(WindowCloseResult.Failed(1, WindowErrorCode.CloseFailed, "quota"));
+        Desktop(AppWindow(1, 600, "CalculatorApp", "Calculator", "ApplicationFrameWindow") with { HostProcessId = 500 });
+        _windowService.Setup(w => w.CloseWindow(1, false)).Returns(WindowCloseResult.Failed(1, WindowErrorCode.CloseFailed, "refused"));
         _verifier.Setup(v => v.CloseWithUiAutomationAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
         WindowsReport(_ => CloseStatus.Closed);
 
@@ -513,6 +543,121 @@ public class WindowManagerToolsCloseTests
         result.Status.Should().Be("stillOpen");
         result.Windows.Should().ContainSingle().Which.Should().Be(new ClosedWindowItem(1, "One", "notSent", "elevated", "AccessDenied"));
         _verifier.Verify(v => v.CloseWithUiAutomationAsync(It.IsAny<nint>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseApplication_APackagedAppsFrameWhoseUiAutomationCloseTimedOut_CountsAsSent_AndIsWaitedFor()
+    {
+        // Arrange - WindowPattern.Close did not return in time: it may still close the frame
+        Desktop(AppWindow(1, 600, "CalculatorApp", "Calculator", "ApplicationFrameWindow") with { HostProcessId = 500 });
+        _windowService.Setup(w => w.CloseWindow(1, false)).Returns(WindowCloseResult.Failed(1, WindowErrorCode.CloseFailed, "refused"));
+        _verifier.Setup(v => v.CloseWithUiAutomationAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync((bool?)null);
+        WindowsReport(_ => CloseStatus.StillOpen);
+
+        // Act
+        var result = await CreateSut().CloseApplication(processId: 600);
+
+        // Assert
+        result.Windows.Should().ContainSingle().Which.Status.Should().Be("stillOpen", "the wait says what became of it, not 'notSent'");
+        _verifier.Verify(v => v.WaitForCloseAsync(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1 })),
+            It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseApplication_ByHandle_DoesNotCloseFramesOfOtherPackagedApps()
+    {
+        // Arrange - two frames whose apps cannot be told (suspended, same title): both are reported under ApplicationFrameHost
+        var mail = AppWindow(1, 500, "ApplicationFrameHost", "Inbox", "ApplicationFrameWindow");
+        var photos = AppWindow(2, 500, "ApplicationFrameHost", "Inbox", "ApplicationFrameWindow");
+        Desktop(mail, photos);
+
+        // Act
+        var result = await CreateSut().CloseApplication(handle: 1);
+
+        // Assert - only the frame the handle names
+        result.ProcessIds.Should().BeEmpty();
+        result.Windows.Select(w => w.Handle).Should().Equal(1L);
+        result.RemainingWindows.Select(w => w.Handle).Should().NotContain(2L, "the other frame is not part of this application");
+        _windowService.Verify(w => w.CloseWindow(1, false), Times.Once);
+        _windowService.Verify(w => w.CloseWindow(2, It.IsAny<bool>()), Times.Never);
+        _verifier.Verify(v => v.WaitForProcessesToExitAsync(It.IsAny<IReadOnlyList<int>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(null, "ApplicationFrameHost")]
+    [InlineData(500, null)]
+    public async Task CloseApplication_NamingApplicationFrameHost_ClosesNoPackagedApp(int? processId, string? processName)
+    {
+        // Arrange - a resolved Calculator frame (its app's process) and two frames left under the host
+        Desktop(
+            AppWindow(1, 600, "CalculatorApp", "Calculator", "ApplicationFrameWindow") with { HostProcessId = 500 },
+            AppWindow(2, 500, "ApplicationFrameHost", "Inbox", "ApplicationFrameWindow"),
+            AppWindow(3, 500, "ApplicationFrameHost", "Inbox", "ApplicationFrameWindow"));
+
+        // Act
+        var result = await CreateSut().CloseApplication(processId: processId, processName: processName);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.NoClosableWindow));
+        result.Error.Should().Contain("ApplicationFrameHost").And.Contain("every packaged").And.Contain("handle");
+        _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseApplication_AWindowWhoseCloseThrows_IsNotSent_AndTheOthersAreStillClosedAndReported()
+    {
+        // Arrange
+        Desktop(AppWindow(1, 700, "app", "One"), AppWindow(2, 700, "app", "Two"));
+        _windowService.Setup(w => w.CloseWindow(1, false)).Throws(new InvalidOperationException("The policy could not be read."));
+
+        // Act
+        var result = await CreateSut().CloseApplication(processId: 700);
+
+        // Assert
+        result.Windows.Should().Equal(
+            new ClosedWindowItem(1, "One", "notSent", "The close could not be sent: The policy could not be read.", "CloseFailed"),
+            new ClosedWindowItem(2, "Two", "closed"));
+        _verifier.Verify(v => v.WaitForCloseAsync(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 2 })),
+            It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseApplication_TimeoutZero_OnlySends_AndReportsRequested()
+    {
+        Desktop(AppWindow(1, 700, "app", "One"));
+
+        var result = await CreateSut().CloseApplication(processId: 700, timeoutMs: 0);
+
+        result.Success.Should().BeTrue();
+        result.Status.Should().Be("requested");
+        result.Windows.Should().Equal(new ClosedWindowItem(1, "One", "requested"));
+        result.Exited.Should().BeNull();
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseApplication_APrompt_TellsTheAgentToAskTheUser()
+    {
+        Desktop(AppWindow(1, 700, "notepad", "a.txt - Notepad"));
+        WindowsReport(_ => CloseStatus.PromptShown);
+
+        var result = await CreateSut().CloseApplication(processId: 700);
+
+        result.Error.Should().Contain("Do not answer it yourself").And.Contain("discards their unsaved work");
+        result.Windows[0].Error.Should().Contain("Do not answer it yourself");
+    }
+
+    [Fact]
+    public async Task CloseApplication_TellsTheWaitEveryTargetWasShown_SoAWindowTheAppHidIsHidden()
+    {
+        Desktop(AppWindow(1, 700, "trayapp", "Tray App"));
+
+        await CreateSut().CloseApplication(processId: 700);
+
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.Is<IReadOnlySet<nint>>(shown => shown.SetEquals(new nint[] { 1 })),
+            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

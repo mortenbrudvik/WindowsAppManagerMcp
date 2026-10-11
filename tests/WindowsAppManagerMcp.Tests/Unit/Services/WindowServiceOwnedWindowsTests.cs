@@ -63,6 +63,23 @@ public class WindowServiceOwnedWindowsTests
     }
 
     [Fact]
+    public void GetOwnedWindows_MarksTheOwnedDialogTheCloseToolsReport_AsBlocking()
+    {
+        // Arrange - the prompt is owned by a disabled owned window of the main window, as FindBlockingDialog's ownedDialog
+        var main = _desktop.Add("Untitled - Editor", disabled: true);
+        var helper = _desktop.Add("Helper", "Helper", owner: main, disabled: true);
+        var prompt = _desktop.Add("Save changes?", "#32770", owner: helper);
+
+        // Act
+        var owned = CreateSut().GetOwnedWindows(main);
+
+        // Assert
+        owned.Single(o => o.Window.Handle == prompt).IsBlocking.Should().BeTrue();
+        owned.Single(o => o.Window.Handle == helper).IsBlocking.Should().BeFalse();
+        CreateSut().FindBlockingDialog(main)!.Handle.Should().Be(prompt);
+    }
+
+    [Fact]
     public void GetOwnedWindows_IncludeHidden_AlsoListsHiddenHelperWindows()
     {
         var main = _desktop.Add("Untitled - Notepad", "Notepad");
@@ -199,6 +216,34 @@ public class WindowServiceOwnedWindowsTests
         // Assert
         windows.Select(w => w.Handle).Should().Equal(main, minimized, untitled, ownedApp);
         windows[1].State.Should().Be(WindowState.Minimized);
+    }
+
+    [Fact]
+    public void GetApplicationWindows_LeavesOutNoActivateWindows_UnlessTheyAreAppWindows()
+    {
+        // Arrange - Alt+Tab skips WS_EX_NOACTIVATE windows (overlays, on-screen keyboards) without WS_EX_APPWINDOW
+        const long wsExNoActivate = 0x08000000;
+        var main = _desktop.Add("notes.txt - Notepad", "Notepad", processId: 700, processName: "notepad");
+        _desktop.Add("Overlay", "OverlayWindow", extendedStyle: wsExNoActivate, processId: 700, processName: "notepad");
+        var keyboard = _desktop.Add("Keyboard", "KeyboardWindow", extendedStyle: wsExNoActivate | WsExAppWindow, processId: 700, processName: "notepad");
+
+        // Act + Assert
+        CreateSut().GetApplicationWindows().Select(w => w.Handle).Should().Equal(main, keyboard);
+    }
+
+    [Fact]
+    public void GetApplicationWindows_OfTheShellsProcess_AreOnlyFileExplorerWindows()
+    {
+        // Arrange - explorer.exe draws the desktop, the taskbar's flyouts and File Explorer; a separate explorer.exe has only folders
+        var progman = _desktop.Add("Program Manager", "Progman", processId: 300, processName: "explorer");
+        _desktop.Native.Setup(n => n.GetShellWindow()).Returns(progman);
+        var folder = _desktop.Add("Downloads", "CabinetWClass", processId: 300, processName: "explorer");
+        _desktop.Add("Search", "XamlExplorerHostIslandWindow", processId: 300, processName: "explorer");
+        _desktop.Add("", "Windows.UI.Input.InputSite.WindowClass", processId: 300, processName: "explorer");
+        var separate = _desktop.Add("Documents", "CabinetWClass", processId: 301, processName: "explorer");
+
+        // Act + Assert
+        CreateSut().GetApplicationWindows().Select(w => w.Handle).Should().Equal(folder, separate);
     }
 
     [Fact]

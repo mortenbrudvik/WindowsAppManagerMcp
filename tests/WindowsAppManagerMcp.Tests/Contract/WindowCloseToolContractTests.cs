@@ -101,6 +101,23 @@ public class WindowCloseToolContractTests
         promptJson.GetProperty("text").GetString().Should().Be("Do you want to save changes to Untitled?");
         promptJson.GetProperty("buttons").EnumerateArray().Select(b => b.GetString()).Should().Equal("Save", "Don't Save");
         promptJson.GetProperty("kind").GetString().Should().Be("modalPopup");
+        payload.GetProperty("error").GetString().Should().Contain("Do not answer it yourself").And.Contain("ask which to choose");
+    }
+
+    [Theory]
+    [InlineData("close_window")]
+    [InlineData("close_windows_batch")]
+    [InlineData("close_application")]
+    public async Task TheCloseToolDescriptions_TellTheAgentNotToAnswerAPromptItself(string tool)
+    {
+        // Every client sees the descriptions; not every client loads the skill, which says the same. Answering a save
+        // prompt with No or Don't Save destroys the user's unsaved work.
+        var tools = await ToolSurface.ListToolsAsync();
+
+        var description = ToolSurface.Tool(tools, tool)["description"]!.GetValue<string>();
+
+        description.Should().MatchRegex("(?i)do not answer it yourself");
+        description.Should().Contain("ask");
     }
 
     [Fact]

@@ -15,6 +15,9 @@ public class WindowCloseVerifierTests
     private static readonly TimeSpan Short = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
 
+    /// <summary>Both windows were shown when the close was sent.</summary>
+    private static readonly IReadOnlySet<nint> ShownBefore = new HashSet<nint> { Editor, Other };
+
     private readonly Mock<IWindowService> _windows = new();
     private readonly Mock<IUIAutomationWrapper> _automation = new();
     private readonly Mock<IProcessService> _processes = new();
@@ -59,7 +62,7 @@ public class WindowCloseVerifierTests
         CloseAfter(Editor, checks: 3);
 
         // Act
-        var result = await CreateSut().WaitForCloseAsync([Editor], Long, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Long, CancellationToken.None);
 
         // Assert
         result.Should().Equal(new CloseObservation(Editor, CloseStatus.Closed));
@@ -70,7 +73,7 @@ public class WindowCloseVerifierTests
     {
         // Act
         var waited = Stopwatch.StartNew();
-        var result = await CreateSut().WaitForCloseAsync([Editor], Short, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
 
         // Assert
         waited.Elapsed.Should().BeGreaterThanOrEqualTo(Short - TimeSpan.FromMilliseconds(20));
@@ -80,16 +83,42 @@ public class WindowCloseVerifierTests
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, true)]
-    public async Task AWindowThatWasHiddenOrCloaked_IsHidden(bool visible, bool cloaked)
+    public async Task AShownWindowThatTheAppHidOrCloaked_IsHidden(bool visible, bool cloaked)
     {
         // Arrange - the app hid its window in the notification area instead of closing it
         OpenWindow(Editor, visible, cloaked);
 
         // Act
-        var result = await CreateSut().WaitForCloseAsync([Editor], Short, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
 
         // Assert
         result.Should().Equal(new CloseObservation(Editor, CloseStatus.Hidden));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task AWindowThatWasAlreadyHiddenOrCloaked_AndStillExists_IsStillOpen_NotHidden(bool visible, bool cloaked)
+    {
+        // Arrange - on another virtual desktop (cloaked) or hidden before the close: it did not react to the close at all
+        OpenWindow(Editor, visible, cloaked);
+
+        // Act
+        var result = await CreateSut().WaitForCloseAsync([Editor], new HashSet<nint>(), Short, CancellationToken.None);
+
+        // Assert
+        result.Should().Equal(new CloseObservation(Editor, CloseStatus.StillOpen));
+    }
+
+    [Fact]
+    public void ShownWindows_AreTheVisibleUncloakedOnes()
+    {
+        var hidden = new nint(0x1003);
+        var cloaked = new nint(0x1004);
+        OpenWindow(hidden, visible: false);
+        OpenWindow(cloaked, cloaked: true);
+
+        CreateSut().ShownWindows([Editor, hidden, cloaked, new nint(0x9999), Editor]).Should().BeEquivalentTo([Editor]);
     }
 
     [Fact]
@@ -101,7 +130,7 @@ public class WindowCloseVerifierTests
 
         // Act
         var waited = Stopwatch.StartNew();
-        var result = await CreateSut().WaitForCloseAsync([Editor], Long, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Long, CancellationToken.None);
 
         // Assert
         waited.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5), "a prompt that stays for two checks ends the wait");
@@ -117,7 +146,7 @@ public class WindowCloseVerifierTests
         _windows.Setup(w => w.FindBlockingDialog(Editor)).Returns(prompt);
 
         // Act
-        var result = await CreateSut().WaitForCloseAsync([Editor, Other, Editor], Long, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor, Other, Editor], ShownBefore, Long, CancellationToken.None);
 
         // Assert
         result.Select(r => (r.Handle, r.Status)).Should().Equal(
@@ -129,9 +158,27 @@ public class WindowCloseVerifierTests
     {
         using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
-        var act = () => CreateSut().WaitForCloseAsync([Editor], Long, cancelled.Token);
+        var act = () => CreateSut().WaitForCloseAsync([Editor], ShownBefore, Long, cancelled.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task TheWindowsStillOpen_AreLookedAtOnceMore_AllAtTheSameTime()
+    {
+        // Arrange - every UI Automation read takes 400 ms; four windows one after another would take 1.6 s after the wait
+        var windows = Enumerable.Range(0, 4).Select(i => new nint(0x3000 + i)).ToList();
+        windows.ForEach(w => OpenWindow(w));
+        var sut = new WindowCloseVerifier(_windows.Object, _tree, new SlowUiaWorker(TimeSpan.FromMilliseconds(400)),
+            pollInterval: TimeSpan.FromMilliseconds(5), promptCheckInterval: TimeSpan.FromMilliseconds(10));
+
+        // Act
+        var waited = Stopwatch.StartNew();
+        var result = await sut.WaitForCloseAsync(windows, windows.ToHashSet(), Short, CancellationToken.None);
+
+        // Assert
+        result.Select(r => r.Status).Should().AllBeEquivalentTo(CloseStatus.StillOpen);
+        waited.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(1200), "the final look runs for every window at once");
     }
 
     #endregion
@@ -215,7 +262,7 @@ public class WindowCloseVerifierTests
         _tree.WithWindow(Editor, new FakeUiaNode("Window", "Editor").With(
             new FakeUiaNode("Window", "Save?") { IsModal = true }.With(new FakeUiaNode("Button", "Save"))));
 
-        var result = await CreateSut().WaitForCloseAsync([Editor], Short, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
 
         result.Should().ContainSingle().Which.Status.Should().Be(CloseStatus.PromptShown);
         result[0].Prompt!.Buttons.Should().Equal("Save");
@@ -234,7 +281,7 @@ public class WindowCloseVerifierTests
     {
         _tree.FromHandleException = new TimeoutException("The provider did not answer.");
 
-        var result = await CreateSut().WaitForCloseAsync([Editor], Short, CancellationToken.None);
+        var result = await CreateSut().WaitForCloseAsync([Editor], ShownBefore, Short, CancellationToken.None);
 
         result.Should().Equal(new CloseObservation(Editor, CloseStatus.StillOpen));
     }
@@ -244,21 +291,44 @@ public class WindowCloseVerifierTests
     #region The UI Automation close and the processes
 
     [Fact]
-    public async Task CloseWithUiAutomation_AsksTheWindowPattern()
+    public async Task CloseWithUiAutomation_AsksTheWindowPattern_WithTheDeadline()
     {
-        _automation.Setup(a => a.CloseWindow(Editor)).Returns(true);
+        _automation.Setup(a => a.CloseWindow(Editor, It.IsAny<CancellationToken>())).Returns(true);
 
         (await CreateSut().CloseWithUiAutomationAsync(Editor, CancellationToken.None)).Should().BeTrue();
-        _automation.Verify(a => a.CloseWindow(Editor), Times.Once);
+        _automation.Verify(a => a.CloseWindow(Editor, _worker.LastToken), Times.Once);
+        _worker.LastToken.CanBeCanceled.Should().BeTrue("the wrapper checks the deadline right before it asks for the close");
     }
 
     [Fact]
     public async Task CloseWithUiAutomation_WithoutUiAutomation_OrWhenItThrows_IsFalse()
     {
-        _automation.Setup(a => a.CloseWindow(Editor)).Throws(new InvalidOperationException("gone"));
+        _automation.Setup(a => a.CloseWindow(Editor, It.IsAny<CancellationToken>())).Throws(new InvalidOperationException("gone"));
 
         (await CreateSut(withUiAutomation: false).CloseWithUiAutomationAsync(Editor, CancellationToken.None)).Should().BeFalse();
         (await CreateSut().CloseWithUiAutomationAsync(Editor, CancellationToken.None)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CloseWithUiAutomation_ThatTimesOut_IsUnknown_BecauseTheWindowMayStillClose()
+    {
+        var worker = new Mock<IUiaWorker>();
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, bool>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new TimeoutException("The UI Automation call did not return in time."));
+        var sut = new WindowCloseVerifier(_windows.Object, _tree, worker.Object, _automation.Object);
+
+        (await sut.CloseWithUiAutomationAsync(Editor, CancellationToken.None)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CloseWithUiAutomation_RefusedBecauseTheAppHangs_IsFalse()
+    {
+        var worker = new Mock<IUiaWorker>();
+        worker.Setup(w => w.RunAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, bool>>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan>()))
+            .ThrowsAsync(new UiaReadRefusedException("Earlier reads are still stuck."));
+        var sut = new WindowCloseVerifier(_windows.Object, _tree, worker.Object, _automation.Object);
+
+        (await sut.CloseWithUiAutomationAsync(Editor, CancellationToken.None)).Should().BeFalse("nothing was started");
     }
 
     [Fact]
@@ -277,4 +347,14 @@ public class WindowCloseVerifierTests
     }
 
     #endregion
+
+    /// <summary>A worker whose every read takes <paramref name="delay"/> before it runs, as a slow application's would.</summary>
+    private sealed class SlowUiaWorker(TimeSpan delay) : IUiaWorker
+    {
+        public async Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        {
+            await Task.Delay(delay, CancellationToken.None);
+            return read(cancellationToken);
+        }
+    }
 }
