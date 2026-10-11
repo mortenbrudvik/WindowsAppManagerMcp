@@ -26,15 +26,8 @@ builder.Services.AddWindowsAppManagerServices();
 // read before the tool registrations; ServerStartupLog logs them and what they leave out
 var toolsets = ToolsetSelection.FromEnvironment();
 
-// Configure MCP Server
-builder.Services.AddMcpServer(options =>
-{
-    options.ServerInfo = new()
-    {
-        Name = "windows-app-manager",
-        Version = WindowsAppManagerMcp.ServerVersion.Current
-    };
-})
+// Configure MCP Server: its name, version (with the commit) and the instructions every client gets
+builder.Services.AddMcpServer(ServerIdentity.Configure)
 .WithStdioServerTransport()
 // The tool error filter (ToolErrorReporting), the input gate and the tools the toolsets serve
 .AddWindowsAppManagerTools(toolsets);

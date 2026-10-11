@@ -22,9 +22,6 @@ public sealed class ServerInfoService(
     INativeWindowWrapper windows,
     ToolsetSelection? toolsets = null) : IServerInfoService
 {
-    /// <summary>The MCP server name (serverInfo.name).</summary>
-    public const string ServerName = "windows-app-manager";
-
     public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools)
     {
         ArgumentNullException.ThrowIfNull(connection);
@@ -39,7 +36,7 @@ public sealed class ServerInfoService(
 
         return new ServerInfoResult(
             new ServerBuildInfo(
-                ServerName,
+                ServerIdentity.Name,
                 ServerVersion.Current,
                 ServerVersion.GitSha,
                 ServerVersion.SdkVersion,
