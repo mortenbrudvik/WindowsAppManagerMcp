@@ -567,17 +567,160 @@ public sealed class UserConfirmationContractTests : IDisposable
         _services.Windows.Verify(w => w.CloseWindow((nint)TypicalDesktop.BrowserHandle, false), Times.Once);
     }
 
-    [Fact]
-    public async Task CloseWindow_ForceWithAClientThatCannotAsk_ClosesTheProtectedWindow()
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task CloseWindow_ForceOnAProtectedWindow_WithAClientThatCannotAsk_NeedsConfirm_AndClosesNothing(string? revision)
     {
-        // The fallback, as kill_process's confirm: force stays the model's argument when the user cannot be asked
+        // Arrange - roadmap M2.F1: without elicitation, force alone no longer overrides a protection; a prompt-injected
+        // agent needs two explicit flags, as it needs the user's yes on a client that can ask
+        NotepadIsProtected();
+        await using var server = await StartAsync(revision, answer: null);
+
+        // Act
+        var result = await server.CallToolAsync("close_window", ForceClose(TypicalDesktop.NotepadHandle));
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var payload = Payload(result);
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationRequired));
+        payload.GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        payload.GetProperty("error").GetString().Should().Contain("agent's host").And.Contain("confirm=true")
+            .And.Contain("Nothing was closed").And.NotContain("Pass force=true");
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindow_ForceAndConfirm_WithAClientThatCannotAsk_ClosesTheProtectedWindow()
+    {
+        // The fallback, as kill_process's confirm: force and confirm stay the model's arguments when the user cannot be asked
         NotepadIsProtected();
         await using var server = await StartAsync(null, answer: null);
+        var arguments = new Dictionary<string, object?>(ForceClose(TypicalDesktop.NotepadHandle)) { ["confirm"] = true };
 
-        var result = await server.CallToolAsync("close_window", ForceClose(TypicalDesktop.NotepadHandle));
+        var result = await server.CallToolAsync("close_window", arguments);
 
         result.IsError.Should().NotBe(true, Payload(result).ToString());
         _services.Windows.Verify(w => w.CloseWindow((nint)TypicalDesktop.NotepadHandle, true), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseWindow_ForceWithoutConfirm_OnAWindowThatIsNotProtected_WithAClientThatCannotAsk_ClosesItWithoutForce()
+    {
+        // force overrides nothing on an ordinary window, so it needs no confirm; it is not passed on either
+        await using var server = await StartAsync(null, answer: null);
+
+        var result = await server.CallToolAsync("close_window", ForceClose(TypicalDesktop.BrowserHandle));
+
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        _services.Windows.Verify(w => w.CloseWindow((nint)TypicalDesktop.BrowserHandle, false), Times.Once);
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindow_ForceAndConfirmOnAProtectedWindow_WithAClientThatCanAsk_StillAsksTheUser()
+    {
+        // confirm from the model does not replace the user's answer when the client can ask, as for the batches
+        NotepadIsProtected();
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+        var arguments = new Dictionary<string, object?>(ForceClose(TypicalDesktop.NotepadHandle)) { ["confirm"] = true };
+
+        var result = await server.CallToolAsync("close_window", arguments);
+
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationDeclined));
+        _questions.Should().ContainSingle();
+        _services.Windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+    }
+
+    [Theory]
+    [MemberData(nameof(Revisions))]
+    public async Task CloseWindowsBatch_ForceOnAProtectedWindow_WithAClientThatCannotAsk_NeedsConfirm_EvenForOneWindow(string? revision)
+    {
+        // Arrange
+        _services.Windows.Setup(w => w.CheckClose((nint)TypicalDesktop.NotepadHandle, false))
+            .Returns(WindowCloseResult.Failed((nint)TypicalDesktop.NotepadHandle, WindowErrorCode.ProtectedWindow, HostProtection));
+        await using var server = await StartAsync(revision, answer: null);
+        var arguments = new Dictionary<string, object?>(CloseArguments(TypicalDesktop.BrowserHandle, TypicalDesktop.NotepadHandle))
+        {
+            ["force"] = true
+        };
+
+        // Act
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        // Assert - the whole batch is refused, so an ordinary window in it is not closed either
+        result.IsError.Should().BeTrue();
+        var payload = Payload(result);
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationRequired));
+        payload.GetProperty("error").GetString().Should().Contain("force=true").And.Contain("protected")
+            .And.Contain(TypicalDesktop.NotepadHandle.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .And.Contain("confirm=true").And.Contain("Nothing was closed");
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_ForceAndConfirmOnAProtectedWindow_WithAClientThatCannotAsk_ClosesWithForce()
+    {
+        _services.Windows.Setup(w => w.CheckClose((nint)TypicalDesktop.NotepadHandle, false))
+            .Returns(WindowCloseResult.Failed((nint)TypicalDesktop.NotepadHandle, WindowErrorCode.ProtectedWindow, HostProtection));
+        await using var server = await StartAsync(null, answer: null);
+        var arguments = new Dictionary<string, object?>(CloseArguments(TypicalDesktop.NotepadHandle)) { ["force"] = true, ["confirm"] = true };
+
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), true, It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_ForceWithoutConfirm_OnWindowsThatAreNotProtected_WithAClientThatCannotAsk_ClosesWithoutForce()
+    {
+        // Arrange - no window is protected when the call checks: force overrides nothing, so it needs no confirm, and it is
+        // not passed on (a protection that appears later is not overridden without confirm), as on a client that can ask
+        await using var server = await StartAsync(null, answer: null);
+        var arguments = new Dictionary<string, object?>(CloseArguments(TypicalDesktop.NotepadHandle)) { ["force"] = true };
+
+        // Act
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        // Assert
+        result.IsError.Should().NotBe(true, Payload(result).ToString());
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), false, It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), true, It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_MoreThanThreeWindowsAndForceOnAProtectedOne_WithAClientThatCannotAsk_NamesBothReasons()
+    {
+        _services.Windows.Setup(w => w.CheckClose((nint)TypicalDesktop.NotepadHandle, false))
+            .Returns(WindowCloseResult.Failed((nint)TypicalDesktop.NotepadHandle, WindowErrorCode.ProtectedWindow, HostProtection));
+        await using var server = await StartAsync(null, answer: null);
+        var arguments = new Dictionary<string, object?>(CloseArguments(FourWindows)) { ["force"] = true };
+
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        var error = Payload(result).GetProperty("error").GetString();
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationRequired));
+        error.Should().Contain("4 windows").And.Contain("protected");
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_ForceAndConfirmOnAProtectedWindow_WithAClientThatCanAsk_StillAsksTheUser()
+    {
+        _services.Windows.Setup(w => w.CheckClose((nint)TypicalDesktop.NotepadHandle, false))
+            .Returns(WindowCloseResult.Failed((nint)TypicalDesktop.NotepadHandle, WindowErrorCode.ProtectedWindow, HostProtection));
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+        var arguments = new Dictionary<string, object?>(CloseArguments(TypicalDesktop.NotepadHandle)) { ["force"] = true, ["confirm"] = true };
+
+        var result = await server.CallToolAsync("close_windows_batch", arguments);
+
+        Payload(result).GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationDeclined));
+        _questions.Should().ContainSingle();
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

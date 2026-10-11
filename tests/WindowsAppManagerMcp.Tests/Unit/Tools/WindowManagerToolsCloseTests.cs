@@ -57,16 +57,40 @@ public class WindowManagerToolsCloseTests
     #region close_window
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CloseWindow_PassesForceToTheService(bool force)
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public async Task CloseWindow_WithoutAClientThatCanAsk_PassesForceToTheServiceOnlyWithConfirm(bool force, bool confirm, bool forced)
     {
-        // Act
-        var result = await CreateSut().CloseWindow(12345, force: force);
+        // Act - roadmap M2.F1: without elicitation, force overrides a protection only with confirm; force alone first
+        // tries an ordinary close, which an unprotected window passes
+        var result = await CreateSut().CloseWindow(12345, force: force, confirm: confirm);
 
         // Assert
         result.Should().Be(new CloseWindowResult(Success: true, Status: "closed", Handle: 12345));
-        _windowService.Verify(w => w.CloseWindow(12345, force), Times.Once);
+        _windowService.Verify(w => w.CloseWindow(12345, forced), Times.Once);
+        _windowService.Verify(w => w.CloseWindow(12345, !forced), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindow_ForceWithoutConfirm_OnAProtectedWindow_IsConfirmationRequired_AndNothingIsForced()
+    {
+        // Arrange
+        _windowService.Setup(w => w.CloseWindow(12345, false)).Returns(WindowCloseResult.Failed(12345, WindowErrorCode.ProtectedWindow,
+            "Window 12345 is part of the desktop shell (Progman). Nothing was sent. Pass force=true only if the user explicitly asked to close this window."));
+
+        // Act
+        var result = await CreateSut().CloseWindow(12345, force: true);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.ConfirmationRequired));
+        result.Error.Should().StartWith("Window 12345 is part of the desktop shell (Progman).").And.Contain("confirm=true")
+            .And.Contain("Nothing was closed").And.NotContain("Pass force=true");
+        _windowService.Verify(w => w.CloseWindow(It.IsAny<nint>(), true), Times.Never);
+        _verifier.Verify(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -247,7 +271,7 @@ public class WindowManagerToolsCloseTests
     public async Task CloseWindowsBatch_PassesForceToTheService()
     {
         // Act
-        await CreateSut().CloseWindowsBatch(Requests(1, 2), force: true);
+        await CreateSut().CloseWindowsBatch(Requests(1, 2), force: true, confirm: true);
 
         // Assert
         _windowService.Verify(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), true, 50, It.IsAny<CancellationToken>()), Times.Once);

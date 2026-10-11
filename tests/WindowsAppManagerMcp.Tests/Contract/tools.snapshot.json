@@ -750,7 +750,7 @@
     {
       "name": "close_window",
       "title": "Close Window",
-      "description": "Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and kind; kind inWindowDialog is drawn inside the window, so use the window's handle. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.); requested (waitMs 0: sent, not checked). success is true for closed, hidden and requested. Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true; then, when the client can ask the user, the user is asked first (ConfirmationDeclined, or HandleMismatch when the window changed hands meanwhile). It refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) and NotResponding when the app's message queue is full (it is hung). InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.",
+      "description": "Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and kind; kind inWindowDialog is drawn inside the window, so use the window's handle. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.); requested (waitMs 0: sent, not checked). success is true for closed, hidden and requested. Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true; then, when the client can ask the user, the user is asked first (ConfirmationDeclined, or HandleMismatch when the window changed hands meanwhile), and when it cannot, confirm must be true too (ConfirmationRequired). It refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), and reports AccessDenied when Windows blocks the message (the window belongs to an app running as administrator) and NotResponding when the app's message queue is full (it is hung). InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -834,7 +834,7 @@
             "default": null
           },
           "force": {
-            "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined when they do not confirm).",
+            "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined when they do not confirm); when it cannot, a protected window is closed only with confirm=true too (ConfirmationRequired otherwise, and nothing is closed).",
             "type": "boolean",
             "default": false
           },
@@ -842,6 +842,11 @@
             "description": "How long to wait for the window to close, in milliseconds (0-30000, default 2000). 0 only sends the close message (status requested). The wait ends early when the window closes or shows a prompt.",
             "type": "integer",
             "default": 2000
+          },
+          "confirm": {
+            "description": "With force=true, must also be true to close a protected window when the MCP client cannot ask the user (elicitation); without it such a window is not closed (errorCode ConfirmationRequired). When the client can ask, the user's answer decides and confirm does not count. Set it only when the user explicitly asked to close that window.",
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -856,7 +861,7 @@
     {
       "name": "close_windows_batch",
       "title": "Close Windows (Batch)",
-      "description": "Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt is never answered: ask the user which button to choose, and do not answer it yourself. More than 3 windows need a confirmation, and so does force=true on a protected window when the MCP client can ask the user (elicitation): the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined). When the client cannot ask, more than 3 windows need confirm=true (ConfirmationRequired), and force alone closes a protected window. A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.",
+      "description": "Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt is never answered: ask the user which button to choose, and do not answer it yourself. More than 3 windows need a confirmation, and so does force=true on a protected window when the MCP client can ask the user (elicitation): the user is asked, with each window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined). When the client cannot ask, more than 3 windows, and force=true on a protected window, need confirm=true (ConfirmationRequired; nothing is closed). A window that changed hands after the user confirmed is not closed (HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -952,12 +957,12 @@
             "default": 50
           },
           "confirm": {
-            "description": "Must be true to close more than 3 windows in one batch when the client cannot ask the user. Check the list (find_windows) first: closing many windows at once can lose unsaved work.",
+            "description": "Must be true to close more than 3 windows in one batch, or (with force=true) a protected window, when the client cannot ask the user. Check the list (find_windows) first: closing many windows at once can lose unsaved work.",
             "type": "boolean",
             "default": false
           },
           "force": {
-            "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined when they do not confirm). Applies to every window in the batch.",
+            "description": "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host (the terminal, editor or chat app this server was started from). Default false: such windows are refused with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined when they do not confirm); when it cannot, a protected window is closed only with confirm=true too (ConfirmationRequired otherwise, and nothing is closed). Applies to every window in the batch.",
             "type": "boolean",
             "default": false
           },

@@ -61,7 +61,10 @@ public enum WindowErrorCode
     /// </summary>
     AccessDenied = 23,
 
-    /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
+    /// <summary>
+    /// A batch above the confirmation threshold, or force on a protected window (roadmap M2.F1), was sent without confirm=true
+    /// by a client that cannot ask the user. Nothing was done.
+    /// </summary>
     ConfirmationRequired = 24,
 
     /// <summary>
