@@ -10,6 +10,11 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="ProcessId">The ID of <paramref name="ProcessName"/>.</param>
 public sealed record WindowSummary(long Handle, string Title, string ProcessName, int ProcessId);
 
+/// <summary>Why a selector's window failed its recheck inside the input gate (<see cref="InputTarget.SelectorRecheck"/>).</summary>
+/// <param name="ErrorCode">The window tools' errorCode for it: HandleMismatch, or InvalidArguments.</param>
+/// <param name="Error">The message.</param>
+public sealed record SelectorRefusal(string ErrorCode, string Error);
+
 /// <summary>
 /// The window an input call is meant for (roadmap M1.5), or none. With a window the input guard brings it
 /// to the front (keys) or checks that the point is on it (mouse), and refuses to send input that would
@@ -33,12 +38,13 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 
     /// <summary>
     /// For a window a selector named (roadmap M2.4): checks that the window still matches the selector, and returns why
-    /// not, or null when it does. The selector is resolved before the call waits for the input gate (up to 30 s); the
+    /// not (with the window tools' errorCode: HandleMismatch, or InvalidArguments when the selector's titleRegex timed out),
+    /// or null when it does. The selector is resolved before the call waits for the input gate (up to 30 s); the
     /// input guard runs this inside the gate, before anything is sent, so input never reaches a window that stopped
     /// matching while it waited, such as a tabbed editor switched to another document (HandleMismatch). Null for a
     /// windowHandle, which names no title or process to check again.
     /// </summary>
-    public Func<string?>? SelectorRecheck { get; init; }
+    public Func<SelectorRefusal?>? SelectorRecheck { get; init; }
 
     /// <summary>Two targets are equal when they name the same window with the same host rule; the recheck is not compared.</summary>
     public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
@@ -372,8 +378,15 @@ public enum InputErrorCode
     /// <summary>
     /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
     /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
-    /// private, or clipboard history; or the clipboard could not be checked. A paste followed by a read would disclose it.
-    /// Nothing (more) was sent.
+    /// private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes (copy
+    /// keys, or the ETX or CAN character, before the paste), or copy keys sent moments ago have not copied yet, so the
+    /// paste would paste a copy no check saw. A paste followed by a read would disclose it. Nothing (more) was sent.
     /// </summary>
-    PasteNotAllowed = 44
+    PasteNotAllowed = 44,
+
+    /// <summary>
+    /// The window selector could not be checked again once the call held the input gate because of the selector itself
+    /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
+    /// </summary>
+    InvalidArguments = 45
 }

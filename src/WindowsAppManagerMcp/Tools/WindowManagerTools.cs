@@ -411,8 +411,11 @@ public class WindowManagerTools
         // client can ask, whatever the number of windows: the user is asked when a window is protected now, and force is
         // passed on only when the user was asked (or cannot be)
         var canAsk = UserConfirmation.CanAsk(server);
-        var forceOverrides = force && canAsk && items.Any(t =>
-            t.Refusal == null && _windowService.CheckClose(t.Handle, force: false) is { ErrorCode: ProtectedWindow });
+        var protectedNow = force && canAsk
+            ? items.Where(t => t.Refusal == null && _windowService.CheckClose(t.Handle, force: false) is { ErrorCode: ProtectedWindow })
+                .Select(t => t.Handle).ToHashSet()
+            : [];
+        var forceOverrides = protectedNow.Count > 0;
         Dictionary<nint, int?>? confirmedOwners = null;
         if (windows.Length > MaxCloseBatchWithoutConfirm || forceOverrides)
         {
@@ -421,7 +424,7 @@ public class WindowManagerTools
                 // Ask the user, not the model, and before the input gate: a waiting user must not hold up every input call
                 var targets = items.Where(t => t.Refusal == null).Select(t => (t.Handle, Window: _windowService.GetWindowInfo(t.Handle)))
                     .ToList();
-                var answer = await UserConfirmation.AskAsync(server!, CloseQuestion(targets, force), $"Close these {targets.Count} windows",
+                var answer = await UserConfirmation.AskAsync(server!, CloseQuestion(targets, force, protectedNow), $"Close these {targets.Count} windows",
                     _answerTimeout, cancellationToken).ConfigureAwait(false);
                 if (!answer.Confirmed)
                 {
@@ -1066,13 +1069,25 @@ public class WindowManagerTools
         return advice < 0 ? text : text[..advice];
     }
 
-    /// <summary>The question close_windows_batch asks the user: every window, with its title, process and PID.</summary>
-    private static string CloseQuestion(IReadOnlyList<(nint Handle, WindowInfo? Window)> targets, bool force)
+    /// <summary>How many windows close_windows_batch's question lists one by one, besides the protected ones.</summary>
+    private const int MaxListedInCloseQuestion = 20;
+
+    /// <summary>
+    /// The question close_windows_batch asks the user: the windows, with their title, process and PID; past the first
+    /// <see cref="MaxListedInCloseQuestion"/> only a count, except for the protected windows force would close, which are
+    /// always named, so a yes never closes a protected window the user was not shown.
+    /// </summary>
+    private static string CloseQuestion(IReadOnlyList<(nint Handle, WindowInfo? Window)> targets, bool force,
+        IReadOnlySet<nint> protectedWindows)
     {
-        var lines = targets.Take(20).Select((t, i) => t.Window is { } w
-            ? $"{i + 1}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
-            : $"{i + 1}. window {t.Handle} (no longer exists)");
-        var more = targets.Count > 20 ? $"\n... and {targets.Count - 20} more" : string.Empty;
+        var lines = targets
+            .Select((t, i) => (Target: t, Number: i + 1, Protected: force && protectedWindows.Contains(t.Handle)))
+            .Where(t => t.Number <= MaxListedInCloseQuestion || t.Protected)
+            .Select(t => t.Target.Window is { } w
+                ? $"{t.Number}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}{(t.Protected ? ", protected" : string.Empty)}"
+                : $"{t.Number}. window {t.Target.Handle} (no longer exists)")
+            .ToList();
+        var more = targets.Count > lines.Count ? $"\n... and {targets.Count - lines.Count} more{(force ? " (none of them protected)" : string.Empty)}" : string.Empty;
         var protection = force
             ? " force is set: protected windows (the desktop shell, the agent's own terminal or editor) are closed too."
             : string.Empty;

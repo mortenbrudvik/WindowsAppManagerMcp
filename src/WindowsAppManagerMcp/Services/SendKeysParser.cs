@@ -134,14 +134,22 @@ public static class SendKeysParser
     /// the modifier keys themselves are not chords. Reads the events as they would arrive, so a modifier
     /// sent as its own key (<c>{ALT}</c>) is released again before the next key and holds nothing.
     /// </summary>
-    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events)
+    public static IReadOnlyList<KeyChord> Chords(IReadOnlyList<InputEvent> events) =>
+        IndexedChords(events).Select(c => c.Chord).ToList();
+
+    /// <summary>
+    /// The chords of <see cref="Chords"/>, each with the index in <paramref name="events"/> of its key-down, so their
+    /// order against other events (a mouse button) can be told.
+    /// </summary>
+    public static IReadOnlyList<(KeyChord Chord, int Index)> IndexedChords(IReadOnlyList<InputEvent> events)
     {
         ArgumentNullException.ThrowIfNull(events);
 
-        var chords = new List<KeyChord>();
+        var chords = new List<(KeyChord, int)>();
         var held = KeyModifiers.None;
-        foreach (var e in events)
+        for (var i = 0; i < events.Count; i++)
         {
+            var e = events[i];
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
             if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) is var modifier && modifier != KeyModifiers.None)
             {
@@ -151,7 +159,7 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                chords.Add(Press(held, e));
+                chords.Add((Press(held, e), i));
             }
         }
 

@@ -956,6 +956,22 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
+    public async Task TypeText_ThatCopiesInOneBatchAndPastesInALaterOne_IsRefusedBeforeAnythingIsTyped()
+    {
+        // ETX (U+0003) copies in an edit control as Ctrl+C does; the SYN that pastes it comes batches later, in the same call
+        var sut = CreateSut(new RefusingPasteGuard());
+        var text = "\u0003" + new string('a', InputSimulationService.TypeTextBatchSize * 2) + "\u0016";
+
+        var result = await sut.TypeTextAsync(text);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        result.Error.Should().Contain("separate calls").And.Contain("Nothing was typed");
+        result.CharactersTyped.Should().Be(0);
+        _sentEvents.Should().BeEmpty();
+    }
+
+    [Fact]
     public void RightClick_IsCheckedAsAPaste_AndRefusedWithoutAPress()
     {
         SetupSingleMonitor();

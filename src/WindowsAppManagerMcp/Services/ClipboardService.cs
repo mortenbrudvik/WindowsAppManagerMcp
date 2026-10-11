@@ -64,7 +64,7 @@ public sealed class ClipboardService : IClipboardService
         // Right after the agent's copy keys the application may not have copied yet
         var sequenceNumber = _clipboard.GetSequenceNumber();
         var waited = TimeSpan.Zero;
-        while (_origin.IsCopyPending(sequenceNumber) && waited < _copyWait)
+        while (_origin.IsUnchangedSinceCopyKeys(sequenceNumber) && waited < _copyWait)
         {
             await Task.Delay(CopyPoll, cancellationToken).ConfigureAwait(false);
             waited += CopyPoll;
@@ -72,7 +72,7 @@ public sealed class ClipboardService : IClipboardService
         }
 
         // The agent meant its own copy: what was there before is not it, whoever put it there
-        if (_origin.IsCopyPending(sequenceNumber))
+        if (_origin.IsUnchangedSinceCopyKeys(sequenceNumber))
         {
             return Failed(format, ClipboardErrorCode.NothingCopied,
                 $"The copy keys were sent, but the clipboard did not change within {_copyWait.TotalSeconds:0.#} s: nothing may have " +

@@ -601,7 +601,10 @@ public class InputTargetGuardTests
     public void ATargetASelectorNamed_ThatNoLongerMatchesIt_IsHandleMismatch_ForKeysAndMouse()
     {
         // Arrange - the selector was resolved before the gate wait; inside the gate the window's title no longer matches
-        var target = To(Notepad) with { SelectorRecheck = () => "Window 512 no longer matches titleContains 'notes.txt'." };
+        var target = To(Notepad) with
+        {
+            SelectorRecheck = () => new SelectorRefusal("HandleMismatch", "Window 512 no longer matches titleContains 'notes.txt'.")
+        };
 
         // Act
         var keys = CreateSut().CheckKeyboard(target, KeyboardInputKind.Text, null);
@@ -612,6 +615,35 @@ public class InputTargetGuardTests
         keys.Error.Should().Contain("no longer matches");
         mouse.ErrorCode.Should().Be(InputErrorCode.HandleMismatch);
         VerifyNoActivation();
+    }
+
+    [Fact]
+    public void ATargetASelectorNamed_WhoseRecheckFailsOnTheSelector_KeepsTheRechecksErrorCode()
+    {
+        // Arrange - the titleRegex timed out inside the gate: the pattern's fault, as the window tools report it, not a
+        // window that changed
+        var target = To(Notepad) with
+        {
+            SelectorRecheck = () => new SelectorRefusal("InvalidArguments", "titleRegex '^(a+)+$' took longer than 100 ms.")
+        };
+
+        // Act
+        var keys = CreateSut().CheckKeyboard(target, KeyboardInputKind.Text, null);
+        var mouse = CreateSut().CheckMouse(10, 10, target);
+
+        // Assert
+        keys.ErrorCode.Should().Be(InputErrorCode.InvalidArguments);
+        keys.Error.Should().Contain("100 ms");
+        mouse.ErrorCode.Should().Be(InputErrorCode.InvalidArguments);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void TheNumbersOfTheExistingInputErrorCodes_DoNotChange()
+    {
+        ((int)InputErrorCode.HandleMismatch).Should().Be(43);
+        ((int)InputErrorCode.PasteNotAllowed).Should().Be(44);
+        ((int)InputErrorCode.InvalidArguments).Should().Be(45);
     }
 
     [Fact]

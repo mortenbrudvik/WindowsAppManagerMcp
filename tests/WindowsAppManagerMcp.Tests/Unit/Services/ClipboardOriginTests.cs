@@ -314,6 +314,66 @@ public class ClipboardOriginTests
     }
 
     [Fact]
+    public void CopyKeysFollowedByAClickToTheSameApp_StayPending_UntilTheAppCopies()
+    {
+        // The click joins the copy keys' run; the keys may still wait in the app's queue
+        CopyKeysSent();
+        ClickSent();
+
+        _sut.IsCopyPending(100).Should().BeTrue("the click does not undo the copy keys");
+        _sut.IsUnchangedSinceCopyKeys(100).Should().BeTrue();
+        AppCopies("the selection");
+        _sut.IsCopyPending(101).Should().BeFalse();
+    }
+
+    [Fact]
+    public void CopyKeys_StayPending_AfterAnotherAppChangesTheClipboard()
+    {
+        // Arrange - another app changes the clipboard before the target has acted on the keys
+        CopyKeysSent();
+        _clipboard.UserCopies("something of the user's");
+
+        // Act & Assert - the target has not copied yet
+        _sut.IsCopyPending(101).Should().BeTrue("the change was not the target's");
+        _sut.IsUnchangedSinceCopyKeys(101).Should().BeFalse("get_clipboard reads (or refuses) the other app's content");
+        AppCopies("the selection");
+        _sut.IsCopyPending(102).Should().BeFalse();
+        _sut.Classify(102).Should().Be(ClipboardOriginKind.AgentInput);
+    }
+
+    [Fact]
+    public void CopyKeys_AreNoLongerPending_AfterTheCopyKeysWindow()
+    {
+        CopyKeysSent();
+        _clipboard.UserCopies("something of the user's");
+        _clock.Advance(CopyKeysWindowAndABit);
+
+        _sut.IsCopyPending(101).Should().BeFalse();
+        _sut.IsCopyPending(100).Should().BeFalse();
+    }
+
+    [Fact]
+    public void CopyKeysThatOpenNoWindow_AreStillPending_UntilTheAppCopies()
+    {
+        // Arrange - after two empty windows, copy keys within the quiet time open no copy window: the app's copy is not
+        // the agent's, but the keys still wait in its queue
+        for (var i = 0; i < 3; i++)
+        {
+            CopyKeysSent();
+            _clock.Advance(TimeSpan.FromSeconds(5.1));
+        }
+
+        // Act
+        CopyKeysSent();
+
+        // Assert
+        _sut.IsCopyPending(100).Should().BeTrue("a paste now would follow the queued copy keys");
+        AppCopies("hunter2");
+        _sut.IsCopyPending(101).Should().BeFalse("the app the keys went to copied");
+        _sut.Classify(101).Should().Be(ClipboardOriginKind.NotFromAgent);
+    }
+
+    [Fact]
     public void ACopyOfTheMarkBefore_IsSeenBeforeANewMarkReplacesIt()
     {
         // The app copies after the keys, and the agent clicks before any poll saw the copy

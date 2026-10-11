@@ -89,10 +89,20 @@ public interface IClipboardOrigin
     ClipboardOriginKind Classify(uint sequenceNumber);
 
     /// <summary>
-    /// True when the agent's copy keys were sent moments ago and the clipboard still has <paramref name="sequenceNumber"/>,
-    /// the number it had before them: the application may still be copying. Read again shortly. Never true after a click.
+    /// True when the agent's last copy keys were sent less than <see cref="ClipboardOrigin.CopyKeysWindow"/> ago and the
+    /// application they went to has not changed the clipboard since: the clipboard still has the number it had before them
+    /// (<paramref name="sequenceNumber"/>), or only another application changed it. The keys may still wait in the
+    /// application's queue. Read again shortly. Not ended by later input (a click to the same application) or by the copy
+    /// window rules, which decide only whose the copy is. Never true for a click alone. The paste rule waits for this.
     /// </summary>
     bool IsCopyPending(uint sequenceNumber);
+
+    /// <summary>
+    /// True when <see cref="IsCopyPending"/> and the clipboard still has <paramref name="sequenceNumber"/>, the number it
+    /// had before the copy keys: nothing changed it since. get_clipboard waits for this, and reports that nothing was
+    /// copied when it lasts (another application's change is read, or refused, as any content is).
+    /// </summary>
+    bool IsUnchangedSinceCopyKeys(uint sequenceNumber);
 
     /// <summary>
     /// True when <paramref name="text"/> (at most the asked number of characters of a text <paramref name="textLength"/>
@@ -167,6 +177,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     /// <summary>The SYN control character: an edit control takes it, typed as a character, as Ctrl+V.</summary>
     public const char PasteCharacter = '\u0016';
 
+    /// <summary>The ETX control character: an edit control takes it, typed as a character, as Ctrl+C.</summary>
+    public const char CopyCharacter = '\u0003';
+
+    /// <summary>The CAN control character: an edit control takes it, typed as a character, as Ctrl+X.</summary>
+    public const char CutCharacter = '\u0018';
+
     /// <summary>
     /// The window classes of terminals in which a right click pastes the clipboard: the console host (with QuickEdit),
     /// Windows Terminal, PuTTY and KiTTY, mintty and ConEmu.
@@ -189,6 +205,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     private uint? _agentCopy;
     private uint? _userAllowed;
     private Pending? _pending;
+    private CopyKeysSend? _copyKeys;
     private ITimer? _timer;
 
     /// <param name="clipboard">The clipboard, for its sequence number and owner.</param>
@@ -218,9 +235,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     public static ClipboardCopyTrigger? CopyTrigger(IReadOnlyList<InputEvent> batch)
     {
         ArgumentNullException.ThrowIfNull(batch);
-        if (SendKeysParser.Chords(batch).Any(chord => chord.Kind == InputEventKind.VirtualKey &&
-                (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code is VkC or VkX or NativeEnums.VK_INSERT) ||
-                 ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_DELETE))))
+        if (SendKeysParser.Chords(batch).Any(IsCopyKeys))
         {
             return ClipboardCopyTrigger.CopyKeys;
         }
@@ -254,11 +269,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             return ClipboardPasteKind.History;
         }
 
-        if (chords.Any(chord =>
-                (chord.Kind == InputEventKind.VirtualKey &&
-                 (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code == VkV) ||
-                  ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_INSERT))) ||
-                (chord.Kind == InputEventKind.Unicode && chord.Code == PasteCharacter)))
+        if (chords.Any(IsPasteKeys))
         {
             return ClipboardPasteKind.Paste;
         }
@@ -268,6 +279,68 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             ? ClipboardPasteKind.Paste
             : null;
     }
+
+    /// <summary>
+    /// True when <paramref name="batch"/> copies and then pastes: copy keys (Ctrl+C, Ctrl+X, Ctrl+Insert, Shift+Delete),
+    /// or the ETX or CAN character (<see cref="CopyCharacter"/>, <see cref="CutCharacter"/>), followed later in the batch
+    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right click when
+    /// <paramref name="receivingClass"/> is a terminal's). Such a paste pastes what the copy takes, which no check made
+    /// before the batch is sent can see.
+    /// </summary>
+    /// <param name="batch">The input of one call.</param>
+    /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
+    public static bool CopiesBeforePaste(IReadOnlyList<InputEvent> batch, string? receivingClass = null)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        var chords = SendKeysParser.IndexedChords(batch);
+        var firstCopy = -1;
+        foreach (var (chord, index) in chords)
+        {
+            if (IsCopyKeys(chord) || (chord.Kind == InputEventKind.Unicode && chord.Code is CopyCharacter or CutCharacter))
+            {
+                firstCopy = index;
+                break;
+            }
+        }
+
+        if (firstCopy < 0)
+        {
+            return false;
+        }
+
+        if (chords.Any(c => c.Index > firstCopy && IsPasteKeys(c.Chord)))
+        {
+            return true;
+        }
+
+        if (receivingClass == null || !RightClickPasteClasses.Contains(receivingClass))
+        {
+            return false;
+        }
+
+        for (var i = firstCopy + 1; i < batch.Count; i++)
+        {
+            if (batch[i].Kind == InputEventKind.Mouse && (batch[i].Flags & NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Ctrl+C, Ctrl+X or Ctrl+Insert (with any other modifiers), or Shift+Delete.</summary>
+    private static bool IsCopyKeys(KeyChord chord) =>
+        chord.Kind == InputEventKind.VirtualKey &&
+        (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code is VkC or VkX or NativeEnums.VK_INSERT) ||
+         ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_DELETE));
+
+    /// <summary>Ctrl+V or Shift+Insert (with any other modifiers), or the SYN character.</summary>
+    private static bool IsPasteKeys(KeyChord chord) =>
+        (chord.Kind == InputEventKind.VirtualKey &&
+         (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code == VkV) ||
+          ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_INSERT))) ||
+        (chord.Kind == InputEventKind.Unicode && chord.Code == PasteCharacter);
 
     public ClipboardCopyMark? BeforeInput(IReadOnlyList<InputEvent> batch, int targetProcessId, nint receivingWindow = 0,
         nint anchorWindow = 0)
@@ -295,6 +368,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         lock (_lock)
         {
             var now = _time.GetTimestamp();
+            if (mark.Trigger == ClipboardCopyTrigger.CopyKeys)
+            {
+                // Pending until the application copies, whether or not the keys open or join a copy window below
+                _copyKeys = new CopyKeysSend(now, mark.TargetProcessId, mark.SequenceBefore);
+            }
+
             if (_pending is { FirstCopyAt: null } run && run.Mark.TargetProcessId == mark.TargetProcessId &&
                 _time.GetElapsedTime(run.Start) <= run.Length)
             {
@@ -411,6 +490,13 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
 
             _agentCopy = sequenceNumber;
             candidateRun.FirstCopyAt ??= _time.GetTimestamp();
+            if (_copyKeys is { } keys && keys.TargetProcessId == candidateRun.Mark.TargetProcessId &&
+                keys.SequenceBefore != sequenceNumber)
+            {
+                // The copy the keys asked for
+                _copyKeys = null;
+            }
+
             _emptyRuns.Remove(candidateRun.Mark.TargetProcessId);
         }
     }
@@ -453,12 +539,71 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         }
 
         Poll();
+        CopyKeysSend keys;
         lock (_lock)
         {
-            return _pending is { Mark.Trigger: ClipboardCopyTrigger.CopyKeys, FirstCopyAt: null } pending &&
-                   pending.Mark.SequenceBefore == sequenceNumber &&
-                   _time.GetElapsedTime(pending.Start) <= pending.Length;
+            if (CurrentCopyKeys() is not { } current)
+            {
+                return false;
+            }
+
+            if (current.SequenceBefore == sequenceNumber)
+            {
+                return true;
+            }
+
+            keys = current;
         }
+
+        // The clipboard changed since the keys: they are done when the application they went to changed it (read without
+        // the lock, native calls; the owner counts only when the number did not change around its read). A change by
+        // another application, or by an unknown one, leaves them pending: the application may still copy.
+        var now = _clipboard.GetSequenceNumber();
+        var ownerProcessId = _clipboard.GetOwnerProcessId();
+        var copied = keys.TargetProcessId != 0 && ownerProcessId == keys.TargetProcessId && now != keys.SequenceBefore &&
+                     _clipboard.GetSequenceNumber() == now;
+
+        lock (_lock)
+        {
+            if (!ReferenceEquals(_copyKeys, keys))
+            {
+                // Copy keys sent meanwhile replaced the ones read, and are pending
+                return CurrentCopyKeys() != null;
+            }
+
+            if (copied)
+            {
+                _copyKeys = null;
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public bool IsUnchangedSinceCopyKeys(uint sequenceNumber)
+    {
+        if (sequenceNumber == 0)
+        {
+            return false;
+        }
+
+        Poll();
+        lock (_lock)
+        {
+            return CurrentCopyKeys()?.SequenceBefore == sequenceNumber;
+        }
+    }
+
+    /// <summary>The agent's last copy keys while within <see cref="CopyKeysWindow"/>; null otherwise. Under the lock.</summary>
+    private CopyKeysSend? CurrentCopyKeys()
+    {
+        if (_copyKeys != null && _time.GetElapsedTime(_copyKeys.SentAt) > CopyKeysWindow)
+        {
+            _copyKeys = null;
+        }
+
+        return _copyKeys;
     }
 
     public bool IsServerText(string? text, int textLength)
@@ -573,6 +718,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
         _timer?.Dispose();
         _timer = null;
     }
+
+    /// <summary>The agent's last copy keys, pending (see <see cref="IsCopyPending"/>) until their application copies.</summary>
+    /// <param name="SentAt">When they were sent.</param>
+    /// <param name="TargetProcessId">The process they went to; 0 when not known.</param>
+    /// <param name="SequenceBefore">The clipboard's sequence number right before they were sent.</param>
+    private sealed record CopyKeysSend(long SentAt, int TargetProcessId, uint SequenceBefore);
 
     /// <summary>A copy window: the input of one run to one application, until it copies or the window passes.</summary>
     private sealed class Pending

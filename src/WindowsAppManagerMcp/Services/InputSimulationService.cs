@@ -438,6 +438,14 @@ public class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.EmptyText);
         }
 
+        // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
+        // later one would paste what the copy took unchecked, so the order is checked on the whole text first
+        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(UnicodeInputs(text), receivingClass: null,
+                "Nothing was typed.") is { } copyThenPaste)
+        {
+            return new TypeTextResult(false, text, 0, copyThenPaste, InputErrorCode.PasteNotAllowed);
+        }
+
         delayBetweenKeysMs = Math.Clamp(delayBetweenKeysMs, 0, 100);
         var charactersTyped = 0;
 
@@ -511,12 +519,7 @@ public class InputSimulationService : IInputSimulationService
                         }, approved));
                     }
 
-                    var inputs = new List<InputEvent>(batch.Length * 2);
-                    foreach (var character in batch)
-                    {
-                        inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
-                        inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
-                    }
+                    var inputs = UnicodeInputs(batch);
 
                     // The SYN character pastes in an edit control, as Ctrl+V does
                     if (PasteRefusal(inputs, approved) is { } pasteRefused)
@@ -1162,6 +1165,19 @@ public class InputSimulationService : IInputSimulationService
             yield return text.Substring(start, length);
             start += length;
         }
+    }
+
+    /// <summary>A key-down and key-up as Unicode for every UTF-16 code unit of <paramref name="text"/>.</summary>
+    private static List<InputEvent> UnicodeInputs(string text)
+    {
+        var inputs = new List<InputEvent>(text.Length * 2);
+        foreach (var character in text)
+        {
+            inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
+            inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
+        }
+
+        return inputs;
     }
 
     private static string Describe(WindowSummary? window) => window switch
