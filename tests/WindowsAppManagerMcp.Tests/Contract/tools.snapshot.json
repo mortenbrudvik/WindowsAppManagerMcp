@@ -2413,6 +2413,11 @@
             "description": "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; never a terminal for cmd or powershell, or a browser for a web address), and of expectWindow.processName when set; when the launch opens a file, folder or web address, its title must show that name (or expectWindow.titleContains). The front-most match is used, nothing is started, and launchStatus is alreadyOpen",
             "type": "boolean",
             "default": false
+          },
+          "forceAccessibility": {
+            "description": "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, so get_ui_elements sees its web content from the first read (default false). Added only when the executable is such a program's .exe (for VS Code Code.exe, not code); otherwise nothing is added and warning says why. forceAccessibilityApplied reports it. An app that is already running keeps its mode: close it first",
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [
