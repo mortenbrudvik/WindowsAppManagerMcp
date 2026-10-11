@@ -14,14 +14,22 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// target, that (1) the target owns, directly or through other owned windows (GW_OWNER, which includes its enabled popup,
 /// GW_ENABLEDPOPUP, and an owned window of another process); or (2) belong to the target's process (for a UWP frame, the
 /// app's process, not the ApplicationFrameHost every UWP app shares; one process has one or more threads, so this covers
-/// the target's thread) and are owned by another window, have no title bar or are tool windows, or are dialog boxes
-/// (#32770), so another main window of the same process (a second Explorer, browser or Notepad window) is not a popup; or
-/// (3) are popups (no title bar, or a tool window) of a direct child process of the target's (msedgewebview2.exe for a
-/// WebView2 pane), checked against one process snapshot with the start times, so a reused process id does not count, and
-/// never for the desktop shell (explorer.exe starts almost every program the user opens). The desktop, the taskbars and the
-/// hidden input helper windows (IME, MSCTFIME UI, GDI+ hook) are never popups. Rules (2) and (3) mirror the input guard's
-/// test for a window that belongs to the target (InputTargetGuard.BelongsToTarget), so a click the guard accepts and a
-/// popup this service names agree. Ordered front to back (z-order), at most <see cref="PopupService.MaxPopups"/>.</para>
+/// the target's thread) and are not tied to another of its main windows: unowned windows with no title bar or tool
+/// windows (a context menu, a dropdown, a palette), unowned dialog boxes (#32770) while the process shows no main window
+/// other than the target, and windows owned by a hidden or popup-styled window (a WinForms parking window, a Delphi or Qt
+/// application window); or (3) are popups (no title bar, or a tool window) of a direct child process of the target's
+/// (msedgewebview2.exe for a WebView2 pane), checked against one process snapshot with the start times, so a reused process
+/// id does not count, and never for the desktop shell (explorer.exe starts almost every program the user opens). A window
+/// owned by another main window of the process (a dialog or popup of a second Word, Explorer or Notepad window) is that
+/// window's, never the target's, and another main window itself is not a popup. The desktop, the taskbars and the hidden
+/// input helper windows (IME, MSCTFIME UI, GDI+ hook) are never popups. Ordered front to back (z-order), at most
+/// <see cref="PopupService.MaxPopups"/>.</para>
+/// <para><b>Against the input guard.</b> The guard's test for a window that belongs to the target
+/// (InputTargetGuard.BelongsToTarget) answers where a click may land, so it is wider: it accepts any popup-styled window of
+/// the target's process, also one that another main window owns, and it does not accept a captioned dialog box that the
+/// target does not own. Every popup this service names that has no title bar, or that the target owns, the guard accepts
+/// too; an unowned captioned dialog box or a captioned window owned by a hidden window it may refuse (TargetOccluded), so
+/// act on such a dialog by naming it as the target.</para>
 /// <para><b>Cost.</b> <see cref="GetPopups"/>, <see cref="IsInForeground"/> and <see cref="GetDesktopWindows"/> only read
 /// Win32 state that Windows answers without the windows' threads (no UI Automation call, no message to a window): call them
 /// on any thread. The child-process rule takes one process snapshot, and only when a window of another process could be
@@ -38,6 +46,9 @@ public interface IPopupService
 {
     /// <summary>The open popups of <paramref name="window"/>, front first (see the remarks); empty when it is no window.</summary>
     IReadOnlyList<PopupWindow> GetPopups(nint window);
+
+    /// <summary><see cref="GetPopups"/>, and whether more popups were open than it lists (find_ui_elements reports that).</summary>
+    PopupList GetPopupList(nint window);
 
     /// <summary>
     /// True when the window in front is <paramref name="window"/>, a window it owns (a dialog it opened), or another window
@@ -72,7 +83,10 @@ public interface IPopupService
     /// <summary>
     /// Waits up to <paramref name="wait"/> for a popup of <paramref name="window"/> whose handle is not in
     /// <paramref name="before"/> (the handles of <see cref="GetPopups"/> taken before acting), checking every 50 ms. Returns
-    /// the front one, or null when none opened in time. Only reads Win32 state.
+    /// the front one, or null when none opened in time. Tooltips are never returned: one that shows because the pointer
+    /// rests on the control is not what the action opened. The target's child processes (one process snapshot) are read
+    /// again at most once a second (<see cref="PopupService.ChildProcessRefresh"/>), not on every check. Only reads Win32
+    /// state.
     /// </summary>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task<PopupWindow?> WaitForNewPopupAsync(

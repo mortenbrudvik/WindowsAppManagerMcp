@@ -25,11 +25,19 @@ namespace WindowsAppManagerMcp.Services;
 /// own), front first and before the window, since an open popup is in front of it; <see cref="ElementSearchScope.Desktop"/>
 /// searches the windows of <see cref="IPopupService.GetDesktopWindows"/> (the named window first). Every window is searched
 /// under the one deadline, the one maxResults and the one candidate limit (each window's search gets what the windows before
-/// it left), so a scope never multiplies the cost. Each match is registered under its own top-level window, the window a
-/// resolution searches. Only the named window is warmed up and searched below withinRef; it not responding or not being
-/// found fails the call as before, while another window that does not respond or closed meanwhile is skipped and counted
-/// (truncationReason PartsSkipped). Uniqueness (below) is judged per window, and the extra search that proves a single
-/// visible match unique runs only when the whole search found one match.</para>
+/// it left, and the popups searched before the named window leave it <see cref="NamedWindowCandidateReserve"/>), so a scope
+/// never multiplies the cost and a large popup cannot crowd out the window the caller named. Each match is registered under
+/// its own top-level window, the window a resolution searches. Only the named window is warmed up and searched below
+/// withinRef; it not responding or not being found fails the call as before, while another window that does not respond,
+/// closed meanwhile, fails or does not answer in time while the deadline has not passed is skipped and counted
+/// (truncationReason PartsSkipped), and the search goes on with the next window. More popups than
+/// <see cref="PopupService.MaxPopups"/> is truncationReason WindowLimit. Uniqueness (below) is judged per window, and the
+/// extra searches that prove single visible matches unique share one <see cref="UniquenessBudget"/>, the named window's
+/// first.</para>
+/// <para>The whole search is one worker read, counted against the named window's application (or the unknown-target
+/// bucket for a desktop search that names no window): a provider stuck in another window of the scope, such as a WebView2
+/// child process or one of the desktop's windows, counts against that application's stuck reads too. Windows that do not
+/// respond are skipped before they are read, which keeps that rare.</para>
 /// <para>A search the managed client cannot express (AppBar or SemanticZoom) runs again with the control types tested on
 /// the server. Reads of a match's details that fail leave those fields out; once the deadline has passed, or a provider did
 /// not answer in time, the remaining matches are described from what the search read (no further call). A read the worker
@@ -43,7 +51,16 @@ public sealed class ElementSearchService : IElementSearchService
     /// <summary>The default timeout of a search.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 
-    /// <summary>The most time the search that proves a single match unique may take (it ends earlier at the deadline).</summary>
+    /// <summary>
+    /// The share of the candidate limit the popups searched first leave to the named window of a windowAndPopups search,
+    /// so a popup with thousands of elements cannot keep the window the caller named from being searched.
+    /// </summary>
+    public const int NamedWindowCandidateReserve = ElementSearch.MaxCandidates / 2;
+
+    /// <summary>
+    /// The most time the searches that prove single matches unique may take together, one per window (they end earlier at
+    /// the deadline).
+    /// </summary>
     public static readonly TimeSpan UniquenessBudget = TimeSpan.FromSeconds(1);
 
     /// <summary>How long to keep waiting after the timeout for the search to stop and hand back what it found.</summary>
@@ -179,11 +196,16 @@ public sealed class ElementSearchService : IElementSearchService
         return query.Scope ?? (_popups.IsInForeground(query.WindowHandle) ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window);
     }
 
-    /// <summary>The windows a scope covers, in the order searched, and how many it left out (desktop only).</summary>
+    /// <summary>
+    /// The windows a scope covers, in the order searched, how many it left out (desktop only), and how many were over its
+    /// limit (for windowAndPopups, 1 when more popups were open than <see cref="PopupService.MaxPopups"/>).
+    /// </summary>
     private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(nint handle, ElementSearchScope scope) => scope switch
     {
         ElementSearchScope.WindowAndPopups when _popups != null =>
-            ([.. _popups.GetPopups(handle).Select(p => p.Handle), handle], 0, 0),
+            _popups.GetPopupList(handle) is { } list
+                ? ([.. list.Popups.Select(p => p.Handle), handle], 0, list.Truncated ? 1 : 0)
+                : ([handle], 0, 0),
         ElementSearchScope.Desktop when _popups != null =>
             _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
         _ => ([handle], 0, 0)
@@ -267,8 +289,9 @@ public sealed class ElementSearchService : IElementSearchService
             var (windows, excluded, overLimit) = WindowsOf(handle, scope);
             var compiled = criteria.Compile();
             var controlTypesOnServer = false;
-            foreach (var target in windows)
+            for (var index = 0; index < windows.Count; index++)
             {
+                var target = windows[index];
                 if (token.IsCancellationRequested)
                 {
                     started.Stop(ElementSearchStop.Timeout);
@@ -283,9 +306,28 @@ public sealed class ElementSearchService : IElementSearchService
                 }
 
                 var isNamed = target == handle;
+
+                // The popups searched before the named window leave it a share of the candidate limit, so a large palette
+                // cannot keep the window the caller named from being searched
+                if (!isNamed && handle != nint.Zero && windows.Skip(index + 1).Contains(handle))
+                {
+                    candidatesLeft -= NamedWindowCandidateReserve;
+                    if (candidatesLeft <= 0)
+                    {
+                        started.Stop(ElementSearchStop.CandidateLimit);
+                        continue;
+                    }
+                }
+
                 var node = isNamed ? root : OpenOther(target);
                 if (node == null)
                 {
+                    if (token.IsCancellationRequested)
+                    {
+                        started.Stop(ElementSearchStop.Timeout);
+                        break;
+                    }
+
                     started.SkipWindow();
                     continue;
                 }
@@ -294,27 +336,37 @@ public sealed class ElementSearchService : IElementSearchService
                 ElementSearchOutcome outcome;
                 try
                 {
-                    outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                    try
+                    {
+                        outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                    }
+                    catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
+                    {
+                        // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this
+                        // window and the next ones
+                        controlTypesOnServer = true;
+                        compiled = criteria.Compile(controlTypesOnServer: true);
+                        outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                    }
                 }
-                catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
+                catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
+                                           ex is not (OperationCanceledException or RegexMatchTimeoutException))
                 {
-                    // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this
-                    // window and the next ones
-                    controlTypesOnServer = true;
-                    compiled = criteria.Compile(controlTypesOnServer: true);
-                    outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
-                }
-                catch (Exception ex) when (!isNamed && ex is not (TimeoutException or OperationCanceledException or
-                                                                  System.Text.RegularExpressions.RegexMatchTimeoutException))
-                {
-                    // A popup that closed meanwhile, or whose provider failed: the other windows are still searched
+                    // A popup that closed meanwhile, or whose provider failed or did not answer in time: the other windows
+                    // are still searched
                     started.Abandon(target);
                     started.SkipWindow();
                     continue;
                 }
 
+                if (!isNamed && outcome.Stop == ElementSearchStop.Timeout && !token.IsCancellationRequested)
+                {
+                    // A popup whose provider did not answer in time, with time left: a part skipped, not the end of the search
+                    outcome = outcome with { Stop = ElementSearchStop.None, SkippedParts = outcome.SkippedParts + 1 };
+                }
+
                 started.Complete(target, node, outcome);
-                if (outcome.Stop != ElementSearchStop.None)
+                if (outcome.Stop != ElementSearchStop.None && (isNamed || token.IsCancellationRequested))
                 {
                     break;
                 }
@@ -330,7 +382,7 @@ public sealed class ElementSearchService : IElementSearchService
             }
 
             var unique = query.WithinRef == null
-                ? Uniqueness(criteria, controlTypesOnServer, started.Searched, total.MatchCount, token)
+                ? Uniqueness(criteria, controlTypesOnServer, started.Searched, handle, token)
                 : _ => null;
             var result = Result(query, withinRef, title, total,
                 Describe(query, criteria, total.Matches, generation, mayRead: true, unique, token), started.Warmup, stopwatch);
@@ -373,7 +425,8 @@ public sealed class ElementSearchService : IElementSearchService
 
     /// <summary>
     /// The node of a window of the scope other than the named one, or null when it must be skipped: it does not respond
-    /// (it would hold the search until the deadline), it closed, or UI Automation cannot read it.
+    /// (it would hold the search until the deadline), it closed, UI Automation cannot read it, or its provider did not
+    /// answer in time (a slow WebView2 popup; the caller tells the deadline apart by its token).
     /// </summary>
     private IUiaNode? OpenOther(nint window)
     {
@@ -386,7 +439,7 @@ public sealed class ElementSearchService : IElementSearchService
         {
             return _tree.FromHandle(window);
         }
-        catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return null;
         }
@@ -407,11 +460,15 @@ public sealed class ElementSearchService : IElementSearchService
     /// caller asks nothing).
     /// </summary>
     private Func<UiaElement, bool?> Uniqueness(
-        ElementCriteria criteria, bool controlTypesOnServer, IReadOnlyList<SearchedWindow> searched, int totalMatches,
+        ElementCriteria criteria, bool controlTypesOnServer, IReadOnlyList<SearchedWindow> searched, nint named,
         CancellationToken token)
     {
         var verdicts = new Dictionary<UiaElement, bool?>(ReferenceEqualityComparer.Instance);
-        foreach (var window in searched)
+
+        // One budget for every window's proof, the named window's first
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(UniquenessBudget);
+        foreach (var window in searched.OrderBy(w => w.Handle == named ? 0 : 1))
         {
             var outcome = window.Outcome;
             var matches = window.Kept;
@@ -452,7 +509,7 @@ public sealed class ElementSearchService : IElementSearchService
                 continue;
             }
 
-            if (outcome.MatchCount != 1 || totalMatches != 1 || matches.Count != 1 || token.IsCancellationRequested)
+            if (outcome.MatchCount != 1 || matches.Count != 1 || budget.IsCancellationRequested)
             {
                 foreach (var match in matches)
                 {
@@ -462,9 +519,9 @@ public sealed class ElementSearchService : IElementSearchService
                 continue;
             }
 
-            // A single match among the visible or enabled ones: an offscreen or disabled twin would not have been found, so
-            // search the window for its identity alone
-            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window.Node, token);
+            // A single match in its window among the visible or enabled ones: an offscreen or disabled twin would not have
+            // been found, so search the window for its identity alone
+            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window.Node, budget.Token);
         }
 
         return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
@@ -474,17 +531,16 @@ public sealed class ElementSearchService : IElementSearchService
     /// True when one more search of the window finds no other element that the criteria and the match's fingerprint fit,
     /// false when it finds one, null when it could not tell.
     /// </summary>
-    private bool? ProveAlone(ElementCriteria identity, bool controlTypesOnServer, UiaElement match, IUiaNode window, CancellationToken token)
+    /// <param name="budget">The deadline, or the end of <see cref="UniquenessBudget"/> when that comes first.</param>
+    private bool? ProveAlone(ElementCriteria identity, bool controlTypesOnServer, UiaElement match, IUiaNode window, CancellationToken budget)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(UniquenessBudget);
         try
         {
             var (condition, filter) = identity.Compile(controlTypesOnServer);
             var fingerprint = ElementRegistry.Fingerprint(match, null);
             var proof = new ElementSearch(
                     _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2)
-                .Run(window, budget.Token);
+                .Run(window, budget);
             return proof.MatchCount switch
             {
                 > 1 => false,

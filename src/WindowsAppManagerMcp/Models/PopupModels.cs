@@ -101,6 +101,11 @@ public sealed record PopupWindow(
 /// <param name="OverLimit">Visible windows left out because the limit was reached (the ones furthest back).</param>
 public sealed record DesktopWindowSet(IReadOnlyList<nint> Windows, int Excluded, int OverLimit);
 
+/// <summary>The open popups of a window (<see cref="Services.Interfaces.IPopupService.GetPopupList"/>).</summary>
+/// <param name="Popups">The popups, front first, at most <see cref="Services.PopupService.MaxPopups"/>.</param>
+/// <param name="Truncated">More popups were open; the ones furthest back are left out.</param>
+public sealed record PopupList(IReadOnlyList<PopupWindow> Popups, bool Truncated);
+
 /// <summary>An open popup of the target app, as get_active_popups returns it (roadmap M3.5).</summary>
 /// <param name="Ref">The ref of the popup window's own element, for find_ui_elements withinRef and the element tools; null
 /// when UI Automation could not read the popup (it did not respond, or closed meanwhile).</param>

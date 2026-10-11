@@ -51,11 +51,14 @@ public sealed class FakeUiaTree : IUiaTree
 
     public bool IsAvailable() => Available;
 
+    /// <summary>Thrown by <see cref="FromHandle"/> for one window when it returns an exception for that handle.</summary>
+    public Func<nint, Exception?>? FromHandleFailure { get; set; }
+
     public IUiaNode? FromHandle(nint windowHandle)
     {
-        if (FromHandleException != null)
+        if ((FromHandleException ?? FromHandleFailure?.Invoke(windowHandle)) is { } failure)
         {
-            throw FromHandleException;
+            throw failure;
         }
 
         return _windows.TryGetValue(windowHandle, out var window) ? window : null;

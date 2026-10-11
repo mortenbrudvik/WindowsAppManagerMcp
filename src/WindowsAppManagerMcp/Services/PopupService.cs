@@ -17,6 +17,9 @@ public sealed class PopupService : IPopupService
     /// <summary>How often <see cref="WaitForNewPopupAsync"/> looks for a new popup.</summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>How long <see cref="WaitForNewPopupAsync"/> keeps the target's child processes before it reads them again.</summary>
+    public static readonly TimeSpan ChildProcessRefresh = TimeSpan.FromSeconds(1);
+
     /// <summary>How long get_active_popups keeps waiting after its timeout for the reads to hand back what they have.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(1);
 
@@ -90,7 +93,17 @@ public sealed class PopupService : IPopupService
     /// <inheritdoc />
     public IReadOnlyList<PopupWindow> GetPopups(nint window) => Popups(window, out _);
 
-    private List<PopupWindow> Popups(nint window, out bool truncated)
+    /// <inheritdoc />
+    public PopupList GetPopupList(nint window)
+    {
+        var popups = Popups(window, out var truncated);
+        return new PopupList(popups, truncated);
+    }
+
+    /// <param name="window">The window.</param>
+    /// <param name="truncated">More than <see cref="MaxPopups"/> popups were open.</param>
+    /// <param name="target">The target's processes when the caller keeps them across calls (a wait); a new snapshot otherwise.</param>
+    private List<PopupWindow> Popups(nint window, out bool truncated, TargetProcesses? target = null)
     {
         truncated = false;
         var popups = new List<PopupWindow>();
@@ -99,13 +112,15 @@ public sealed class PopupService : IPopupService
             return popups;
         }
 
-        var target = new TargetProcesses(this, window);
+        target ??= new TargetProcesses(this, window);
         var enabledPopup = EnabledPopupOf(window);
         var shell = new ShellWindow(_windows);
         var selfProcess = _windows.GetCurrentProcessId();
 
         // Collected first: no window is read inside the enumeration callback
-        foreach (var candidate in TopLevelWindows())
+        var topLevel = TopLevelWindows();
+        var mainWindows = new MainWindows(this, window, target, topLevel);
+        foreach (var candidate in topLevel)
         {
             if (candidate == window || !IsShown(candidate, out var bounds))
             {
@@ -122,7 +137,7 @@ public sealed class PopupService : IPopupService
             var style = (long)_windows.GetWindowLongPtr(candidate, NativeEnums.GWL_STYLE);
             var exStyle = (long)_windows.GetWindowLongPtr(candidate, NativeEnums.GWL_EXSTYLE);
             var owner = _windows.GetWindow(candidate, NativeEnums.GW_OWNER);
-            if (Relation(candidate, window, className, processId, owner, style, exStyle, target, shell) is not { } relation)
+            if (Relation(candidate, window, className, processId, owner, style, exStyle, target, shell, mainWindows) is not { } relation)
             {
                 continue;
             }
@@ -151,23 +166,64 @@ public sealed class PopupService : IPopupService
     /// <summary>Why <paramref name="candidate"/> is a popup of <paramref name="window"/>, or null when it is not one.</summary>
     private PopupRelation? Relation(
         nint candidate, nint window, string className, uint processId, nint owner, long style, long exStyle,
-        TargetProcesses target, ShellWindow shell)
+        TargetProcesses target, ShellWindow shell, MainWindows mainWindows)
     {
-        if (owner != nint.Zero && WindowOwnerChain.SelfAndOwners(_windows, candidate).Skip(1).Contains(window))
+        if (owner != nint.Zero)
         {
-            return PopupRelation.Owned;
+            var chain = WindowOwnerChain.SelfAndOwners(_windows, candidate);
+            if (chain.Skip(1).Contains(window))
+            {
+                return PopupRelation.Owned;
+            }
+
+            // Owned by another window: the window at the top of its chain says whose it is. Another main window of the
+            // process (a second Word or Explorer window) keeps its dialogs and popups; a hidden owner (a WinForms parking
+            // window, a Delphi or Qt application window) or a popup-styled one ties it to no main window
+            if (!OwnerLeavesItToTheProcess(chain.Count > 1 ? chain[^1] : owner, target, mainWindows))
+            {
+                return null;
+            }
+
+            if (target.Contains(processId))
+            {
+                return PopupRelation.SameProcess;
+            }
+        }
+        else if (target.Contains(processId))
+        {
+            return IsProcessLevel(style, exStyle, className, mainWindows) ? PopupRelation.SameProcess : null;
         }
 
-        var popupStyle = IsPopupStyle(style, exStyle);
-        if (target.Contains(processId))
-        {
-            return owner != nint.Zero || popupStyle || WindowClassification.IsDialogClass(className)
-                ? PopupRelation.SameProcess
-                : null;
-        }
-
-        return popupStyle && !target.IsShell(shell) && target.IsChild(processId) ? PopupRelation.ChildProcess : null;
+        return IsPopupStyle(style, exStyle) && !target.IsShell(shell) && target.IsChild(processId) ? PopupRelation.ChildProcess : null;
     }
+
+    /// <summary>
+    /// Whether the unowned window at the top of an owner chain (not the target) leaves the windows it owns to the process
+    /// rules: it is hidden or popup-styled, or it is a dialog box of the target's process that counts as a popup itself. A
+    /// visible app window does not: it is another main window, and its dialogs and popups are its own.
+    /// </summary>
+    private bool OwnerLeavesItToTheProcess(nint root, TargetProcesses target, MainWindows mainWindows)
+    {
+        if (!_windows.IsWindowVisible(root))
+        {
+            return true;
+        }
+
+        var style = (long)_windows.GetWindowLongPtr(root, NativeEnums.GWL_STYLE);
+        var exStyle = (long)_windows.GetWindowLongPtr(root, NativeEnums.GWL_EXSTYLE);
+        return IsPopupStyle(style, exStyle) ||
+               (target.Contains(_windows.GetWindowThreadProcessId(root)) &&
+                IsProcessLevel(style, exStyle, _windows.GetClassName(root) ?? string.Empty, mainWindows));
+    }
+
+    /// <summary>
+    /// An unowned window of the target's process that is not tied to one of its main windows: popup-styled (a context menu,
+    /// a dropdown, a palette, as the input guard counts them), or a dialog box (#32770) while the process shows no main
+    /// window other than the target, since with two main windows nothing says whose dialog it is.
+    /// </summary>
+    private static bool IsProcessLevel(long style, long exStyle, string className, MainWindows mainWindows) =>
+        IsPopupStyle(style, exStyle) ||
+        (WindowClassification.IsDialogClass(className) && !mainWindows.OtherThanTargetExist);
 
     /// <summary>
     /// A window without the look of an app window: no title bar (or a tool window), and not forced into the taskbar with
@@ -476,10 +532,22 @@ public sealed class PopupService : IPopupService
     {
         ArgumentNullException.ThrowIfNull(before);
         var started = _clock.GetTimestamp();
+        TargetProcesses? target = null;
+        var targetRead = started;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (GetPopups(window).FirstOrDefault(p => !before.Contains(p.Handle)) is { } opened)
+
+            // The target's child processes (one process snapshot) are kept for a while, not read again every poll
+            if (target == null || _clock.GetElapsedTime(targetRead) >= ChildProcessRefresh)
+            {
+                target = window != nint.Zero && _windows.IsWindow(window) ? new TargetProcesses(this, window) : null;
+                targetRead = _clock.GetTimestamp();
+            }
+
+            // A tooltip that shows because the pointer rests on the control is not what the action opened
+            if (Popups(window, out _, target).FirstOrDefault(p => p.Kind != PopupKind.Tooltip && !before.Contains(p.Handle)) is
+                { } opened)
             {
                 return opened;
             }
@@ -576,6 +644,32 @@ public sealed class PopupService : IPopupService
 
         public bool Contains(nint window, string className, uint processId) =>
             WindowClassification.IsShellWindow(window, className, processId, _window, ProcessId);
+    }
+
+    /// <summary>
+    /// Whether the target's process shows a main window other than the target: visible, uncloaked, unowned, with the look of
+    /// an app window, and not a dialog box. Read once, when a dialog box first asks.
+    /// </summary>
+    private sealed class MainWindows(PopupService owner, nint target, TargetProcesses processes, IReadOnlyList<nint> topLevel)
+    {
+        private bool? _otherExists;
+
+        public bool OtherThanTargetExist => _otherExists ??= topLevel.Any(IsOtherMainWindow);
+
+        private bool IsOtherMainWindow(nint window)
+        {
+            var windows = owner._windows;
+            if (window == target || !processes.Contains(windows.GetWindowThreadProcessId(window)) ||
+                windows.GetWindow(window, NativeEnums.GW_OWNER) != nint.Zero || !owner.IsShown(window, out _))
+            {
+                return false;
+            }
+
+            var className = windows.GetClassName(window) ?? string.Empty;
+            return !HelperWindowClasses.Contains(className) && !WindowClassification.IsDialogClass(className) &&
+                   !IsPopupStyle((long)windows.GetWindowLongPtr(window, NativeEnums.GWL_STYLE),
+                       (long)windows.GetWindowLongPtr(window, NativeEnums.GWL_EXSTYLE));
+        }
     }
 
     /// <summary>The target's process (for a UWP frame its app's), and its direct children from one process snapshot.</summary>

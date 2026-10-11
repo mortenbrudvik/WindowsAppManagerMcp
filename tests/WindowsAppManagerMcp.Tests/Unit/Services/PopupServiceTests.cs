@@ -80,21 +80,72 @@ public class PopupServiceTests
     }
 
     [Fact]
-    public void GetPopups_LeavesOutAnotherMainWindowOfTheSameProcess_ButKeepsItsDialogsAndToolWindows()
+    public void GetPopups_LeavesOutAnotherMainWindowOfTheSameProcess_AndAnUnownedDialogBoxNobodyCanAttribute()
     {
         // Arrange - one process shows two main windows (a second browser or Explorer window), a tool palette and an unowned
-        // message box
+        // message box, which could be either window's
         var main = AddMain("Window A", processId: 500);
         AddMain("Window B", processId: 500);
         var palette = AddPopup("Colors", "Palette", processId: 500, style: WsCaption, extendedStyle: WsExToolWindow);
-        var messageBox = AddPopup("Error", "#32770", processId: 500, style: WsCaption);
+        AddPopup("Error", "#32770", processId: 500, style: WsCaption);
         AddPopup("Forced into the taskbar", "Splash", processId: 500, extendedStyle: WsExAppWindow);
 
         // Act
         var popups = CreateSut().GetPopups(main);
 
         // Assert
-        popups.Select(p => (p.Handle, p.Kind)).Should().Equal((palette, PopupKind.Window), (messageBox, PopupKind.Dialog));
+        popups.Select(p => (p.Handle, p.Kind)).Should().Equal((palette, PopupKind.Window));
+    }
+
+    [Fact]
+    public void GetPopups_KeepsAnUnownedDialogBoxOfTheProcess_WhenTheWindowIsItsOnlyMainWindow()
+    {
+        var main = AddMain("Editor", processId: 500);
+        var messageBox = AddPopup("Error", "#32770", processId: 500, style: WsCaption);
+        AddMain("Other app", processName: "other");
+
+        var popups = CreateSut().GetPopups(main);
+
+        popups.Should().ContainSingle().Which.Should().Match<PopupWindow>(p =>
+            p.Handle == messageBox && p.Kind == PopupKind.Dialog && p.Relation == PopupRelation.SameProcess);
+    }
+
+    [Fact]
+    public void GetPopups_LeavesOutTheDialogsAndPopupsAnotherMainWindowOfTheSameProcessOwns()
+    {
+        // Arrange - Word document B's dialog and its tooltip, and the Properties dialog of a dialog B owns, are B's: a search
+        // of document A must not find their buttons
+        var documentA = AddMain("Report.docx", processId: 500);
+        var documentB = AddMain("Letter.docx", processId: 500);
+        var dialogOfB = AddPopup("Font", "#32770", processId: 500, style: WsCaption, owner: documentB);
+        AddPopup("", "tooltips_class32", processId: 500, owner: documentB);
+        AddPopup("Properties", "#32770", processId: 500, style: WsCaption, owner: dialogOfB);
+        var dialogOfA = AddPopup("Paragraph", "#32770", processId: 500, style: WsCaption, owner: documentA);
+
+        // Act
+        var popups = CreateSut().GetPopups(documentA);
+
+        // Assert
+        popups.Should().ContainSingle().Which.Should().Match<PopupWindow>(p => p.Handle == dialogOfA && p.Relation == PopupRelation.Owned);
+    }
+
+    [Fact]
+    public void GetPopups_KeepsAWindowOfTheProcessOwnedByAHiddenOrPopupStyledWindow()
+    {
+        // Arrange - a WinForms dialog owned by the hidden parking window, and a window owned by the app's tool palette
+        var main = AddMain("Editor", processId: 500);
+        AddMain("Editor 2", processId: 500);
+        var parking = AddPopup("", "WindowsForms10.Window.8.app", processId: 500, visible: false);
+        var options = AddPopup("Options", "WindowsForms10.Window.8.app", processId: 500, style: WsCaption, owner: parking);
+        var palette = AddPopup("Colors", "Palette", processId: 500, style: WsCaption, extendedStyle: WsExToolWindow);
+        var picker = AddPopup("Pick a color", "Picker", processId: 500, style: WsCaption, owner: palette);
+
+        // Act
+        var popups = CreateSut().GetPopups(main);
+
+        // Assert
+        popups.Select(p => (p.Handle, p.Relation)).Should().Equal(
+            (options, PopupRelation.SameProcess), (palette, PopupRelation.SameProcess), (picker, PopupRelation.SameProcess));
     }
 
     [Fact]
@@ -158,6 +209,7 @@ public class PopupServiceTests
         }
 
         CreateSut().GetPopups(main).Should().HaveCount(PopupService.MaxPopups);
+        CreateSut().GetPopupList(main).Should().Match<PopupList>(l => l.Popups.Count == PopupService.MaxPopups && l.Truncated);
     }
 
     [Fact]
@@ -507,6 +559,36 @@ public class PopupServiceTests
         var opened = await CreateSut().WaitForNewPopupAsync(main, new HashSet<nint>(), TimeSpan.FromMilliseconds(120), CancellationToken.None);
 
         opened.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task WaitForNewPopup_IgnoresATooltip_AndReturnsTheMenuThatOpened()
+    {
+        // Arrange - the pointer rests on the button, so its tooltip shows in front of the menu the click opened
+        var main = AddMain("Editor");
+        AddPopup("", "tooltips_class32", owner: main);
+        var menu = AddPopup("", PopupService.MenuClass, owner: main);
+
+        // Act
+        var opened = await CreateSut().WaitForNewPopupAsync(main, new HashSet<nint>(), TimeSpan.FromSeconds(1), CancellationToken.None);
+
+        // Assert
+        opened!.Handle.Should().Be(menu);
+    }
+
+    [Fact]
+    public async Task WaitForNewPopup_ReadsTheProcessSnapshotOnce_NotOnEveryCheck()
+    {
+        // Arrange - a WebView2 popup of the app is already open, so every check needs the app's child processes
+        var popup = ArrangeWebViewPopup(new DateTime(2026, 1, 1, 9, 0, 0), new DateTime(2026, 1, 1, 9, 0, 1), out var host);
+
+        // Act - several checks (every 50 ms) within one refresh period
+        var opened = await CreateSut().WaitForNewPopupAsync(host, new HashSet<nint> { popup }, TimeSpan.FromMilliseconds(300),
+            CancellationToken.None);
+
+        // Assert
+        opened.Should().BeNull();
+        _processes.Verify(p => p.GetProcessList(), Times.Once);
     }
 
     [Fact]

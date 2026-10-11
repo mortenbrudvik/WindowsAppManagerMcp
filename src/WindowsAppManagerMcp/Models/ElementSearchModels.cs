@@ -61,7 +61,8 @@ public enum ElementSearchTruncation
 
     /// <summary>
     /// scope desktop: more windows were open than one search covers (<see cref="Services.PopupService.DesktopWindowLimit"/>);
-    /// the ones furthest back were not searched (roadmap M3.5).
+    /// scope windowAndPopups: more popups were open than <see cref="Services.PopupService.MaxPopups"/>. The ones furthest
+    /// back were not searched (roadmap M3.5).
     /// </summary>
     WindowLimit = 5
 }
