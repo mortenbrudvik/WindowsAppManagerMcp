@@ -15,6 +15,7 @@ namespace WindowsAppManagerMcp.Services;
 /// <item>or a match of the caller's <see cref="LaunchWindowHint"/> (every field it sets).</item>
 /// </list>
 /// The process checks are made once per process and remembered for the launch; the hint's title is checked each time.
+/// An instance may be used from several threads (the waits of a batch check each other's started processes).
 /// </summary>
 public sealed class LaunchWindowOwner
 {
@@ -54,7 +55,9 @@ public sealed class LaunchWindowOwner
     private readonly HashSet<string> _processNames;
     private readonly LaunchWindowHint? _hint;
     private readonly Dictionary<int, bool> _processMatches = [];
+    private readonly Dictionary<int, bool> _startedProcesses = [];
     private readonly Dictionary<int, string?> _processNamesById = [];
+    private readonly object _sync = new();
 
     /// <param name="processes">Reads the process list, image paths and start times.</param>
     /// <param name="launchedProcessId">The started process; null when Windows started none (a handoff).</param>
@@ -124,16 +127,43 @@ public sealed class LaunchWindowOwner
         if (window.ProcessId <= 0)
             return false;
 
-        if (_hint != null && HintMatches(window))
+        lock (_sync)
+        {
+            if (_hint != null && HintMatches(window))
+                return true;
+
+            if (!_processMatches.TryGetValue(window.ProcessId, out var matches))
+            {
+                matches = ProcessMatches(window.ProcessId);
+                _processMatches[window.ProcessId] = matches;
+            }
+
+            return matches;
+        }
+    }
+
+    /// <summary>
+    /// Whether the process is the one this launch started, or a process it started (the strongest match, which no
+    /// other launch of a batch can claim): never for a handoff, where Windows started no process.
+    /// </summary>
+    public bool StartedProcess(int processId)
+    {
+        if (processId <= 0 || _launchedProcessId == null)
+            return false;
+
+        if (processId == _launchedProcessId)
             return true;
 
-        if (!_processMatches.TryGetValue(window.ProcessId, out var matches))
+        lock (_sync)
         {
-            matches = ProcessMatches(window.ProcessId);
-            _processMatches[window.ProcessId] = matches;
-        }
+            if (!_startedProcesses.TryGetValue(processId, out var started))
+            {
+                started = IsLaunchedDescendant(processId);
+                _startedProcesses[processId] = started;
+            }
 
-        return matches;
+            return started;
+        }
     }
 
     private bool HintMatches(WindowCandidate window)
@@ -164,7 +194,7 @@ public sealed class LaunchWindowOwner
             string.Equals(path, _imagePath, StringComparison.OrdinalIgnoreCase))
             return true;
 
-        return _launchedProcessId != null && IsLaunchedDescendant(processId);
+        return StartedProcess(processId); // the lock is re-entrant
     }
 
     /// <summary>

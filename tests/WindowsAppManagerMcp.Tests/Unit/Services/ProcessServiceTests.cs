@@ -474,6 +474,89 @@ public class ProcessServiceTests
         _waitOptions[1].TryClaim!(0x101).Should().BeTrue();
     }
 
+    /// <summary>
+    /// Two launches of the same program match each other's windows by name and path. A window of the process one of them
+    /// started (or of its child) is that launch's, whichever wait sees it first: a wait that polls first must not take
+    /// the other launch's document window. A window neither started (a running instance both may hand off to) stays open
+    /// to both, and the shared claim gives it to one.
+    /// </summary>
+    [Fact]
+    public async Task LaunchApplicationsBatch_SameProgramTwice_EachLaunchGetsOnlyTheWindowsOfTheProcessItStarted()
+    {
+        // Arrange - notepad a.txt starts 501, notepad b.txt starts 502; 600 is a child of 502; 700 is an older Notepad
+        const string notepad = @"C:\Windows\notepad.exe";
+        var launchedAt = DateTime.UtcNow;
+        var processList = new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [501] = (10, "notepad.exe"),
+            [502] = (10, "notepad.exe"),
+            [600] = (502, "notepad.exe"),
+            [700] = (10, "notepad.exe")
+        };
+        _mockResolver.Setup(r => r.Resolve("notepad", It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget(notepad, LaunchTargetKind.NativeExecutable));
+        _mockProcessWrapper.Setup(w => w.GetProcessList()).Returns(processList);
+        _mockProcessWrapper.Setup(w => w.GetProcessImagePath(It.IsAny<int>())).Returns(notepad);
+        _mockProcessWrapper.Setup(w => w.GetProcessStartTime(It.IsAny<int>()))
+            .Returns<int>(id => id == 700 ? launchedAt.AddHours(-1) : launchedAt.AddSeconds(1));
+        var first = new Mock<IProcessHandle>();
+        first.SetupGet(p => p.Id).Returns(501);
+        var second = new Mock<IProcessHandle>();
+        second.SetupGet(p => p.Id).Returns(502);
+        _mockProcessWrapper.SetupSequence(w => w.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Returns(first.Object)
+            .Returns(second.Object);
+        WaitFinds(WindowWaitOutcome.TimedOut, null);
+
+        // Act
+        await CreateSut().LaunchApplicationsBatchAsync(
+            [
+                new LaunchRequest("notepad", ["a.txt"], ExpectWindow: new LaunchWindowHint(TitleContains: ".txt")),
+                new LaunchRequest("notepad", ["b.txt"])
+            ],
+            waitForWindows: true);
+
+        // Assert
+        _ownerPredicates.Should().HaveCount(2);
+        var (ownsA, ownsB) = (_ownerPredicates[0], _ownerPredicates[1]);
+        WindowCandidate Window(int processId, string title) => new(0x100 + processId, processId, null, title);
+
+        ownsA(Window(501, "a.txt - Notepad")).Should().BeTrue();
+        ownsA(Window(502, "b.txt - Notepad")).Should().BeFalse("502 is the other launch's process, even though the hint matches");
+        ownsA(Window(600, "b.txt - Notepad")).Should().BeFalse("600 is a child of the other launch's process");
+        ownsB(Window(502, "b.txt - Notepad")).Should().BeTrue();
+        ownsB(Window(600, "b.txt - Notepad")).Should().BeTrue();
+        ownsB(Window(501, "a.txt - Notepad")).Should().BeFalse("501 is the other launch's process");
+
+        // A running instance that neither launch started can be either launch's (the shared claim decides)
+        ownsA(Window(700, "Notepad")).Should().BeTrue();
+        ownsB(Window(700, "Notepad")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ProgressValues_OnlyIncrease_WhenWaitsEndTogether()
+    {
+        // Arrange - every wait ends on a thread-pool thread at once
+        using var go = new ManualResetEventSlim();
+        _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
+                It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.Run(() =>
+            {
+                go.Wait(TimeSpan.FromSeconds(10));
+                return new WindowWaitResult(WindowWaitOutcome.TimedOut, null, 100);
+            }));
+        var progress = new RecordingProgress<OperationProgress>();
+        var applications = Enumerable.Range(0, 16).Select(i => new LaunchRequest($"app{i}.exe")).ToList();
+
+        // Act
+        var batch = CreateSut().LaunchApplicationsBatchAsync(applications, waitForWindows: true, waitTimeoutMs: 100, progress: progress);
+        go.Set();
+        await batch;
+
+        // Assert
+        progress.Reports.Select(p => p.Completed).Should().Equal(Enumerable.Range(1, 16));
+    }
+
     [Fact]
     public async Task LaunchApplicationsBatch_ExpectWindowOfAnItem_IsUsedForItsWait()
     {

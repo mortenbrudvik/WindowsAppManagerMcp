@@ -22,7 +22,7 @@ public class ProcessService : IProcessService
     private readonly INativeProcessWrapper _processWrapper;
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
-    private IWindowWaitService? _windowWait;
+    private readonly IWindowWaitService _windowWait;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -35,7 +35,7 @@ public class ProcessService : IProcessService
     /// </param>
     /// <param name="windowWait">
     /// Finds the window a launch opens (roadmap M2.6). The server always passes it; without it a wait reads the real
-    /// desktop through a <see cref="NativeWindowWrapper"/> created on first use.
+    /// desktop through a <see cref="NativeWindowWrapper"/> created here (eagerly, so that the E2E reference walk sees it).
     /// </param>
     public ProcessService(
         IWindowService windowService,
@@ -54,23 +54,21 @@ public class ProcessService : IProcessService
         _processWrapper = processWrapper ?? new NativeProcessWrapper();
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
-        _windowWait = windowWait;
+        _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
     }
 
     /// <summary>
     /// How long a start may take before the launch reports <see cref="LaunchStatus.AwaitingUserConsent"/>: ShellExecute does
-    /// not return while Windows asks the user to approve an elevated program (UAC), which can take any time.
+    /// not return while Windows asks the user something (a UAC prompt for an elevated program, SmartScreen, a security
+    /// warning, an Open with dialog), which can take any time.
     /// </summary>
     public static readonly TimeSpan DefaultStartTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>How long a start may take (default <see cref="DefaultStartTimeout"/>); tests shorten it.</summary>
     public TimeSpan StartTimeout { get; init; } = DefaultStartTimeout;
 
-    /// <summary>ERROR_CANCELLED: the user declined the UAC prompt.</summary>
+    /// <summary>ERROR_CANCELLED: the user declined or cancelled a prompt of the start (most likely UAC).</summary>
     private const int ErrorCancelled = 1223;
-
-    private IWindowWaitService WindowWait =>
-        _windowWait ??= new WindowWaitService(new NativeWindowWrapper(), _windowService, _processWrapper);
 
     public Task<LaunchResult> LaunchApplicationAsync(
         string executable,
@@ -107,9 +105,14 @@ public class ProcessService : IProcessService
         using (launch.Process)
         {
             // Cancelled while waiting for the window: the program was started and keeps running, and the call throws
-            return waitForWindow
-                ? await WaitForWindowAsync(launch, request, waitTimeoutMs, tryClaim: null, cancellationToken).ConfigureAwait(false)
-                : StartedWithoutWait(launch);
+            if (!waitForWindow)
+            {
+                return StartedWithoutWait(launch);
+            }
+
+            var owner = OwnerOf(launch, request);
+            return await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 
@@ -132,7 +135,7 @@ public class ProcessService : IProcessService
     /// </summary>
     private async Task<StartedLaunch> StartAsync(LaunchPlan plan, bool takeBaseline, CancellationToken cancellationToken)
     {
-        var baseline = takeBaseline ? WindowWait.TakeBaseline() : null;
+        var baseline = takeBaseline ? _windowWait.TakeBaseline() : null;
         var launchedAt = DateTime.UtcNow;
         // On a thread of its own, not the thread pool: a start that waits for the user's answer to a UAC prompt can take
         // minutes, and a busy thread pool must not delay a start into looking like one
@@ -154,9 +157,11 @@ public class ProcessService : IProcessService
             return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(
                 Success: true,
                 Warning: CombineWarnings(plan.Warning,
-                    $"The start did not return within {StartTimeout.TotalSeconds:0.#} seconds: Windows is most likely asking the user to " +
-                    "approve the program (a UAC prompt on the secure desktop). It starts only if the user approves, and its process ID " +
-                    "is not known. Ask the user to answer the prompt, then look for its window with find_windows; do not launch it again."),
+                    $"The start did not return within {StartTimeout.TotalSeconds:0.#} seconds: Windows is most likely showing a consent " +
+                    "or security prompt (UAC, SmartScreen, a security warning for a downloaded or network file, or 'How do you want to " +
+                    "open this file?'). Only the user may answer it: do not click or type into it. The program starts only if the user " +
+                    "approves, its process ID is not known, and a later decline is not reported. Ask the user to answer the prompt, then " +
+                    "look for its window with find_windows; do not launch it again."),
                 Status: LaunchStatus.AwaitingUserConsent));
         }
 
@@ -167,8 +172,8 @@ public class ProcessService : IProcessService
         catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
         {
             return new StartedLaunch(plan, null, null, launchedAt, new LaunchResult(false,
-                ErrorMessage: "The program needs administrator rights, and the user declined the UAC prompt (or it was cancelled). " +
-                              "Nothing was started. Ask the user before trying again.",
+                ErrorMessage: "The user declined or cancelled a prompt Windows showed for the start (most likely a UAC prompt for a " +
+                              "program that needs administrator rights). Nothing was started. Ask the user before trying again.",
                 ErrorCode: nameof(LaunchErrorCode.ElevationCancelled), Warning: plan.Warning));
         }
         catch (Exception ex)
@@ -205,11 +210,17 @@ public class ProcessService : IProcessService
     /// Waits for the window of a started launch (<see cref="IWindowWaitService"/>) and turns the outcome into the launch
     /// result. When no window was found, a visible main window of the started process (which may be untitled) still counts.
     /// </summary>
+    /// <param name="isOwner">Whether a window belongs to the launch: <paramref name="owner"/>'s match, narrowed in a batch.</param>
     private async Task<LaunchResult> WaitForWindowAsync(
-        StartedLaunch launch, LaunchRequest request, int waitTimeoutMs, Func<nint, bool>? tryClaim, CancellationToken cancellationToken)
+        StartedLaunch launch,
+        LaunchRequest request,
+        LaunchWindowOwner owner,
+        Func<WindowCandidate, bool> isOwner,
+        int waitTimeoutMs,
+        Func<nint, bool>? tryClaim,
+        CancellationToken cancellationToken)
     {
         var target = launch.Plan.Target!;
-        var owner = LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, target, request.ExpectWindow);
         var options = new WindowWaitOptions
         {
             TimeoutMs = waitTimeoutMs,
@@ -217,7 +228,7 @@ public class ProcessService : IProcessService
             TryClaim = tryClaim
         };
 
-        var wait = await WindowWait.WaitForNewWindowAsync(launch.Baseline!, owner.Matches, options, cancellationToken).ConfigureAwait(false);
+        var wait = await _windowWait.WaitForNewWindowAsync(launch.Baseline!, isOwner, options, cancellationToken).ConfigureAwait(false);
         var window = wait.Window;
         var status = wait.Outcome switch
         {
@@ -250,6 +261,18 @@ public class ProcessService : IProcessService
             Window: window,
             LauncherExited: launcherExited);
     }
+
+    private LaunchWindowOwner OwnerOf(StartedLaunch launch, LaunchRequest request) =>
+        LaunchWindowOwner.For(_processWrapper, launch.Process?.Id, launch.LaunchedAtUtc, launch.Plan.Target!, request.ExpectWindow);
+
+    /// <summary>
+    /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
+    /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
+    /// other's windows by name and path; the started process decides between them.
+    /// </summary>
+    private static Func<WindowCandidate, bool> BatchOwner(LaunchWindowOwner owner, IReadOnlyList<LaunchWindowOwner> others) =>
+        window => owner.Matches(window) &&
+                  (owner.StartedProcess(window.ProcessId) || !others.Any(other => other.StartedProcess(window.ProcessId)));
 
     /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
     private WindowInfo? MainWindowOf(IProcessHandle process)
@@ -637,13 +660,18 @@ public class ProcessService : IProcessService
         var results = new LaunchResult?[applications.Count];
         var waiting = new List<(int Index, StartedLaunch Launch)>();
         var finished = 0;
+        var reportLock = new object();
 
-        // "i of n" when an application is done: refused or started (without a wait), or its window wait ended
+        // "i of n" when an application is done: refused or started (without a wait), or its window wait ended. The waits
+        // end concurrently: counting and reporting under one lock keeps the reported values increasing
         void Report(int index)
         {
-            var done = Interlocked.Increment(ref finished);
-            progress?.Report(new OperationProgress(done, applications.Count,
-                $"{done} of {applications.Count}: {applications[index].Executable} {DescribeLaunch(results[index]!)}"));
+            lock (reportLock)
+            {
+                finished++;
+                progress?.Report(new OperationProgress(finished, applications.Count,
+                    $"{finished} of {applications.Count}: {applications[index].Executable} {DescribeLaunch(results[index]!)}"));
+            }
         }
 
         try
@@ -683,7 +711,10 @@ public class ProcessService : IProcessService
                 }
             }
 
-            // Then wait for all the windows at once, against one deadline; a new window goes to one launch only
+            // Then wait for all the windows at once, against one deadline; a new window goes to one launch only. A window
+            // of a process that one launch started (or that process's child) is that launch's: the other launches' looser
+            // matches (same program name or path, handoff names, hint) leave it alone, whichever wait sees it first
+            var owners = waiting.Select(item => OwnerOf(item.Launch, applications[item.Index])).ToList();
             var claimed = new HashSet<nint>();
             bool Claim(nint handle)
             {
@@ -693,10 +724,13 @@ public class ProcessService : IProcessService
                 }
             }
 
-            await Task.WhenAll(waiting.Select(async item =>
+            await Task.WhenAll(waiting.Select(async (item, position) =>
             {
+                var owner = owners[position];
+                var others = owners.Where((_, other) => other != position).ToList();
                 results[item.Index] = await WaitForWindowAsync(
-                    item.Launch, applications[item.Index], waitTimeoutMs, Claim, cancellationToken).ConfigureAwait(false);
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others), waitTimeoutMs, Claim,
+                    cancellationToken).ConfigureAwait(false);
                 Report(item.Index);
             })).ConfigureAwait(false);
         }
@@ -721,7 +755,7 @@ public class ProcessService : IProcessService
             LaunchStatus.PossibleHandoff => "was handed to an app that was already running",
             LaunchStatus.ExitedWithoutWindow => "started, but it exited without a window",
             LaunchStatus.TimedOut => "started, no window appeared in time",
-            LaunchStatus.AwaitingUserConsent => "is waiting for the user to approve it (UAC)",
+            LaunchStatus.AwaitingUserConsent => "is waiting for the user to answer a prompt (most likely UAC)",
             _ => "started"
         };
 

@@ -22,14 +22,15 @@ namespace WindowsAppManagerMcp.Services;
 /// first: a per-user App Paths key (HKCU, writable by any program of the user) would then shadow the
 /// copies in the Windows directory and System32. PATH is enumerated by hand (SearchPathW cannot leave
 /// the current directory out); empty, '.', relative and drive-relative entries are skipped. A bare name
-/// without an extension tries the PATHEXT extensions in order, as cmd.exe does. A bare name found in
+/// without an extension tries the program types (.com, .exe, .bat, .cmd) in PATHEXT's order, as cmd.exe
+/// does, but no script types such as .vbs or .js (the planted-file check covers every PATHEXT type). A bare name found in
 /// none of these places is reported as <see cref="ResolvedLaunchTarget.NotFound"/>, never passed on.
 /// </para>
 /// </remarks>
 public partial class ExecutableResolver : IExecutableResolver
 {
-    // Extensions tried for a bare name without an extension when PATHEXT is not set (or lists nothing usable),
-    // in ShellExecute's order. A path without an extension always uses these.
+    // The only types a bare name resolves to, in PATHEXT's order (in this order when PATHEXT lists none of them).
+    // A path without an extension always uses these.
     private static readonly string[] ProgramExtensions = [".com", ".exe", ".bat", ".cmd"];
 
     private const string AppPathsKey = @"Software\Microsoft\Windows\CurrentVersion\App Paths";
@@ -61,8 +62,8 @@ public partial class ExecutableResolver : IExecutableResolver
     /// Creates a resolver with injectable environment access (used by tests).
     /// </summary>
     /// <param name="getPathExtVariable">
-    /// Reads PATHEXT, the extensions tried for a bare name without one, in order. Null (or a value without usable
-    /// entries) means .com, .exe, .bat and .cmd.
+    /// Reads PATHEXT, the order in which a bare name without an extension tries .com, .exe, .bat and .cmd (its other
+    /// types count only for the planted-file check). Null (or a value without any of them) means that order.
     /// </param>
     public ExecutableResolver(
         Func<string, bool> fileExists,
@@ -167,7 +168,7 @@ public partial class ExecutableResolver : IExecutableResolver
 
     private ResolvedLaunchTarget ResolveBareName(string name, string? workingDirectory)
     {
-        var candidateNames = GetCandidateFileNames(name);
+        var candidateNames = GetCandidateFileNames(name, plantedCheck: false);
 
         foreach (var directory in GetSearchDirectories())
         {
@@ -186,9 +187,10 @@ public partial class ExecutableResolver : IExecutableResolver
 
         // Not found in a trusted location. ShellExecute would still look in the current directory
         // (and possibly the working directory); report a match there instead of letting it run.
+        var plantedNames = GetCandidateFileNames(name, plantedCheck: true);
         foreach (var directory in GetUntrustedDirectories(workingDirectory))
         {
-            var planted = FindInDirectory(directory, candidateNames);
+            var planted = FindInDirectory(directory, plantedNames);
             if (planted != null)
             {
                 return new ResolvedLaunchTarget(name, LaunchTargetKind.Other, FoundOnlyInWorkingDirectory: planted);
@@ -200,19 +202,38 @@ public partial class ExecutableResolver : IExecutableResolver
         return new ResolvedLaunchTarget(name, LaunchTargetKind.Other, NotFound: true);
     }
 
-    private IReadOnlyList<string> GetCandidateFileNames(string name)
+    /// <param name="plantedCheck">
+    /// False for the search of the trusted places: only the program types (.com, .exe, .bat, .cmd) in PATHEXT's order,
+    /// so a bare name never resolves to a script that Windows Script Host, an MMC snap-in or another handler runs
+    /// (PATHEXT lists .vbs, .js, .wsf and .msc by default; ShellExecute's own search does not try them). True for the
+    /// planted-file check: every PATHEXT type as well, since a planted file of any of them is worth reporting.
+    /// </param>
+    private IReadOnlyList<string> GetCandidateFileNames(string name, bool plantedCheck)
     {
-        return Path.HasExtension(name)
-            ? [name]
-            : GetBareNameExtensions().Select(extension => name + extension).ToArray();
+        if (Path.HasExtension(name))
+        {
+            return [name];
+        }
+
+        var pathExt = GetPathExtExtensions();
+        var programs = pathExt.Where(extension => ProgramExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (programs.Count == 0)
+        {
+            programs.AddRange(ProgramExtensions);
+        }
+
+        var extensions = plantedCheck
+            ? programs.Concat(pathExt).Concat(ProgramExtensions).Distinct(StringComparer.OrdinalIgnoreCase)
+            : programs;
+        return extensions.Select(extension => name + extension).ToArray();
     }
 
     /// <summary>
-    /// The extensions tried for a bare name without one: the PATHEXT entries in their order (as cmd.exe tries them),
-    /// or .com, .exe, .bat and .cmd when PATHEXT is not set or has no usable entry. An entry is usable when it is a
-    /// dot followed by at least one character that is valid in a file name and is not a dot or a path separator.
+    /// The usable PATHEXT entries in their order (as cmd.exe tries them), lower case; empty when PATHEXT is not set.
+    /// An entry is usable when it is a dot followed by at least one character that is valid in a file name and is not
+    /// a dot or a path separator.
     /// </summary>
-    private IReadOnlyList<string> GetBareNameExtensions()
+    private IReadOnlyList<string> GetPathExtExtensions()
     {
         string? pathExt;
         try
@@ -224,13 +245,12 @@ public partial class ExecutableResolver : IExecutableResolver
             pathExt = null;
         }
 
-        var extensions = (pathExt ?? string.Empty)
+        return (pathExt ?? string.Empty)
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(IsUsableExtension)
             .Select(extension => extension.ToLowerInvariant()) // PATHEXT is upper case; paths read better in lower case
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return extensions.Length > 0 ? extensions : ProgramExtensions;
     }
 
     private static bool IsUsableExtension(string extension) =>

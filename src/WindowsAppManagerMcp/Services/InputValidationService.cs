@@ -196,9 +196,19 @@ public partial class InputValidationService : IInputValidationService
                 ErrorCode: nameof(LaunchErrorCode.BlockedProtocol));
         }
 
+        // Many handlers are registered as app.exe "%1" (or %1 unquoted): a raw quote would end the argument and let the
+        // rest of the URI become more switches, and a space or another character a URI cannot hold may split it. Web
+        // addresses may keep spaces (browsers take the whole URI as one argument), but never a quote.
+        if (UnsafeUriCharacter(uri, allowSpaces: IsWebScheme(scheme)) is { } unsafeCharacter)
+        {
+            return new ExecutableValidationResult(false,
+                Error: $"The URI contains {unsafeCharacter}, which a URI cannot hold and which could split it into more arguments " +
+                       "for the app that opens it. Percent-encode it (for example %22 for a quote, %20 for a space).",
+                ErrorCode: nameof(LaunchErrorCode.InvalidUri));
+        }
+
         // http and https must name a host (http://...); "http:x" is not a web address
-        if ((scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) &&
-            !uri.AsSpan(scheme.Length).StartsWith("://", StringComparison.Ordinal))
+        if (IsWebScheme(scheme) && !uri.AsSpan(scheme.Length).StartsWith("://", StringComparison.Ordinal))
         {
             return new ExecutableValidationResult(false, Error: $"Invalid {scheme.ToLowerInvariant()} URI: expected {scheme.ToLowerInvariant()}://host/...",
                 ErrorCode: nameof(LaunchErrorCode.InvalidUri));
@@ -215,6 +225,36 @@ public partial class InputValidationService : IInputValidationService
                    $"file (a local path), and {AppsFolderPrefix}<AppUserModelID>. The user can allow more schemes with the " +
                    $"{ProtocolAllowlist.Variable} environment variable of the server.",
             ErrorCode: nameof(LaunchErrorCode.UnknownProtocol));
+    }
+
+    private static bool IsWebScheme(string scheme) =>
+        scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Characters RFC 3986 does not allow in a URI, besides control characters (checked before) and whitespace.</summary>
+    private const string CharactersNotInUris = "\"<>`{}|\\^";
+
+    /// <summary>
+    /// A description of the first character that has no place in a URI handed to its app (a quote, whitespace, or
+    /// <see cref="CharactersNotInUris"/>), or null. With <paramref name="allowSpaces"/>, only the quote is refused.
+    /// </summary>
+    private static string? UnsafeUriCharacter(string uri, bool allowSpaces)
+    {
+        foreach (var c in uri)
+        {
+            if (c == '"')
+                return "a quote (\")";
+
+            if (allowSpaces)
+                continue;
+
+            if (char.IsWhiteSpace(c))
+                return "whitespace";
+
+            if (CharactersNotInUris.Contains(c))
+                return $"'{c}'";
+        }
+
+        return null;
     }
 
     private ExecutableValidationResult ValidateFileUri(string uri)

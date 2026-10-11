@@ -100,7 +100,7 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 - **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`), and convert capture points with `imageToScreen`, never with `scaleFactor`.
 - **A minimized window cannot be captured** (`CaptureFailed`); restore it with `set_window_state` first, or capture what is on screen.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.
-- **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows is asking the user to approve the program (UAC): ask the user. `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
+- **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows shows a consent or security prompt (UAC, SmartScreen): only the user may answer it, so ask the user and never click or type into it. `InvalidUri`: percent-encode quotes and spaces in a URI (`%22`, `%20`). `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
 
 ## When to Use
 

@@ -19,13 +19,15 @@ public sealed partial class ProtocolAllowlist
     public static readonly IReadOnlyList<string> BuiltInSchemes = ["http", "https", "mailto", "tel", "ms-settings"];
 
     /// <summary>
-    /// Schemes that run script or commands, or open arbitrary shell locations or diagnostics: refused even when the
-    /// user lists them. shell: is refused except for shell:AppsFolder\&lt;AppUserModelID&gt;.
+    /// Schemes that run script or commands, install packages, or open arbitrary shell locations, diagnostics, compiled
+    /// help or the out-of-box experience, each with a history of abuse: refused even when the user lists them. shell: is
+    /// refused except for shell:AppsFolder\&lt;AppUserModelID&gt;.
     /// </summary>
     public static readonly IReadOnlyList<string> BlockedSchemes =
     [
         "javascript", "vbscript", "data", "mshta", "cmd", "powershell", "pwsh", "wscript", "cscript",
-        "shell", "ms-msdt", "search-ms", "search"
+        "shell", "ms-msdt", "search-ms", "search",
+        "ms-appinstaller", "ms-officecmd", "its", "ms-its", "mk", "hcp", "ms-cxh", "ms-cxh-full"
     ];
 
     /// <summary>Schemes that are handled apart and cannot be listed: file: URIs are validated as the path they name.</summary>

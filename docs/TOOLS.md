@@ -2971,7 +2971,7 @@ A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `she
 | `possibleHandoff` | Windows started no process: the request went to an app that was already running, or a packaged app was activated (`processId` is absent). With `waitForWindow`, no window of it was recognised | - |
 | `exitedWithoutWindow` | The started process exited, and no window of it or of an app it may have handed off to was recognised | - |
 | `timedOut` | The program is still running, but no window of it appeared within `waitTimeoutMs`; it may still be starting | - |
-| `awaitingUserConsent` | The start did not return within 5 seconds: Windows is most likely asking the user to approve the program (a UAC prompt). It starts only if the user approves; `processId` is absent | - |
+| `awaitingUserConsent` | The start did not return within 5 seconds: Windows is most likely showing a consent or security prompt (UAC, SmartScreen, a security warning for a downloaded or network file, or "How do you want to open this file?"). Only the user may answer it; do not click or type into it. The program starts only if the user approves; `processId` is absent, and a decline after the 5 seconds is not reported | - |
 
 `warning` says what to do for the statuses without a window: look for the window with [find_windows](#find_windows), or launch with `expectWindow`. `launcherExited` (after a window wait) is `true` when the started process had exited by then, as launchers and single-instance stubs do after a handoff.
 
@@ -2980,11 +2980,11 @@ A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `she
 **How the executable is resolved:**
 - **Absolute paths** may contain any character that is valid in a Windows path, including `(x86)`, `&`, `'`, `;`, `$` and `{GUID}`. Only `" < > | * ?` and control characters are rejected. Applications are started with ShellExecute, which does not pass the path through a shell.
 - **Bare names and relative paths** (`notepad`, `tools\app.exe`) must not contain shell metacharacters (`` & | ; < > $ ` " ' ( ) { } ``).
-- **Bare names** are looked up in the Windows directory, System32, the absolute entries of `PATH` and then App Paths (HKCU, HKLM). A name without an extension tries the `PATHEXT` extensions in order, as `cmd.exe` does (`.com`, `.exe`, `.bat`, `.cmd` when `PATHEXT` is not set). If the program is found there, its absolute path is what gets started, so a `notepad.exe` or `code.cmd` planted in a repository cannot shadow an installed program. `PATH` entries that are empty, `.` or relative are skipped; entries that point to folders the user can write to still count, as in any shell. App Paths come last on purpose: a per-user App Paths key could otherwise shadow the copies in System32.
+- **Bare names** are looked up in the Windows directory, System32, the absolute entries of `PATH` and then App Paths (HKCU, HKLM). A name without an extension tries `.com`, `.exe`, `.bat` and `.cmd` in their `PATHEXT` order, as `cmd.exe` does, but not the script types `PATHEXT` also lists (`.vbs`, `.js`, `.wsf`, `.msc`, ...): a script is started by its full path only. If the program is found there, its absolute path is what gets started, so a `notepad.exe` or `code.cmd` planted in a repository cannot shadow an installed program. `PATH` entries that are empty, `.` or relative are skipped; entries that point to folders the user can write to still count, as in any shell. App Paths come last on purpose: a per-user App Paths key could otherwise shadow the copies in System32.
 - **Bare names found only in the current or working directory** are refused with `ExecutableInWorkingDirectory`. The server checks the server's current directory and `workingDirectory` for the name with each extension above, or for the exact name when it has an extension. This also refuses documents and scripts named that way, such as `report.pdf` or `build.cmd` in the `workingDirectory` you passed. Pass the full path to open that file on purpose.
 - **Bare names found nowhere** are refused with `ExecutableNotFound`. They are never passed to Windows unresolved, because Windows' own search starts in the server's current directory and tries more file types (such as `.lnk` shortcuts). Pass the program's full path.
 - **Working directory:** without `workingDirectory`, the program starts in its own folder (a document in its folder, a URI in the user's profile folder), never in the server's current directory.
-- **URIs:** `file://` URIs are converted to their local or UNC path and validated like a plain path. `http`, `https`, `mailto`, `tel` and `ms-settings` (Settings pages, such as `ms-settings:display`) URIs are passed to their handler, and so is `shell:AppsFolder\<AppUserModelID>`, which starts a Store or packaged app; the rest of `shell:` is blocked. The user can allow more schemes (such as `vscode`, `ms-teams` or `spotify`) with the `WAM_ALLOWED_PROTOCOLS` environment variable of the server, a list separated by commas. `javascript`, `vbscript`, `data`, `mshta`, `cmd`, `powershell`, `pwsh`, `wscript`, `cscript`, `ms-msdt` and `search-ms` (and `search`) stay blocked even when listed there (`BlockedProtocol`); any other scheme is `UnknownProtocol`. A URI with a line break or another control character is `InvalidUri`.
+- **URIs:** `file://` URIs are converted to their local or UNC path and validated like a plain path. `http`, `https`, `mailto`, `tel` and `ms-settings` (Settings pages, such as `ms-settings:display`) URIs are passed to their handler, and so is `shell:AppsFolder\<AppUserModelID>`, which starts a Store or packaged app; the rest of `shell:` is blocked. The user can allow more schemes (such as `vscode`, `ms-teams` or `spotify`) with the `WAM_ALLOWED_PROTOCOLS` environment variable of the server, a list separated by commas. Listing a scheme trusts its app with whatever the agent passes in the URI. `javascript`, `vbscript`, `data`, `mshta`, `cmd`, `powershell`, `pwsh`, `wscript`, `cscript`, `ms-msdt`, `search-ms`, `search`, `ms-appinstaller`, `ms-officecmd`, `its`, `ms-its`, `mk`, `hcp`, `ms-cxh` and `ms-cxh-full` stay blocked even when listed there (`BlockedProtocol`); any other scheme is `UnknownProtocol`. A URI with a line break or another control character, or a quote (`"`), is `InvalidUri`, and so is any URI but an `http` or `https` address that holds whitespace or one of `<`, `>`, `` ` ``, `{`, `}`, `|`, `\`, `^`: an app registered as `app.exe "%1"` would take a quote as the end of its argument and the rest as more switches. Percent-encode such characters (`%22`, `%20`).
 
 **How arguments are passed:**
 - Each array element is passed as exactly one argument, quoted with the standard Windows rules. Spaces, embedded quotes, trailing backslashes (`C:\My Folder\`) and empty strings are preserved. Do not add your own quotes.
@@ -3003,7 +3003,7 @@ A Store app starts through `shell:AppsFolder\<AppUserModelID>`, for example `she
 | `UnsafeBatchArguments` | Argument would be interpreted by `cmd.exe` (see above) |
 | `ExecutableInWorkingDirectory` | Bare name found only in the current or working directory |
 | `ExecutableNotFound` | Bare name not found in the Windows folder, System32, `PATH` or App Paths |
-| `ElevationCancelled` | The program needs administrator rights and the user declined the UAC prompt |
+| `ElevationCancelled` | The user declined or cancelled a prompt Windows showed for the start (most likely UAC, for a program that needs administrator rights), within the 5 seconds the start is waited for |
 | `LaunchException` | Windows failed to start the target (for example, a full path that does not exist) |
 
 ---
@@ -3787,18 +3787,22 @@ sees now.
   and `launcherExited` (see [launch_application](#launch_application)). `windowHandle` is now the window the launch
   opened whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to, or a window
   that was reused or got a new tab), where it used to be only a window of the started process; it is no longer an
-  untitled or splash window of it. When Windows starts no process (a URL or document handed to a running app), the
+  untitled or splash window of it, unless no other window of the launch is found within `waitTimeoutMs` (then a visible
+  main window of the started process is still reported, as before). When Windows starts no process (a URL or document handed to a running app), the
   launch succeeds with `launchStatus: "possibleHandoff"` and no `processId`, where it used to fail with
-  `ProcessStartFailed`. A start that waits for a UAC prompt returns after 5 seconds with
-  `launchStatus: "awaitingUserConsent"` instead of blocking the call, and a declined prompt is `ElevationCancelled`.
-  launch_applications_batch starts every application first and then waits for all the windows together, so
-  `waitTimeoutMs` bounds the whole wait instead of each application's.
+  `ProcessStartFailed`. A start that waits for a prompt (UAC, SmartScreen, a security warning) returns after 5 seconds
+  with `launchStatus: "awaitingUserConsent"` instead of blocking the call, and a prompt declined within those 5 seconds
+  is `ElevationCancelled`. launch_applications_batch starts every application first and then waits for all the windows
+  together, so `waitTimeoutMs` bounds the whole wait instead of each application's; a window of the process one item
+  started goes to that item, never to another launch of the same program.
 - **Launch path hygiene.** A bare name that is not found in the Windows folder, System32, `PATH` or App Paths fails
   with `ExecutableNotFound` instead of being passed to Windows, whose search includes the current directory. Without
   `workingDirectory`, a program starts in its own folder instead of the server's current directory. `ms-settings:`
   and `shell:AppsFolder\<AppUserModelID>` URIs are now allowed (they were `BlockedProtocol`), the user can allow more
   schemes with `WAM_ALLOWED_PROTOCOLS`, and `ms-windows-store:` is `UnknownProtocol` (allowable) instead of
-  `BlockedProtocol`.
+  `BlockedProtocol`. A URI with a quote, or (except `http` and `https`) whitespace or another character a URI cannot
+  hold, is `InvalidUri`; percent-encode it. A bare name no longer resolves to a script (`.vbs`, `.js`, ...) through
+  `PATHEXT`; only `.com`, `.exe`, `.bat` and `.cmd` are tried, as before.
 
 ## Error Codes
 
@@ -3907,7 +3911,7 @@ table, it gives more detail.
 | `DestructiveChordNeedsTarget` | [send_keys](#send_keys) | The keys contain a chord that closes, quits or locks (such as Alt+F4) and no `windowHandle` was given; nothing was sent |
 | `ElementAccessFailed` | [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | An element that was being read is no longer available |
 | `ElementNotFound` | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | No element has keyboard focus, or there is no element at the point |
-| `ElevationCancelled` | [launch_application](#launch_application), launch_applications_batch | The program needs administrator rights and the user declined the UAC prompt; nothing was started. Ask the user before trying again |
+| `ElevationCancelled` | [launch_application](#launch_application), launch_applications_batch | The user declined or cancelled a prompt Windows showed for the start (most likely UAC, for a program that needs administrator rights); nothing was started. Ask the user before trying again |
 | `EmptyExecutablePath` | [launch_application](#launch_application), launch_applications_batch | `executable` is empty |
 | `EmptyText` | [type_text](#type_text), [send_keys](#send_keys) | The text or keys string is empty |
 | `ExecutableInWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | A bare name was found only in the current or working directory |
@@ -3939,7 +3943,7 @@ table, it gives more detail.
 | `InvalidSnapPosition` | [snap_window](#snap_window) (tool error), snap_windows_batch (per window) | `position` is missing or not a known snap position; `error` lists them |
 | `InvalidState` | [set_window_state](#set_window_state) (tool error), set_windows_state_batch (per window) | `state` is missing or not minimize, maximize or restore (or minimized, maximized, normal); nothing was changed |
 | `InvalidTimeout` | [kill_process](#kill_process) | `gracefulTimeoutMs` is out of range |
-| `InvalidUri` | [launch_application](#launch_application), launch_applications_batch | The URI is malformed, or a file URI does not name an absolute local or UNC path |
+| `InvalidUri` | [launch_application](#launch_application), launch_applications_batch | The URI is malformed, holds a quote, a control character or (except http/https) whitespace or another character a URI cannot hold (percent-encode it), or a file URI does not name an absolute local or UNC path |
 | `InvalidWorkingDirectory` | [launch_application](#launch_application), launch_applications_batch | The working directory contains invalid characters |
 | `KeysAfterFocusChange` | [send_keys](#send_keys) | Keys follow a chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord such as Alt+F4), so they would reach a window the guard never checked; nothing was sent. Make that chord the last key, and send the rest in a new call |
 | `LaunchException` | [launch_application](#launch_application), launch_applications_batch | Windows failed to start the target; `error` has the reason |

@@ -128,7 +128,7 @@ server configuration). No tool argument can change them.
 | `WAM_TOOLSETS` | the default toolsets (today: all) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process` |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, window changes, captures or process control) |
-| `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). `javascript`, `vbscript`, `data`, `mshta`, the shells and `shell:` stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
+| `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
 
 The server logs the deny list, the allow list, the chords and the toolsets in force to stderr when it starts,
 with a warning for every entry it ignored (the extra URI schemes when it first validates a launch). The test opt-ins `WAM_ALLOW_DESKTOP_TESTS` and

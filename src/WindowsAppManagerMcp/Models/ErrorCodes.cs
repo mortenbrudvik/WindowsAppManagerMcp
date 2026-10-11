@@ -167,7 +167,8 @@ public enum LaunchErrorCode
     ExecutableInWorkingDirectory = 13,
 
     /// <summary>
-    /// The program needs administrator rights, and the user declined the UAC prompt (Win32 error 1223). Nothing was started.
+    /// The user declined or cancelled a prompt Windows showed for the start, most likely a UAC prompt for a program that
+    /// needs administrator rights (Win32 error 1223, within the start timeout). Nothing was started.
     /// </summary>
     ElevationCancelled = 14,
 

@@ -201,19 +201,57 @@ public class ExecutableResolverTests
     }
 
     [Fact]
-    public void Resolve_ScriptExtensionFromPathExt_IsFoundButNotANativeExecutable()
+    public void Resolve_ScriptExtensionFromPathExt_IsNotUsedForABareName()
     {
-        // Arrange - a script type the user registered in PATHEXT
+        // Arrange - a script type the user registered in PATHEXT, and no program of that name
         _pathExtVariable = ".COM;.EXE;.BAT;.CMD;.VBS;.PY";
         _files.Add(@"C:\Tools\report.py");
 
         // Act
         var result = CreateSut().Resolve("report", null);
 
-        // Assert - its arguments get the cmd metacharacter check, as for any target that is not a native .exe
-        result.FileName.Should().Be(@"C:\Tools\report.py");
-        result.Kind.Should().Be(LaunchTargetKind.Other);
-        result.NotFound.Should().BeFalse();
+        // Assert - a bare name resolves to a program only; a script needs its full path
+        result.NotFound.Should().BeTrue();
+        result.FileName.Should().Be("report");
+    }
+
+    /// <summary>
+    /// The default PATHEXT lists Windows Script Host types, and System32 has proxy-execution scripts such as
+    /// SyncAppvPublishingServer.vbs: a bare name must not run them, as ShellExecute's own search would not.
+    /// </summary>
+    [Theory]
+    [InlineData("SyncAppvPublishingServer", "vbs")]
+    [InlineData("pubprn", "vbs")]
+    [InlineData("slmgr", "vbs")]
+    [InlineData("devmgmt", "msc")]
+    public void Resolve_ScriptInSystem32WithTheDefaultPathExt_IsNotFoundByItsBareName(string name, string extension)
+    {
+        // Arrange
+        _pathExtVariable = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL";
+        _files.Add($@"{SystemDir}\{name}.{extension}");
+
+        // Act
+        var result = CreateSut().Resolve(name, null);
+
+        // Assert
+        result.NotFound.Should().BeTrue();
+        _probedPaths.Should().NotContain(path => path.EndsWith("." + extension, StringComparison.OrdinalIgnoreCase) &&
+                                                 path.StartsWith(SystemDir, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Resolve_PathExtWithoutAnyProgramType_UsesComExeBatCmd()
+    {
+        // Arrange
+        _pathExtVariable = ".VBS;.JS";
+        _files.Add(@"C:\Tools\tool.exe");
+        _files.Add(@"C:\Tools\tool.vbs");
+
+        // Act
+        var result = CreateSut().Resolve("tool", null);
+
+        // Assert
+        result.FileName.Should().Be(@"C:\Tools\tool.exe");
     }
 
     [Theory]

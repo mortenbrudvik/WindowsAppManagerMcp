@@ -198,6 +198,51 @@ public class InputValidationServiceTests
         result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidUri));
     }
 
+    /// <summary>
+    /// A handler registered as app.exe "%1" (Outlook's mailto: is OUTLOOK.EXE -c IPM.Note /m "%1") would take a raw quote
+    /// as the end of its argument, and the rest as more switches; a space or another character a URI cannot hold may split
+    /// an unquoted %1.
+    /// </summary>
+    [Theory]
+    [InlineData("mailto:x\" /a \"C:\\secret.txt")]
+    [InlineData("mailto:a\"b@example.com")]
+    [InlineData("mailto:a@example.com?subject=hello world")]
+    [InlineData("tel:+1 234")]
+    [InlineData("ms-settings:display|calc")]
+    [InlineData("vscode://file/C:/repo/a b.md")]
+    [InlineData("vscode://file/C:\\repo\\a.md")]
+    [InlineData("vscode://file/<x>")]
+    [InlineData("vscode://file/^x")]
+    [InlineData("vscode://file/`x`")]
+    [InlineData("vscode://file/{x}")]
+    [InlineData("https://example.com/\"--foo")]
+    public void ValidateExecutable_UriWithAQuoteOrACharacterOutsideUris_IsInvalidUri(string uri)
+    {
+        // Arrange
+        var sut = new InputValidationService(ProtocolAllowlist.Parse("vscode"));
+
+        // Act
+        var result = sut.ValidateExecutable(uri);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InvalidUri));
+        result.Error.Should().Contain("Percent-encode");
+    }
+
+    [Theory]
+    [InlineData("https://example.com/search?q=two words")]
+    [InlineData("mailto:a@example.com?subject=hello%20world")]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    public void ValidateExecutable_WebAddressesWithSpacesAndEncodedOrAppsFolderUris_StayValid(string uri)
+    {
+        // Act
+        var result = _sut.ValidateExecutable(uri);
+
+        // Assert - browsers take the whole URI as one argument; shell:AppsFolder has its own strict check
+        result.IsValid.Should().BeTrue(result.Error);
+    }
+
     [Theory]
     [InlineData("vscode://file/C:/repo/README.md")]
     [InlineData("ms-teams:l/chat/0/0")]
@@ -223,10 +268,19 @@ public class InputValidationServiceTests
     [InlineData("shell:startup")]
     [InlineData("ms-msdt:/id PCWDiagnostic")]
     [InlineData("search-ms:query=x")]
+    [InlineData("ms-appinstaller:?source=https://example.com/x.msix")]
+    [InlineData("ms-officecmd:{}")]
+    [InlineData("its:C:/x.chm::/a.htm")]
+    [InlineData("ms-its:C:/x.chm::/a.htm")]
+    [InlineData("mk:@MSITStore:C:/x.chm::/a.htm")]
+    [InlineData("hcp://system/x")]
+    [InlineData("ms-cxh:x")]
+    [InlineData("ms-cxh-full:x")]
     public void ValidateExecutable_BlockedSchemes_StayBlockedWhenTheUserListsThem(string uri)
     {
         // Arrange
-        var sut = new InputValidationService(ProtocolAllowlist.Parse("javascript,vbscript,data,mshta,shell,ms-msdt,search-ms"));
+        var sut = new InputValidationService(ProtocolAllowlist.Parse(
+            "javascript,vbscript,data,mshta,shell,ms-msdt,search-ms,ms-appinstaller,ms-officecmd,its,ms-its,mk,hcp,ms-cxh,ms-cxh-full"));
 
         // Act
         var result = sut.ValidateExecutable(uri);

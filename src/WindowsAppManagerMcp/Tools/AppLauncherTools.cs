@@ -48,7 +48,7 @@ public class AppLauncherTools
                  "With waitForWindow=true it also returns the window the launch opened, whichever process owns it (launchers such as calc, " +
                  "code or a browser hand off to another process): launchStatus windowObserved, reusedExistingWindow or openedInTab " +
                  "(single-instance and tabbed apps such as Notepad, Terminal, VS Code or Explorer), or, without a window, possibleHandoff, " +
-                 "exitedWithoutWindow or timedOut. awaitingUserConsent means Windows is asking the user to approve the program (UAC). " +
+                 "exitedWithoutWindow or timedOut. awaitingUserConsent means Windows shows the user a prompt (UAC, SmartScreen) that only the user may answer. " +
                  "Never launch again just because no window was found: look for it with find_windows.")]
     public async Task<LaunchResultDto> LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound")]

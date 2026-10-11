@@ -68,8 +68,8 @@ public enum LaunchStatus
     TimedOut,
 
     /// <summary>
-    /// The start did not return in time: Windows is most likely asking the user to approve the program (UAC) on the
-    /// secure desktop. It starts only if the user approves.
+    /// The start did not return in time: Windows is most likely showing a consent or security prompt (UAC, SmartScreen,
+    /// a security warning). It starts only if the user approves; a later decline is not reported.
     /// </summary>
     AwaitingUserConsent
 }

@@ -70,6 +70,23 @@ public class LaunchWindowOwnerTests
     }
 
     [Fact]
+    public void StartedProcess_IsTheStartedProcessOrItsChild_NotAProcessThatOnlyMatchesByNameOrPath()
+    {
+        // Arrange - 2000 is a child started after the launch; 4000 is an older instance with the same name and path
+        AddProcess(2000, LaunchedProcessId, "app.exe", LaunchedAt.AddMilliseconds(50), @"C:\Tools\app.exe");
+        AddProcess(4000, 1, "app.exe", LaunchedAt.AddHours(-1), @"C:\Tools\app.exe");
+        var owner = OwnerOf(@"C:\Tools\app.exe", LaunchTargetKind.NativeExecutable);
+
+        // Act & Assert
+        owner.StartedProcess(LaunchedProcessId).Should().BeTrue();
+        owner.StartedProcess(2000).Should().BeTrue();
+        owner.StartedProcess(4000).Should().BeFalse();
+        owner.Matches(Window(4000)).Should().BeTrue("it matches by name and path, a weaker match");
+        OwnerOf(@"C:\Tools\app.exe", LaunchTargetKind.NativeExecutable, launchedProcessId: null).StartedProcess(2000)
+            .Should().BeFalse("a handoff started no process");
+    }
+
+    [Fact]
     public void AProcessWhoseStartTimeCannotBeRead_IsNoChildOfIt()
     {
         // Arrange
