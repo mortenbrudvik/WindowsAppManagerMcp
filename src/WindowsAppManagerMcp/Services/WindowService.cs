@@ -37,6 +37,7 @@ public class WindowService : IWindowService
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IWindowCallRunner _windowCalls;
     private readonly TimeSpan _stateChangeTimeout;
+    private readonly INativeVirtualDesktopWrapper? _virtualDesktops;
 
     /// <param name="monitorService">Monitor lookups.</param>
     /// <param name="nativeWrapper">The window calls.</param>
@@ -54,13 +55,19 @@ public class WindowService : IWindowService
     /// <param name="stateChangeTimeout">
     /// How long a state change waits to see the new state; default <see cref="StateChangeTimeout"/>. Tests pass zero.
     /// </param>
+    /// <param name="virtualDesktops">
+    /// The shell's virtual desktop manager, which tells a window on another desktop from a suspended or prelaunched frame
+    /// that the shell cloaks the same way (<see cref="GetApplicationWindowsOnOtherDesktops"/>). The server always passes it;
+    /// without it every window the shell cloaks counts as on another desktop.
+    /// </param>
     public WindowService(
         IMonitorService monitorService,
         INativeWindowWrapper nativeWrapper,
         IHostGuard hostGuard,
         ITargetPolicy? targetPolicy = null,
         IWindowCallRunner? windowCalls = null,
-        TimeSpan? stateChangeTimeout = null)
+        TimeSpan? stateChangeTimeout = null,
+        INativeVirtualDesktopWrapper? virtualDesktops = null)
     {
         _monitorService = monitorService;
         _nativeWrapper = nativeWrapper;
@@ -68,6 +75,7 @@ public class WindowService : IWindowService
         _targetPolicy = targetPolicy;
         _windowCalls = windowCalls ?? new WindowCallRunner(nativeWrapper);
         _stateChangeTimeout = stateChangeTimeout ?? StateChangeTimeout;
+        _virtualDesktops = virtualDesktops;
     }
 
     /// <summary>The delay a batch sleeps between two windows for <paramref name="delayBetweenMs"/>: 0 to <see cref="MaxDelayBetweenMs"/>.</summary>
@@ -948,11 +956,24 @@ public class WindowService : IWindowService
 
     public IReadOnlyList<WindowInfo> GetApplicationWindows() => ApplicationWindows(otherDesktops: false);
 
-    public IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops() => ApplicationWindows(otherDesktops: true);
+    public IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops()
+    {
+        var cloaked = ApplicationWindows(otherDesktops: true);
+        if (_virtualDesktops == null || cloaked.Count == 0)
+            return cloaked;
+
+        // The shell also cloaks suspended and prelaunched frames: the virtual desktop manager puts those on no desktop. A
+        // window it cannot place is kept, so a window with unsaved work on another desktop is never left out of the report
+        var placements = _virtualDesktops.GetPlacements(cloaked.Select(w => w.Handle).ToList());
+        return cloaked
+            .Where((_, i) => i >= placements.Count ||
+                             placements[i] is VirtualDesktopPlacement.OtherDesktop or VirtualDesktopPlacement.Unknown)
+            .ToList();
+    }
 
     /// <summary>
     /// The Alt-Tab set: the windows that are not cloaked, or with <paramref name="otherDesktops"/> those the shell cloaks
-    /// (on another virtual desktop) and that would be in it otherwise.
+    /// (on another virtual desktop, or a suspended or prelaunched frame) and that would be in it otherwise.
     /// </summary>
     private List<WindowInfo> ApplicationWindows(bool otherDesktops)
     {
@@ -980,7 +1001,8 @@ public class WindowService : IWindowService
 
             if (otherDesktops)
             {
-                // Cloaked by the shell: on another virtual desktop (an app's own cloak is a suspended or hidden window)
+                // Cloaked by the shell: on another virtual desktop, or a suspended or prelaunched frame, which
+                // GetApplicationWindowsOnOtherDesktops tells apart (an app's own cloak is a hidden window)
                 if ((_nativeWrapper.GetCloakReason(window) & NativeEnums.DWM_CLOAKED_SHELL) == 0)
                     continue;
             }

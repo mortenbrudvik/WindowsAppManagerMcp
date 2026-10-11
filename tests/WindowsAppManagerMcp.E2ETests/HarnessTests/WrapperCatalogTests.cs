@@ -26,6 +26,7 @@ public class WrapperCatalogTests
             typeof(INativeHitTestWrapper),
             typeof(INativeSecurityWrapper),
             typeof(INativeSystemInfoWrapper),
+            typeof(INativeVirtualDesktopWrapper),
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),

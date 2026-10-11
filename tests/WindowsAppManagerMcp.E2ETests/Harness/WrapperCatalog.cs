@@ -178,6 +178,11 @@ public static class WrapperCatalog
                 [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read
             },
+            [typeof(INativeVirtualDesktopWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // IsWindowOnCurrentVirtualDesktop and GetWindowDesktopId; the wrapper cannot move a window to a desktop
+                [nameof(INativeVirtualDesktopWrapper.GetPlacements)] = WrapperMember.Read
+            },
             [typeof(INativeClipboardWrapper)] = new Dictionary<string, WrapperMember>
             {
                 // A counter that changes with the content; it does not open the clipboard
