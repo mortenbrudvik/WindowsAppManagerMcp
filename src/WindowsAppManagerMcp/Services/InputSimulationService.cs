@@ -19,29 +19,47 @@ public class InputSimulationService : IInputSimulationService
     /// </summary>
     public const int TypeTextBatchSize = 32;
 
+    /// <summary>The most wheel notches scroll sends in one direction in one call.</summary>
+    public const int MaxScrollNotches = 100;
+
     private readonly IMonitorService _monitorService;
     private readonly INativeInputWrapper _inputWrapper;
     private readonly IInputTargetGuard _guard;
     private readonly IInputSession _session;
     private readonly TimeSpan _gateTimeout;
+    private readonly INativeHitTestWrapper? _hitTest;
+    private readonly INativeSystemInfoWrapper? _systemInfo;
+    private readonly IClipboardOrigin? _clipboardOrigin;
 
     /// <param name="monitorService">The monitors, for coordinate checks.</param>
     /// <param name="inputWrapper">The native input layer, for cursor reads; input itself goes through <paramref name="session"/>.</param>
     /// <param name="guard">The input guard.</param>
     /// <param name="session">The input session: the user's pause and the held-input bookkeeping.</param>
     /// <param name="gateTimeout">How long to wait for the input gate; default <see cref="InputGate.InputWaitTimeout"/>.</param>
+    /// <param name="hitTest">scroll: the client area of the target window, where it scrolls when no point is given.</param>
+    /// <param name="systemInfo">
+    /// scroll: where Windows sends the wheel. Without it the routing is unknown, and scroll then goes only to the
+    /// foreground window, as with focus routing.
+    /// </param>
+    /// <param name="clipboardOrigin">Told about the batches that can copy, so get_clipboard knows the agent's copies.</param>
     public InputSimulationService(
         IMonitorService monitorService,
         INativeInputWrapper inputWrapper,
         IInputTargetGuard guard,
         IInputSession session,
-        TimeSpan? gateTimeout = null)
+        TimeSpan? gateTimeout = null,
+        INativeHitTestWrapper? hitTest = null,
+        INativeSystemInfoWrapper? systemInfo = null,
+        IClipboardOrigin? clipboardOrigin = null)
     {
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
         _guard = guard ?? throw new ArgumentNullException(nameof(guard));
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _gateTimeout = gateTimeout ?? InputGate.InputWaitTimeout;
+        _hitTest = hitTest;
+        _systemInfo = systemInfo;
+        _clipboardOrigin = clipboardOrigin;
     }
 
     public ClickResult Click(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
@@ -146,6 +164,245 @@ public class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
+    }
+
+    public ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, InputTarget target = default, bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (x.HasValue != y.HasValue || (!x.HasValue && !target.HasWindow))
+        {
+            throw new ArgumentException("scroll needs both x and y, or neither and a target window.");
+        }
+
+        if ((deltaY == 0 && deltaX == 0) || deltaY is < -MaxScrollNotches or > MaxScrollNotches ||
+            deltaX is < -MaxScrollNotches or > MaxScrollNotches)
+        {
+            throw new ArgumentOutOfRangeException(nameof(deltaY), $"scroll needs 1 to {MaxScrollNotches} notches in at least one direction.");
+        }
+
+        // No point: the centre of the target's client area
+        if (x is not { } pointX || y is not { } pointY)
+        {
+            var handle = target.WindowHandle!.Value;
+            var client = _hitTest?.GetClientAreaOnScreen(handle);
+            if (client == null)
+            {
+                return new ScrollResult(false, 0, 0, deltaY, deltaX,
+                    $"Window {(long)handle} is not a window, or its client area cannot be read, so there is no point to scroll at. " +
+                    "Get a current handle from find_windows, or pass x and y.", InputErrorCode.InvalidHandle);
+            }
+
+            if (client.Width <= 0 || client.Height <= 0)
+            {
+                return new ScrollResult(false, client.X, client.Y, deltaY, deltaX,
+                    $"Window {(long)handle} has no client area on screen (it is minimized or has no size), so there is nothing to " +
+                    "scroll. Restore it with set_window_state first.", InputErrorCode.CoordinatesOutOfBounds);
+            }
+
+            pointX = client.X + client.Width / 2;
+            pointY = client.Y + client.Height / 2;
+        }
+
+        if (!IsValidScreenCoordinate(pointX, pointY))
+        {
+            return new ScrollResult(false, pointX, pointY, deltaY, deltaX, "Coordinates are outside screen bounds",
+                InputErrorCode.CoordinatesOutOfBounds);
+        }
+
+        return ScrollAt(pointX, pointY, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+    }
+
+    /// <summary>
+    /// scroll at a checked point, as a click: the guard checks the window at the point before the pointer moves and
+    /// again right before the wheel, together with where Windows sends the wheel. The wheel notches go in one SendInput
+    /// call with a move to the checked point, so no other input can come between them.
+    /// </summary>
+    private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers,
+        CancellationToken cancellationToken)
+    {
+        const string NothingScrolled = "Nothing was scrolled.";
+
+        using var call = new InputCall(_session, cancellationToken);
+        if (call.IsPaused)
+        {
+            return new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser);
+        }
+
+        IDisposable? gate;
+        try
+        {
+            gate = InputGate.TryEnter(_gateTimeout, call.Token);
+        }
+        catch (OperationCanceledException) when (call.IsPaused)
+        {
+            return new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser);
+        }
+
+        if (gate == null)
+        {
+            return new ScrollResult(false, x, y, deltaY, deltaX, BusyMessage("scrolled"), InputErrorCode.InputBusy);
+        }
+
+        using (gate)
+        {
+            InputGuardResult? approved = null;
+            HeldCheck held = default;
+            try
+            {
+                held = CheckHeldInput(releaseHeldModifiers, "scrolled");
+                if (!held.Ok)
+                {
+                    return held.Apply(new ScrollResult(false, x, y, deltaY, deltaX, held.Error, held.Code));
+                }
+
+                approved = _guard.CheckMouse(x, y, target);
+                if (!approved.Allowed)
+                {
+                    return call.IsPaused
+                        ? held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved))
+                        : held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, approved.Error, approved.ErrorCode), approved));
+                }
+
+                // Before the pointer moves: a wheel that follows the focus would scroll another window
+                if (WheelGoesElsewhere(approved) is { } elsewhere)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhere, InputErrorCode.WheelFollowsFocus), approved));
+                }
+
+                if (MouseButtonsDownNow("scrolled") is { } buttons)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, buttons, InputErrorCode.MouseInUse), approved));
+                }
+
+                switch (_session.SetCursorPos(x, y))
+                {
+                    case null:
+                        return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
+                    case false:
+                        return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
+                            CursorPositionFailedMessage(NothingScrolled), InputErrorCode.CursorPositionFailed), approved));
+                }
+
+                // As for a click: a popup the pointer opens there shows up in the re-check
+                Wait(10, call);
+
+                var recheck = _guard.RecheckMouse(x, y, approved);
+                if (!recheck.Allowed)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, $"{NothingScrolled} {recheck.Error}", recheck.ErrorCode), recheck));
+                }
+
+                approved = recheck;
+                switch (PointerIsAt(x, y, out var actual))
+                {
+                    case PointerCheck.Paused:
+                        return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
+                            PausedMessage("The pointer moved away from the point and was not placed there again; nothing was scrolled."),
+                            InputErrorCode.PausedByUser), approved));
+                    case PointerCheck.Away:
+                        return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, $"{NothingScrolled} {PointerMovedAway(x, y, actual)}",
+                            InputErrorCode.CursorNotAtPoint), approved));
+                }
+
+                // Right before the wheel: Ctrl turns it into zoom, Shift into horizontal scrolling
+                if (ModifiersDownNow("scrolled") is { } downNow)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, downNow.Error, InputErrorCode.ModifiersHeld)
+                    {
+                        HeldModifiers = downNow.Names
+                    }, approved));
+                }
+
+                if (MouseButtonsDownNow("scrolled") is { } buttonsNow)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, buttonsNow, InputErrorCode.MouseInUse), approved));
+                }
+
+                // The foreground may have changed while the pointer moved
+                if (WheelGoesElsewhere(approved) is { } elsewhereNow)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhereNow, InputErrorCode.WheelFollowsFocus), approved));
+                }
+
+                var batch = ScrollInputs(ToVirtualDesktopAbsolute(x, y, _monitorService.GetAllMonitors()), deltaY, deltaX);
+                var sent = Send(batch, approved);
+                if (sent.PausedByUser)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
+                }
+
+                if (!sent.Complete)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX,
+                        $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then one per notch), so " +
+                        $"{Math.Max(0, sent.Inserted - 1)} of {Math.Abs(deltaY) + Math.Abs(deltaX)} notches were scrolled. Check the window " +
+                        "before scrolling again.", InputErrorCode.SendInputFailed), approved));
+                }
+
+                return held.Apply(Finish(new ScrollResult(true, x, y, deltaY, deltaX), approved));
+            }
+            catch (OperationCanceledException) when (call.IsPaused)
+            {
+                var paused = new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser);
+                return held.Apply(approved == null ? paused : Finish(paused, approved));
+            }
+            finally
+            {
+                _session.ReleaseHeldInput("the end of the input call");
+            }
+        }
+    }
+
+    /// <summary>
+    /// A move to the point, then one wheel event per notch: vertical first, then horizontal. One event per notch
+    /// (WHEEL_DELTA each) rather than one large delta, because some applications scroll one step for any delta.
+    /// deltaY counts down as positive (as a web page's wheel event does), which is a negative wheel movement.
+    /// </summary>
+    public static List<InputEvent> ScrollInputs((int X, int Y) absolute, int deltaY, int deltaX)
+    {
+        var inputs = new List<InputEvent>(1 + Math.Abs(deltaY) + Math.Abs(deltaX))
+        {
+            InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y)
+        };
+
+        for (var i = 0; i < Math.Abs(deltaY); i++)
+        {
+            inputs.Add(InputEvent.Wheel(-Math.Sign(deltaY) * InputEvent.WheelDelta));
+        }
+
+        for (var i = 0; i < Math.Abs(deltaX); i++)
+        {
+            inputs.Add(InputEvent.HorizontalWheel(Math.Sign(deltaX) * InputEvent.WheelDelta));
+        }
+
+        return inputs;
+    }
+
+    /// <summary>
+    /// Null when the wheel goes to the window at the point. Windows sends it there when "Scroll inactive windows when I
+    /// hover over them" is on (the default); otherwise, or when the setting cannot be read, it goes to the window with the
+    /// keyboard focus, so the window at the point must be the foreground window. Otherwise the WheelFollowsFocus message.
+    /// </summary>
+    private string? WheelGoesElsewhere(InputGuardResult approved)
+    {
+        var routing = _systemInfo?.GetMouseWheelRouting();
+        if (routing == MouseWheelRouting.MousePosition)
+        {
+            return null;
+        }
+
+        var foreground = _guard.DescribeForeground();
+        if (foreground != null && foreground.Handle == (long)approved.Receiving)
+        {
+            return null;
+        }
+
+        var setting = routing == null
+            ? "Windows' wheel setting cannot be read, so the wheel may go to the window with the keyboard focus"
+            : "\"Scroll inactive windows when I hover over them\" is off in Windows' mouse settings, so the wheel goes to the " +
+              "window with the keyboard focus";
+        return $"Nothing was scrolled: {setting} ({Describe(foreground)}), not to the window at the point " +
+               $"({Describe(approved.ReceivingWindow)}). Bring that window to the front with focus_window first, then scroll again.";
     }
 
     public (int X, int Y)? GetCursorPosition()
@@ -401,7 +658,7 @@ public class InputSimulationService : IInputSimulationService
                     }, approved));
                 }
 
-                var sent = _session.Send(inputs);
+                var sent = Send(inputs, approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage("Nothing was sent."), InputErrorCode.PausedByUser), approved));
@@ -549,7 +806,7 @@ public class InputSimulationService : IInputSimulationService
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + buttonsNow, InputErrorCode.MouseInUse), approved));
                     }
 
-                    var sent = SendClickInputs(leftButton, absolute);
+                    var sent = SendClickInputs(leftButton, absolute, approved);
                     if (sent.PausedByUser)
                     {
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage(sentSoFar.TrimEnd(' ', ':') + "."),
@@ -586,17 +843,34 @@ public class InputSimulationService : IInputSimulationService
         clicksSent == 0 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
 
     /// <summary>A move to the checked point, the button down and up, in one SendInput call.</summary>
-    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute)
+    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute, InputGuardResult approved)
     {
         var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
         var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
 
-        return _session.Send(
+        return Send(
         [
             InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y),
             InputEvent.Mouse(downFlag),
             InputEvent.Mouse(upFlag)
-        ]);
+        ], approved);
+    }
+
+    /// <summary>
+    /// Sends a batch through the session. A batch that can copy (copy keys, a left-button press) is reported to the
+    /// clipboard origin with the process of the window it goes to, so get_clipboard can tell the copy that application
+    /// makes from one the user makes.
+    /// </summary>
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, InputGuardResult approved)
+    {
+        var copy = _clipboardOrigin?.BeforeInput(batch, approved.ReceivingWindow?.ProcessId ?? 0);
+        var sent = _session.Send(batch);
+        if (copy != null && sent.Inserted > 0)
+        {
+            _clipboardOrigin!.InputSent(copy);
+        }
+
+        return sent;
     }
 
     /// <summary>
@@ -807,6 +1081,19 @@ public class InputSimulationService : IInputSimulationService
         };
     }
 
+    private ScrollResult Finish(ScrollResult result, InputGuardResult guard)
+    {
+        var cursor = _inputWrapper.GetCursorPos();
+        return result with
+        {
+            ReceivingWindow = guard.ReceivingWindow,
+            BlockingWindow = guard.BlockingWindow,
+            ForegroundAfter = _guard.DescribeForeground(),
+            ActualX = cursor?.X,
+            ActualY = cursor?.Y
+        };
+    }
+
     private TypeTextResult Finish(TypeTextResult result, InputGuardResult guard) => result with
     {
         ReceivingWindow = guard.ReceivingWindow,
@@ -892,6 +1179,8 @@ public class InputSimulationService : IInputSimulationService
         public ClickResult Apply(ClickResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
         public MouseMoveResult Apply(MouseMoveResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
+
+        public ScrollResult Apply(ScrollResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 
         public TypeTextResult Apply(TypeTextResult result) => result with { HeldModifiers = result.HeldModifiers ?? Held, ReleasedModifiers = Released };
 

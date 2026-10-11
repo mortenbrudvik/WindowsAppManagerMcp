@@ -176,9 +176,30 @@ public enum InputEventKind
 /// <param name="Flags">The raw MOUSEEVENTF_* or KEYEVENTF_* flags.</param>
 /// <param name="Dx">Mouse events: MOUSEINPUT.dx (with MOUSEEVENTF_ABSOLUTE, 0..65535 across the screen); otherwise 0.</param>
 /// <param name="Dy">Mouse events: MOUSEINPUT.dy; otherwise 0.</param>
-public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0)
+/// <param name="MouseData">
+/// Mouse events: MOUSEINPUT.mouseData, the wheel movement of a MOUSEEVENTF_WHEEL or MOUSEEVENTF_HWHEEL event
+/// (a multiple of WHEEL_DELTA, 120, as a two's-complement DWORD); otherwise 0.
+/// </param>
+public readonly record struct InputEvent(InputEventKind Kind, ushort Code, uint Flags, int Dx = 0, int Dy = 0, uint MouseData = 0)
 {
+    /// <summary>One notch of the mouse wheel (WHEEL_DELTA).</summary>
+    public const int WheelDelta = 120;
+
     public static InputEvent Mouse(uint flags) => new(InputEventKind.Mouse, 0, flags);
+
+    /// <summary>
+    /// One vertical wheel event of <paramref name="delta"/> (MOUSEEVENTF_WHEEL): positive turns the wheel forward,
+    /// away from the user, which scrolls up; negative scrolls down. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent Wheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_WHEEL, MouseData: unchecked((uint)delta));
+
+    /// <summary>
+    /// One horizontal wheel event of <paramref name="delta"/> (MOUSEEVENTF_HWHEEL): positive tilts the wheel to the
+    /// right, which scrolls right; negative scrolls left. One notch is <see cref="WheelDelta"/>.
+    /// </summary>
+    public static InputEvent HorizontalWheel(int delta) =>
+        new(InputEventKind.Mouse, 0, Native.NativeEnums.MOUSEEVENTF_HWHEEL, MouseData: unchecked((uint)delta));
 
     /// <summary>
     /// Moves the pointer to normalized absolute coordinates (0..65535) across the whole virtual desktop
@@ -319,5 +340,12 @@ public enum InputErrorCode
     /// input desktop cannot be reached). Nothing was clicked. Not SendInputFailed, which means the input itself was
     /// not accepted (roadmap M2.2).
     /// </summary>
-    CursorPositionFailed = 41
+    CursorPositionFailed = 41,
+
+    /// <summary>
+    /// scroll: Windows sends the wheel to the window with the keyboard focus, not to the window under the pointer
+    /// (the "Scroll inactive windows when I hover over them" setting is off, or its value cannot be read), and the
+    /// window at the point is not the foreground window, so the wheel would scroll another window. Nothing was sent.
+    /// </summary>
+    WheelFollowsFocus = 42
 }

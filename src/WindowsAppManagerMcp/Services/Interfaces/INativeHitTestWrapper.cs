@@ -1,3 +1,5 @@
+using WindowsAppManagerMcp.Models;
+
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
@@ -20,4 +22,11 @@ public interface INativeHitTestWrapper
     /// root: GA_ROOT follows the parent chain, not the owner.
     /// </summary>
     nint GetRootWindow(nint windowHandle);
+
+    /// <summary>
+    /// The window's client area on screen (GetClientRect, then MapWindowPoints to the screen), in physical
+    /// virtual-screen pixels: where scroll points by default. Null when the handle is not a window or the area cannot
+    /// be read; a minimized window has an empty area. It does not wait for the window's application.
+    /// </summary>
+    WindowRect? GetClientAreaOnScreen(nint windowHandle);
 }

@@ -470,3 +470,47 @@ public enum BrowserErrorCode
     /// <summary>HTML content (textOnly=false) was requested, but it is only available via CDP.</summary>
     HtmlRequiresCdp = 38
 }
+
+/// <summary>
+/// Error codes for get_clipboard and set_clipboard (roadmap M2.16). A refused read returns no content at all.
+/// </summary>
+public enum ClipboardErrorCode
+{
+    /// <summary>No error occurred.</summary>
+    None = 0,
+
+    /// <summary>
+    /// get_clipboard: the clipboard holds content the agent did not put there (the user or another app copied it), and
+    /// reading the user's clipboard is not allowed: WAM_ALLOW_USER_CLIPBOARD is off and the user was not asked, or the
+    /// clipboard changed while they were asked. Nothing was read.
+    /// </summary>
+    ClipboardNotFromAgent = 1,
+
+    /// <summary>
+    /// get_clipboard: the content is marked private (ExcludeClipboardContentFromMonitorProcessing,
+    /// CanIncludeInClipboardHistory = 0 or Clipboard Viewer Ignore), as password managers mark what they copy. It is
+    /// never returned, whoever copied it, unless it is the text set_clipboard put there.
+    /// </summary>
+    ClipboardPrivate = 2,
+
+    /// <summary>get_clipboard: the clipboard holds nothing in the format asked for; availableFormats lists what it holds.</summary>
+    FormatNotAvailable = 3,
+
+    /// <summary>Another application kept the clipboard open, or did not answer, so it could not be read or set.</summary>
+    ClipboardBusy = 4,
+
+    /// <summary>Windows refused to read or set the clipboard data; the error has the Win32 error.</summary>
+    ClipboardFailed = 5,
+
+    /// <summary>get_clipboard: the user was asked to let the agent read their clipboard and did not allow it. Nothing was read.</summary>
+    ConfirmationDeclined = 6,
+
+    /// <summary>get_clipboard: the format is not text, html or files.</summary>
+    InvalidFormat = 7,
+
+    /// <summary>
+    /// get_clipboard: the agent's copy keys were sent moments ago, but the clipboard did not change within a second
+    /// (nothing selected, or the application did not copy). Nothing was read, and the user is not asked.
+    /// </summary>
+    NothingCopied = 8
+}

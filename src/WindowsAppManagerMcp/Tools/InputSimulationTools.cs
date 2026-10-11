@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Tools;
@@ -142,6 +144,58 @@ public class InputSimulationTools
         CancellationToken cancellationToken = default)
     {
         return _inputService.MoveMouse(x, y, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
+    }
+
+    [McpServerTool(Name = "scroll", Title = "Scroll", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Turn the mouse wheel over a window to scroll it: deltaY notches down (negative: up) and deltaX notches right " +
+                 "(negative: left); one notch usually scrolls 3 lines. Pass windowHandle. Without x and y the wheel turns at the " +
+                 "centre of that window's client area; to scroll one list or pane, pass a point inside it (the centre of its bounds " +
+                 "from get_ui_elements). The pointer moves to the point and the notches are sent with it in one batch. Windows " +
+                 "sends the wheel to the window under the pointer; when the user turned 'Scroll inactive windows' off it goes to " +
+                 "the focused window, so scroll is then refused unless the window at the point is in front (WheelFollowsFocus): " +
+                 "call focus_window first; even then the wheel reaches the control with the keyboard focus, not the one at the " +
+                 "point, so click into the content first. The wheel over a combo box, slider or number box changes its value, so point at the " +
+                 "content, not at such a control. To see whether the content moved, read it again (get_ui_elements, a capture)." +
+                 " The same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." +
+                 GuardNote)]
+    public ScrollResult Scroll(
+        [Description(MouseWindowHandleDescription)]
+        long? windowHandle = null,
+        [Description(XDescription + ", together with y. Default: the centre of windowHandle's client area")]
+        int? x = null,
+        [Description(YDescription + ", together with x. Default: the centre of windowHandle's client area")]
+        int? y = null,
+        [Description("Vertical wheel notches: positive scrolls down, negative scrolls up, at most 100 either way. Default: 0")]
+        int deltaY = 0,
+        [Description("Horizontal wheel notches: positive scrolls right, negative scrolls left, at most 100 either way. Default: 0")]
+        int deltaX = 0,
+        [Description(AllowHostTargetDescription)]
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (x.HasValue != y.HasValue)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "Pass both x and y, or neither (then the wheel turns at the centre of windowHandle's client area). Nothing was scrolled.");
+        }
+
+        if (!x.HasValue && !windowHandle.HasValue)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "Pass windowHandle (the wheel turns at the centre of its client area), or x and y. Nothing was scrolled.");
+        }
+
+        const int Max = InputSimulationService.MaxScrollNotches;
+        if ((deltaY == 0 && deltaX == 0) || deltaY is < -Max or > Max || deltaX is < -Max or > Max)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"deltaY and deltaX must be between -{InputSimulationService.MaxScrollNotches} and {InputSimulationService.MaxScrollNotches}, " +
+                $"and not both 0 (got deltaY {deltaY}, deltaX {deltaX}). Nothing was scrolled.");
+        }
+
+        return _inputService.Scroll(x, y, deltaY, deltaX, Target(windowHandle, allowHostTarget), releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]

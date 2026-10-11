@@ -64,6 +64,7 @@ public class ToolDescriptionTests
     [InlineData("right_click")]
     [InlineData("double_click")]
     [InlineData("mouse_move")]
+    [InlineData("scroll")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
     public void InputToolDescription_RecommendsWindowHandleAndNamesTheGuardResults(string toolName)

@@ -46,6 +46,22 @@ public interface IInputSimulationService
     (int X, int Y)? GetCursorPosition();
 
     /// <summary>
+    /// Turns the mouse wheel at a point (roadmap M2.15): moves the pointer there and sends one wheel event per notch, in
+    /// one SendInput call. Without a point, at the centre of the target window's client area. The guard checks the point
+    /// as for a click, and the wheel must reach the window at the point: when Windows sends the wheel to the focus window
+    /// instead, the window at the point must be the foreground window (otherwise WheelFollowsFocus).
+    /// </summary>
+    /// <param name="x">The point's x, or null (with <paramref name="y"/>) for the target's client centre.</param>
+    /// <param name="y">The point's y, or null.</param>
+    /// <param name="deltaY">Vertical notches: positive scrolls down, negative up; at most <see cref="InputSimulationService.MaxScrollNotches"/> either way.</param>
+    /// <param name="deltaX">Horizontal notches: positive scrolls right, negative left.</param>
+    /// <param name="target">The target window; required when no point is given.</param>
+    /// <param name="releaseHeldModifiers">Release modifier keys that are down first, instead of returning ModifiersHeld.</param>
+    /// <param name="cancellationToken">The request's token.</param>
+    /// <exception cref="ArgumentException">Only one of x and y, no point and no target, or no notches or too many.</exception>
+    ScrollResult Scroll(int? x, int? y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Checks if the given screen coordinates are within the bounds of any connected monitor.
     /// </summary>
     bool IsValidScreenCoordinate(int x, int y);
