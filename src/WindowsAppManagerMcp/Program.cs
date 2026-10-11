@@ -2,18 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WindowsAppManagerMcp.Infrastructure;
-using WindowsAppManagerMcp.Native;
 
-// Set per-monitor DPI awareness for accurate window positioning on high-DPI displays
-try
-{
-    NativeMethods.Shcore.SetProcessDpiAwareness(PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE);
-}
-catch
-{
-    // Windows 8.1+ required for SetProcessDpiAwareness, ignore on older versions
-}
-
+// Per-monitor v2 DPI awareness comes from app.manifest, so every coordinate is a physical pixel. Setting it through
+// the API as well would fail with ACCESS_DENIED; ServerStartupLog logs the effective awareness instead.
 var builder = Host.CreateApplicationBuilder(args);
 
 // Configure logging to stderr (important for STDIO-based MCP servers)

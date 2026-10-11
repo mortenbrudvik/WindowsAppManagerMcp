@@ -157,6 +157,12 @@ public static class WrapperCatalog
                 [nameof(IScreenCaptureWrapper.GetVirtualScreenBounds)] = WrapperMember.Read,
                 [nameof(IScreenCaptureWrapper.IsValidWindow)] = WrapperMember.Read
             },
+            [typeof(INativeSystemInfoWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                [nameof(INativeSystemInfoWrapper.GetDpiAwareness)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetForegroundLockTimeout)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read
+            },
             [typeof(INativeMonitorWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeMonitorWrapper.EnumerateMonitors)] = WrapperMember.Read,
