@@ -104,14 +104,14 @@ public class LayoutPresetTools
         );
     }
 
-    [McpServerTool(Name = "apply_layout", Title = "Apply Layout", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = true)]
+    [McpServerTool(Name = "apply_layout", Title = "Apply Layout", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
     [Description("Apply a previously saved layout preset. Takes one snapshot of the open windows and gives each placement its own window, never one window to two placements, preferring the window whose title, class and executable match what save_layout recorded. success is true only if every placement was arranged (and focused, for a placement with focus); status is applied, partial or failed, and placements reports each placement in order (status applied, notFound, notApplicable or failed, with window, errorCode and error). A placement matchBy cannot match (title_only on a placement without titleContains) is notApplicable with NoMatchCriterion, and one on a monitor that does not exist fails with InvalidMonitorIndex; neither falls back to another window or monitor. focus lists the outcome of each focus placement that was arranged, with the same fields as focus_window (isForeground, foregroundHandle, blockingPopup, inMenuMode, errorCode). A window of an app the user's policy denies is not arranged (TargetDeniedByPolicy).")]
     public async Task<ApplyLayoutResultDto> ApplyLayout(
         [Description("Name of the layout preset to apply")]
         string name,
         [Description("How to match saved windows to current windows: 'process_and_title' (default), 'process_only' or 'title_only' (only for placements with titleContains; save_layout records none). Any other value fails with InvalidMatchBy.")]
         LayoutMatchBy matchBy = LayoutMatchBy.ProcessAndTitle,
-        [Description("Attempt to launch applications for missing windows (default: false)")]
+        [Description("Run the preset's launchCommand for each placement whose window is not found (default: false). This starts the programs the preset file names; a second call can start another instance when the launched window does not match yet.")]
         bool launchMissing = false,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)

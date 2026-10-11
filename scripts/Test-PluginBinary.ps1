@@ -7,7 +7,8 @@
     Reads the exe's file metadata only; it never runs the exe. Checks:
       1. Directory.Build.props, plugin.json and marketplace.json declare the same version.
       2. With -Tag: the tag is v<version>.
-      3. The exe's ProductVersion is <version>+<commit sha>.
+      3. The exe's ProductVersion is <version>+<commit sha>, and its bytes carry the PerMonitorV2
+         dpiAwareness of src/WindowsAppManagerMcp/app.manifest.
       4. That commit exists and no build input changed between it and HEAD. The build inputs are
          listed once, in $BuildInputPaths in scripts/ReleaseCommon.ps1: src/, config/ (the sample
          layout presets embedded in the exe), the MSBuild, NuGet and SDK files at the repository

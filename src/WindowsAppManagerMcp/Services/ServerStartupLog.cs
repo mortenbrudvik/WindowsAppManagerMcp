@@ -28,7 +28,7 @@ public sealed class ServerStartupLog(
             "Windows App Manager {Version} (MCP SDK {SdkVersion}), DPI awareness {DpiAwareness}",
             ServerVersion.Current, ServerVersion.SdkVersion, awareness);
 
-        if (!DpiAwarenessNames.IsExpected(awareness))
+        if (!DpiAwarenessNames.GivesPhysicalPixels(awareness))
         {
             logger?.LogWarning(
                 "The DPI awareness in force is {DpiAwareness}, not the PerMonitorV2 the app manifest declares: window, element " +

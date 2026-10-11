@@ -18,7 +18,8 @@
        under artifacts/ (gitignored).
     4. Checks the publish produced only WindowsAppManagerMcp.exe (plus symbols), because that single
        file is all the plugin ships.
-    5. Checks the exe's ProductVersion is "<version>+<HEAD sha>".
+    5. Checks the exe's ProductVersion is "<version>+<HEAD sha>" and that it carries the PerMonitorV2
+       DPI awareness of app.manifest (its bytes are read; the exe is not run).
     6. Copies WindowsAppManagerMcp.exe into -OutputDirectory (default: <repo>/bin).
 
     The exe is framework-dependent: it needs the .NET 8 Desktop Runtime (x64) on the machine.
@@ -129,6 +130,9 @@ if (-not $build.CommitSha) {
 }
 if ($build.CommitSha -ne $headSha) {
     throw "The published exe reports commit $($build.CommitSha), expected HEAD $headSha."
+}
+if (-not (Test-ExeDpiManifest $exe)) {
+    throw "The published exe carries no PerMonitorV2 dpiAwareness manifest (src/WindowsAppManagerMcp/app.manifest), so Windows could scale its coordinates."
 }
 
 # 6. Copy into place

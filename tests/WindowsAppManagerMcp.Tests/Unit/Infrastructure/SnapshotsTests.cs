@@ -26,6 +26,8 @@ public class SnapshotsTests
     [InlineData("CI", "True")]
     [InlineData("GITHUB_ACTIONS", "true")]
     [InlineData("TF_BUILD", "True")]
+    [InlineData("CI", "1")]
+    [InlineData("CI", "yes")]
     public void IsUpdateRequested_InCI_Throws(string variable, string value)
     {
         // A leaked UPDATE_SNAPSHOTS=1 (a repository variable, a workflow env) would make the snapshot and docs tests
@@ -33,6 +35,16 @@ public class SnapshotsTests
         var act = () => Snapshots.IsUpdateRequested(Environment(("UPDATE_SNAPSHOTS", "1"), (variable, value)));
 
         act.Should().Throw<InvalidOperationException>().WithMessage("*UPDATE_SNAPSHOTS=1*CI*");
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("0")]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void IsUpdateRequested_ACIVariableThatSaysNo_IsNoCI(string value)
+    {
+        Snapshots.IsUpdateRequested(Environment(("UPDATE_SNAPSHOTS", "1"), ("CI", value))).Should().BeTrue();
     }
 
     [Fact]

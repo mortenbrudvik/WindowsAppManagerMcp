@@ -78,7 +78,7 @@ public sealed class ServerInfoService(
     {
         var integrity = probe.ServerIntegrity;
         var awareness = system.GetDpiAwareness();
-        if (!DpiAwarenessNames.IsExpected(awareness))
+        if (!DpiAwarenessNames.GivesPhysicalPixels(awareness))
         {
             warnings.Add($"The DPI awareness in force is {awareness}, not the PerMonitorV2 the server's manifest declares: window, " +
                          "element and click coordinates can be scaled on monitors above 100%. Tell the user.");

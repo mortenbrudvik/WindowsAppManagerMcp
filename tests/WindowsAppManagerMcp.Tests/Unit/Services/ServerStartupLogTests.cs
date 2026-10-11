@@ -34,8 +34,18 @@ public class ServerStartupLogTests
             .And.Contain("DPI awareness PerMonitorV2");
     }
 
+    [Fact]
+    public async Task StartAsync_PerMonitorV1_IsNoWarning()
+    {
+        // The manifest's fallback before Windows 10 1703: physical pixels on every monitor for a windowless server
+        _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.PerMonitor);
+
+        await StartAsync();
+
+        _logger.Entries.Should().ContainSingle().Which.Level.Should().Be(LogLevel.Information);
+    }
+
     [Theory]
-    [InlineData(DpiAwareness.PerMonitor)]
     [InlineData(DpiAwareness.System)]
     [InlineData(DpiAwareness.Unaware)]
     [InlineData(DpiAwareness.Unknown)]
@@ -57,7 +67,7 @@ public class ServerStartupLogTests
         var selection = ToolsetSelection.FromEnvironment(
             name => name switch
             {
-                ToolsetSelection.ToolsetsVariable => "-browser,widnows",
+                ToolsetSelection.ToolsetsVariable => "-browser,+widnows",
                 ToolsetSelection.ReadOnlyVariable => "1",
                 _ => null
             },
@@ -71,7 +81,7 @@ public class ServerStartupLogTests
         _logger.Entries.Should().Contain(e => e.Level == LogLevel.Information && e.Message.StartsWith("Serving 1 tools") &&
                                               e.Message.Contains("from WAM_TOOLSETS") && e.Message.Contains("not served: browser") &&
                                               e.Message.Contains("read-only mode on"));
-        _logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("'widnows'"));
+        _logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("'+widnows'"));
     }
 
     [Fact]

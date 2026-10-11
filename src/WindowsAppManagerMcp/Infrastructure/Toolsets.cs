@@ -12,13 +12,14 @@ public sealed record Toolset(string Name, bool OnByDefault, string Description, 
 
 /// <summary>
 /// The toolsets of a server: every tool belongs to at most one, and one toolset is always on (it reports the server's
-/// state and the user's control over it, which an agent needs whatever else is turned off).
+/// state and the user's control over it, which an agent needs whatever else is turned off). One tool of it can be
+/// always served: the tool that tells the agent which tools are off and why, which WAM_EXCLUDE_TOOLS cannot drop.
 /// </summary>
 public sealed class ToolsetCatalog
 {
     private readonly Dictionary<string, Toolset> _byTool = new(StringComparer.OrdinalIgnoreCase);
 
-    public ToolsetCatalog(string alwaysOn, IReadOnlyList<Toolset> toolsets)
+    public ToolsetCatalog(string alwaysOn, IReadOnlyList<Toolset> toolsets, string? alwaysServedTool = null)
     {
         ArgumentNullException.ThrowIfNull(toolsets);
         if (toolsets.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != toolsets.Count)
@@ -43,6 +44,14 @@ public sealed class ToolsetCatalog
         {
             throw new ArgumentException($"The always-on toolset '{alwaysOn}' must be on by default.", nameof(alwaysOn));
         }
+
+        if (alwaysServedTool != null && ToolsetOf(alwaysServedTool)?.Name != AlwaysOn)
+        {
+            throw new ArgumentException(
+                $"The always-served tool '{alwaysServedTool}' must be a tool of the always-on toolset '{AlwaysOn}'.", nameof(alwaysServedTool));
+        }
+
+        AlwaysServedTool = alwaysServedTool == null ? null : _byTool.Keys.First(t => string.Equals(t, alwaysServedTool, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The toolsets, in the order the docs and get_server_info list them.</summary>
@@ -50,6 +59,12 @@ public sealed class ToolsetCatalog
 
     /// <summary>The toolset that is always served; WAM_TOOLSETS cannot turn it off (WAM_EXCLUDE_TOOLS can drop its tools).</summary>
     public string AlwaysOn { get; }
+
+    /// <summary>
+    /// The tool that is served whatever the variables say (WAM_EXCLUDE_TOOLS ignores it with a warning), or null. It must
+    /// be a read-only tool of the always-on toolset.
+    /// </summary>
+    public string? AlwaysServedTool { get; }
 
     /// <summary>Every tool of every toolset.</summary>
     public IEnumerable<string> ToolNames => _byTool.Keys;
@@ -114,12 +129,15 @@ public static class Toolsets
             new("browser", OnByDefault: true,
                 "Read the URL and text of browser pages; start a browser with a DevTools port.",
                 ["get_browser_url", "get_active_browser_url", "get_browser_content", "launch_browser_with_debug"]),
-        ]);
+        ],
+        // It reports the toolsets in force and why a tool is missing, and the server instructions send the agent to it
+        alwaysServedTool: "get_server_info");
 
     /// <summary>
     /// Serves only the tools <paramref name="selection"/> chooses: registers the selection (get_server_info reports it)
     /// and removes every other tool from the server's tool collection once the registrations are complete, so tools/list
-    /// leaves them out and a call to one is an unknown tool. Program.cs reads the selection from the environment before
+    /// leaves them out and a call to one is an unknown tool. When the user turned off tools the default serves, the
+    /// server instructions get one more line that says which (<see cref="ToolsetSelection.InstructionsNote"/>). Program.cs reads the selection from the environment before
     /// the tool registrations (<see cref="ServiceRegistration.AddWindowsAppManagerTools"/>).
     /// </summary>
     public static IMcpServerBuilder WithToolsets(this IMcpServerBuilder builder, ToolsetSelection selection)
@@ -135,6 +153,14 @@ public static class Toolsets
 
     private static void RemoveUnselected(McpServerOptions options, ToolsetSelection selection)
     {
+        // The instructions name tools of the loop (focus_window, click, ...); say which the user turned off
+        if (selection.InstructionsNote is { } note)
+        {
+            options.ServerInstructions = string.IsNullOrEmpty(options.ServerInstructions)
+                ? note
+                : options.ServerInstructions + "\n" + note;
+        }
+
         if (options.ToolCollection is not { } tools)
         {
             return;

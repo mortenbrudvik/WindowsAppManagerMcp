@@ -43,6 +43,12 @@ public static class DpiAwarenessNames
         _ => DpiAwareness.Unknown
     };
 
-    /// <summary>True for the awareness the app manifest declares (<see cref="DpiAwareness.PerMonitorV2"/>).</summary>
-    public static bool IsExpected(DpiAwareness awareness) => awareness == DpiAwareness.PerMonitorV2;
+    /// <summary>
+    /// True when the server sees and sends physical pixels on every monitor: <see cref="DpiAwareness.PerMonitorV2"/>, which
+    /// the app manifest declares, or <see cref="DpiAwareness.PerMonitor"/> (v1), the manifest's fallback before Windows 10
+    /// 1703. v2 differs from v1 only in how Windows scales a process's own windows, and the server has none. Any other
+    /// awareness can scale coordinates on monitors above 100%, and the server warns about it.
+    /// </summary>
+    public static bool GivesPhysicalPixels(DpiAwareness awareness) =>
+        awareness is DpiAwareness.PerMonitorV2 or DpiAwareness.PerMonitor;
 }

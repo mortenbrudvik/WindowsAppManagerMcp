@@ -123,10 +123,13 @@ public static class Snapshots
     public const string UpdateVariable = "UPDATE_SNAPSHOTS";
 
     /// <summary>
-    /// Variables a CI service sets to "true": GitHub Actions sets CI and GITHUB_ACTIONS, Azure Pipelines TF_BUILD, and
-    /// most other services CI.
+    /// Variables a CI service sets: GitHub Actions sets CI and GITHUB_ACTIONS, Azure Pipelines TF_BUILD, and most other
+    /// services CI. Most set "true", some "1" or another value, so any value but empty, "false" or "0" counts as CI.
     /// </summary>
     private static readonly string[] CiVariables = ["CI", "GITHUB_ACTIONS", "TF_BUILD"];
+
+    private static bool SaysCi(string? value) =>
+        value?.Trim() is { Length: > 0 } text && !string.Equals(text, "false", StringComparison.OrdinalIgnoreCase) && text != "0";
 
     public static bool UpdateRequested => IsUpdateRequested(Environment.GetEnvironmentVariable);
 
@@ -142,11 +145,11 @@ public static class Snapshots
             return false;
         }
 
-        var ci = CiVariables.FirstOrDefault(name => string.Equals(environment(name), "true", StringComparison.OrdinalIgnoreCase));
+        var ci = CiVariables.FirstOrDefault(name => SaysCi(environment(name)));
         if (ci != null)
         {
             throw new InvalidOperationException(
-                $"{UpdateVariable}=1 is refused in CI ({ci} is true): it would rewrite the tool snapshot and the generated docs " +
+                $"{UpdateVariable}=1 is refused in CI ({ci} is '{environment(ci)}'): it would rewrite the tool snapshot and the generated docs " +
                 "on the runner instead of checking them. Regenerate them locally and commit the result (see TESTING.md).");
         }
 

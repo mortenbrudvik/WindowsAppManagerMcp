@@ -41,7 +41,7 @@ These tools act on the user's real desktop. Every task follows one loop: **locat
 
 ### Start: check the server
 
-Call `get_server_info` once at the start of a task, and again whenever tools behave unexpectedly. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness other than `PerMonitorV2`, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows.
+Call `get_server_info` once at the start of a task, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows. The steps below name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
 
 ### 1. Locate
 
@@ -53,7 +53,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 ### 2. Activate and verify
 
 - `focus_window` brings the window to the front and reports what is in front afterwards. Check that it is your window before you type; when it is not, read its `errorCode` (`FocusFailed`, `Cloaked`, `WindowHidden`, `NotResponding`, `TargetDeniedByPolicy`) instead of retrying blindly.
-- Input tools with `windowHandle` activate the window for keys themselves and refuse to send anywhere else, so this step is how you find out early, and why.
+- Input tools with `windowHandle` activate the window for keys themselves and refuse to send anywhere else, so this step is how you find out early, and why. Clicks do not bring their window to the front: call `focus_window` before clicking a window that may be covered (otherwise `TargetOccluded`).
 - Before typing into a field, click it (with `windowHandle`), then call `get_focused_element` to confirm the caret is in that field.
 
 ### 3. Act
@@ -99,7 +99,7 @@ There is no sleep tool, and you do not need one. `launch_application` with `wait
 **Other failure modes:**
 
 - **A tool is missing:** the user's toolsets, excluded tools or read-only mode leave it out (see [Toolsets](#toolsets)); `get_server_info` says which. Tell the user instead of working around it.
-- **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`), and convert capture points with `imageToScreen`, never with `scaleFactor`.
+- **Coordinates are off:** check `dpiAwareness` in `get_server_info` (it must be `PerMonitorV2`, or `PerMonitor` on Windows before 10 1703), and convert capture points with `imageToScreen`, never with `scaleFactor`.
 - **A capture shows nothing useful:** a minimized window fails with `WindowMinimized` (pass `restoreIfMinimized: true`, which restores it without activation and minimizes it again), a hidden one with `WindowHidden`, one on another virtual desktop with `Cloaked`. Read the capture's `warnings`: `ImageBlank` (one solid color: GPU or protected content, or not painted yet), `WindowNotResponding` (copied from the screen, so covering windows show) or `DpiScaledWindow`.
 - **A window is not listed:** listings leave out cloaked windows (other virtual desktops), tool windows, untitled windows and shell windows; see the Tips.
 - **A launched app's window is not found** (`launchStatus` `possibleHandoff`, `exitedWithoutWindow` or `timedOut`): the program was started, so never launch it again. Find the window with `find_windows`, or launch with `expectWindow` next time. `awaitingUserConsent` means Windows shows a consent or security prompt (UAC, SmartScreen): only the user may answer it, so ask the user and never click or type into it. `InvalidUri`: percent-encode quotes and spaces in a URI (`%22`, `%20`). `ExecutableNotFound`: the bare name is not installed where the server looks; use the full path.
@@ -339,7 +339,7 @@ To get a page's URL or text, use these tools instead of screenshots:
 
 ## Toolsets
 
-The user chooses which tools the server serves (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`, `WAM_READ_ONLY`). A tool that is turned off is missing from your tool list; a call to it fails as an unknown tool. `get_server_info` reports the toolsets in force (`toolsets.enabled`, `disabled`, `readOnly`, `excludedTools`). In read-only mode only the tools that never change anything are served: you can look, but not type, click, move, close, launch or capture. Do not try to work around a missing tool (for example by typing a key chord instead of a closing tool): tell the user what you need. See [Toolsets](https://github.com/mortenbrudvik/WindowsAppManagerMcp/blob/main/docs/TOOLS.md#toolsets).
+The user chooses which tools the server serves (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`, `WAM_READ_ONLY`). A tool that is turned off is missing from your tool list; a call to it fails as an unknown tool. `get_server_info`, which is always served, reports the toolsets in force (`toolsets.enabled`, `disabled`, `readOnly`, `excludedTools`), and its `warnings` name a setting the server could not read (it then serves only the `server` toolset, to be safe). When the user turned tools off, the server's instructions end with a line that says which. In read-only mode only the tools that never change anything are served: you can look, but not type, click, move, close, launch, capture or save layouts. Do not try to work around a missing tool (for example by typing a key chord instead of a closing tool): tell the user what you need. See [Toolsets](https://github.com/mortenbrudvik/WindowsAppManagerMcp/blob/main/docs/TOOLS.md#toolsets).
 
 ## Snap Positions
 

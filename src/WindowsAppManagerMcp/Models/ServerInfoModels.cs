@@ -46,7 +46,8 @@ public sealed record ServerConnectionInfo(string? ProtocolVersion, string? Clien
 /// <param name="IntegrityLevel">Its integrity level. Windows drops input to windows of a higher level (TargetElevated).</param>
 /// <param name="Elevated">Whether its token is elevated (run as administrator), or null when it cannot be read.</param>
 /// <param name="DpiAwareness">
-/// The DPI awareness in force; PerMonitorV2 (from the app manifest) means every coordinate is a physical pixel.
+/// The DPI awareness in force; PerMonitorV2 (from the app manifest), or its fallback PerMonitor on Windows before 10 1703,
+/// means every coordinate is a physical pixel.
 /// </param>
 public sealed record ServerProcessInfo(int ProcessId, int? SessionId, IntegrityLevel IntegrityLevel, bool? Elevated, DpiAwareness DpiAwareness);
 
