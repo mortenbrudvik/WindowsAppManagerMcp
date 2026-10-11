@@ -598,6 +598,35 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void ATargetASelectorNamed_ThatNoLongerMatchesIt_IsHandleMismatch_ForKeysAndMouse()
+    {
+        // Arrange - the selector was resolved before the gate wait; inside the gate the window's title no longer matches
+        var target = To(Notepad) with { SelectorRecheck = () => "Window 512 no longer matches titleContains 'notes.txt'." };
+
+        // Act
+        var keys = CreateSut().CheckKeyboard(target, KeyboardInputKind.Text, null);
+        var mouse = CreateSut().CheckMouse(10, 10, target);
+
+        // Assert
+        keys.ErrorCode.Should().Be(InputErrorCode.HandleMismatch);
+        keys.Error.Should().Contain("no longer matches");
+        mouse.ErrorCode.Should().Be(InputErrorCode.HandleMismatch);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void ATargetASelectorNamed_ThatStillMatchesIt_IsCheckedAsAnyWindowHandle()
+    {
+        var rechecked = 0;
+        var target = To(Notepad) with { SelectorRecheck = () => { rechecked++; return null; } };
+
+        var result = CreateSut().CheckKeyboard(target, KeyboardInputKind.Text, null);
+
+        result.Allowed.Should().BeTrue(result.Error);
+        rechecked.Should().Be(1);
+    }
+
+    [Fact]
     public void Keyboard_TargetDisabledByAModalDialog_IsBlockedByModal_WithTheDialog()
     {
         // Arrange - the dialog is GW_ENABLEDPOPUP of the target

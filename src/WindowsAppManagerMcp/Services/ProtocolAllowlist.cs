@@ -62,6 +62,13 @@ public sealed partial class ProtocolAllowlist
     /// <summary>Every allowed scheme, built-in first, for messages.</summary>
     public IEnumerable<string> AllowedSchemes => BuiltInSchemes.Concat(ExtraSchemes);
 
+    /// <summary>The warning about <see cref="IgnoredEntries"/> (get_server_info and the log at start); null when none was ignored.</summary>
+    public string? IgnoredWarning => IgnoredEntries.Count == 0
+        ? null
+        : $"{Variable}: {string.Join(", ", IgnoredEntries.Select(e => $"'{e}'"))} " +
+          $"{(IgnoredEntries.Count == 1 ? "is" : "are")} blocked, file, or not a URI scheme name, so launch_application does not open " +
+          $"{(IgnoredEntries.Count == 1 ? "it" : "them")} (UnknownProtocol or BlockedProtocol).";
+
     /// <summary>Reads <see cref="Variable"/> from the environment (or <paramref name="read"/>).</summary>
     public static ProtocolAllowlist FromEnvironment(Func<string, string?>? read = null) =>
         Parse((read ?? Environment.GetEnvironmentVariable)(Variable));

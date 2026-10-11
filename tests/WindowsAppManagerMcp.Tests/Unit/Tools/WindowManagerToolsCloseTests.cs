@@ -18,6 +18,7 @@ public class WindowManagerToolsCloseTests
     private readonly Mock<IWindowService> _windowService = new();
     private readonly Mock<IWindowCloseVerifier> _verifier = new();
     private readonly List<bool> _gateFreeDuringTheWait = [];
+    private object _flow = new();
 
     public WindowManagerToolsCloseTests()
     {
@@ -31,8 +32,12 @@ public class WindowManagerToolsCloseTests
             .ReturnsAsync([]);
     }
 
-    private WindowManagerTools CreateSut() =>
-        new(_windowService.Object, Mock.Of<IForegroundService>(), closeVerifier: _verifier.Object, gateWaitTimeout: TimeSpan.FromSeconds(5));
+    /// <summary>The tools, with the calling test's flow tagged so the gate checks see its own calls only.</summary>
+    private WindowManagerTools CreateSut()
+    {
+        _flow = InputGate.TagFlow();
+        return new(_windowService.Object, Mock.Of<IForegroundService>(), closeVerifier: _verifier.Object, gateWaitTimeout: TimeSpan.FromSeconds(5));
+    }
 
     private static WindowCloseRequest[] Requests(params long[] handles) => handles.Select(h => new WindowCloseRequest(h)).ToArray();
 
@@ -41,11 +46,8 @@ public class WindowManagerToolsCloseTests
         _verifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
             {
-                // The tool must have released the gate: taking it here would time out otherwise
-                using (var gate = InputGate.TryEnter(TimeSpan.FromSeconds(5), CancellationToken.None))
-                {
-                    _gateFreeDuringTheWait.Add(gate != null);
-                }
+                // The tool must have released the gate (another test may hold it in parallel)
+                _gateFreeDuringTheWait.Add(!InputGate.IsHeldBy(_flow));
 
                 return handles.Select(h => status(h) == CloseStatus.PromptShown
                     ? new CloseObservation(h, CloseStatus.PromptShown, SavePrompt)
@@ -266,13 +268,13 @@ public class WindowManagerToolsCloseTests
         // Act
         var result = await CreateSut().CloseWindowsBatch(Requests(1, 2, 3));
 
-        // Assert
+        // Assert - a window that got no close message is notSent, as close_application reports it
         result.Succeeded.Should().Be(1);
         result.Failed.Should().Be(2);
         result.Results.Should().Equal(
             new WindowResultItem(1, true, Status: "closed"),
-            new WindowResultItem(2, false, Error: "the desktop", ErrorCode: "ProtectedWindow"),
-            new WindowResultItem(3, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle"));
+            new WindowResultItem(2, false, Error: "the desktop", ErrorCode: "ProtectedWindow", Status: "notSent"),
+            new WindowResultItem(3, false, Error: "Invalid window handle", ErrorCode: "InvalidHandle", Status: "notSent"));
         _verifier.Verify(v => v.WaitForCloseAsync(It.Is<IReadOnlyList<nint>>(h => h.SequenceEqual(new nint[] { 1 })), It.IsAny<IReadOnlySet<nint>>(),
             TimeSpan.FromSeconds(2), It.IsAny<CancellationToken>()), Times.Once);
         _gateFreeDuringTheWait.Should().Equal(true);
@@ -448,6 +450,61 @@ public class WindowManagerToolsCloseTests
         result.Success.Should().BeTrue();
         result.Exited.Should().BeFalse();
         result.RunningProcessIds.Should().Equal(700);
+    }
+
+    [Fact]
+    public async Task CloseApplication_WindowsOnOtherDesktops_AreNotClosed_AndAreReported()
+    {
+        // Arrange - Notepad has a window here and one with unsaved work on another virtual desktop
+        Desktop(AppWindow(1, 700, "notepad", "a.txt - Notepad"));
+        _windowService.Setup(w => w.GetApplicationWindowsOnOtherDesktops())
+            .Returns([AppWindow(9, 700, "notepad", "draft.txt - Notepad") with { IsCloaked = true }, AppWindow(8, 800, "mspaint", "Paint")]);
+        _windowService.Setup(w => w.CloseWindow(1, false)).Returns(() =>
+        {
+            _windowService.Setup(w => w.GetApplicationWindows()).Returns([]);
+            return WindowCloseResult.Sent(1);
+        });
+
+        // Act
+        var result = await CreateSut().CloseApplication(processName: "notepad");
+
+        // Assert - this desktop's window is closed; the process keeps running with the other one, which is named
+        result.Status.Should().Be("closed");
+        result.OtherDesktopWindows.Should().Equal(new RemainingWindowDto(9, "draft.txt - Notepad", 700, "notepad"));
+        result.Exited.Should().BeFalse();
+        result.RunningProcessIds.Should().Equal(700);
+        _windowService.Verify(w => w.CloseWindow(9, It.IsAny<bool>()), Times.Never);
+        _verifier.Verify(v => v.WaitForProcessesToExitAsync(It.IsAny<IReadOnlyList<int>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a process with a window on another desktop does not exit");
+    }
+
+    [Fact]
+    public async Task CloseApplication_WithoutWindowsOnOtherDesktops_LeavesThemOut()
+    {
+        Desktop(AppWindow(1, 700, "notepad", "a.txt - Notepad"));
+
+        var result = await CreateSut().CloseApplication(processName: "notepad");
+
+        result.OtherDesktopWindows.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CloseApplication_AWindowWhoseHandleAnotherProcessGotMeanwhile_IsNotClosed_EvenWithoutAQuestion()
+    {
+        // Arrange - listed as Notepad's; by the time the call holds the gate, the handle names a terminal's window
+        Desktop(AppWindow(1, 700, "notepad", "a.txt - Notepad"), AppWindow(2, 700, "notepad", "b.txt - Notepad"));
+        _windowService.Setup(w => w.GetWindowInfo(1)).Returns(AppWindow(1, 900, "WindowsTerminal", "pwsh"));
+
+        // Act
+        var result = await CreateSut().CloseApplication(processName: "notepad");
+
+        // Assert
+        _windowService.Verify(w => w.CloseWindow(1, It.IsAny<bool>()), Times.Never);
+        _windowService.Verify(w => w.CloseWindow(2, false), Times.Once);
+        var refused = result.Windows.Single(w => w.Handle == 1);
+        refused.Status.Should().Be("notSent");
+        refused.ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        refused.Error.Should().Contain("WindowsTerminal").And.Contain("PID 700");
     }
 
     [Fact]

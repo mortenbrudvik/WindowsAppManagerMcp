@@ -96,6 +96,7 @@ public class WindowServiceHangTests
     {
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.IsIconic(Hung)).Returns(true);
+        _native.Setup(n => n.IsWindowVisible(Hung)).Returns(true);
         _native.Setup(n => n.ShowWindow(Hung, SwShowNoActivate)).Returns(() => answer.Wait(Long));
         var sut = CreateSut(BlockedDeadline);
 

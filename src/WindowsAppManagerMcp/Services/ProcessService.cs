@@ -268,11 +268,19 @@ public class ProcessService : IProcessService
     /// <summary>
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
     /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
-    /// other's windows by name and path; the started process decides between them.
+    /// other's windows by name and path; the started process decides between them. Such a window is this launch's after
+    /// all once that other launch has its window and this launch's own process is gone (<paramref name="handedOff"/>): a
+    /// single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
+    /// Terminal launches) opens its window in that instance. The shared claim still gives each window to one launch.
     /// </summary>
-    private static Func<WindowCandidate, bool> BatchOwner(LaunchWindowOwner owner, IReadOnlyList<LaunchWindowOwner> others) =>
+    private static Func<WindowCandidate, bool> BatchOwner(
+        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, Func<bool> handedOff) =>
         window => owner.Matches(window) &&
-                  (owner.StartedProcess(window.ProcessId) || !others.Any(other => other.StartedProcess(window.ProcessId)));
+                  (owner.StartedProcess(window.ProcessId) ||
+                   !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff())));
+
+    /// <summary>True when the launch started no process, or the process it started has exited.</summary>
+    private static bool LauncherGone(StartedLaunch launch) => launch.Process == null || HasExitedSafe(launch.Process);
 
     /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
     private WindowInfo? MainWindowOf(IProcessHandle process)
@@ -716,21 +724,35 @@ public class ProcessService : IProcessService
             // matches (same program name or path, handoff names, hint) leave it alone, whichever wait sees it first
             var owners = waiting.Select(item => OwnerOf(item.Launch, applications[item.Index])).ToList();
             var claimed = new HashSet<nint>();
-            bool Claim(nint handle)
+            var hasWindow = new bool[waiting.Count];
+            bool Claim(int position, nint handle)
             {
                 lock (claimed)
                 {
-                    return claimed.Add(handle);
+                    if (!claimed.Add(handle))
+                        return false;
+
+                    hasWindow[position] = true;
+                    return true;
+                }
+            }
+
+            bool HasWindow(int position)
+            {
+                lock (claimed)
+                {
+                    return hasWindow[position];
                 }
             }
 
             await Task.WhenAll(waiting.Select(async (item, position) =>
             {
                 var owner = owners[position];
-                var others = owners.Where((_, other) => other != position).ToList();
+                var others = owners.Select((other, index) => (Owner: other, HasWindow: (Func<bool>)(() => HasWindow(index))))
+                    .Where((_, index) => index != position).ToList();
                 results[item.Index] = await WaitForWindowAsync(
-                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others), waitTimeoutMs, Claim,
-                    cancellationToken).ConfigureAwait(false);
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, () => LauncherGone(item.Launch)), waitTimeoutMs,
+                    handle => Claim(position, handle), cancellationToken).ConfigureAwait(false);
                 Report(item.Index);
             })).ConfigureAwait(false);
         }
@@ -765,6 +787,7 @@ public class ProcessService : IProcessService
         bool forceKill = false,
         int gracefulTimeoutMs = DefaultGracefulTimeoutMs,
         string? expectedProcessName = null,
+        KillSafeguards? safeguards = null,
         CancellationToken cancellationToken = default)
     {
         // Safety check: require explicit confirmation
@@ -810,17 +833,23 @@ public class ProcessService : IProcessService
                 return ProcessNotFound(processId);
             }
 
-            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out _) is { } refused)
+            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused)
             {
                 return refused;
+            }
+
+            if (safeguards?.Confirmed is { } confirmed && ConfirmedTargetRefusal(processId, processName, forceKill, confirmed, tree) is { } changed)
+            {
+                return changed;
             }
 
             // A call cancelled before anything is sent does nothing
             cancellationToken.ThrowIfCancellationRequested();
 
+            var beforeWait = safeguards?.BeforeWait;
             return forceKill
-                ? await TerminateForcefullyAsync(process, processId, processName, cancellationToken).ConfigureAwait(false)
-                : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, cancellationToken).ConfigureAwait(false);
+                ? await TerminateForcefullyAsync(process, processId, processName, beforeWait, cancellationToken).ConfigureAwait(false)
+                : await CloseGracefullyAsync(process, processId, processName, gracefulTimeoutMs, beforeWait, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -870,8 +899,52 @@ public class ProcessService : IProcessService
                 return KillTargetCheck.Refused(NoClosableWindow(processId, processName));
             }
 
-            return new KillTargetCheck(null, processName, tree ?? []);
+            // Read while the process is open, so the PID cannot have been reused yet
+            return new KillTargetCheck(null, processName, tree ?? [], _processWrapper.GetProcessStartTime(processId));
         }
+    }
+
+    /// <summary>
+    /// Why the open process is not the one the user confirmed, or null: it started at another time than the confirmed one
+    /// (the PID was reused while the question was open), or, with <paramref name="forceKill"/>, its tree has a process the
+    /// user was not shown. The process is open, so its PID cannot be reused while this reads its start time.
+    /// </summary>
+    private KillResult? ConfirmedTargetRefusal(
+        int processId, string processName, bool forceKill, KillTargetCheck confirmed, IReadOnlyList<(int ProcessId, string ImageName)>? tree)
+    {
+        if (confirmed.StartTime is { } confirmedStart && _processWrapper.GetProcessStartTime(processId) is var start && start != confirmedStart)
+        {
+            var started = start is { } now ? $"at {now:u}" : "at a time that cannot be read";
+            return new KillResult(
+                Success: false,
+                ProcessId: processId,
+                ProcessName: processName,
+                ErrorMessage: $"PID {processId} now belongs to a '{processName}' process that started {started}, not the one the user " +
+                              $"confirmed (started at {confirmedStart:u}): that one exited and its PID was reused while the question was " +
+                              "open. Nothing was done; call list_processes to get the current PID.",
+                ErrorCode: nameof(ProcessErrorCode.ProcessNameMismatch));
+        }
+
+        if (forceKill && tree != null)
+        {
+            var shown = confirmed.ChildProcesses.Select(c => c.ProcessId).ToHashSet();
+            var added = tree.Where(c => !shown.Contains(c.ProcessId)).ToList();
+            if (added.Count > 0)
+            {
+                var names = string.Join(", ", added.Take(10).Select(c => $"{c.ImageName} (PID {c.ProcessId})")) +
+                            (added.Count > 10 ? $" and {added.Count - 10} more" : string.Empty);
+                return new KillResult(
+                    Success: false,
+                    ProcessId: processId,
+                    ProcessName: processName,
+                    ErrorMessage: $"forceKill would also end {names}, which started under '{processName}' (PID {processId}) while the " +
+                                  "user was asked, so the user never saw them. Nothing was terminated. Call kill_process again to ask " +
+                                  "about the process tree as it is now.",
+                    ErrorCode: nameof(ProcessErrorCode.ProcessTreeChanged));
+            }
+        }
+
+        return null;
     }
 
     /// <summary>True when the process has a main window, or when that cannot be read (the close request then finds out).</summary>
@@ -1086,7 +1159,7 @@ public class ProcessService : IProcessService
     /// a process that cannot be closed or is still running is left alone and reported as such.
     /// </summary>
     private static async Task<KillResult> CloseGracefullyAsync(
-        IProcessHandle process, int processId, string processName, int timeoutMs, CancellationToken cancellationToken)
+        IProcessHandle process, int processId, string processName, int timeoutMs, Action? beforeWait, CancellationToken cancellationToken)
     {
         bool closeRequested;
         try
@@ -1108,6 +1181,7 @@ public class ProcessService : IProcessService
             return NoClosableWindow(processId, processName);
         }
 
+        beforeWait?.Invoke();
         bool exited;
         try
         {
@@ -1145,7 +1219,7 @@ public class ProcessService : IProcessService
     /// Force mode: terminates the process and its child processes, then confirms that it exited.
     /// </summary>
     private static async Task<KillResult> TerminateForcefullyAsync(
-        IProcessHandle process, int processId, string processName, CancellationToken cancellationToken)
+        IProcessHandle process, int processId, string processName, Action? beforeWait, CancellationToken cancellationToken)
     {
         AggregateException? treeFailures = null;
         try
@@ -1175,6 +1249,7 @@ public class ProcessService : IProcessService
               (accessDenied ? " (access denied: they probably run elevated or as another user)" : "") +
               ": " + string.Join("; ", treeFailures.InnerExceptions.Select(e => e.Message));
 
+        beforeWait?.Invoke();
         bool exited;
         try
         {

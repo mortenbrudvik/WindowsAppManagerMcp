@@ -36,6 +36,103 @@ public class ProcessKillTests
     private void VerifyNeverForceKilled() =>
         _mockProcess.Verify(p => p.Kill(It.IsAny<bool>()), Times.Never);
 
+    #region What the user confirmed (roadmap M2.10 review)
+
+    private static readonly DateTime StartedAt = new(2026, 10, 11, 8, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void CheckKillTarget_ReadsTheProcessStartTime_ToPinTheProcessTheUserIsAskedAbout()
+    {
+        _mockWrapper.Setup(w => w.GetProcessStartTime(Pid)).Returns(StartedAt);
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(0x100);
+
+        CreateSut().CheckKillTarget(Pid, forceKill: false, gracefulTimeoutMs: 5000).StartTime.Should().Be(StartedAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task KillProcess_AConfirmedProcessWhosePidWasReused_ByOneWithTheSameName_IsNotTouched(bool forceKill)
+    {
+        // Arrange - the user approved notepad started at 08:00; it exited while they read the question, and another notepad
+        // got its PID
+        var confirmed = new KillTargetCheck(null, "notepad", [], StartedAt);
+        _mockWrapper.Setup(w => w.GetProcessStartTime(Pid)).Returns(StartedAt.AddMinutes(1));
+
+        // Act
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: forceKill, expectedProcessName: "notepad",
+            safeguards: new KillSafeguards(confirmed));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessNameMismatch));
+        result.ErrorMessage.Should().Contain("started").And.Contain("Nothing was done");
+        VerifyNeverForceKilled();
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public async Task KillProcess_Forced_ATreeThatGainedAProcessTheUserWasNotShown_IsNotTerminated()
+    {
+        // Arrange - the user saw one child; a second started while the question was open
+        var confirmed = new KillTargetCheck(null, "notepad", [(5001, "conhost.exe")], StartedAt);
+        _mockWrapper.Setup(w => w.GetProcessStartTime(Pid)).Returns(StartedAt);
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "conhost.exe"), (5002, "cmd.exe")]);
+
+        // Act
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true, safeguards: new KillSafeguards(confirmed));
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(ProcessErrorCode.ProcessTreeChanged));
+        result.ErrorMessage.Should().Contain("cmd.exe (PID 5002)").And.Contain("Nothing was terminated");
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public async Task KillProcess_Forced_TheTreeTheUserWasShown_OrPartOfIt_IsTerminated()
+    {
+        var confirmed = new KillTargetCheck(null, "notepad", [(5001, "conhost.exe"), (5002, "cmd.exe")], StartedAt);
+        _mockWrapper.Setup(w => w.GetProcessStartTime(Pid)).Returns(StartedAt);
+        _mockWrapper.Setup(w => w.GetDescendantsOf(Pid)).Returns([(5001, "conhost.exe")]);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var result = await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true, safeguards: new KillSafeguards(confirmed));
+
+        result.Success.Should().BeTrue(result.ErrorMessage);
+        _mockProcess.Verify(p => p.Kill(true), Times.Once);
+    }
+
+    [Fact]
+    public async Task KillProcess_Graceful_HandsBackTheGate_AfterTheCloseRequest_AndBeforeTheWait()
+    {
+        // Arrange - kill_process releases the input gate here: the wait (up to 60 s) needs no gate
+        var order = new List<string>();
+        _mockProcess.Setup(p => p.CloseMainWindow()).Callback(() => order.Add("close")).Returns(true);
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("wait")).ReturnsAsync(true);
+
+        // Act
+        await CreateSut().KillProcessAsync(Pid, confirm: true, safeguards: new KillSafeguards(BeforeWait: () => order.Add("release")));
+
+        // Assert
+        order.Should().Equal("close", "release", "wait");
+    }
+
+    [Fact]
+    public async Task KillProcess_Forced_HandsBackTheGate_AfterTheTermination_AndBeforeTheWait()
+    {
+        var order = new List<string>();
+        _mockProcess.Setup(p => p.Kill(true)).Callback(() => order.Add("kill"));
+        _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("wait")).ReturnsAsync(true);
+
+        await CreateSut().KillProcessAsync(Pid, confirm: true, forceKill: true, safeguards: new KillSafeguards(BeforeWait: () => order.Add("release")));
+
+        order.Should().Equal("kill", "release", "wait");
+    }
+
+    #endregion
+
     #region Graceful Mode Never Escalates
 
     [Fact]

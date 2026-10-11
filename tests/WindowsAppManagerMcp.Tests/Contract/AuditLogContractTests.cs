@@ -146,6 +146,62 @@ public class AuditLogContractTests
         line.GetProperty("result").GetProperty("charactersTyped").GetInt32().Should().Be(23);
     }
 
+    /// <summary>The audited tools whose typical call aims at nothing a line can name: no window, process, program or item.</summary>
+    private static readonly string[] Untargeted = ["release_all_input", "save_layout", "delete_layout", "set_clipboard"];
+
+    [Theory]
+    [MemberData(nameof(ServedAuditedTools))]
+    public async Task TheTypicalCall_OfAnAuditedTool_NamesWhatItActedOn(string tool)
+    {
+        if (Untargeted.Contains(tool))
+        {
+            return;
+        }
+
+        var (_, lines) = await CallAsync(tool, EveryToolContractTests.ArgumentsFor(tool));
+
+        var line = lines.Single();
+        var named = new[] { "target", "items", "receivingWindow" }.Where(p => line.TryGetProperty(p, out _)).ToList();
+        named.Should().NotBeEmpty("the line of '{0}' must say what it acted on: {1}", tool, line.GetRawText());
+    }
+
+    [Fact]
+    public async Task CloseApplication_RecordsEachWindowItClosed_WithItsTitleProcessAndStatus()
+    {
+        var (_, lines) = await CallAsync("close_application", new Dictionary<string, object?> { ["processName"] = "notepad" });
+
+        var items = lines.Single().GetProperty("items").EnumerateArray().ToList();
+        items.Should().NotBeEmpty();
+        items.Should().OnlyContain(i => i.GetProperty("process").GetString() == "notepad" && i.GetProperty("processId").GetInt32() > 0);
+        items.Select(i => i.GetProperty("title").GetString()).Should().Contain(TypicalDesktop.Notepad.Title);
+        items.Should().OnlyContain(i => i.GetProperty("status").GetString() == "closed");
+    }
+
+    [Fact]
+    public async Task ApplyLayout_RecordsEachPlacementsWindow()
+    {
+        var (_, lines) = await CallAsync("apply_layout", EveryToolContractTests.ArgumentsFor("apply_layout"));
+
+        var items = lines.Single().GetProperty("items").EnumerateArray().ToList();
+        items.Should().NotBeEmpty();
+        items.Should().OnlyContain(i => i.GetProperty("handle").GetInt64() != 0 && i.GetProperty("status").GetString() == "applied");
+        items[0].GetProperty("title").GetString().Should().Be(TypicalDesktop.Windows[0].Title);
+    }
+
+    [Fact]
+    public async Task ACloseNamedByASelector_RecordsTheResolvedWindowsTitleAndProcess()
+    {
+        var (_, lines) = await CallAsync("close_window", new Dictionary<string, object?>
+        {
+            ["window"] = new Dictionary<string, object?> { ["processName"] = "notepad" }
+        });
+
+        var target = lines.Single().GetProperty("target");
+        target.GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        target.GetProperty("title").GetString().Should().Be(TypicalDesktop.Notepad.Title, "the tool notes the window before it closes it");
+        target.GetProperty("process").GetString().Should().Be("notepad");
+    }
+
     [Fact]
     public async Task ANumberSentForTheText_IsRecordedAsItsLength_FromTheToolsSchema()
     {

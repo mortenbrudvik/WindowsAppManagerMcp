@@ -17,18 +17,20 @@ public sealed class UserConfirmationContractTests : IDisposable
 {
     public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision };
 
-    private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(5);
     private static readonly long[] FourWindows =
         [TypicalDesktop.NotepadHandle, TypicalDesktop.BrowserHandle, 0x300000 + 2 * 0x1F4, 0x300000 + 4 * 0x1F4];
 
     private readonly ContractServices _services = new(ContractMode.Typical);
     private readonly List<string> _questions = [];
     private bool? _gateWasFreeDuringTheQuestion;
+    private object _flow = new();
+
+    private static readonly DateTime NotepadStarted = new(2026, 10, 11, 8, 0, 0, DateTimeKind.Utc);
 
     public UserConfirmationContractTests()
     {
         _services.Processes.Setup(p => p.CheckKillTarget(TypicalDesktop.NotepadProcessId, It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()))
-            .Returns(new KillTargetCheck(null, "notepad", [(20_001, "conhost.exe")]));
+            .Returns(new KillTargetCheck(null, "notepad", [(20_001, "conhost.exe")], NotepadStarted));
         _services.Windows.Setup(w => w.FindWindows(It.Is<WindowQuery>(q => q.ProcessId == TypicalDesktop.NotepadProcessId)))
             .Returns([TypicalDesktop.Notepad]);
     }
@@ -37,6 +39,8 @@ public sealed class UserConfirmationContractTests : IDisposable
 
     private Task<InProcessMcpServer> StartAsync(string? revision, Func<ElicitRequestParams, ElicitResult>? answer)
     {
+        // The server's calls run under this test's tag, so the checks below see this test's hold of the gate, not another's
+        _flow = InputGate.TagFlow();
         McpClientOptions? options = null;
         if (answer != null)
         {
@@ -51,9 +55,10 @@ public sealed class UserConfirmationContractTests : IDisposable
                             _questions.Add(request!.Message);
                         }
 
-                        // While the user reads the question, input and window calls must be able to run
-                        using var gate = await InputGate.TryEnterAsync(GateWait, token);
-                        _gateWasFreeDuringTheQuestion = gate != null;
+                        // While the user reads the question, input and window calls must be able to run: this test's
+                        // call does not hold the gate (another test's call may, in parallel)
+                        await Task.Yield();
+                        _gateWasFreeDuringTheQuestion = !InputGate.IsHeldBy(_flow);
                         return answer(request!);
                     }
                 }
@@ -90,11 +95,19 @@ public sealed class UserConfirmationContractTests : IDisposable
     [MemberData(nameof(Revisions))]
     public async Task KillProcess_AsksTheUser_OutsideTheGate_AndKillsOnlyAfterTheirYes(string? revision)
     {
-        // Arrange - the kill runs inside the gate, after the answer
+        // Arrange - the kill runs inside the gate, after the answer; the wait for the exit (after BeforeWait) runs outside it
         bool? gateHeldDuringTheKill = null;
-        _services.Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(),
+        bool? gateHeldDuringTheWait = null;
+        KillSafeguards? safeguards = null;
+        _services.Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback(() => gateHeldDuringTheKill = InputGate.IsHeld)
+            .Callback((int _, bool _, bool _, int _, string? _, KillSafeguards? given, CancellationToken _) =>
+            {
+                safeguards = given;
+                gateHeldDuringTheKill = InputGate.IsHeldBy(_flow);
+                given?.BeforeWait?.Invoke();
+                gateHeldDuringTheWait = InputGate.IsHeldBy(_flow);
+            })
             .ReturnsAsync(new KillResult(true, TypicalDesktop.NotepadProcessId, "notepad", Forced: true, Exited: true));
         await using var server = await StartAsync(revision, _ => Answer("accept", confirm: true));
 
@@ -108,7 +121,10 @@ public sealed class UserConfirmationContractTests : IDisposable
             .And.Contain("Unsaved work in it is lost");
         _gateWasFreeDuringTheQuestion.Should().BeTrue("a question must never hold the input gate");
         gateHeldDuringTheKill.Should().BeTrue("the kill itself runs inside the gate");
-        _services.Processes.Verify(p => p.KillProcessAsync(TypicalDesktop.NotepadProcessId, true, true, 5000, "notepad",
+        gateHeldDuringTheWait.Should().BeFalse("the wait for the process to exit does not hold up every input call");
+        safeguards!.Confirmed!.StartTime.Should().Be(NotepadStarted, "a process that got the PID while the user read the question is not killed");
+        safeguards.Confirmed.ChildProcesses.Should().Equal([(20_001, "conhost.exe")], "a tree that gained a process is not killed");
+        _services.Processes.Verify(p => p.KillProcessAsync(TypicalDesktop.NotepadProcessId, true, true, 5000, "notepad", It.IsAny<KillSafeguards?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -130,7 +146,7 @@ public sealed class UserConfirmationContractTests : IDisposable
         var payload = Payload(result);
         payload.GetProperty("errorCode").GetString().Should().Be(nameof(ProcessErrorCode.ConfirmationDeclined));
         payload.GetProperty("error").GetString().Should().Contain("Nothing was done");
-        _services.Processes.Verify(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(),
+        _services.Processes.Verify(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -163,7 +179,7 @@ public sealed class UserConfirmationContractTests : IDisposable
 
         // Assert
         _services.Processes.Verify(p => p.CheckKillTarget(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>()), Times.Never);
-        _services.Processes.Verify(p => p.KillProcessAsync(TypicalDesktop.NotepadProcessId, true, false, 5000, null, It.IsAny<CancellationToken>()),
+        _services.Processes.Verify(p => p.KillProcessAsync(TypicalDesktop.NotepadProcessId, true, false, 5000, null, It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -194,7 +210,7 @@ public sealed class UserConfirmationContractTests : IDisposable
         // Arrange
         bool? gateHeldDuringTheClose = null;
         _services.Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .Callback(() => gateHeldDuringTheClose = InputGate.IsHeld)
+            .Callback(() => gateHeldDuringTheClose = InputGate.IsHeldBy(_flow))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) => handles.Select(WindowCloseResult.Sent).ToList());
         await using var server = await StartAsync(revision, _ => Answer("accept", confirm: true));
 
@@ -387,7 +403,7 @@ public sealed class UserConfirmationContractTests : IDisposable
         var windows = FourNotepadWindows();
         var gateHeldDuringTheClose = new List<bool>();
         _services.Windows.Setup(w => w.CloseWindow(It.IsAny<nint>(), false))
-            .Callback(() => gateHeldDuringTheClose.Add(InputGate.IsHeld))
+            .Callback(() => gateHeldDuringTheClose.Add(InputGate.IsHeldBy(_flow)))
             .Returns((nint h, bool _) => WindowCloseResult.Sent(h));
         await using var server = await StartAsync(revision, _ =>
         {

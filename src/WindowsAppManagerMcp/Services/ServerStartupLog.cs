@@ -19,7 +19,9 @@ public sealed class ServerStartupLog(
     INativeSystemInfoWrapper system,
     ToolsetSelection? toolsets = null,
     IOptions<McpServerOptions>? serverOptions = null,
-    ILogger<ServerStartupLog>? logger = null) : IHostedService
+    ILogger<ServerStartupLog>? logger = null,
+    ClipboardOptions? clipboard = null,
+    ProtocolAllowlist? protocols = null) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -42,10 +44,35 @@ public sealed class ServerStartupLog(
             LogToolsets(toolsets, serverOptions?.Value.ToolCollection?.Count ?? 0);
         }
 
+        if (clipboard != null || protocols != null)
+        {
+            LogClipboardAndProtocols(clipboard ?? ClipboardOptions.Default, protocols ?? ProtocolAllowlist.BuiltIn);
+        }
+
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private void LogClipboardAndProtocols(ClipboardOptions clipboard, ProtocolAllowlist protocols)
+    {
+        logger?.LogInformation(
+            "Reading the user's clipboard without asking ({ClipboardVariable}): {UserClipboard}; launch_application opens the URI " +
+            "schemes {Schemes}",
+            ClipboardOptions.EnvironmentVariable,
+            clipboard.AllowUserClipboard ? "on" : "off",
+            string.Join(", ", protocols.AllowedSchemes));
+
+        if (clipboard.Warning is { } clipboardWarning)
+        {
+            logger?.LogWarning("{ClipboardWarning}", clipboardWarning);
+        }
+
+        if (protocols.IgnoredWarning is { } protocolWarning)
+        {
+            logger?.LogWarning("{ProtocolWarning}", protocolWarning);
+        }
+    }
 
     private void LogToolsets(ToolsetSelection selection, int served)
     {

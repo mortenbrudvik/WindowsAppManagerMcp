@@ -129,6 +129,35 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_ReportsTheClipboardAndProtocolSettings_AndWarnsAboutWhatWasIgnored()
+    {
+        // Arrange - a mistyped WAM_ALLOW_USER_CLIPBOARD, and a WAM_ALLOWED_PROTOCOLS with one usable and two ignored entries
+        var clipboard = ClipboardOptions.FromEnvironment(_ => "ture");
+        var protocols = ProtocolAllowlist.Parse("vscode, javascript, 1bad");
+
+        // Act
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, clipboard: clipboard, protocols: protocols).Read(Connection, 48);
+
+        // Assert
+        info.Safety.UserClipboardAllowed.Should().BeFalse();
+        info.Safety.AllowedProtocols.Should().Equal("http", "https", "mailto", "tel", "ms-settings", "vscode");
+        info.Warnings.Should().Contain(w => w.Contains("WAM_ALLOW_USER_CLIPBOARD") && w.Contains("'ture'"));
+        info.Warnings.Should().Contain(w => w.Contains("WAM_ALLOWED_PROTOCOLS") && w.Contains("'javascript'") && w.Contains("'1bad'"));
+    }
+
+    [Fact]
+    public void Read_WithTheUsersClipboardAllowed_SaysSo_WithoutAWarning()
+    {
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, clipboard: new ClipboardOptions(true), protocols: ProtocolAllowlist.BuiltIn).Read(Connection, 48);
+
+        info.Safety.UserClipboardAllowed.Should().BeTrue();
+        info.Safety.AllowedProtocols.Should().Equal(ProtocolAllowlist.BuiltInSchemes);
+        info.Warnings.Should().BeNull();
+    }
+
+    [Fact]
     public void Read_WithoutAnAuditLog_LeavesItsPathOut()
     {
         var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,

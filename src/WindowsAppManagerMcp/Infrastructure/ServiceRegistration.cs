@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Native;
@@ -92,7 +93,14 @@ public static class ServiceRegistration
         // The effective DPI awareness (from app.manifest), the foreground lock timeout and the session, for
         // get_server_info and the log at start
         services.AddSingleton<INativeSystemInfoWrapper, NativeSystemInfoWrapper>();
-        services.AddHostedService<ServerStartupLog>(); // logs the versions, the DPI awareness and the toolsets in force
+        // Logs the versions, the DPI awareness, the toolsets, and the clipboard and URI scheme settings in force
+        services.AddHostedService(sp => new ServerStartupLog(
+            sp.GetRequiredService<INativeSystemInfoWrapper>(),
+            sp.GetService<ToolsetSelection>(),
+            sp.GetService<IOptions<McpServerOptions>>(),
+            sp.GetService<ILogger<ServerStartupLog>>(),
+            sp.GetService<ClipboardOptions>(),
+            ProtocolAllowlist.FromEnvironment()));
         services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
             sp.GetRequiredService<INativeSystemInfoWrapper>(),
             sp.GetRequiredService<IProcessSecurityProbe>(),
@@ -103,7 +111,9 @@ public static class ServiceRegistration
             sp.GetRequiredService<ILayoutService>(),
             sp.GetRequiredService<INativeWindowWrapper>(),
             sp.GetService<ToolsetSelection>(), // registered by AddWindowsAppManagerTools
-            sp.GetRequiredService<IAuditLog>()));
+            sp.GetRequiredService<IAuditLog>(),
+            sp.GetService<ClipboardOptions>(),
+            ProtocolAllowlist.FromEnvironment()));
 
         // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
         services.AddSingleton<IAuditLog>(sp => new AuditLog(

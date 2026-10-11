@@ -266,9 +266,10 @@ public class WindowServiceOutcomeTests
         // Act
         var result = CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Maximize);
 
-        // Assert - it used to maximize the window where it was and report success
+        // Assert - it used to maximize the window where it was and report success; now it is not maximized there at all
         result.ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
-        result.Error.Should().Contain("maximized on monitor 0, not on monitor 1");
+        result.Error.Should().Contain("on monitor 0, not on monitor 1");
+        _native.Verify(n => n.ShowWindow(Window, 3 /* SW_MAXIMIZE */), Times.Never);
     }
 
     [Fact]

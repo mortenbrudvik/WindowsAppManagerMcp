@@ -242,22 +242,71 @@ public sealed class AuditLogTests : IDisposable
     }
 
     [Fact]
-    public async Task AFileAnotherServerIsWriting_IsWaitedFor_Briefly()
+    public void AFileAnotherServerIsWriting_IsWaitedFor_Briefly()
     {
-        // Arrange - another server holds the day's file open for writing (the log opens it so that only one writer at a time can)
+        // Arrange - another server holds the day's file open for writing (the log opens it so that only one writer at a time
+        // can); it closes the file when the writer tries again, so the retry is exercised whatever the machine's speed
         Directory.CreateDirectory(_folder);
         var other = new FileStream(DayFile("2026-10-10"), FileMode.Append, FileAccess.Write, FileShare.Read | FileShare.Delete);
-        var log = CreateLog();
+        var attempts = new List<int>();
+        var log = new AuditLog(new AuditLogOptions(_folder, AuditLogOptions.DefaultRetention), _windows.Object, _clock, _logger,
+            writeAttempt: attempt =>
+            {
+                attempts.Add(attempt);
+                if (attempt == 2)
+                {
+                    other.Dispose();
+                }
+            });
 
         // Act
-        var write = Task.Run(() => Record(log, "click"));
-        await Task.Delay(50);
-        await other.DisposeAsync();
-        await write;
+        Record(log, "click");
 
         // Assert
+        attempts.Should().Equal(1, 2);
         log.LastError.Should().BeNull();
         Lines("2026-10-10").Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task AWriteThatStalls_HoldsUpTheCall_AtMostTheCallDelay_AndTheLineIsWrittenLater()
+    {
+        // Arrange - the folder does not answer (a network share that went away): the writer is stuck until the test lets go
+        using var stalled = new ManualResetEventSlim();
+        var log = new AuditLog(new AuditLogOptions(_folder, AuditLogOptions.DefaultRetention), _windows.Object, _clock, _logger,
+            maxCallDelay: TimeSpan.FromMilliseconds(50), writeAttempt: _ => stalled.Wait(TimeSpan.FromSeconds(30)));
+
+        // Act - the call returns while its line still waits
+        var call = Task.Run(() => Record(log, "click"));
+        var returned = await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(20))) == call;
+        var writtenBeforeTheFolderAnswered = File.Exists(DayFile("2026-10-10"));
+        stalled.Set();
+
+        // Assert
+        returned.Should().BeTrue("a call never waits for a stalled audit folder longer than the call delay");
+        writtenBeforeTheFolderAnswered.Should().BeFalse();
+        log.WaitForPendingLines(TimeSpan.FromSeconds(20)).Should().BeTrue();
+        Lines("2026-10-10").Should().ContainSingle("the line is written once the folder answers");
+        log.LastError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LinesThatWaitForAStalledWriter_AreWrittenInOrder()
+    {
+        using var stalled = new ManualResetEventSlim();
+        var log = new AuditLog(new AuditLogOptions(_folder, AuditLogOptions.DefaultRetention), _windows.Object, _clock, _logger,
+            maxCallDelay: TimeSpan.Zero, writeAttempt: _ => stalled.Wait(TimeSpan.FromSeconds(30)));
+
+        for (var i = 0; i < 5; i++)
+        {
+            Record(log, "type_text", new { text = new string('x', i + 1) });
+        }
+
+        stalled.Set();
+        await Task.Run(() => log.WaitForPendingLines(TimeSpan.FromSeconds(20)).Should().BeTrue());
+
+        Lines("2026-10-10").Select(l => JsonDocument.Parse(l).RootElement.GetProperty("args").GetProperty("textLength").GetInt32())
+            .Should().Equal(1, 2, 3, 4, 5);
     }
 
     /// <summary>A clock whose local time zone is UTC, so the day's file does not depend on the machine's zone.</summary>

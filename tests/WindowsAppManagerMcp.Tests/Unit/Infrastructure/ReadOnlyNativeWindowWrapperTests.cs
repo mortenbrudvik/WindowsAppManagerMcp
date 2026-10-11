@@ -111,7 +111,8 @@ public class ReadOnlyNativeWindowWrapperTests
             nameof(INativeWindowWrapper.GetProcessName),
             nameof(INativeWindowWrapper.EnumChildWindows), nameof(INativeWindowWrapper.GetClassName),
             nameof(INativeWindowWrapper.GetWindowLongPtr), nameof(INativeWindowWrapper.GetWindow),
-            nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetExtendedFrameBounds),
+            nameof(INativeWindowWrapper.IsCloaked), nameof(INativeWindowWrapper.GetCloakReason),
+            nameof(INativeWindowWrapper.GetExtendedFrameBounds),
             nameof(INativeWindowWrapper.IsHungAppWindow), nameof(INativeWindowWrapper.GetDpiForWindow),
         ];
         var changes = WindowChanges().Select(row => (string)row[0]);

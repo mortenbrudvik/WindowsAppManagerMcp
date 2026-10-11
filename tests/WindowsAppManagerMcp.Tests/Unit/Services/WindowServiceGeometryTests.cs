@@ -318,14 +318,47 @@ public class WindowServiceGeometryTests
     }
 
     [Fact]
-    public void MoveWindowToMonitor_Maximize_ThatEndsOnAnotherMonitor_IsMoveFailed()
+    public void MoveWindowToMonitor_Maximize_OfAWindowThatStaysOnItsMonitor_IsMoveFailed_AndDoesNotMaximizeItThere()
     {
+        // Arrange - the app keeps its own position: the move 'succeeds', but the window is still on monitor 0
         _window.IgnoresPlacement = true;
 
+        // Act
         var result = CreateSut().MoveWindowToMonitor(Window, 1, MonitorPositioning.Maximize);
 
+        // Assert - SW_MAXIMIZE (which activates) would maximize it on the monitor it was to leave
         result.ErrorCode.Should().Be(WindowErrorCode.MoveFailed);
-        result.Error.Should().Contain("maximized on monitor 0, not on monitor 1");
+        result.Error.Should().Contain("on monitor 0, not on monitor 1");
+        _native.Verify(n => n.ShowWindow(Window, SwMaximize), Times.Never);
+        _window.State.Should().Be(WindowState.Normal);
+    }
+
+    [Theory]
+    [InlineData("move", WindowErrorCode.MoveFailed)]
+    [InlineData("resize", WindowErrorCode.ResizeFailed)]
+    [InlineData("bounds", WindowErrorCode.MoveFailed)]
+    [InlineData("snap", WindowErrorCode.MoveFailed)]
+    [InlineData("monitor", WindowErrorCode.MoveFailed)]
+    public void APlacement_OfAHiddenMinimizedOrMaximizedWindow_DoesNotShowIt(string operation, WindowErrorCode expected)
+    {
+        foreach (var state in new[] { WindowState.Minimized, WindowState.Maximized })
+        {
+            // Arrange - a tray app hid its window after minimizing it: SW_SHOWNOACTIVATE would show it behind its back
+            _window.State = state;
+            _window.Hidden = true;
+            _native.Invocations.Clear();
+            _window.Calls.Clear();
+
+            // Act
+            var result = Place(operation);
+
+            // Assert
+            result.ErrorCode.Should().Be(expected);
+            result.Error.Should().Contain("hidden").And.Contain("not shown");
+            _native.Verify(n => n.ShowWindow(Window, It.IsAny<int>()), Times.Never);
+            _window.Calls.Should().BeEmpty();
+            _window.State.Should().Be(state);
+        }
     }
 
     #endregion
@@ -473,7 +506,7 @@ public class WindowServiceGeometryTests
             var native = test._native;
             native.Setup(n => n.IsIconic(Window)).Returns(() => State == WindowState.Minimized);
             native.Setup(n => n.IsZoomed(Window)).Returns(() => State == WindowState.Maximized);
-            native.Setup(n => n.IsWindowVisible(Window)).Returns(true);
+            native.Setup(n => n.IsWindowVisible(Window)).Returns(() => !Hidden);
             native.Setup(n => n.GetWindowRect(Window)).Returns(() => Ltrb(CurrentOuter));
             native.Setup(n => n.GetExtendedFrameBounds(Window)).Returns(() => HasFrame ? Ltrb(CurrentVisible) : null);
             native.Setup(n => n.ShowWindow(Window, It.IsAny<int>())).Returns((nint _, int command) => Show(command));
@@ -492,6 +525,9 @@ public class WindowServiceGeometryTests
         public bool RescalesOnDpiChange { get; set; }
 
         public bool HasFrame { get; set; } = true;
+
+        /// <summary>Its app hid it (WS_VISIBLE off), for example after minimizing it to the notification area.</summary>
+        public bool Hidden { get; set; }
 
         /// <summary>The visible frame of the normal (restored) window.</summary>
         public WindowRect Visible { get; set; } = new(100, 100, 800, 600);

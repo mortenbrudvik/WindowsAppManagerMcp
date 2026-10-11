@@ -460,6 +460,12 @@ public sealed class InputTargetGuard : IInputTargetGuard
             return InvalidHandle(target, handle);
         }
 
+        // A window a selector named must still match it: the selector was resolved before the call waited for the gate
+        if (target.SelectorRecheck?.Invoke() is { } changed)
+        {
+            return InputGuardResult.Refuse(InputErrorCode.HandleMismatch, changed, target);
+        }
+
         root = RootOf(handle);
         var window = Read(root);
         if (WindowRefusal(root, window, target, "sent", root) is { } refused)

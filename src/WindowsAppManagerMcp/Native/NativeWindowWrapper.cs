@@ -158,8 +158,13 @@ public class NativeWindowWrapper : INativeWindowWrapper
 
     public bool IsCloaked(nint hWnd)
     {
+        return GetCloakReason(hWnd) != 0;
+    }
+
+    public int GetCloakReason(nint hWnd)
+    {
         var hr = NativeMethods.Dwmapi.DwmGetWindowAttribute(hWnd, NativeEnums.DWMWA_CLOAKED, out int cloaked, sizeof(int));
-        return hr == 0 && cloaked != 0;
+        return hr == 0 ? cloaked : 0;
     }
 
     public (int Left, int Top, int Right, int Bottom)? GetExtendedFrameBounds(nint hWnd)

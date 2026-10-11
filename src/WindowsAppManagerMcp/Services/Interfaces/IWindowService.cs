@@ -177,6 +177,13 @@ public interface IWindowService
     /// </summary>
     IReadOnlyList<WindowInfo> GetApplicationWindows();
 
+    /// <summary>
+    /// The application windows on other virtual desktops: windows that would be in <see cref="GetApplicationWindows"/>
+    /// but that the shell cloaks (DWM_CLOAKED_SHELL). close_application leaves them alone and reports them, so an
+    /// application with unsaved work on another desktop is never reported closed without a word.
+    /// </summary>
+    IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops();
+
     // Batch operations. Each changes one window after another, with delayBetweenMs (clamped to 0-5000) between two
     // windows; the cancellation token ends the batch between windows and during that delay: the windows already
     // changed stay changed, and the call throws OperationCanceledException. Each window gets its own result, in order:

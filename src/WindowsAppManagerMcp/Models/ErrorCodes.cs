@@ -287,7 +287,13 @@ public enum ProcessErrorCode
     /// The MCP client can ask the user (elicitation), and the user declined, dismissed or did not answer the
     /// confirmation question (roadmap M2.10). Nothing was done.
     /// </summary>
-    ConfirmationDeclined = 16
+    ConfirmationDeclined = 16,
+
+    /// <summary>
+    /// forceKill after the user confirmed: the process gained a child process the user was not shown while the question
+    /// was open, so the forced kill would end a process nobody approved. Nothing was terminated.
+    /// </summary>
+    ProcessTreeChanged = 17
 }
 
 /// <summary>

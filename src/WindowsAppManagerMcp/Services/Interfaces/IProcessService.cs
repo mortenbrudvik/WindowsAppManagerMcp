@@ -80,6 +80,7 @@ public interface IProcessService
     /// </param>
     /// <param name="gracefulTimeoutMs">Graceful mode: how long to wait for the process to exit (0-60000 ms).</param>
     /// <param name="expectedProcessName">Optional PID-reuse guard: the expected process name, with or without .exe.</param>
+    /// <param name="safeguards">The process the user confirmed, and what to call before the wait for the exit (see <see cref="KillSafeguards"/>).</param>
     /// <param name="cancellationToken">
     /// Cancels the wait for the process to exit; the close request or termination already sent stands, and the call
     /// throws <see cref="OperationCanceledException"/>. Cancelled before anything was sent, nothing is done.
@@ -91,6 +92,7 @@ public interface IProcessService
         bool forceKill = false,
         int gracefulTimeoutMs = 5000,
         string? expectedProcessName = null,
+        KillSafeguards? safeguards = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

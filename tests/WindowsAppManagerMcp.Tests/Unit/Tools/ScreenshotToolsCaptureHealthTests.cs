@@ -148,11 +148,12 @@ public class ScreenshotToolsCaptureHealthTests
     {
         // Arrange
         Minimized();
+        var flow = InputGate.TagFlow();
         var gateHeldDuringTheCapture = false;
         _screenshots.Setup(s => s.CaptureWindow(Window, true, It.IsAny<CaptureOptions>()))
             .Callback(() =>
             {
-                gateHeldDuringTheCapture = InputGate.IsHeld;
+                gateHeldDuringTheCapture = InputGate.IsHeldBy(flow);
                 _events.Add("capture");
             })
             .Returns(new ScreenCapture<ScreenshotResult>(TestDataFactory.CreateScreenshotResult(), TestDataFactory.CreateEncodedImage()));

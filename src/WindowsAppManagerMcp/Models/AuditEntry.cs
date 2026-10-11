@@ -56,14 +56,22 @@ public sealed record AuditTarget(
     int? ProcessId = null,
     string? Executable = null);
 
-/// <summary>One item of a batch in an <see cref="AuditEntry"/>.</summary>
+/// <summary>
+/// One item in an <see cref="AuditEntry"/>: a window or launch of a batch, a window close_application sent a close to,
+/// or a placement of apply_layout.
+/// </summary>
 /// <param name="Handle">The window handle.</param>
-/// <param name="Title">The window title, read before the call.</param>
+/// <param name="Title">The window title, read before the call (or, for close_application and apply_layout, as the result names it).</param>
 /// <param name="Process">The window's process name, read before the call.</param>
 /// <param name="ProcessId">The process ID: the window's, or the process a launch started.</param>
-/// <param name="Executable">The program a launch was asked for, as in <see cref="AuditTarget.Executable"/>.</param>
-/// <param name="Success">Whether the item succeeded.</param>
+/// <param name="Executable">
+/// The program a launch was asked for (a launch batch item, or the launchCommand an apply_layout placement ran), as in
+/// <see cref="AuditTarget.Executable"/>.
+/// </param>
+/// <param name="Success">Whether the item succeeded, when the result says so.</param>
 /// <param name="ErrorCode">Why it failed.</param>
+/// <param name="Status">The item's status in the result, such as closed, promptShown, notSent, applied or notFound.</param>
+/// <param name="Launched">True for an apply_layout placement whose window was launched (launchMissing).</param>
 public sealed record AuditItem(
     long? Handle,
     string? Title,
@@ -71,7 +79,9 @@ public sealed record AuditItem(
     int? ProcessId,
     string? Executable,
     bool? Success,
-    string? ErrorCode);
+    string? ErrorCode,
+    string? Status = null,
+    bool? Launched = null);
 
 /// <summary>The outcomes an <see cref="AuditEntry"/> records.</summary>
 public static class AuditOutcome

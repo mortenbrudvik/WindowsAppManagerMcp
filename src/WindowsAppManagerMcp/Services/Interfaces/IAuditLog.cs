@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
@@ -54,4 +55,12 @@ public sealed record AuditCall(
     long StartTimestamp,
     IReadOnlyDictionary<long, Models.AuditTarget> Windows,
     IReadOnlyDictionary<int, string?> Processes,
-    IReadOnlyDictionary<string, IReadOnlySet<string>>? DeclaredTypes = null);
+    IReadOnlyDictionary<string, IReadOnlySet<string>>? DeclaredTypes = null)
+{
+    /// <summary>
+    /// The windows the tool noted while it ran (<see cref="Infrastructure.AuditScope"/>), by handle: the window a selector
+    /// resolved to, and the windows close_application listed, as they were before the tool acted on them. A window in
+    /// <see cref="Windows"/> (read before the call) is taken from there first.
+    /// </summary>
+    public ConcurrentDictionary<long, Models.AuditTarget> ResolvedWindows { get; } = new();
+}

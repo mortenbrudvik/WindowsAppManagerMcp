@@ -413,6 +413,11 @@ public class LayoutService : ILayoutService
         var results = new List<LayoutPlacementResult>(plans.Count);
         List<FocusResult>? focusResults = null;
 
+        // What the placement being applied has done so far, so that a placement that throws still reports its launch
+        string? launchCommand = null;
+        var launchedWindow = false;
+        WindowInfo? placedWindow = null;
+
         for (var index = 0; index < plans.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -420,6 +425,9 @@ public class LayoutService : ILayoutService
             var plan = plans[index];
             LayoutPlacementResult result;
             string outcome;
+            launchCommand = null;
+            launchedWindow = false;
+            placedWindow = plan.Window;
             try
             {
                 (result, outcome) = await ApplyPlacementAsync(plan).ConfigureAwait(false);
@@ -430,13 +438,17 @@ public class LayoutService : ILayoutService
             }
             catch (Exception ex)
             {
-                // One placement's failure never aborts the others
+                // One placement's failure never aborts the others; a window it launched is still reported as launched
                 result = new LayoutPlacementResult(
                     plan.Placement.Order,
                     LayoutPlacementStatus.Failed,
-                    plan.Window is { } window ? LayoutWindowRef.From(window) : null,
+                    placedWindow is { } window ? LayoutWindowRef.From(window) : null,
+                    Launched: launchedWindow ? true : null,
                     ErrorCode: nameof(LayoutErrorCode.ArrangeFailed),
-                    Error: $"Could not arrange {plan.Label}: {ex.GetType().Name}: {ex.Message}");
+                    Error: $"Could not arrange {plan.Label}: " + (ex is WindowNotRespondingException
+                        ? $"{nameof(WindowErrorCode.NotResponding)}: {ex.Message}"
+                        : $"{ex.GetType().Name}: {ex.Message}"),
+                    LaunchCommand: launchCommand);
                 outcome = "could not be arranged";
             }
 
@@ -471,7 +483,7 @@ public class LayoutService : ILayoutService
             LayoutPlacementResult Result(string status, WindowInfo? window, string? errorCode = null, string? error = null,
                 bool launched = false, bool? focused = null) =>
                 new(placement.Order, status, window == null ? null : LayoutWindowRef.From(window),
-                    launched ? true : null, focused, errorCode, error);
+                    launched ? true : null, focused, errorCode, error, launchCommand);
 
             if (plan.NotApplicable is { } notApplicable)
             {
@@ -499,6 +511,7 @@ public class LayoutService : ILayoutService
                 }
 
                 // Try to launch the application; a cancelled call stops waiting for its window
+                launchCommand = placement.LaunchCommand;
                 var launchResult = await _processService.LaunchApplicationAsync(
                     placement.LaunchCommand,
                     waitForWindow: true,
@@ -513,7 +526,9 @@ public class LayoutService : ILayoutService
                 }
 
                 launched = true;
+                launchedWindow = true;
                 window = launchResult.WindowHandle is { } handle ? _windowService.GetWindowInfo(handle) : null;
+                placedWindow = window;
                 if (window == null)
                 {
                     return (Result(LayoutPlacementStatus.Failed, null, nameof(LayoutErrorCode.LaunchFailed),
@@ -567,7 +582,17 @@ public class LayoutService : ILayoutService
 
             if (placement.State == WindowState.Minimized)
             {
-                var minimized = _windowService.SetWindowState(window.Handle, WindowStateRequest.Minimize);
+                WindowChangeResult minimized;
+                try
+                {
+                    minimized = _windowService.SetWindowState(window.Handle, WindowStateRequest.Minimize);
+                }
+                catch (WindowNotRespondingException ex)
+                {
+                    // The window was arranged: the placement stays applied, with the minimize's failure
+                    minimized = WindowChangeResult.Failed(window.Handle, WindowErrorCode.NotResponding, ex.Message);
+                }
+
                 if (!minimized.Success)
                 {
                     outcome = "was arranged, but could not be minimized";
@@ -602,20 +627,14 @@ public class LayoutService : ILayoutService
 
     /// <summary>
     /// Puts the window where the placement says, through the window service's verified geometry: a maximized placement
-    /// maximizes the window on its monitor; otherwise a maximized window is restored first (a maximized window moved with
-    /// SetWindowPos stays maximized in name, at the wrong size), then given the placement's rectangle.
+    /// maximizes the window on its monitor; otherwise the window is given the placement's rectangle. SetWindowBounds
+    /// restores a minimized or maximized window to normal first, without activating it (SW_SHOWNOACTIVATE), so a window
+    /// that was maximized is not activated (SW_RESTORE would bring it to the front, roadmap M2.3).
     /// </summary>
     private WindowChangeResult Arrange(WindowInfo window, WindowPlacement placement, WindowRect target)
     {
         if (placement.State == WindowState.Maximized)
             return _windowService.MoveWindowToMonitor(window.Handle, placement.MonitorIndex, MonitorPositioning.Maximize);
-
-        if (window.State == WindowState.Maximized)
-        {
-            var restored = _windowService.SetWindowState(window.Handle, WindowStateRequest.Restore);
-            if (!restored.Success)
-                return restored;
-        }
 
         return _windowService.SetWindowBounds(window.Handle, target.X, target.Y, target.Width, target.Height);
     }

@@ -24,12 +24,14 @@ public class WindowManagerTools
     private const string GeometryResult =
         " Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds " +
         "(its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this " +
-        "rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex.";
+        "rect as bounds, and the visible frame as visibleBounds), state (normal, minimized or maximized; a minimized window has no " +
+        "bounds) and monitorIndex.";
 
     /// <summary>How the placements read their coordinates and treat the window's state (roadmap M2.3).</summary>
     private const string PlacementRules =
-        " Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. " +
-        "A minimized or maximized window is restored to normal first, without activating it.";
+        " Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame " +
+        "(find_windows' visibleBounds, not its bounds). A minimized or maximized window is restored to normal first, without " +
+        "activating it; one its app hid (in the notification area) is not shown, and the change fails.";
 
     private const string SettleDescription =
         "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads " +
@@ -286,6 +288,9 @@ public class WindowManagerTools
             return new CloseWindowResult(false, Error: invalid, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode, Handle: handle);
         }
 
+        // Nothing while the user has paused input, not even resolving: a pause is PausedByUser, never a selector error
+        InputGateToolFilter.ThrowIfPaused(_session);
+
         // The selector is resolved before the gate; the close guards check the window it names as they check any handle
         var hwnd = WindowTargeting.Require(_windowService, handle, window, requireNamedWindow: true);
         var reported = hwnd.ToInt64();
@@ -296,7 +301,6 @@ public class WindowManagerTools
 
         // Only the close message is sent inside the input gate; the wait for the window runs outside it, so a slow app or a
         // prompt does not hold up every input and window call for up to waitMs
-        InputGateToolFilter.ThrowIfPaused(_session);
         var shownBefore = waitMs == 0 ? EmptyHandles : _closeVerifier.ShownWindows([hwnd]);
         WindowCloseResult sent;
         using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
@@ -324,7 +328,8 @@ public class WindowManagerTools
 
     [McpServerTool(Name = "close_windows_batch", Title = "Close Windows (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each " +
-                 "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested). A prompt " +
+                 "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent " +
+                 "for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt " +
                  "is never answered: ask the user which button to choose, and do not answer it yourself. " +
                  "More than 3 windows need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each " +
                  "window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise " +
@@ -415,11 +420,12 @@ public class WindowManagerTools
             : (await _closeVerifier.WaitForCloseAsync(sent, shownBefore, TimeSpan.FromMilliseconds(waitMs), cancellationToken).ConfigureAwait(false))
                 .GroupBy(o => o.Handle).ToDictionary(g => g.Key, g => g.First());
 
-        return Summary(windows.Length, InOrder(refusals, results.Select(r =>
+        // A window that got no close message (refused, or the send failed) is notSent, as close_application reports it
+        return Summary(windows.Length, InOrder(refusals.Select(r => r == null ? null : r with { Status = NotSent }).ToList(), results.Select(r =>
         {
             if (!r.Success)
             {
-                return new WindowResultItem(r.Handle.ToInt64(), false, Error: r.Error, ErrorCode: r.ErrorCode.ToString());
+                return new WindowResultItem(r.Handle.ToInt64(), false, Error: r.Error, ErrorCode: r.ErrorCode.ToString(), Status: NotSent);
             }
 
             if (!observed.TryGetValue(r.Handle, out var observation))
@@ -440,8 +446,10 @@ public class WindowManagerTools
                  "windows), window (a selector for one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed " +
                  "through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; " +
                  "a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File " +
-                 "Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, " +
-                 "runningProcessIds lists those that keep running, for example in the notification area), promptShown (errorCode " +
+                 "Explorer windows are closed. Returns status closed (every window on the current virtual desktop gone; exited says whether " +
+                 "the processes ended, " +
+                 "runningProcessIds lists those that keep running, for example in the notification area or with otherDesktopWindows: its " +
+                 "windows on other virtual desktops, which are not closed), promptShown (errorCode " +
                  "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + ") or stillOpen " +
                  "(errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status " +
                  "requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), " +
@@ -487,6 +495,9 @@ public class WindowManagerTools
         var application = TargetApplication(handle, processId, name, appWindows);
         var processIds = application.ProcessIds;
         var targets = appWindows.Where(application.Includes).ToList();
+
+        // The audit log records each window with its process, as it is before the close
+        AuditScope.NoteWindows(targets);
         if (targets.Count == 0)
         {
             return ApplicationRefusal(processIds, nameof(ProcessErrorCode.NoClosableWindow), application.NamesFrameHost
@@ -494,7 +505,8 @@ public class WindowManagerTools
                   "(UWP) app, so closing it would close apps nobody named. Nothing was sent. Pass the handle of the one frame " +
                   "window to close instead (find_windows reports it)."
                 : $"{Describe(handle, processId, name)} has no window the user can switch to (no visible, unowned window in Alt+Tab), " +
-                  "so there is nothing to close gracefully: it may run without windows or only in the notification area. Nothing was " +
+                  "so there is nothing to close gracefully: it may run without windows, only in the notification area, or only on another " +
+                  "virtual desktop (windows there are closed only from that desktop). Nothing was " +
                   "sent. Check with find_windows or list_processes; kill_process ends a process without a window.");
         }
 
@@ -508,7 +520,9 @@ public class WindowManagerTools
             }
         }
 
-        Dictionary<nint, int?>? confirmedOwners = null;
+        // The process each window belonged to when it was listed: a window that closed while the call waited (for the user or
+        // the gate) and whose handle another process's window got is not closed (HandleMismatch), whether or not the user was asked
+        var owners = targets.ToDictionary(t => t.Handle, t => (int?)t.ProcessId);
         if (targets.Count > MaxCloseBatchWithoutConfirm)
         {
             if (UserConfirmation.CanAsk(server))
@@ -521,7 +535,6 @@ public class WindowManagerTools
                         $"{answer.Reason} Nothing was closed. Ask the user how to continue.");
                 }
 
-                confirmedOwners = targets.ToDictionary(t => t.Handle, t => (int?)t.ProcessId);
             }
             else if (!confirm)
             {
@@ -545,7 +558,7 @@ public class WindowManagerTools
             foreach (var target in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (confirmedOwners != null && HandleMismatchRefusal(target.Handle, confirmedOwners) is { } mismatch)
+                if (HandleMismatchRefusal(target.Handle, owners) is { } mismatch)
                 {
                     items[target.Handle] = new ClosedWindowItem(target.Handle, target.Title, NotSent, mismatch.Error, mismatch.ErrorCode);
                     continue;
@@ -602,41 +615,53 @@ public class WindowManagerTools
         var windowItems = targets.Select(t => items[t.Handle]).ToList();
         var pids = processIds.Order().ToList();
 
+        // Windows of the application on other virtual desktops are not closed (Alt+Tab shows only this desktop's): they are
+        // reported, so a status closed is never read as 'nothing of the application is left open'
+        var otherDesktops = (_windowService.GetApplicationWindowsOnOtherDesktops() ?? []).Where(application.Includes)
+            .Select(w => new RemainingWindowDto(w.Handle.ToInt64(), w.Title, w.ProcessId, w.ProcessName)).ToList();
+        CloseApplicationResult Result(CloseApplicationResult result) =>
+            otherDesktops.Count == 0 ? result : result with { OtherDesktopWindows = otherDesktops };
+
         if (prompt != null)
         {
-            return new CloseApplicationResult(false, CloseNames.Of(CloseStatus.PromptShown), pids, windowItems, remaining, true,
+            return Result(new CloseApplicationResult(false, CloseNames.Of(CloseStatus.PromptShown), pids, windowItems, remaining, true,
                 ClosePromptDto.From(prompt),
                 Error: $"The application did not close: it shows a prompt (see prompt) that waits for an answer. {PromptAdvice} " +
                        "Then call close_application again if it is still open.",
-                ErrorCode: nameof(PromptShown));
+                ErrorCode: nameof(PromptShown)));
         }
 
         if (timeoutMs == 0 && sent.Count > 0)
         {
             // Only sent, as asked: nothing was checked
-            return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Requested), pids, windowItems, remaining, false);
+            return Result(new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Requested), pids, windowItems, remaining, false));
         }
 
         if (remaining.Count > 0)
         {
-            return new CloseApplicationResult(false, CloseNames.Of(CloseStatus.StillOpen), pids, windowItems, remaining, false,
+            return Result(new CloseApplicationResult(false, CloseNames.Of(CloseStatus.StillOpen), pids, windowItems, remaining, false,
                 Error: $"{remaining.Count} window{(remaining.Count == 1 ? " is" : "s are")} still open after {timeoutMs} ms, without a " +
                        "prompt (see windows for why: a close Windows refused, or an app that is busy or ignores it). Check them with " +
                        "find_windows; kill_process ends an app that will not close.",
-                ErrorCode: nameof(StillOpen));
+                ErrorCode: nameof(StillOpen)));
         }
 
         if (pids.Count == 0)
         {
             // A frame closed by its own handle: its app cannot be told, so there is no process to wait for
-            return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false);
+            return Result(new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false));
         }
 
+        // A process with a window on another desktop keeps running: it is not waited for
+        var staying = otherDesktops.Select(w => w.ProcessId).Where(pids.Contains).ToHashSet();
         var exitWait = TimeSpan.FromMilliseconds(timeoutMs) - waited.Elapsed;
-        var running = await _closeVerifier.WaitForProcessesToExitAsync(
-            pids, exitWait > MaxExitWait ? MaxExitWait : exitWait > TimeSpan.Zero ? exitWait : TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
-        return new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false,
-            Exited: running.Count == 0, RunningProcessIds: running.Count == 0 ? null : running);
+        IReadOnlyList<int> running = staying.Count == pids.Count
+            ? []
+            : await _closeVerifier.WaitForProcessesToExitAsync(pids.Where(p => !staying.Contains(p)).ToList(),
+                exitWait > MaxExitWait ? MaxExitWait : exitWait > TimeSpan.Zero ? exitWait : TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        var stillRunning = running.Concat(staying).Distinct().Order().ToList();
+        return Result(new CloseApplicationResult(true, CloseNames.Of(CloseStatus.Closed), pids, windowItems, remaining, false,
+            Exited: stillRunning.Count == 0, RunningProcessIds: stillRunning.Count == 0 ? null : stillRunning));
     }
 
     /// <summary>
@@ -1000,7 +1025,7 @@ public class WindowManagerTools
         }
 
         var then = asked is { } pid
-            ? $"not to the process (PID {pid}) the user confirmed: the window closed and its handle was reused"
+            ? $"not to the process (PID {pid}) it belonged to when it was chosen: the window closed and its handle was reused"
             : "but it was no window when the user was asked (the user saw it as 'no longer exists'): a new window got its handle";
         return new WindowResultItem(handle, false,
             Error: $"Window {handle} now belongs to {now.ProcessName} (PID {now.ProcessId}), {then}. It was not closed.",
