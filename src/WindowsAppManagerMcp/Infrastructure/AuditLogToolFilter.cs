@@ -43,15 +43,6 @@ public static class AuditLogToolFilter
         "set_clipboard"
     };
 
-    /// <summary>
-    /// The audited tools that other M2 items add: scroll (M2.15), set_clipboard (M2.16) and close_application (M2.5).
-    /// They are audited as soon as they are served.
-    /// </summary>
-    public static IReadOnlySet<string> ToolsOfOtherItems { get; } = new HashSet<string>(StringComparer.Ordinal)
-    {
-        "scroll", "set_clipboard", "close_application"
-    };
-
     /// <summary>Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.</summary>
     public static IMcpServerBuilder AddAuditLog(this IMcpServerBuilder builder)
     {

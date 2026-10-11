@@ -89,11 +89,10 @@ something went wrong. The agent does not need to do anything for it, and cannot 
 - **Kept:** 7 days. The first line a server writes on a day deletes the day files that are 7 or more days old. Only
   files named like a day's file are deleted; nothing else in the folder is touched.
 - **Audited tools:** click, right_click, double_click, mouse_move, type_text, send_keys, release_all_input,
-  close_window, close_windows_batch, kill_process, launch_application, launch_applications_batch,
-  launch_browser_with_debug, apply_layout, save_layout and delete_layout, and scroll, set_clipboard and
-  close_application once they exist. A call is logged whatever its outcome: refused by the input guard or a pause,
-  failed, cancelled (some input may have been sent) or done. The read-only tools are never logged, and neither are the
-  captures.
+  scroll, close_window, close_windows_batch, close_application, kill_process, launch_application,
+  launch_applications_batch, launch_browser_with_debug, apply_layout, save_layout, delete_layout and set_clipboard.
+  A call is logged whatever its outcome: refused by the input guard or a pause, failed, cancelled (some input may have
+  been sent) or done. The read-only tools are never logged, and neither are the captures.
 - **Never logged:** typed text, keys, clipboard text, URL paths, queries and credentials, working directories,
   command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count

@@ -83,10 +83,9 @@ public class AuditLogContractTests
     }
 
     [Fact]
-    public void EveryAuditedTool_IsServed_OrComesWithAnotherM2Item()
+    public void EveryAuditedTool_IsServed()
     {
-        AuditLogToolFilter.AuditedTools.Except(ServerToolCatalog.ServedToolNames)
-            .Should().BeSubsetOf(AuditLogToolFilter.ToolsOfOtherItems, "an audited name that is no tool is a typo");
+        AuditLogToolFilter.AuditedTools.Should().BeSubsetOf(ServerToolCatalog.ServedToolNames, "an audited name that is no tool is a typo");
     }
 
     [Theory]
