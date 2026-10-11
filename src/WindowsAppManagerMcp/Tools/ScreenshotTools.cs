@@ -13,11 +13,12 @@ namespace WindowsAppManagerMcp.Tools;
 public class ScreenshotTools
 {
     internal const string ImageResultDescription =
-        "Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). " +
+        "Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). " +
         "By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. ";
 
     internal const string ImageToScreenDescription =
-        "Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use " +
+        "Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with " +
+        "this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: " +
         "screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. " +
         "scaleFactor is the monitor's DPI scale, for information only; never multiply by it.";
 
@@ -96,11 +97,11 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture a specific monitor. " + ImageResultDescription + ImageToScreenDescription +
-                 " Use list_screens to get available monitor indices.")]
+    [Description("Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). " +
+                 ImageResultDescription + ImageToScreenDescription + " Use list_screens to get available monitor indices.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult TakeScreenshot(
-        [Description("Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.")]
+        [Description("Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use list_screens to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
         [Description(FormatDescription)]
         CaptureFormat format = CaptureFormat.Auto,

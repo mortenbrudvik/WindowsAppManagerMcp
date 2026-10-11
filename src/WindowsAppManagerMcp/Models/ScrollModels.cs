@@ -60,4 +60,7 @@ public record ScrollResult(
 
     /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
     public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Requested"/>
+    public RequestedPoint? Requested { get; init; }
 }

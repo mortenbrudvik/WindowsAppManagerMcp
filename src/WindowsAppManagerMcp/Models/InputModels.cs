@@ -46,7 +46,15 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
     /// </summary>
     public Func<SelectorRefusal?>? SelectorRecheck { get; init; }
 
-    /// <summary>Two targets are equal when they name the same window with the same host rule; the recheck is not compared.</summary>
+    /// <summary>
+    /// For a point converted from image, window or client coordinates (roadmap M3.11): checks that what the point was
+    /// measured on is unchanged, and returns why not (errorCode StaleCapture), or null when it is. The point is converted
+    /// before the call waits for the input gate; the input guard runs this inside the gate for mouse input, after the
+    /// target's own checks, so input never reaches a point that a window moving meanwhile turned into another spot.
+    /// </summary>
+    public Func<SelectorRefusal?>? PointRecheck { get; init; }
+
+    /// <summary>Two targets are equal when they name the same window with the same host rule; the rechecks are not compared.</summary>
     public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
 
     public override int GetHashCode() => HashCode.Combine(WindowHandle, AllowHostTarget);
@@ -87,6 +95,13 @@ public record ClickResult(
 
     /// <summary>With releaseHeldModifiers: the modifier keys the server released before sending the input.</summary>
     public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <summary>
+    /// The point as the call gave it, when not in screen coordinates (space window, client or image, roadmap M3.11);
+    /// <see cref="X"/> and <see cref="Y"/> are then the screen point it was converted to (the given point when it could
+    /// not be converted). Null for a screen point.
+    /// </summary>
+    public RequestedPoint? Requested { get; init; }
 }
 
 /// <summary>
@@ -120,6 +135,9 @@ public record MouseMoveResult(
 
     /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
     public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Requested"/>
+    public RequestedPoint? Requested { get; init; }
 }
 
 /// <summary>
@@ -388,5 +406,21 @@ public enum InputErrorCode
     /// The window selector could not be checked again once the call held the input gate because of the selector itself
     /// (a titleRegex that took longer than 100 ms on the window's title), as the window tools report it. Nothing was sent.
     /// </summary>
-    InvalidArguments = 45
+    InvalidArguments = 45,
+
+    // Coordinate space codes (roadmap M3.11). Nothing was sent.
+
+    /// <summary>
+    /// The point was given in image, window or client coordinates, and what it was measured on changed: the captured
+    /// window moved or resized by more than 2 pixels since the capture, closed, was minimized or its handle was reused,
+    /// or the monitors changed since a screen capture; or the window moved while the call waited for the input gate.
+    /// The point would land somewhere the image no longer shows. Nothing was sent: capture again.
+    /// </summary>
+    StaleCapture = 46,
+
+    /// <summary>
+    /// The captureId names no capture: it is mistyped, from an earlier server run, older than 10 minutes, or 32 newer
+    /// captures pushed it out. Nothing was sent: capture again.
+    /// </summary>
+    CaptureNotFound = 47
 }

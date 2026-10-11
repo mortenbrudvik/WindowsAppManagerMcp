@@ -43,7 +43,7 @@
     {
       "name": "capture_region",
       "title": "Capture Screen Region",
-      "description": "Capture an arbitrary screen region given in screen coordinates. Only the part on the screen is captured: a region partly off the screen is cut to it (warning RegionClipped, see capturedRegion), and a region entirely off it fails with RegionOffScreen. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture an arbitrary screen region given in screen coordinates. Only the part on the screen is captured: a region partly off the screen is cut to it (warning RegionClipped, see capturedRegion), and a region entirely off it fails with RegionOffScreen. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -143,7 +143,7 @@
     {
       "name": "capture_window",
       "title": "Capture Window",
-      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -310,7 +310,7 @@
     {
       "name": "capture_with_elements",
       "title": "Capture Window with Element Boxes",
-      "description": "Capture a window with UI element bounding boxes drawn on it. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a window with UI element bounding boxes drawn on it. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -510,7 +510,7 @@
     {
       "name": "click",
       "title": "Click",
-      "description": "Perform a left mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point. Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). Mouse results also report actualX and actualY, the cursor position afterwards.",
+      "description": "Perform a left mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point. Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds; for a point you see on a capture, pass its captureId with the image point instead of converting it yourself. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). Mouse results also report actualX and actualY, the cursor position afterwards.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -610,6 +610,29 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "required": [
@@ -1011,7 +1034,7 @@
     {
       "name": "double_click",
       "title": "Double-Click",
-      "description": "Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions. Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions. Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds; for a point you see on a capture, pass its captureId with the image point instead of converting it yourself. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1116,6 +1139,29 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "required": [
@@ -3011,6 +3057,29 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "required": [
@@ -3425,7 +3494,7 @@
     {
       "name": "right_click",
       "title": "Right-Click",
-      "description": "Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point. In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
+      "description": "Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point. In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed). Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below. Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds; for a point you see on a capture, pass its captureId with the image point instead of converting it yourself. The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint). Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. MouseInUse also when the capture cannot be read (a window just closed): retry. Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3525,6 +3594,29 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         },
         "required": [
@@ -3709,6 +3801,29 @@
             "description": "Release modifier keys (Shift, Ctrl, Alt, Windows) that are down before the input is sent, instead of refusing with ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a modifier of the user's pause hotkey is down. Default: false",
             "type": "boolean",
             "default": false
+          },
+          "space": {
+            "description": "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or 'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "screen",
+              "window",
+              "client",
+              "image",
+              null
+            ]
+          },
+          "captureId": {
+            "description": "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target (another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 minutes (CaptureNotFound): capture again. Default: none",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         }
       },
@@ -4643,12 +4758,12 @@
     {
       "name": "take_screenshot",
       "title": "Capture Monitor",
-      "description": "Capture a specific monitor. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it. Use list_screens to get available monitor indices.",
+      "description": "Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it. Use list_screens to get available monitor indices.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "monitorIndex": {
-            "description": "Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.",
+            "description": "Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use list_screens to see available monitors. Defaults to primary monitor.",
             "type": [
               "integer",
               "null"

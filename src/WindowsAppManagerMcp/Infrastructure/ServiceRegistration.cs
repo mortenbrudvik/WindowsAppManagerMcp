@@ -63,6 +63,9 @@ public static class ServiceRegistration
         services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
+        // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11)
+        services.AddSingleton<ICaptureRegistry, CaptureRegistry>();
+        services.AddSingleton<ICoordinateSpaceResolver, CoordinateSpaceResolver>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,

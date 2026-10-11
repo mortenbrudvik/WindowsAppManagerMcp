@@ -39,10 +39,23 @@ public class InputSimulationTools
         "ModifiersHeld. Set it only when nobody is pressing them (a stuck key) or the user asked. Nothing is released while a " +
         "modifier of the user's pause hotkey is down. Default: false";
 
+    internal const string SpaceDescription =
+        "What x and y are measured in: 'screen' (physical virtual-desktop pixels), 'window' (from the top-left corner of the " +
+        "windowHandle window's rectangle, find_windows' bounds), 'client' (from the top-left corner of its client area) or " +
+        "'image' (pixels of the image a capture returned, with captureId). The server converts the point; the result's x and y " +
+        "are the screen point and requested echoes what was given. Default: 'image' with captureId, else 'screen'";
+
+    internal const string CaptureIdDescription =
+        "The captureId of a take_screenshot, capture_region, capture_window or capture_with_elements result: x and y are then " +
+        "pixels of that image as returned, converted through its imageToScreen. A window capture's window is the input's target " +
+        "(another windowHandle is refused). Nothing is sent when the captured window moved or resized by more than 2 pixels, " +
+        "closed or was minimized since, or the monitors changed (StaleCapture), or when the id is unknown or older than 10 " +
+        "minutes (CaptureNotFound): capture again. Default: none";
+
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
         "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
-        " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds, not from positions measured on a screenshot image." +
+        " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds; for a point you see on a capture, pass its captureId with the image point instead of converting it yourself." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
         " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
         "MouseInUse also when the capture cannot be read (a window just closed): retry." +
@@ -64,13 +77,20 @@ public class InputSimulationTools
 
     private readonly IInputSimulationService _inputService;
     private readonly IWindowService? _windowService;
+    private readonly ICoordinateSpaceResolver? _coordinates;
 
     /// <param name="inputService">The guarded input.</param>
     /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
-    public InputSimulationTools(IInputSimulationService inputService, IWindowService? windowService = null)
+    /// <param name="coordinates">
+    /// Converts window, client and image points to screen points (roadmap M3.11); the server always passes it. Without it
+    /// only screen points can be sent.
+    /// </param>
+    public InputSimulationTools(IInputSimulationService inputService, IWindowService? windowService = null,
+        ICoordinateSpaceResolver? coordinates = null)
     {
         _inputService = inputService;
         _windowService = windowService;
+        _coordinates = coordinates;
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -89,9 +109,19 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.Click(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
+        if (point.Failure is { } failure)
+        {
+            return new ClickResult(false, x, y, "left", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+        }
+
+        return Echo(_inputService.Click(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken), point.Requested);
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -110,9 +140,19 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.RightClick(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
+        if (point.Failure is { } failure)
+        {
+            return new ClickResult(false, x, y, "right", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+        }
+
+        return Echo(_inputService.RightClick(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken), point.Requested);
     }
 
     [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -132,10 +172,20 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.DoubleClick(x, y, Math.Clamp(delayMs, 10, 500), Target(windowHandle, window, allowHostTarget), releaseHeldModifiers,
-            cancellationToken);
+        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
+        if (point.Failure is { } failure)
+        {
+            return new ClickResult(false, x, y, "double", failure.Error, failure.ErrorCode) { Requested = point.Requested };
+        }
+
+        return Echo(_inputService.DoubleClick(point.X, point.Y, Math.Clamp(delayMs, 10, 500), point.Target, releaseHeldModifiers,
+            cancellationToken), point.Requested);
     }
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -154,9 +204,19 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
         CancellationToken cancellationToken = default)
     {
-        return _inputService.MoveMouse(x, y, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+        var point = Point(x, y, space, captureId, windowHandle, window, allowHostTarget);
+        if (point.Failure is { } failure)
+        {
+            return new MouseMoveResult(false, x, y, failure.Error, failure.ErrorCode) { Requested = point.Requested };
+        }
+
+        return Echo(_inputService.MoveMouse(point.X, point.Y, point.Target, releaseHeldModifiers, cancellationToken), point.Requested);
     }
 
     [McpServerTool(Name = "scroll", Title = "Scroll", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -188,6 +248,10 @@ public class InputSimulationTools
         bool allowHostTarget = false,
         [Description(ReleaseHeldModifiersDescription)]
         bool releaseHeldModifiers = false,
+        [Description(SpaceDescription)]
+        CoordinateSpace? space = null,
+        [Description(CaptureIdDescription)]
+        string? captureId = null,
         CancellationToken cancellationToken = default)
     {
         if (x.HasValue != y.HasValue)
@@ -204,16 +268,35 @@ public class InputSimulationTools
                 $"and not both 0 (got deltaY {deltaY}, deltaX {deltaX}). Nothing was scrolled.");
         }
 
+        if (x is { } pointX && y is { } pointY)
+        {
+            var point = Point(pointX, pointY, space, captureId, windowHandle, window, allowHostTarget);
+            if (point.Failure is { } failure)
+            {
+                return new ScrollResult(false, pointX, pointY, deltaY, deltaX, failure.Error, failure.ErrorCode) { Requested = point.Requested };
+            }
+
+            return Echo(_inputService.Scroll(point.X, point.Y, deltaY, deltaX, point.Target, releaseHeldModifiers, cancellationToken),
+                point.Requested);
+        }
+
+        if ((space != null && space != CoordinateSpace.Screen) || captureId != null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "space and captureId convert a point: pass x and y with them, or leave them out to scroll at the centre of " +
+                "windowHandle's client area. Nothing was scrolled.");
+        }
+
         // Without a point the wheel turns at the centre of a named window; a bare {"foreground": true} names none
         var target = Target(windowHandle, window, allowHostTarget);
-        if (!x.HasValue && !target.HasWindow)
+        if (!target.HasWindow)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "Pass windowHandle or a window selector that names a window (the wheel turns at the centre of its client area), or " +
                 "x and y. {\"foreground\": true} alone names no window here. Nothing was scrolled.");
         }
 
-        return _inputService.Scroll(x, y, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
+        return _inputService.Scroll(null, null, deltaY, deltaX, target, releaseHeldModifiers, cancellationToken);
     }
 
     [McpServerTool(Name = "type_text", Title = "Type Text", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -262,6 +345,103 @@ public class InputSimulationTools
         CancellationToken cancellationToken = default)
     {
         return _inputService.SendKeysAsync(keys, Target(windowHandle, window, allowHostTarget), releaseHeldModifiers, cancellationToken);
+    }
+
+    /// <summary>The result with the point as the call gave it, when that was not a screen point.</summary>
+    private static ClickResult Echo(ClickResult result, RequestedPoint? requested) =>
+        requested == null ? result : result with { Requested = requested };
+
+    /// <inheritdoc cref="Echo(ClickResult, RequestedPoint?)"/>
+    private static MouseMoveResult Echo(MouseMoveResult result, RequestedPoint? requested) =>
+        requested == null ? result : result with { Requested = requested };
+
+    /// <inheritdoc cref="Echo(ClickResult, RequestedPoint?)"/>
+    private static ScrollResult Echo(ScrollResult result, RequestedPoint? requested) =>
+        requested == null ? result : result with { Requested = requested };
+
+    /// <summary>A mouse point converted to the screen with its target, or why it could not be converted.</summary>
+    /// <param name="X">The screen point; the given point when it could not be converted.</param>
+    /// <param name="Y">See <paramref name="X"/>.</param>
+    /// <param name="Target">The input's target, with the point's recheck.</param>
+    /// <param name="Requested">The point as given, when it was not a screen point.</param>
+    /// <param name="Failure">Why it could not be converted (nothing is sent), or null.</param>
+    private sealed record MousePoint(int X, int Y, InputTarget Target, RequestedPoint? Requested, PointResolution? Failure);
+
+    /// <summary>
+    /// The screen point and target of a mouse call (roadmap M3.11). A screen point is sent as given. A window or client
+    /// point is converted from the target window's rectangle or client area. An image point is converted through its
+    /// capture's imageToScreen, and a window capture's window becomes the target: the call's own target must be that
+    /// window, and a target the capture supplied never lifts the host guard (allowHostTarget needs the window named by
+    /// its handle, as always). The converted point carries a recheck the input guard runs inside the input gate, so it is
+    /// checked exactly as a screen point is, and refused (StaleCapture) when what it was measured on changed meanwhile.
+    /// </summary>
+    /// <exception cref="ToolErrorException">
+    /// InvalidArguments: image without captureId, a captureId with another space, window or client without a window, or an
+    /// image point of one window with another window as target. Nothing is sent.
+    /// </exception>
+    private MousePoint Point(int x, int y, CoordinateSpace? space, string? captureId, long? windowHandle, WindowSelector? window,
+        bool allowHostTarget)
+    {
+        var effective = space ?? (captureId != null ? CoordinateSpace.Image : CoordinateSpace.Screen);
+        if (captureId != null && effective != CoordinateSpace.Image)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"captureId names an image, so x and y must be image pixels: pass space 'image' (or leave space out), not " +
+                $"'{ToolEnum<CoordinateSpace>.Name(effective)}'. Nothing was sent.");
+        }
+
+        if (effective == CoordinateSpace.Image && string.IsNullOrWhiteSpace(captureId))
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "space 'image' needs captureId: the captureId of the capture whose image x and y were measured on. Nothing was sent.");
+        }
+
+        var target = Target(windowHandle, window, allowHostTarget);
+        if (effective == CoordinateSpace.Screen)
+        {
+            return new MousePoint(x, y, target, null, null);
+        }
+
+        var spaceName = ToolEnum<CoordinateSpace>.Name(effective);
+        var requested = new RequestedPoint(x, y, spaceName, effective == CoordinateSpace.Image ? captureId : null);
+        var coordinates = _coordinates
+            ?? throw new InvalidOperationException("Window, client and image points need the coordinate resolver; the server always registers it.");
+
+        PointResolution point;
+        if (effective == CoordinateSpace.Image)
+        {
+            point = coordinates.FromImage(captureId!, x, y);
+            if (point is { Resolved: true, CapturedWindow: { } captured })
+            {
+                if (target.HasWindow && target.WindowHandle != captured)
+                {
+                    throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                        $"Capture {captureId} is of window {(long)captured}, but the call names window {(long)target.WindowHandle!.Value}: " +
+                        "a point of one window's image is never sent to another. Leave windowHandle and window out (the captured " +
+                        "window is the target), or capture the window you mean. Nothing was sent.");
+                }
+
+                if (!target.HasWindow)
+                {
+                    target = InputTarget.Window(captured);
+                }
+            }
+        }
+        else
+        {
+            if (target.WindowHandle is not { } handle)
+            {
+                throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                    $"space '{spaceName}' is relative to a window: pass windowHandle, or a window selector that names one " +
+                    "({\"foreground\": true} alone names none). Nothing was sent.");
+            }
+
+            point = coordinates.FromWindow(effective, handle, x, y);
+        }
+
+        return point.Resolved
+            ? new MousePoint(point.X, point.Y, target with { PointRecheck = point.Recheck }, requested, null)
+            : new MousePoint(x, y, target, requested, point);
     }
 
     /// <summary>
