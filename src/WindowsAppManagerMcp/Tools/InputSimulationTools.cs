@@ -268,7 +268,8 @@ public class InputSimulationTools
     /// <c>{"foreground": true}</c> is the implicit target (whatever is in front) under another name, so it is passed as no
     /// windowHandle, and destructive chords and the host rule still apply to it as without windowHandle. allowHostTarget
     /// lifts the host guard only for a window named by its handle (windowHandle or window.handle): a selector that finds
-    /// windows by name could resolve to the agent's own terminal without the caller ever seeing it.
+    /// windows by name could resolve to the agent's own terminal without the caller ever seeing it. A selector's window is
+    /// checked against it again inside the input gate (<see cref="InputTarget.SelectorRecheck"/>), as the window tools do.
     /// </remarks>
     /// <exception cref="ToolErrorException">
     /// Both were given, allowHostTarget came with a selector that names no handle, or the selector names no single window;
@@ -287,6 +288,14 @@ public class InputSimulationTools
                 "and pass its handle, only when the user explicitly asked for input there. Nothing was sent.");
         }
 
-        return new InputTarget(WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle"), allowHostTarget);
+        var handle = WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle");
+        if (handle is not { } resolved || window == null)
+            return new InputTarget(handle, allowHostTarget);
+
+        // The selector is checked again inside the gate, by the input guard, as the window tools check theirs
+        return new InputTarget(handle, allowHostTarget)
+        {
+            SelectorRecheck = () => WindowTargeting.Recheck(_windowService, window, resolved)?.Error
+        };
     }
 }

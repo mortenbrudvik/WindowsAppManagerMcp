@@ -30,6 +30,20 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
 
     /// <summary>True when a target window was given (even an invalid one).</summary>
     public bool HasWindow => WindowHandle.HasValue;
+
+    /// <summary>
+    /// For a window a selector named (roadmap M2.4): checks that the window still matches the selector, and returns why
+    /// not, or null when it does. The selector is resolved before the call waits for the input gate (up to 30 s); the
+    /// input guard runs this inside the gate, before anything is sent, so input never reaches a window that stopped
+    /// matching while it waited, such as a tabbed editor switched to another document (HandleMismatch). Null for a
+    /// windowHandle, which names no title or process to check again.
+    /// </summary>
+    public Func<string?>? SelectorRecheck { get; init; }
+
+    /// <summary>Two targets are equal when they name the same window with the same host rule; the recheck is not compared.</summary>
+    public bool Equals(InputTarget other) => WindowHandle == other.WindowHandle && AllowHostTarget == other.AllowHostTarget;
+
+    public override int GetHashCode() => HashCode.Combine(WindowHandle, AllowHostTarget);
 }
 
 /// <summary>
@@ -347,5 +361,11 @@ public enum InputErrorCode
     /// (the "Scroll inactive windows when I hover over them" setting is off, or its value cannot be read), and the
     /// window at the point is not the foreground window, so the wheel would scroll another window. Nothing was sent.
     /// </summary>
-    WheelFollowsFocus = 42
+    WheelFollowsFocus = 42,
+
+    /// <summary>
+    /// The window a selector named no longer matches it once the call holds the input gate: it changed (another document
+    /// or tab, another title), or it closed and its handle was reused, while the call waited. Nothing was sent.
+    /// </summary>
+    HandleMismatch = 43
 }

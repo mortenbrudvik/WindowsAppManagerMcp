@@ -188,6 +188,23 @@ public class WindowSelectorToolTests
     }
 
     [Fact]
+    public async Task WhileInputIsPaused_CloseWindow_Refuses_BeforeResolvingOrCheckingTheWindow()
+    {
+        // Arrange - an ambiguous or stale selector must not turn a pause into AmbiguousWindow or WindowNotFound, which an agent
+        // would 'fix' and retry instead of stopping
+        using var session = new InputSession(new FakeInputWrapper());
+        session.Pause(InputControlSources.Hotkey);
+
+        // Act
+        var act = () => CreateWindowTools(session).CloseWindow(window: NotepadSelector);
+
+        // Assert
+        (await act.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+        _windows.Verify(w => w.IsValidWindow(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
     public async Task FocusWindow_WithASelector_ActivatesTheResolvedWindow()
     {
         var foreground = new Mock<IForegroundService>();
@@ -318,6 +335,7 @@ public class WindowSelectorToolTests
         (await closeApplication.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         batch.Results[0].ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
         batch.Results[0].Error.Should().Contain("foreground");
+        batch.Results[0].Status.Should().Be("notSent", "the item was refused before its close message");
         _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
         _windows.Verify(w => w.CloseWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
         _windows.Verify(w => w.CloseWindowsBatchAsync(It.Is<IReadOnlyList<nint>>(h => h.Count > 0), It.IsAny<bool>(), It.IsAny<int>(),
@@ -374,6 +392,43 @@ public class WindowSelectorToolTests
     #endregion
 
     #region The input tools
+
+    [Fact]
+    public void AnInputTool_WithASelector_HandsTheInputServiceARecheck_ForInsideTheGate()
+    {
+        // Arrange - the input service waits for the gate (up to 30 s) after the selector was resolved
+        var input = new Mock<IInputSimulationService>();
+        InputTarget? passed = null;
+        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+            .Returns(new ClickResult(true, 5, 6, "left"));
+        var tools = new InputSimulationTools(input.Object, _windows.Object);
+        var selector = new WindowSelector { ProcessName = "notepad", TitleContains = "notes.txt" };
+        _windows.Setup(w => w.ResolveWindow(selector)).Returns(WindowResolution.Found(NotepadWindow));
+
+        // Act
+        tools.Click(5, 6, window: selector);
+
+        // Assert - still the same document: no refusal; then the user switches the tab, and the recheck says so
+        passed!.Value.SelectorRecheck.Should().NotBeNull();
+        passed.Value.SelectorRecheck!().Should().BeNull();
+        _windows.Setup(w => w.GetWindowInfo((nint)Notepad)).Returns(NotepadWindow with { Title = "draft.txt - Notepad" });
+        passed.Value.SelectorRecheck!().Should().Contain("no longer matches").And.Contain("notes.txt");
+    }
+
+    [Fact]
+    public void AnInputTool_WithAHandleOnly_HasNoSelectorToRecheck()
+    {
+        var input = new Mock<IInputSimulationService>();
+        InputTarget? passed = null;
+        input.Setup(i => i.Click(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, int _, InputTarget target, bool _, CancellationToken _) => passed = target)
+            .Returns(new ClickResult(true, 5, 6, "left"));
+
+        new InputSimulationTools(input.Object, _windows.Object).Click(5, 6, windowHandle: Notepad);
+
+        passed!.Value.SelectorRecheck.Should().BeNull();
+    }
 
     [Fact]
     public void Click_WithASelector_TargetsTheResolvedWindow_AsWindowHandle()
@@ -558,6 +613,9 @@ public class WindowSelectorToolTests
         result.IsVisible.Should().BeTrue();
         result.ClassName.Should().Be("Notepad");
         result.IsForeground.Should().BeNull("only detail 'full' reads the extra state");
+        result.VisibleBounds.Should().Be(
+            NotepadWindow.VisibleBounds is { } visible ? new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height) : null,
+            "standard reports what find_windows reports, the visible frame included");
         _windows.Verify(w => w.GetWindowDetails(It.IsAny<nint>()), Times.Never);
     }
 
