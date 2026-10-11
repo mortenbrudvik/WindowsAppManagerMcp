@@ -142,6 +142,21 @@ public class ToolEnumTests
     }
 
     [Fact]
+    public void ANull_BindsToTheDefaultItMeant_ForTheOptionalParameters_AndIsRefusedForTheRequiredOnes()
+    {
+        // format = null used to mean auto; state never had a default
+        JsonSerializer.Deserialize<CaptureFormat>("null", ToolJson.SerializerOptions).Should().Be(CaptureFormat.Auto);
+        JsonSerializer.Deserialize<CaptureOutputMode>("null", ToolJson.SerializerOptions).Should().Be(CaptureOutputMode.Image);
+        JsonSerializer.Deserialize<MonitorPositioning>("null", ToolJson.SerializerOptions).Should().Be(MonitorPositioning.Center);
+        JsonSerializer.Deserialize<LayoutMatchBy>("null", ToolJson.SerializerOptions).Should().Be(LayoutMatchBy.ProcessAndTitle);
+        JsonSerializer.Deserialize<DebugBrowser>("null", ToolJson.SerializerOptions).Should().Be(DebugBrowser.Chrome);
+        var state = () => JsonSerializer.Deserialize<WindowStateRequest>("null", ToolJson.SerializerOptions);
+        var position = () => JsonSerializer.Deserialize<SnapPosition>("null", ToolJson.SerializerOptions);
+        state.Should().Throw<ToolArgumentException>();
+        position.Should().Throw<ToolArgumentException>();
+    }
+
+    [Fact]
     public void TheConverter_LeavesANullableEnumNull_AndWritesTheCanonicalName()
     {
         JsonSerializer.Deserialize<SnapPosition?>("null", ToolJson.SerializerOptions).Should().BeNull();

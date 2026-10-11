@@ -7,7 +7,7 @@ namespace WindowsAppManagerMcp.Services;
 /// What a capture returns: the image, a file, both, or only the metadata. Also the capture tools' output argument
 /// (roadmap M2.2): an unknown value fails with InvalidOutputMode.
 /// </summary>
-[ToolEnum(nameof(ScreenshotErrorCode.InvalidOutputMode), "output")]
+[ToolEnum(nameof(ScreenshotErrorCode.InvalidOutputMode), "output", NullMeans = "image")]
 public enum CaptureOutputMode
 {
     [JsonStringEnumMemberName("image")]

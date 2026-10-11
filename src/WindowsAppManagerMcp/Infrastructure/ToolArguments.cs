@@ -28,7 +28,8 @@ public sealed class ToolArgumentException : JsonException
 
 /// <summary>
 /// Binds the <see cref="ToolEnumAttribute"/> enums of tool arguments from JSON strings (roadmap M2.2): a canonical
-/// name, an alias or the member name, ignoring case, spaces, '_' and '-'. Anything else, numbers included, throws a
+/// name, an alias or the member name, ignoring case, spaces, '_' and '-'. A JSON null binds to the enum's
+/// <see cref="ToolEnumAttribute.NullMeans"/> member when it names one. Anything else, numbers included, throws a
 /// <see cref="ToolArgumentException"/> with the enum's errorCode and the allowed values. Writes the canonical name.
 /// </summary>
 public sealed class ToolEnumConverterFactory : JsonConverterFactory
@@ -53,6 +54,11 @@ public sealed class ToolEnumConverterFactory : JsonConverterFactory
                 }
 
                 throw new ToolArgumentException(_info.ErrorCode, _info.InvalidMessage(text));
+            }
+
+            if (reader.TokenType == JsonTokenType.Null && _info.NullValue is { } defaultValue)
+            {
+                return (T)defaultValue;
             }
 
             // A number or any other JSON value: never an index into the enum

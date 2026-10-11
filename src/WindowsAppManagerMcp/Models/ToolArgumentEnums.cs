@@ -4,7 +4,8 @@ namespace WindowsAppManagerMcp.Models;
 
 // The fixed-value tool parameters (roadmap M2.2). The input schema lists each enum's canonical names and listed aliases,
 // and an unknown value fails with the enum's errorCode and the allowed values instead of falling back to a default. The
-// names are the strings the tools took before they were typed, and so are the aliases the documentation named.
+// names are the strings the tools took before they were typed, and so are the aliases the documentation named. For an
+// optional parameter, NullMeans keeps a JSON null meaning the parameter's default, as it did for the strings.
 
 /// <summary>The state set_window_state and set_windows_state_batch put a window in.</summary>
 [ToolEnum(nameof(WindowErrorCode.InvalidState), "window state")]
@@ -30,7 +31,7 @@ public enum WindowStateRequest
 }
 
 /// <summary>Where move_window_to_monitor puts the window on the target monitor's work area.</summary>
-[ToolEnum(nameof(WindowErrorCode.InvalidPositioning), "positioning")]
+[ToolEnum(nameof(WindowErrorCode.InvalidPositioning), "positioning", NullMeans = "center")]
 public enum MonitorPositioning
 {
     /// <summary>Centered, at its current size.</summary>
@@ -63,7 +64,7 @@ public enum MonitorPositioning
 }
 
 /// <summary>How apply_layout matches a preset's placements to open windows.</summary>
-[ToolEnum(nameof(LayoutErrorCode.InvalidMatchBy), "matchBy value")]
+[ToolEnum(nameof(LayoutErrorCode.InvalidMatchBy), "matchBy value", NullMeans = "process_and_title")]
 public enum LayoutMatchBy
 {
     /// <summary>The process name and the title text must both match.</summary>
@@ -80,7 +81,7 @@ public enum LayoutMatchBy
 }
 
 /// <summary>The image format of a capture.</summary>
-[ToolEnum(nameof(ScreenshotErrorCode.InvalidFormat), "image format")]
+[ToolEnum(nameof(ScreenshotErrorCode.InvalidFormat), "image format", NullMeans = "auto")]
 public enum CaptureFormat
 {
     /// <summary>JPEG, or PNG when the image's long edge is at most 512 pixels; with an outputPath, its extension decides.</summary>
@@ -98,7 +99,7 @@ public enum CaptureFormat
 }
 
 /// <summary>The browser launch_browser_with_debug starts.</summary>
-[ToolEnum(nameof(BrowserErrorCode.UnsupportedBrowser), "browser")]
+[ToolEnum(nameof(BrowserErrorCode.UnsupportedBrowser), "browser", NullMeans = "chrome")]
 public enum DebugBrowser
 {
     /// <summary>Google Chrome.</summary>

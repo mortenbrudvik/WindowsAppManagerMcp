@@ -21,6 +21,12 @@ public sealed class ToolEnumAttribute(string errorCode, string noun) : Attribute
 
     /// <summary>What a value names, for the error message.</summary>
     public string Noun { get; } = noun;
+
+    /// <summary>
+    /// The canonical name of the member a JSON null binds to, for an optional parameter whose earlier string version took
+    /// null as "use the default" (format = null meant auto). Null (the default): a JSON null is refused like an unknown value.
+    /// </summary>
+    public string? NullMeans { get; init; }
 }
 
 /// <summary>
@@ -94,6 +100,13 @@ public sealed class ToolEnumInfo
             }
         }
 
+        if (attribute.NullMeans is { } nullMeans)
+        {
+            NullValue = _byKey.TryGetValue(Key(nullMeans), out var nullValue)
+                ? nullValue
+                : throw new ArgumentException($"{enumType.Name}: NullMeans '{nullMeans}' names no member.", nameof(enumType));
+        }
+
         Names = canonical;
         Aliases = listedAliases;
         SchemaValues = [.. canonical, .. listedAliases];
@@ -132,6 +145,9 @@ public sealed class ToolEnumInfo
 
     /// <summary>The allowed values as the error message lists them: "a, b, c (also accepted: d)".</summary>
     public string AllowedValues { get; }
+
+    /// <summary>The member a JSON null binds to (<see cref="ToolEnumAttribute.NullMeans"/>), or null when null is refused.</summary>
+    public object? NullValue { get; }
 
     /// <summary>True when <paramref name="type"/> is a <see cref="ToolEnumAttribute"/> enum.</summary>
     public static bool IsToolEnum(Type type) => type.IsEnum && type.IsDefined(typeof(ToolEnumAttribute), inherit: false);

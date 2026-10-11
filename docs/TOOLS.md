@@ -3561,7 +3561,9 @@ sees now.
   window, an unknown positioning centered it, an unknown matchBy matched by process and title); now the call fails
   as a tool error with the parameter's code (`InvalidState`, `InvalidPositioning`, `InvalidMatchBy`,
   `InvalidSnapPosition`, `InvalidFormat`, `InvalidOutputMode`, `UnsupportedBrowser`) and the allowed values, and
-  does nothing. A number is no longer accepted for these parameters. For the captures, an unknown `format` or
+  does nothing. A number is no longer accepted for these parameters. An explicit `null` for an optional one
+  (`format`, `output`, `positioning`, `matchBy`, `browser`) still means its default, as it did for `format` and
+  `output` (for `positioning` and `matchBy` it used to fail with an internal error). For the captures, an unknown `format` or
   `output` is now a tool error without the capture metadata (it was a capture result with `success: false` and the
   same code).
 - **Out-of-range values are refused.** A `monitorIndex` that is not a monitor fails with `InvalidMonitorIndex` and the

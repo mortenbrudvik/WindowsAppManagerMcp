@@ -135,6 +135,15 @@ public sealed class ToolArgumentContractTests : IDisposable
     }
 
     [Fact]
+    public async Task Captures_TakeANullFormatAndOutputAsTheDefaults_AsTheStringParametersDid()
+    {
+        var result = await CallAsync("take_screenshot", """{ "format": null, "output": null }""");
+
+        result.IsError.Should().NotBe(true);
+        result.Content.OfType<ImageContentBlock>().Should().ContainSingle("output null is the default, image");
+    }
+
+    [Fact]
     public async Task Captures_TakeJpgForJpeg()
     {
         var result = await CallAsync("take_screenshot", """{ "format": "jpg" }""");
