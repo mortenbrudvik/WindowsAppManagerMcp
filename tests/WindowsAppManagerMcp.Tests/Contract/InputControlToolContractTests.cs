@@ -282,7 +282,7 @@ public sealed class InputControlToolContractTests : IDisposable
         _questions.Should().Be(1);
     }
 
-    public static TheoryData<string?> InitializeRevisions => new() { InProcessMcpServer.InitializeRevision, InProcessMcpServer.NewestInitializeRevision };
+    public static TheoryData<string> InitializeRevisions => new() { InProcessMcpServer.InitializeRevision, InProcessMcpServer.NewestInitializeRevision };
 
     [Theory]
     [MemberData(nameof(InitializeRevisions))]

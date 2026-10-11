@@ -289,13 +289,13 @@ public class InputSimulationTools
         }
 
         var handle = WindowTargeting.Optional(_windowService, windowHandle, window, "windowHandle");
-        if (handle is not { } resolved || window == null)
+        if (handle is not { } resolved || window == null || _windowService is not { } windows)
             return new InputTarget(handle, allowHostTarget);
 
         // The selector is checked again inside the gate, by the input guard, as the window tools check theirs
         return new InputTarget(handle, allowHostTarget)
         {
-            SelectorRecheck = () => WindowTargeting.Recheck(_windowService, window, resolved)?.Error
+            SelectorRecheck = () => WindowTargeting.Recheck(windows, window, resolved)?.Error
         };
     }
 }

@@ -6,8 +6,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// <summary>
 /// The error contract of every tool (roadmap M2.1): a call whose result says <c>"success": false</c> goes out with
 /// isError true, with the tool's own JSON body unchanged (its error and errorCode). The tools keep returning their
-/// typed results; <see cref="ToolErrorReporting"/>, the outermost call filter, applies <see cref="WithIsError"/> to
-/// every result, so a new tool cannot forget it.
+/// typed results; <see cref="ToolErrorReporting"/>, the call filter just inside the audit log's (the outermost one),
+/// applies <see cref="WithIsError"/> to every result, so a new tool cannot forget it.
 /// </summary>
 /// <remarks>
 /// Only a top-level <c>success</c> property counts. A list, or a batch summary whose items failed, is data and keeps
