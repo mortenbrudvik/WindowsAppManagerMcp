@@ -253,8 +253,8 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((LaunchRequest _, bool wait, int _, CancellationToken _) => TypicalLaunch(wait, notepad, TypicalDesktop.NotepadProcessId));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns(TypicalDesktop.Processes);
-        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
+        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(true, id, ProcessName: "notepad", CloseRequested: true, Exited: true));
         Processes.Setup(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<LaunchRequest> apps, bool wait, int _, IProgress<OperationProgress>? _, CancellationToken _) =>
@@ -392,8 +392,8 @@ public sealed class ContractServices : IDisposable
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<string>(), It.IsAny<string[]?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: "ExecutableNotFound"));
         Processes.Setup(p => p.GetRunningProcesses(It.IsAny<string?>(), It.IsAny<bool>())).Returns([]);
-        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((int id, bool _, bool _, int _, string? _, CancellationToken _) =>
+        Processes.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int id, bool _, bool _, int _, string? _, KillSafeguards? _, CancellationToken _) =>
                 new KillResult(false, id, ErrorMessage: "No process with that ID", ErrorCode: nameof(ProcessErrorCode.ProcessNotFound)));
         Processes.Setup(p => p.LaunchApplicationAsync(It.IsAny<LaunchRequest>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LaunchResult(false, ErrorMessage: "The executable was not found", ErrorCode: nameof(LaunchErrorCode.ExecutableNotFound)));

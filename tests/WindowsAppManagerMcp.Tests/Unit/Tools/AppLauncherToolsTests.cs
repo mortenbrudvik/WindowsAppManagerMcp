@@ -380,7 +380,7 @@ public class AppLauncherToolsTests
             It.IsAny<bool>(),
             It.IsAny<bool>(),
             It.IsAny<int>(),
-            It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<KillSafeguards?>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync(result);
     }
@@ -396,7 +396,7 @@ public class AppLauncherToolsTests
         await sut.KillProcess(processId: 1234, confirm: true, forceKill: true, gracefulTimeoutMs: 2500, expectedProcessName: "notepad.exe");
 
         // Assert
-        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, true, 2500, "notepad.exe", It.IsAny<CancellationToken>()), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, true, 2500, "notepad.exe", It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -410,7 +410,36 @@ public class AppLauncherToolsTests
         await sut.KillProcess(processId: 1234, confirm: true);
 
         // Assert - graceful by default, 5 s timeout, no name guard
-        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task KillProcess_ReleasesTheInputGate_BeforeTheWaitForTheExit()
+    {
+        // Arrange - a graceful close waits up to 60 s for an app showing 'Save changes?': no input call must wait that long
+        var flow = InputGate.TagFlow();
+        bool? heldForTheClose = null;
+        bool? heldForTheWait = null;
+        KillSafeguards? passed = null;
+        _mockProcessService.Setup(p => p.KillProcessAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(),
+                It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
+            .Callback((int _, bool _, bool _, int _, string? _, KillSafeguards? safeguards, CancellationToken _) =>
+            {
+                passed = safeguards;
+                heldForTheClose = InputGate.IsHeldBy(flow);
+                safeguards?.BeforeWait?.Invoke();
+                heldForTheWait = InputGate.IsHeldBy(flow);
+            })
+            .ReturnsAsync(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
+
+        // Act - the model confirmed: the client cannot ask the user
+        var result = await CreateSut().KillProcess(processId: 1234, confirm: true);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        heldForTheClose.Should().BeTrue();
+        heldForTheWait.Should().BeFalse();
+        passed!.Confirmed.Should().BeNull("the user was not asked, so there is nothing they confirmed to pin");
     }
 
     [Fact]
@@ -528,14 +557,14 @@ public class AppLauncherToolsTests
         // Arrange
         using var call = new CancellationTokenSource();
         _mockProcessService.Setup(p => p.KillProcessAsync(
-                It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<KillSafeguards?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new KillResult(true, 1234, "notepad", CloseRequested: true, Exited: true));
 
         // Act
         await CreateSut().KillProcess(processId: 1234, confirm: true, cancellationToken: call.Token);
 
         // Assert
-        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, call.Token), Times.Once);
+        _mockProcessService.Verify(p => p.KillProcessAsync(1234, true, false, 5000, null, It.IsAny<KillSafeguards?>(), call.Token), Times.Once);
     }
 
     #endregion

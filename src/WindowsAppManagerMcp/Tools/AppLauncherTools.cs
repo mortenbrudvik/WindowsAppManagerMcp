@@ -108,7 +108,9 @@ public class AppLauncherTools
     [McpServerTool(Name = "kill_process", Title = "Close or Terminate Process", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close or terminate a process by its ID. When the MCP client can ask the user (elicitation), the user is asked to confirm, " +
                  "with the process's name, PID, windows and (forceKill) child processes, and nothing is done unless they confirm " +
-                 "(errorCode ConfirmationDeclined); otherwise confirm=true is required (ConfirmationRequired). " +
+                 "(errorCode ConfirmationDeclined); a process that got the PID while the user read the question is not touched, even one with " +
+                 "the same name (ProcessNameMismatch), nor a forceKill tree that gained a process the user was not shown (ProcessTreeChanged). " +
+                 "Otherwise confirm=true is required (ConfirmationRequired). " +
                  "Default (forceKill=false) is a graceful close only: WM_CLOSE is sent to the main window and the call waits up to gracefulTimeoutMs. " +
                  "It never escalates: if the process has no closable window (errorCode NoClosableWindow) or is still running after the timeout, " +
                  "for example because it shows a 'Save changes?' prompt (errorCode GracefulCloseTimedOut), the process is left running and success is false. " +
@@ -133,6 +135,7 @@ public class AppLauncherTools
         // Nothing while the user has paused input, not even a question
         InputGateToolFilter.ThrowIfPaused(_session);
 
+        KillTargetCheck? confirmed = null;
         if (UserConfirmation.CanAsk(server))
         {
             // Ask the user, not the model, and before the input gate: a waiting user must not hold up every input call.
@@ -153,23 +156,34 @@ public class AppLauncherTools
                     ErrorCode: nameof(ProcessErrorCode.ConfirmationDeclined));
             }
 
-            // The user agreed to this process: if its PID now belongs to another one, nothing is done (ProcessNameMismatch)
+            // The user agreed to this process: if its PID now belongs to another one, even one with the same name (its start
+            // time differs), or a forced kill's tree gained a process the user was not shown, nothing is done
             confirm = true;
             expectedProcessName = target.ProcessName;
+            confirmed = target;
         }
         else if (!confirm)
         {
             // ConfirmationRequired, without waiting for the gate
             return ToDto(await _processService.KillProcessAsync(
-                processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, cancellationToken).ConfigureAwait(false));
+                processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, cancellationToken: cancellationToken).ConfigureAwait(false));
         }
 
-        using var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
-
-        // The wait for the process to exit (up to gracefulTimeoutMs) ends when the client cancels the call
-        var result = await _processService.KillProcessAsync(
-            processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, cancellationToken).ConfigureAwait(false);
-        return ToDto(result);
+        // Only the close request or the termination is sent inside the input gate: the gate is released before the wait for
+        // the process to exit (up to gracefulTimeoutMs), as the close tools do, so a 'Save changes?' prompt does not hold up
+        // every input and window call. The wait ends when the client cancels the call.
+        var gate = await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false);
+        try
+        {
+            var result = await _processService.KillProcessAsync(
+                processId, confirm, forceKill, gracefulTimeoutMs, expectedProcessName, new KillSafeguards(confirmed, gate.Dispose),
+                cancellationToken).ConfigureAwait(false);
+            return ToDto(result);
+        }
+        finally
+        {
+            gate.Dispose();
+        }
     }
 
     private static KillResultDto ToDto(KillResult result) => new(
