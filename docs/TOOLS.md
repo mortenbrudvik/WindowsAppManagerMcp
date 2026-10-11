@@ -275,18 +275,18 @@ Every tool that acts on one window takes it as `handle` (`windowHandle` for the 
 | `processId` | The process ID (the app's, or a UWP window's host) |
 | `className` | The exact window class, ignoring case; skips the user-facing filter, as in find_windows |
 | `includeCloaked`, `includeUntitled` | Also match cloaked windows (other virtual desktops, suspended apps) or untitled windows |
-| `index` | Which of several matches, front to back in z-order (0 is the front one) |
-| `foreground` | The window in front; the other filters must match it (`WindowNotFound` otherwise) |
+| `index` | Which of several matches, front to back in z-order (0 is the front one), counted when the call runs |
+| `foreground` | The window in front; the other filters must match it (`WindowNotFound` otherwise). Alone, it names no particular window: the input tools take it as no `windowHandle`, and the close tools refuse it (`InvalidArguments`) |
 | `handle` | One window by handle; the other filters then say what that window must still be (see `HandleMismatch` below) |
 
-Titles are compared as they read: invisible format characters (the U+200B zero-width space Edge writes into "Microsoft Edge"), runs of whitespace and Edge's " and N more pages" segment are ignored. So `{"titleContains": "Microsoft Edge"}` finds Edge windows, and `{"titleEquals": "Inbox - Personal - Microsoft Edge"}` finds the window titled "Inbox and 2 more pages - Personal - Microsoft Edge". find_windows and [apply_layout](#apply_layout) compare titles the same way, as the CDP tab match of the [Browser Reading](#browser-reading) tools does. A selector with a field it does not know is refused (`InvalidArguments`), so a misspelled filter never widens the match; so is an empty selector.
+Titles are compared as they read: invisible format characters (the U+200B zero-width space Edge writes into "Microsoft Edge"), runs of whitespace and Edge's " and N more pages" segment are ignored. So `{"titleContains": "Microsoft Edge"}` finds Edge windows, and `{"titleEquals": "Inbox - Personal - Microsoft Edge"}` finds the window titled "Inbox and 2 more pages - Personal - Microsoft Edge". find_windows and [apply_layout](#apply_layout) compare titles the same way, as the CDP tab match of the [Browser Reading](#browser-reading) tools does. A selector with a field it does not know is refused (`InvalidArguments`), so a misspelled filter never widens the match; so is an empty selector, and so is a filter whose text is blank once normalized (`" "`, a zero-width space, a `processName` of only `.exe`), which would otherwise match every window. An empty string is a filter left out.
 
 | Outcome | errorCode | Meaning |
 |---------|-----------|---------|
 | One window | - | The tool goes on exactly as if it had been given that window's handle. The window tools report it as `handle` |
 | No window | `WindowNotFound` | Nothing matches, or `index` is past the matches (then with the matches as `candidates`). The listing rules of find_windows apply: no cloaked, untitled, tool or shell windows unless the selector asks for them. Nothing was done |
-| Several windows | `AmbiguousWindow` | More than one window matches and there is no `index`. `candidates` lists up to 5 of them, front to back, each with `handle`, `title`, `processName`, `processId` and `className`. Nothing was done |
-| A reused handle | `HandleMismatch` | `window.handle` came with `processId`, `processName`, a title filter or `className`, and the window no longer matches it: it closed, and Windows gave its handle to another window. Nothing was done |
+| Several windows | `AmbiguousWindow` | More than one window matches and there is no `index`. `candidates` lists up to 5 of them, front to back, each with `handle`, `title`, `processName`, `processId` and `className`, and `isAgentHost: true` on your own terminal, editor or chat window. Nothing was done |
+| A reused handle | `HandleMismatch` | `window.handle` came with `processId`, `processName`, a title filter or `className`, and the window no longer matches it: it closed, and Windows gave its handle to another window. The window tools check the resolved window again once they hold the input gate, just before they act, so a window that changed while the call waited is refused too. Nothing was done |
 | A closed handle | `InvalidHandle` | `window.handle` (with filters) is no window any more. A selector with only `handle` is that handle, and the tool reports it as it reports its own `handle` |
 
 The single-window tools report these as a tool error (`isError: true`) with `candidates`; in a batch, an item whose selector names no single window fails alone with the same code and `candidates`, and the other items run:
@@ -294,7 +294,7 @@ The single-window tools report these as a tool error (`isError: true`) with `can
 ```json
 {
   "success": false,
-  "error": "2 windows match processName 'chrome', so the window cannot be told; nothing was done. candidates lists them, front to back. Call again with one candidate's handle as window.handle (with its processId, so a reused handle is refused), narrow the filters (titleEquals, processId, className), or pick one in z-order with window.index.",
+  "error": "2 windows match processName 'chrome', so the window cannot be told; nothing was done. candidates lists them, front to back; isAgentHost marks your own terminal or editor. Call again with the one you mean as window {handle, processId} (a reused handle is then refused), or narrow the filters (titleEquals, processId, className). Do not turn a candidate's position into window.index: index counts the z-order at the time of the next call, which can change.",
   "errorCode": "AmbiguousWindow",
   "tool": "focus_window",
   "candidates": [
@@ -304,9 +304,9 @@ The single-window tools report these as a tool error (`isError: true`) with `can
 }
 ```
 
-**After `AmbiguousWindow`**, do not repeat the same selector: pick the candidate you mean and call again with `"window": {"handle": 2821181, "processId": 7720}` (the `processId` turns a reused handle into `HandleMismatch` instead of an action on another app), or narrow the selector (`titleEquals`, `titleRegex`, `processId`, `className`), or pick by z-order with `index`. If you cannot tell which window the user means, ask.
+**After `AmbiguousWindow`**, do not repeat the same selector: pick the candidate you mean and call again with `"window": {"handle": 2821181, "processId": 7720}` (the `processId` turns a reused handle into `HandleMismatch` instead of an action on another app), or narrow the selector (`titleEquals`, `titleRegex`, `processId`, `className`). Do not turn a candidate's position in the list into `index`: `index` counts the z-order when the next call runs, and a focus, launch or click in between reorders the windows. Never pick a candidate marked `isAgentHost` unless the user asked for their own terminal or editor. If you cannot tell which window the user means, ask.
 
-**Guards.** A resolved window goes through every check a handle goes through: the [target policy](#target-policy), the [input guard](#input-guard) and its host rule (`allowHostTarget` still needs the user's explicit request, and `{"foreground": true}` on the agent's own terminal is refused like its handle), and close_window's protected-window rules. A selector cannot reach a window its handle could not. Resolving only reads windows, never activates or restores one, and happens before the tool waits for the input gate, so it never holds up other input or window calls; while input is paused, the window tools return `PausedByUser` without resolving.
+**Guards.** A resolved window goes through every check a handle goes through: the [target policy](#target-policy), the [input guard](#input-guard) and its host rule, and close_window's protected-window rules. The rules for a window the caller chose do not take a selector that chose nothing: on the input tools, `{"foreground": true}` alone is the same as no `windowHandle`, so chords that close, quit or lock are still refused (`DestructiveChordNeedsTarget`) and the agent's own terminal in front is still refused (`TargetIsAgentHost`); `allowHostTarget` lifts the host rule only for a window named by its handle (`windowHandle` or `window.handle`) and is refused (`InvalidArguments`) beside a selector that finds windows by name or by `foreground`; and the close tools refuse `{"foreground": true}` alone (`InvalidArguments`). A selector cannot reach a window its handle could not. Resolving only reads windows, never activates or restores one, and happens before the tool waits for the input gate, so it never holds up other input or window calls; while input is paused, the window tools return `PausedByUser` without resolving.
 
 ### find_windows
 
@@ -317,7 +317,7 @@ Find windows matching specific criteria.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | titleContains | string | No | - | Partial text to match in window title (case-insensitive) |
-| processName | string | No | - | Process name to match (e.g., 'notepad', 'chrome'). For a UWP app, both the app process and `ApplicationFrameHost` match |
+| processName | string | No | - | The whole process name, case-insensitive, with or without .exe (e.g., 'notepad', 'chrome'); `processNameContains` matches a part of it. For a UWP app, both the app process and `ApplicationFrameHost` match |
 | processId | integer | No | - | Process ID to match. For a UWP app, both the app process and its host process match |
 | handle | integer | No | - | Specific window handle to find. Skips the user-facing filter |
 | visibleOnly | boolean | No | true | Only return visible windows |
@@ -1352,7 +1352,7 @@ Close multiple windows gracefully in a single batch operation, then wait up to `
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| windows | object[] | Yes | - | Array of window handles to close |
+| windows | object[] | Yes | - | Array of windows to close, each with `handle` or `window` (a selector, as close_window takes it; `{"foreground": true}` alone is refused) |
 | delayBetweenMs | integer | No | 50 | Delay between two windows in milliseconds (clamped to 0-5000) |
 | confirm | boolean | No | false | Must be true to close more than 3 windows in one batch when the client cannot ask the user; when it can, the user's answer decides |
 | force | boolean | No | false | Close protected windows too (see [close_window](#close_window)); applies to every window in the batch. Set it only when the user explicitly asked to close those windows |
@@ -2646,8 +2646,8 @@ Perform a left mouse click at the specified screen coordinates. Pass `windowHand
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:click -->
 
@@ -2711,8 +2711,8 @@ Perform a right mouse click at the specified screen coordinates.
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:right_click -->
 
@@ -2746,8 +2746,8 @@ Perform a double left click at the specified screen coordinates. Useful for open
 | y | integer | Yes | - | Y coordinate (screen position) |
 | delayMs | integer | No | 50 | Delay between clicks in milliseconds (range: 10-500) |
 | windowHandle | integer | No | none | The window the click is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:double_click -->
 
@@ -2795,8 +2795,8 @@ Move the mouse cursor to the specified screen coordinates without clicking. Usef
 | x | integer | Yes | - | X coordinate (screen position) |
 | y | integer | Yes | - | Y coordinate (screen position) |
 | windowHandle | integer | No | none | The window the input is for. Sent only if the point is on this window or a popup or dialog of it (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:mouse_move -->
 
@@ -2845,7 +2845,7 @@ The wheel over a combo box, slider or number box changes its value, so point at 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | windowHandle | integer | No | - | The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on this window or a popup or dialog of it (otherwise errorCode TargetOccluded) and the window is not disabled by a modal dialog (BlockedByModal). A child window's handle stands for its top-level window. Default: none |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | x | integer | No | - | X coordinate in physical virtual-desktop pixels (negative on monitors left of the primary monitor), together with y. Default: the centre of windowHandle's client area |
 | y | integer | No | - | Y coordinate in physical virtual-desktop pixels (negative on monitors above the primary monitor), together with x. Default: the centre of windowHandle's client area |
 | deltaY | integer | No | 0 | Vertical wheel notches: positive scrolls down, negative scrolls up, at most 100 either way. Default: 0 |
@@ -2898,8 +2898,8 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 | text | string | Yes | - | The text to type |
 | delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:type_text -->
 
@@ -2969,8 +2969,8 @@ Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`
 |-----------|------|----------|---------|-------------|
 | keys | string | Yes | - | Keys to send in SendKeys format (see syntax below) |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
-| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
-| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle`. Set it only when the user explicitly asked |
+| window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
+| allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 <!-- tools:end params:send_keys -->
 
