@@ -38,6 +38,10 @@
 .PARAMETER TimeoutSeconds
     How long to wait for each response and for the server to exit. Default 60.
 
+.PARAMETER ProtocolVersion
+    The MCP revision the initialize request asks for. Default: the newest revision with the initialize handshake that
+    the server's SDK speaks, which stdio clients such as Claude Code use (ProtocolRevisionContractTests pins it).
+
 .EXAMPLE
     ./scripts/Test-ToolsSnapshot.ps1 -ExePath ./publish/WindowsAppManagerMcp.exe
 
@@ -51,17 +55,22 @@ param(
     [string[]]$ArgumentList = @(),
     [string]$SnapshotPath,
     [switch]$OnlyIfCurrent,
-    [int]$TimeoutSeconds = 60
+    [int]$TimeoutSeconds = 60,
+    [string]$ProtocolVersion = '2025-11-25'
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ReleaseCommon.ps1')
 
 $root = Get-RepoRoot
-if (-not $SnapshotPath) {
+# Relative paths are relative to the PowerShell location (Set-Location), which .NET's current directory does not follow
+if ($SnapshotPath) {
+    $SnapshotPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($SnapshotPath)
+}
+else {
     $SnapshotPath = Join-Path $root 'tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json'
 }
-$ExePath = [System.IO.Path]::GetFullPath($ExePath)
+$ExePath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ExePath)
 $exeLabel = Get-RepoRelativeLabel $root $ExePath
 $inActions = $env:GITHUB_ACTIONS -eq 'true'
 
@@ -154,7 +163,7 @@ try {
     Send-Message @{
         jsonrpc = '2.0'; id = 1; method = 'initialize'
         params  = @{
-            protocolVersion = '2025-06-18'
+            protocolVersion = $ProtocolVersion
             capabilities    = @{}
             clientInfo      = @{ name = 'tools-snapshot-check'; version = '1.0.0' }
         }
@@ -234,7 +243,7 @@ foreach ($name in $expected.Keys) {
 }
 
 if ($differences.Count -eq 0) {
-    Write-Host "OK: the $($actual.Count) tools of $exeLabel match $(Get-RepoRelativeLabel $root ([System.IO.Path]::GetFullPath($SnapshotPath)))."
+    Write-Host "OK: the $($actual.Count) tools of $exeLabel match $(Get-RepoRelativeLabel $root $SnapshotPath)."
     exit 0
 }
 

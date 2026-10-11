@@ -93,6 +93,17 @@ public class ToolSurfaceSnapshotTests
     }
 
     [Fact]
+    public void TheGuardScript_ListsTheToolsOnTheNewestInitializeRevision()
+    {
+        // Claude Code and other stdio clients use the initialize handshake; the script asks for the newest revision of
+        // it that the SDK speaks (ProtocolRevisionContractTests pins that revision), not one an upgrade left behind
+        var script = Snapshots.ReadNormalized(RepositoryFiles.PathOf("scripts", "Test-ToolsSnapshot.ps1"))!;
+
+        script.Should().Contain($"[string]$ProtocolVersion = '{InProcessMcpServer.NewestInitializeRevision}'")
+            .And.Contain("protocolVersion = $ProtocolVersion");
+    }
+
+    [Fact]
     public void Differences_NamesAddedRemovedAndChangedTools()
     {
         // The failure message must point at what changed, not just say "differs"
