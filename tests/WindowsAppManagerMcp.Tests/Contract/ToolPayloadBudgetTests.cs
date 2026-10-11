@@ -43,19 +43,19 @@ public class ToolPayloadBudgetTests
         ["get_foreground_window"] = 100, // 58
 
         // Window Control
-        ["move_window"] = 100, // 18
-        ["resize_window"] = 100, // 18
-        ["set_window_bounds"] = 100, // 18
-        ["set_window_state"] = 100, // 9
+        ["move_window"] = 100, // 39: bounds, outerBounds, state, monitorIndex (roadmap M2.3)
+        ["resize_window"] = 100, // 39
+        ["set_window_bounds"] = 100, // 39
+        ["set_window_state"] = 100, // 39
         ["focus_window"] = 100, // 44
         ["close_window"] = 100, // 4
-        ["snap_window"] = 100, // 18
-        ["move_window_to_monitor"] = 100, // 18
+        ["snap_window"] = 100, // 39
+        ["move_window_to_monitor"] = 100, // 39
 
         // Batch Operations: 2 windows or applications
-        ["set_windows_bounds_batch"] = 100, // 59
-        ["snap_windows_batch"] = 100, // 59
-        ["set_windows_state_batch"] = 100, // 42
+        ["set_windows_bounds_batch"] = 160, // 104
+        ["snap_windows_batch"] = 160, // 104
+        ["set_windows_state_batch"] = 160, // 104
         ["close_windows_batch"] = 100, // 32
         ["launch_applications_batch"] = 100, // 54
 

@@ -152,16 +152,9 @@ public class WindowService : IWindowService
             includeCloaked: false,
             out _);
 
-    public WindowChangeResult MoveWindow(nint handle, int x, int y, bool bringToFront = true)
-    {
-        if (ChangeRefusal(handle) is { } refused)
-            return refused;
-
-        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
-            return WindowGone(handle);
-
-        return Place(handle, x, y, rect.Right - rect.Left, rect.Bottom - rect.Top, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
-    }
+    public WindowChangeResult MoveWindow(nint handle, int x, int y, bool bringToFront = true) =>
+        ChangeRefusal(handle) ??
+        Place(handle, new PlacementTarget(X: x, Y: y), BoundsFrame.Visible, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
 
     /// <summary>
     /// The SetWindowPos flags for a placement. With <paramref name="bringToFront"/> the window goes to
@@ -172,30 +165,168 @@ public class WindowService : IWindowService
     private static uint PlacementFlags(bool bringToFront) =>
         bringToFront ? NativeEnums.SWP_NOACTIVATE : NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE;
 
-    public WindowChangeResult ResizeWindow(nint handle, int width, int height)
-    {
-        if (ChangeRefusal(handle) is { } refused)
-            return refused;
-
-        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
-            return WindowGone(handle);
-
-        return Place(handle, rect.Left, rect.Top, width, height, NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE,
-            WindowErrorCode.ResizeFailed);
-    }
+    public WindowChangeResult ResizeWindow(nint handle, int width, int height) =>
+        ChangeRefusal(handle) ??
+        Place(handle, new PlacementTarget(Width: width, Height: height), BoundsFrame.Visible,
+            NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE, WindowErrorCode.ResizeFailed);
 
     public WindowChangeResult SetWindowBounds(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
-        ChangeRefusal(handle) ?? ApplyBounds(handle, x, y, width, height, bringToFront);
+        ChangeRefusal(handle) ??
+        Place(handle, new PlacementTarget(x, y, width, height), BoundsFrame.Outer, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
 
-    /// <summary>Places a window that was checked already, restoring it first if it is minimized.</summary>
-    private WindowChangeResult ApplyBounds(nint handle, int x, int y, int width, int height, bool bringToFront)
+    public WindowChangeResult SetWindowFrame(nint handle, int x, int y, int width, int height, bool bringToFront = true) =>
+        ChangeRefusal(handle) ??
+        Place(handle, new PlacementTarget(x, y, width, height), BoundsFrame.Visible, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
+
+    /// <summary>The longest settleMs the geometry tools wait for a window to stop moving: they wait inside the input gate.</summary>
+    public const int MaxSettleMs = 5000;
+
+    /// <summary>
+    /// How long a placement that took the window to a monitor with another scale waits for the application to apply its
+    /// own DPI change (WM_DPICHANGED) before it measures the window again.
+    /// </summary>
+    public static readonly TimeSpan DpiSettleTimeout = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>How often the frame is read while a placement waits for the window to stop moving.</summary>
+    private static readonly TimeSpan SettlePollInterval = TimeSpan.FromMilliseconds(20);
+
+    /// <summary>The wait for <paramref name="settleMs"/>: 0 to <see cref="MaxSettleMs"/>.</summary>
+    public static TimeSpan SettleDelay(int settleMs) => TimeSpan.FromMilliseconds(Math.Clamp(settleMs, 0, MaxSettleMs));
+
+    public void WaitForSettledFrame(nint handle, TimeSpan timeout)
     {
-        if (_nativeWrapper.IsIconic(handle))
+        if (timeout <= TimeSpan.Zero)
+            return;
+
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        var last = ReadFrame(handle);
+        while (last != null)
         {
-            ShowWindow(handle, NativeEnums.SW_RESTORE);
+            // Thread.Sleep throws for a negative time, so the remaining time is read once
+            var remaining = timeout - waited.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+                return;
+
+            Thread.Sleep(remaining < SettlePollInterval ? remaining : SettlePollInterval);
+
+            var now = ReadFrame(handle);
+            if (now == last)
+                return;
+
+            last = now;
+        }
+    }
+
+    /// <summary>
+    /// What a placement sets; null keeps the window's own value. Without X and Y the window is not moved
+    /// (SWP_NOMOVE), without Width and Height it is not resized (SWP_NOSIZE).
+    /// </summary>
+    private readonly record struct PlacementTarget(int? X = null, int? Y = null, int? Width = null, int? Height = null);
+
+    /// <summary>A window's rect, its visible frame and the invisible borders between them, read at one moment.</summary>
+    private readonly record struct WindowFrame(WindowRect Outer, WindowRect Visible, FrameInsets Insets);
+
+    /// <summary>
+    /// The window's rect and visible frame (DWMWA_EXTENDED_FRAME_BOUNDS; the rect itself when DWM cannot report it or
+    /// reports an implausible frame). Null when the window is gone. Both are reads that never wait for the window's thread.
+    /// </summary>
+    private WindowFrame? ReadFrame(nint handle)
+    {
+        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+            return null;
+
+        var insets = FrameInsets.Between(rect, _nativeWrapper.GetExtendedFrameBounds(handle));
+        var outer = WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        var visible = new WindowRect(outer.X + insets.Left, outer.Y + insets.Top,
+            outer.Width - insets.Left - insets.Right, outer.Height - insets.Top - insets.Bottom);
+        return new WindowFrame(outer, visible, insets);
+    }
+
+    /// <summary>
+    /// Places a window that was checked already. A minimized or maximized window is restored first, without activation
+    /// (<see cref="RestoreForPlacement"/>), and measured only afterwards. The target is in <paramref name="frame"/>'s
+    /// coordinates; for the visible frame the invisible borders are added. When the placement took the window to a
+    /// monitor with another scale, the application has rescaled it and its borders changed (WM_DPICHANGED), so once the
+    /// window has settled the same target is placed again, measured anew, as PowerToys FancyZones does; a move keeps the
+    /// size the application chose (SWP_NOSIZE).
+    /// </summary>
+    private WindowChangeResult Place(nint handle, PlacementTarget target, BoundsFrame frame, uint flags, WindowErrorCode failure)
+    {
+        if (RestoreForPlacement(handle, failure) is { } notRestored)
+            return notRestored;
+
+        var scaleBefore = MonitorScale(handle);
+        var placed = PlaceOnce(handle, target, frame, flags, failure);
+        if (!placed.Success || MonitorScale(handle) == scaleBefore)
+            return placed;
+
+        WaitForSettledFrame(handle, DpiSettleTimeout);
+        return PlaceOnce(handle, target, frame, flags, failure);
+    }
+
+    private WindowChangeResult PlaceOnce(nint handle, PlacementTarget target, BoundsFrame frame, uint flags, WindowErrorCode failure)
+    {
+        if (ReadFrame(handle) is not { } current)
+            return WindowGone(handle);
+
+        var (now, insets) = frame == BoundsFrame.Visible ? (current.Visible, current.Insets) : (current.Outer, FrameInsets.None);
+        var rect = insets.Outer(new WindowRect(target.X ?? now.X, target.Y ?? now.Y, target.Width ?? now.Width, target.Height ?? now.Height));
+        var keep = (target.X is null ? NativeEnums.SWP_NOMOVE : 0) | (target.Width is null ? NativeEnums.SWP_NOSIZE : 0);
+        return SetPosition(handle, rect, flags | keep, failure);
+    }
+
+    /// <summary>The scale factor of the monitor the window is on (1.0 when it cannot be told).</summary>
+    private double MonitorScale(nint handle)
+    {
+        var monitors = _monitorService.GetAllMonitors();
+        var index = _monitorService.GetMonitorIndex(handle);
+        return index >= 0 && index < monitors.Count ? monitors[index].ScaleFactor : 1.0;
+    }
+
+    /// <summary>
+    /// Restores a minimized or maximized window to normal before it is placed or measured (roadmap M2.3): a maximized
+    /// window that is placed keeps WS_MAXIMIZE (it is reported maximized at the new size and jumps back on the next
+    /// restore), and a minimized one is measured as its 160x28 icon. SW_SHOWNOACTIVATE restores without activating the
+    /// window, unlike SW_RESTORE, so keyboard input stays where it was. A window minimized from maximized comes back
+    /// maximized first, so the command is sent at most twice. Null when the window is normal; MoveFailed or ResizeFailed
+    /// (<paramref name="failure"/>) when it stays minimized or maximized.
+    /// </summary>
+    /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
+    private WindowChangeResult? RestoreForPlacement(nint handle, WindowErrorCode failure)
+    {
+        for (var i = 0; i < 2 && IsMinimizedOrMaximized(handle); i++)
+        {
+            var before = (_nativeWrapper.IsIconic(handle), _nativeWrapper.IsZoomed(handle));
+            ShowWindow(handle, NativeEnums.SW_SHOWNOACTIVATE);
+
+            // An application that animates the restore takes a moment to leave the state
+            WaitUntil(() => (_nativeWrapper.IsIconic(handle), _nativeWrapper.IsZoomed(handle)) != before || !_nativeWrapper.IsWindow(handle),
+                _stateChangeTimeout);
         }
 
-        return Place(handle, x, y, width, height, PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
+        if (!IsMinimizedOrMaximized(handle))
+            return null;
+
+        if (!_nativeWrapper.IsWindow(handle))
+            return WindowGone(handle);
+
+        var change = failure == WindowErrorCode.ResizeFailed ? "resized" : "moved";
+        return WindowChangeResult.Failed(handle, failure,
+            $"The window is {ObservedState(handle)} and did not return to normal when it was restored (the application may have " +
+            $"refused it), so it was not {change}: a {ObservedState(handle)} window cannot be placed. Check the window " +
+            "(find_windows with its handle), or ask the user to restore it.");
+    }
+
+    private bool IsMinimizedOrMaximized(nint handle) => _nativeWrapper.IsIconic(handle) || _nativeWrapper.IsZoomed(handle);
+
+    /// <summary>Polls <paramref name="condition"/> until it holds or <paramref name="timeout"/> has passed.</summary>
+    private static void WaitUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition() && waited.Elapsed < timeout)
+        {
+            Thread.Sleep(StatePollInterval);
+        }
     }
 
     public WindowChangeResult SetWindowState(nint handle, WindowStateRequest state) =>
@@ -294,7 +425,8 @@ public class WindowService : IWindowService
             return MonitorIndexRefusal(handle, targetMonitor) ?? throw new InvalidOperationException("The monitor list changed.");
         }
 
-        return ApplyBounds(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height, bringToFront);
+        return Place(handle, new PlacementTarget(bounds.X, bounds.Y, bounds.Width, bounds.Height), BoundsFrame.Visible,
+            PlacementFlags(bringToFront), WindowErrorCode.MoveFailed);
     }
 
     public WindowChangeResult MoveWindowToMonitor(
@@ -307,64 +439,89 @@ public class WindowService : IWindowService
         if (MonitorIndexRefusal(handle, monitorIndex, monitors.Count) is { } invalid)
             return invalid;
 
-        var workArea = monitors[monitorIndex].WorkArea;
-        if (positioning == MonitorPositioning.Maximize)
-            return MaximizeOnMonitor(handle, monitorIndex, workArea);
+        var maximize = positioning == MonitorPositioning.Maximize;
+        if (maximize && _monitorService.GetMonitorIndex(handle) == monitorIndex)
+            return OnMonitor(handle, ApplyState(handle, WindowStateRequest.Maximize), monitorIndex, maximize);
 
-        // The window keeps its current size
-        if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
-            return WindowGone(handle);
+        var moved = MoveOntoMonitor(handle, monitors[monitorIndex], positioning,
+            // SW_MAXIMIZE raises (and activates) the window anyway, so the move before it keeps the z-order
+            maximize ? NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE : PlacementFlags(bringToFront));
+        if (!moved.Success)
+            return moved;
 
-        var width = rect.Right - rect.Left;
-        var height = rect.Bottom - rect.Top;
-        var (x, y) = positioning switch
-        {
-            MonitorPositioning.Center => (workArea.X + (workArea.Width - width) / 2, workArea.Y + (workArea.Height - height) / 2),
-            MonitorPositioning.TopLeft => (workArea.X, workArea.Y),
-            MonitorPositioning.TopRight => (workArea.X + workArea.Width - width, workArea.Y),
-            MonitorPositioning.BottomLeft => (workArea.X, workArea.Y + workArea.Height - height),
-            MonitorPositioning.BottomRight => (workArea.X + workArea.Width - width, workArea.Y + workArea.Height - height),
-            MonitorPositioning.Restore => (workArea.X, workArea.Y),
-            _ => throw new ArgumentOutOfRangeException(nameof(positioning), positioning, "Not a positioning.")
-        };
-
-        return ApplyBounds(handle, x, y, width, height, bringToFront);
+        return OnMonitor(handle, maximize ? ApplyState(handle, WindowStateRequest.Maximize) : moved, monitorIndex, maximize);
     }
 
     /// <summary>
-    /// Maximizes the window on monitor <paramref name="monitorIndex"/>. SW_MAXIMIZE maximizes a window on the monitor it is
-    /// on, and SetWindowPos does not take a maximized window to another monitor, so a maximized or minimized window is
-    /// restored first (twice for a window that was maximized before it was minimized) and moved into the target work area,
-    /// and only then maximized. Success requires the window to be maximized on that monitor.
+    /// Places the window in <paramref name="target"/>'s work area at its normal size, clamped to the work area so that the
+    /// whole visible frame, title bar included, is on that monitor. The window is restored first and measured only then
+    /// (a minimized window measures as its 160x28 icon). Across a scale change the window is moved in two steps: onto the
+    /// target monitor without changing its size (SWP_NOSIZE), where a per-monitor-aware application rescales itself for
+    /// the new DPI, then, once it has settled, sized from the size the application chose and positioned. The size is never
+    /// scaled by the ratio of the scales in advance: the application would scale it a second time, and DWM already scales
+    /// a window that is not per-monitor aware.
     /// </summary>
-    private WindowChangeResult MaximizeOnMonitor(nint handle, int monitorIndex, MonitorRect workArea)
+    private WindowChangeResult MoveOntoMonitor(nint handle, MonitorInfo target, MonitorPositioning positioning, uint flags)
     {
-        if (_monitorService.GetMonitorIndex(handle) != monitorIndex)
-        {
-            for (var i = 0; i < 2 && (_nativeWrapper.IsIconic(handle) || _nativeWrapper.IsZoomed(handle)); i++)
-            {
-                ShowWindow(handle, NativeEnums.SW_RESTORE);
-            }
+        if (RestoreForPlacement(handle, WindowErrorCode.MoveFailed) is { } notRestored)
+            return notRestored;
 
-            if (_nativeWrapper.GetWindowRect(handle) is not { } rect)
+        var workArea = target.WorkArea;
+        if (MonitorScale(handle) != target.ScaleFactor)
+        {
+            if (ReadFrame(handle) is not { } before)
                 return WindowGone(handle);
 
-            var moved = Place(handle, workArea.X, workArea.Y,
-                Math.Min(rect.Right - rect.Left, workArea.Width), Math.Min(rect.Bottom - rect.Top, workArea.Height),
-                NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE, WindowErrorCode.MoveFailed);
-            if (!moved.Success)
-                return moved;
+            // Centred, so that the target monitor holds most of the window even before it is clamped
+            var (x, y) = Position(MonitorPositioning.Center, workArea, before.Visible.Width, before.Visible.Height);
+            var onto = before.Insets.Outer(before.Visible with { X = x, Y = y });
+            var arrived = SetPosition(handle, onto, NativeEnums.SWP_NOSIZE | NativeEnums.SWP_NOZORDER | NativeEnums.SWP_NOACTIVATE,
+                WindowErrorCode.MoveFailed);
+            if (!arrived.Success)
+                return arrived;
+
+            WaitForSettledFrame(handle, DpiSettleTimeout);
         }
 
-        var maximized = ApplyState(handle, WindowStateRequest.Maximize);
-        if (!maximized.Success)
-            return maximized;
+        if (ReadFrame(handle) is not { } frame)
+            return WindowGone(handle);
+
+        var width = Math.Clamp(frame.Visible.Width, 1, Math.Max(1, workArea.Width));
+        var height = Math.Clamp(frame.Visible.Height, 1, Math.Max(1, workArea.Height));
+        var (left, top) = Position(positioning, workArea, width, height);
+        return SetPosition(handle, frame.Insets.Outer(new WindowRect(left, top, width, height)), flags, WindowErrorCode.MoveFailed);
+    }
+
+    /// <summary>The top-left corner of a window of this size at <paramref name="positioning"/> in the work area.</summary>
+    private static (int X, int Y) Position(MonitorPositioning positioning, MonitorRect workArea, int width, int height) => positioning switch
+    {
+        MonitorPositioning.Center or MonitorPositioning.Maximize =>
+            (workArea.X + (workArea.Width - width) / 2, workArea.Y + (workArea.Height - height) / 2),
+        MonitorPositioning.TopLeft or MonitorPositioning.Restore => (workArea.X, workArea.Y),
+        MonitorPositioning.TopRight => (workArea.X + workArea.Width - width, workArea.Y),
+        MonitorPositioning.BottomLeft => (workArea.X, workArea.Y + workArea.Height - height),
+        MonitorPositioning.BottomRight => (workArea.X + workArea.Width - width, workArea.Y + workArea.Height - height),
+        _ => throw new ArgumentOutOfRangeException(nameof(positioning), positioning, "Not a positioning.")
+    };
+
+    /// <summary>
+    /// <paramref name="result"/> when it failed; otherwise Done only when the window is on monitor
+    /// <paramref name="monitorIndex"/> (MonitorFromWindow) afterwards, and MoveFailed when it is not: an application can
+    /// keep or restore its own position, and SW_MAXIMIZE maximizes a window on the monitor it is on.
+    /// </summary>
+    private WindowChangeResult OnMonitor(nint handle, WindowChangeResult result, int monitorIndex, bool maximized)
+    {
+        if (!result.Success)
+            return result;
 
         var actual = _monitorService.GetMonitorIndex(handle);
-        return actual == monitorIndex
-            ? WindowChangeResult.Done(handle)
-            : WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed,
-                $"The window was maximized on monitor {actual}, not on monitor {monitorIndex}: it did not move there. Check it with find_windows.");
+        if (actual == monitorIndex)
+            return WindowChangeResult.Done(handle);
+
+        return WindowChangeResult.Failed(handle, WindowErrorCode.MoveFailed, maximized
+            ? $"The window was maximized on monitor {actual}, not on monitor {monitorIndex}: it did not move there. Check it with find_windows."
+            : $"The window is on monitor {actual}, not on monitor {monitorIndex}: it did not move there (the application may keep its " +
+              "own position). Check it with find_windows.");
     }
 
     public bool IsValidWindow(nint handle)
@@ -415,9 +572,9 @@ public class WindowService : IWindowService
     /// changes to windows of more privileged processes), any other error <paramref name="failure"/>.
     /// </summary>
     /// <exception cref="WindowNotRespondingException">The window did not answer in time.</exception>
-    private WindowChangeResult Place(nint handle, int x, int y, int width, int height, uint flags, WindowErrorCode failure)
+    private WindowChangeResult SetPosition(nint handle, WindowRect rect, uint flags, WindowErrorCode failure)
     {
-        var placed = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPos(handle, x, y, width, height, flags));
+        var placed = _windowCalls.Run(handle, () => _nativeWrapper.SetWindowPos(handle, rect.X, rect.Y, rect.Width, rect.Height, flags));
         return placed.Succeeded ? WindowChangeResult.Done(handle) : NotPlaced(handle, placed.Win32Error, failure);
     }
 
@@ -567,7 +724,7 @@ public class WindowService : IWindowService
         RunBatchAsync(
             placements.Count,
             i => placements[i].Handle,
-            i => SetWindowBounds(placements[i].Handle, placements[i].X, placements[i].Y, placements[i].Width, placements[i].Height,
+            i => SetWindowFrame(placements[i].Handle, placements[i].X, placements[i].Y, placements[i].Width, placements[i].Height,
                 placements[i].BringToFront),
             WindowErrorCode.MoveFailed,
             delayBetweenMs,
@@ -788,6 +945,9 @@ public class WindowService : IWindowService
             state = WindowState.Maximized;
 
         var owner = _nativeWrapper.GetWindow(hWnd, NativeEnums.GW_OWNER);
+        var frame = _nativeWrapper.GetExtendedFrameBounds(hWnd) is { } extended
+            ? WindowRect.FromLTRB(extended.Left, extended.Top, extended.Right, extended.Bottom)
+            : null;
 
         return new WindowInfo(
             Handle: hWnd,
@@ -799,6 +959,7 @@ public class WindowService : IWindowService
             IsVisible: _nativeWrapper.IsWindowVisible(hWnd),
             MonitorIndex: _monitorService.GetMonitorIndex(hWnd))
         {
+            VisibleBounds = frame,
             ClassName = className,
             IsCloaked = isCloaked,
             OwnerHandle = owner == nint.Zero ? null : owner,

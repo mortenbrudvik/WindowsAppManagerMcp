@@ -1368,7 +1368,7 @@
     {
       "name": "move_window",
       "title": "Move Window",
-      "description": "Move a window to a specific position. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not move it (error has the reason).",
+      "description": "Move a window so that its visible frame's top-left corner is at x, y; it keeps its size. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not move it, or it did not return to normal from minimized or maximized (error has the reason).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1377,17 +1377,22 @@
             "type": "integer"
           },
           "x": {
-            "description": "X coordinate (left edge)",
+            "description": "X coordinate of the visible frame's left edge",
             "type": "integer"
           },
           "y": {
-            "description": "Y coordinate (top edge)",
+            "description": "Y coordinate of the visible frame's top edge",
             "type": "integer"
           },
           "bringToFront": {
             "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
             "type": "boolean",
             "default": true
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1407,7 +1412,7 @@
     {
       "name": "move_window_to_monitor",
       "title": "Move Window to Monitor",
-      "description": "Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, or with positioning 'maximize' it was not maximized on that monitor. An unknown positioning fails with InvalidPositioning.",
+      "description": "Move a window to a specific monitor, optionally positioning it. The window keeps its normal size, made smaller when needed so that it fits the monitor's work area. To a monitor with other scaling it is moved first, and sized after the app has rescaled itself. success requires the window to be on that monitor afterwards. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not maximized there). An unknown positioning fails with InvalidPositioning.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1420,7 +1425,7 @@
             "type": "integer"
           },
           "positioning": {
-            "description": "Position on the monitor: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's current size), 'maximize' (moved there, then maximized) or 'restore' (current size, at the work area's top-left corner)",
+            "description": "Position on the monitor's work area: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's normal size, fitted to the work area), 'maximize' (moved there, then maximized) or 'restore' (normal size, at the work area's top-left corner)",
             "default": "center",
             "type": "string",
             "enum": [
@@ -1434,9 +1439,14 @@
             ]
           },
           "bringToFront": {
-            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it; positioning 'maximize' ignores bringToFront and can activate it too. Default: true",
+            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true. Positioning 'maximize' ignores it and activates the window: Windows has no maximize that does not activate.",
             "type": "boolean",
             "default": true
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1477,7 +1487,7 @@
     {
       "name": "resize_window",
       "title": "Resize Window",
-      "description": "Resize a window to specific dimensions. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). ResizeFailed: Windows did not resize it (error has the reason). InvalidArguments: width or height is not positive.",
+      "description": "Resize a window's visible frame; its top-left corner stays where it is and it is not raised. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). ResizeFailed: Windows did not resize it, or it did not return to normal from minimized or maximized (error has the reason). InvalidArguments: width or height is not positive. An app can keep a minimum or maximum size: compare bounds with what you asked for.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1486,12 +1496,17 @@
             "type": "integer"
           },
           "width": {
-            "description": "New width in pixels (at least 1)",
+            "description": "New width of the visible frame in pixels (at least 1)",
             "type": "integer"
           },
           "height": {
-            "description": "New height in pixels (at least 1)",
+            "description": "New height of the visible frame in pixels (at least 1)",
             "type": "integer"
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1664,7 +1679,7 @@
     {
       "name": "set_window_bounds",
       "title": "Set Window Bounds",
-      "description": "Move and resize a window in a single operation. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not place it (error has the reason). InvalidArguments: width or height is not positive.",
+      "description": "Move and resize a window in a single operation: x, y, width and height are its visible frame. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. A window moved to a monitor with another scale is placed again once the app has rescaled itself. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). InvalidArguments: width or height is not positive.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1673,25 +1688,30 @@
             "type": "integer"
           },
           "x": {
-            "description": "X coordinate (left edge)",
+            "description": "X coordinate of the visible frame's left edge",
             "type": "integer"
           },
           "y": {
-            "description": "Y coordinate (top edge)",
+            "description": "Y coordinate of the visible frame's top edge",
             "type": "integer"
           },
           "width": {
-            "description": "New width in pixels (at least 1)",
+            "description": "New width of the visible frame in pixels (at least 1)",
             "type": "integer"
           },
           "height": {
-            "description": "New height in pixels (at least 1)",
+            "description": "New height of the visible frame in pixels (at least 1)",
             "type": "integer"
           },
           "bringToFront": {
-            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true",
+            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
             "type": "boolean",
             "default": true
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1713,7 +1733,7 @@
     {
       "name": "set_window_state",
       "title": "Minimize, Maximize or Restore Window",
-      "description": "Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state afterwards (within 300 ms); newState reports the state it is in (minimized, maximized or normal). errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). An unknown state fails with InvalidState and the allowed values.",
+      "description": "Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state afterwards (within 300 ms); state reports the state it is in (minimized, maximized or normal). Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). An unknown state fails with InvalidState and the allowed values.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1732,6 +1752,11 @@
               "maximized",
               "normal"
             ]
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1750,12 +1775,12 @@
     {
       "name": "set_windows_bounds_batch",
       "title": "Set Window Bounds (Batch)",
-      "description": "Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). MoveFailed: Windows did not place the window.",
+      "description": "Move and resize multiple windows in a single batch operation, as set_window_bounds does: x, y, width and height are each window's visible frame. More efficient than multiple individual calls. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "placements": {
-            "description": "Array of window placements with handle, x, y, width, height, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)",
+            "description": "Array of window placements with handle, x, y, width, height (the visible frame), and optional bringToFront (raises the window without activating it)",
             "type": "array",
             "items": {
               "type": "object",
@@ -1810,7 +1835,7 @@
     {
       "name": "set_windows_state_batch",
       "title": "Set Window States (Batch)",
-      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only when its window was seen in that state afterwards, and newState reports the state it is in. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.",
+      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only when its window was seen in that state afterwards, and state reports the state it is in. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1862,7 +1887,7 @@
     {
       "name": "snap_window",
       "title": "Snap Window",
-      "description": "Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it.",
+      "description": "Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. The visible frames of snapped windows tile the work area exactly: no gap from the invisible borders, no pixel lost on odd sizes. Coordinates are physical virtual-screen pixels (negative left of or above the primary monitor) of the visible frame. A minimized or maximized window is restored to normal first, without activating it. Returns success and the window as it is afterwards, also when the change failed: bounds (its visible frame), outerBounds (its window rect with the invisible resize borders, about 7 px left, right and bottom at 100%; find_windows reports this rect as bounds), state (normal, minimized or maximized; a minimized window has no bounds) and monitorIndex. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1899,9 +1924,14 @@
             "default": null
           },
           "bringToFront": {
-            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it. Default: true",
+            "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). Default: true",
             "type": "boolean",
             "default": true
+          },
+          "settleMs": {
+            "description": "Wait up to this many milliseconds (0-5000, default 0) for the window to stop moving before it is read: until two reads 20 ms apart agree. Use it for an app that animates or re-applies its own size after the change.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -1920,12 +1950,12 @@
     {
       "name": "snap_windows_batch",
       "title": "Snap Windows (Batch)",
-      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window.",
+      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, failed or not: bounds (visible frame), outerBounds, state and monitorIndex. InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "placements": {
-            "description": "Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized window is restored first, and restoring can activate it)",
+            "description": "Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized or maximized window is restored first, without activating it)",
             "type": "array",
             "items": {
               "type": "object",

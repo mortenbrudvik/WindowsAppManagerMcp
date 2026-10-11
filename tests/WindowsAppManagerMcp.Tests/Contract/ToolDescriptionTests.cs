@@ -211,32 +211,54 @@ public class ToolDescriptionTests
     }
 
     /// <summary>
-    /// These tools restore a minimized window with SW_RESTORE before placing it, and SW_RESTORE activates
-    /// (WindowService.SetWindowBounds and MoveWindowToMonitor); move_window_to_monitor's 'maximize' uses
-    /// SW_MAXIMIZE, which activates and ignores bringToFront. The descriptions must not promise more.
+    /// Since roadmap M2.3 the placements restore a minimized or maximized window with SW_SHOWNOACTIVATE, which does not
+    /// activate it, so only move_window_to_monitor's 'maximize' still activates (SW_MAXIMIZE has no non-activating form).
+    /// The descriptions must say so, and no longer warn that restoring activates.
     /// </summary>
     [Theory]
+    [InlineData("move_window")]
+    [InlineData("resize_window")]
     [InlineData("set_window_bounds")]
     [InlineData("snap_window")]
     [InlineData("move_window_to_monitor")]
+    [InlineData("set_windows_bounds_batch")]
+    public void PlacementDescriptions_SayAMinimizedOrMaximizedWindowIsRestoredWithoutActivation(string toolName)
+    {
+        ServerToolCatalog.Description(toolName).Should().Contain("minimized or maximized window is restored to normal first, without activating it");
+    }
+
+    [Fact]
+    public void MoveWindowToMonitorBringToFront_NamesMaximizeAsTheCaseThatActivates()
+    {
+        ParameterDescription("move_window_to_monitor", "bringToFront").Should().Contain("'maximize'").And.Contain("activates the window");
+    }
+
+    [Theory]
+    [InlineData("move_window")]
+    [InlineData("set_window_bounds")]
+    [InlineData("snap_window")]
     [InlineData("set_windows_bounds_batch.placements")]
     [InlineData("snap_windows_batch.placements")]
-    public void BringToFrontDescription_NamesTheCasesThatStillActivate(string source)
+    public void NoPlacementDescription_SaysRestoringActivates(string source)
     {
         var text = source.Contains('.')
             ? ServerToolCatalog.AllDescriptions().Single(d => d.Source == source).Text
             : ParameterDescription(source, "bringToFront");
 
-        text.Should().Contain("minimized").And.Contain("can activate it");
-        if (source == "move_window_to_monitor")
-            text.Should().Contain("'maximize'");
+        text.Should().NotContain("can activate it");
     }
 
-    [Fact]
-    public void MoveWindowBringToFrontDescription_HasNoActivatingCase()
+    [Theory]
+    [InlineData("move_window")]
+    [InlineData("resize_window")]
+    [InlineData("set_window_bounds")]
+    [InlineData("set_window_state")]
+    [InlineData("snap_window")]
+    [InlineData("move_window_to_monitor")]
+    public void GeometryDescriptions_NameTheResultFields_AndTheVisibleFrame(string toolName)
     {
-        // move_window only calls SetWindowPos (SWP_NOACTIVATE), never ShowWindow
-        ParameterDescription("move_window", "bringToFront").Should().NotContain("minimized");
+        ServerToolCatalog.Description(toolName).Should().Contain("bounds (its visible frame)").And.Contain("outerBounds")
+            .And.Contain("state").And.Contain("monitorIndex").And.NotContain("newBounds");
     }
 
     [Theory]

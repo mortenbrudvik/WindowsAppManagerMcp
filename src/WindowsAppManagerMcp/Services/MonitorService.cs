@@ -143,54 +143,7 @@ public class MonitorService : IMonitorService
                 $"Monitor index {monitorIndex} does not exist; there are {snapshot.Infos.Length} monitors.");
         }
 
-        var monitor = snapshot.Infos[monitorIndex];
-
-        var workArea = monitor.WorkArea;
-
-        return position switch
-        {
-            SnapPosition.LeftHalf => new MonitorRect(
-                workArea.X, workArea.Y, workArea.Width / 2, workArea.Height),
-
-            SnapPosition.RightHalf => new MonitorRect(
-                workArea.X + workArea.Width / 2, workArea.Y, workArea.Width / 2, workArea.Height),
-
-            SnapPosition.TopHalf => new MonitorRect(
-                workArea.X, workArea.Y, workArea.Width, workArea.Height / 2),
-
-            SnapPosition.BottomHalf => new MonitorRect(
-                workArea.X, workArea.Y + workArea.Height / 2, workArea.Width, workArea.Height / 2),
-
-            SnapPosition.TopLeftQuarter => new MonitorRect(
-                workArea.X, workArea.Y, workArea.Width / 2, workArea.Height / 2),
-
-            SnapPosition.TopRightQuarter => new MonitorRect(
-                workArea.X + workArea.Width / 2, workArea.Y, workArea.Width / 2, workArea.Height / 2),
-
-            SnapPosition.BottomLeftQuarter => new MonitorRect(
-                workArea.X, workArea.Y + workArea.Height / 2, workArea.Width / 2, workArea.Height / 2),
-
-            SnapPosition.BottomRightQuarter => new MonitorRect(
-                workArea.X + workArea.Width / 2, workArea.Y + workArea.Height / 2, workArea.Width / 2, workArea.Height / 2),
-
-            SnapPosition.LeftThird => new MonitorRect(
-                workArea.X, workArea.Y, workArea.Width / 3, workArea.Height),
-
-            SnapPosition.CenterThird => new MonitorRect(
-                workArea.X + workArea.Width / 3, workArea.Y, workArea.Width / 3, workArea.Height),
-
-            SnapPosition.RightThird => new MonitorRect(
-                workArea.X + workArea.Width * 2 / 3, workArea.Y, workArea.Width / 3, workArea.Height),
-
-            SnapPosition.LeftTwoThirds => new MonitorRect(
-                workArea.X, workArea.Y, workArea.Width * 2 / 3, workArea.Height),
-
-            SnapPosition.RightTwoThirds => new MonitorRect(
-                workArea.X + workArea.Width / 3, workArea.Y, workArea.Width * 2 / 3, workArea.Height),
-
-            SnapPosition.Fullscreen => workArea,
-
-            _ => throw new ArgumentOutOfRangeException(nameof(position), position, "Not a snap position.")
-        };
+        // The visible frame the window gets; the parts of a split tile the work area exactly (SnapMath)
+        return SnapMath.Calculate(snapshot.Infos[monitorIndex].WorkArea, position);
     }
 }

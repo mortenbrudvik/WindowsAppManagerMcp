@@ -279,7 +279,7 @@ public sealed class ToolArgumentContractTests : IDisposable
         var items = Payload(result).GetProperty("results").EnumerateArray().ToList();
         items[0].GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.InvalidState));
         items[1].GetProperty("success").GetBoolean().Should().BeTrue();
-        items[1].GetProperty("newState").GetString().Should().NotBeNullOrEmpty("every item reports the state its window is in");
+        items[1].GetProperty("state").GetString().Should().NotBeNullOrEmpty("every item reports the state its window is in");
         _services.Windows.Verify(w => w.SetWindowStateBatchAsync(
             It.Is<IReadOnlyList<(nint Handle, WindowStateRequest State)>>(c => c.Count == 1 && c[0].State == WindowStateRequest.Minimize),
             It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -354,7 +354,7 @@ public sealed class ToolArgumentContractTests : IDisposable
         // Assert
         var item = Payload(result).GetProperty("results").EnumerateArray().Single();
         item.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.AccessDenied));
-        item.TryGetProperty("newBounds", out _).Should().BeTrue("a window that is still there reports where it is");
+        item.TryGetProperty("bounds", out _).Should().BeTrue("a window that is still there reports where it is");
     }
 
     #endregion
