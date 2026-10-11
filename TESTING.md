@@ -1836,8 +1836,9 @@ process tokens, the input desktop, the session state and the agent's host chain 
 client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomationCollection.Name)]`),
 which runs them one at a time: the client's first call in a process fails with E_FAIL when two
 threads make it at once. `RealUiAutomationCollectionTests` scans the test assembly and fails for a
-class that calls the real client (the production `UiaTree` or `UIAutomationWrapper`,
-`UiaClientStartup.Shared` or `AutomationElement`) outside that collection, directly or through a
+class that calls the real client (the production `UiaTree`, `Uia3Tree` or `UIAutomationWrapper`,
+`UiaClientStartup.Shared`, `AutomationElement` or the COM client's `CUIAutomation*` classes) outside that
+collection, directly or through a
 helper in the test assembly (a fixture factory, another class's helper, their lambdas, async
 bodies and static constructors). Calls through an interface or a virtual method are not followed,
 so keep real-client factories non-virtual.
@@ -2013,7 +2014,12 @@ that adds wrapper members, classify them there.
   wrappers, and no fixture has one yet.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
-forbids acting pattern calls outside the Native wrappers. The harness finds the fixture exe from a
+forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
+pattern objects `IUiaTree.GetPattern` hands out are guarded in turn: their actions (`UiaAction` in
+`WrapperCatalog`) are refused in both tiers until the action tools bring a fixture rule. A scenario can choose the
+engine with `E2ESession.Start(..., uiaEngine: UiaEngine.Uia2)` (or `ServerHarness.Create(tier, pid, engine)`);
+`FixtureUiaEngineTests` reads the fixture with both and compares the trees. The Uia3Tree unit tests never create the
+COM client: they run over Moq mocks of its interfaces. The harness finds the fixture exe from a
 path the build records in the test assembly; set `WAM_FIXTURE_APP_PATH` to use another build of
 `WamFixtureApp.exe` (for example in Windows Sandbox). The harness refuses any exe with another name.
 
