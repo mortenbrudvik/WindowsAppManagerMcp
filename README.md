@@ -93,7 +93,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (48)
+## Available Tools (51)
 
 | Category | Tools |
 |----------|-------|
@@ -104,9 +104,10 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
-| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `type_text`, `send_keys` |
+| Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process` |
+| Clipboard | `get_clipboard`, `set_clipboard` |
 | Layout Presets | `list_layouts`, `get_layout`, `save_layout`, `apply_layout`, `delete_layout` |
 | Server Info | `get_server_info` |
 <!-- tools:end tool-table -->
@@ -128,6 +129,7 @@ server configuration). No tool argument can change them.
 | `WAM_TOOLSETS` | the default toolsets (today: all) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process` |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, window changes, captures or process control) |
+| `WAM_ALLOW_USER_CLIPBOARD` | not set (off) | `1` lets `get_clipboard` return what you copied, without asking you each time. Off, it returns only what the agent copied or set, and asks you (when the client can) before reading your clipboard; content password managers mark as private is never returned. See [Clipboard](docs/TOOLS.md#clipboard) |
 
 The server logs the deny list, the allow list, the chords and the toolsets in force to stderr when it starts,
 with a warning for every entry it ignored. The test opt-ins `WAM_ALLOW_DESKTOP_TESTS` and

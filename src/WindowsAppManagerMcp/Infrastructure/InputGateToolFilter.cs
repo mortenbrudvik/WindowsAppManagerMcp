@@ -41,20 +41,22 @@ public static class InputGateToolFilter
     /// <summary>The input tools. They hold the gate themselves (InputSimulationService), not through this filter.</summary>
     public static IReadOnlySet<string> InputTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys"
+        "click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"
     };
 
     /// <summary>
     /// Tools that can change which window is in front or at a point: they activate, move, resize, restore,
     /// minimize or close windows, or start or stop processes (a new window can take the foreground, and closing
-    /// the window in front activates another). They run inside the gate.
+    /// the window in front activates another). They run inside the gate. set_clipboard runs inside it too: it changes
+    /// no window, but it replaces the user's clipboard, so it waits for a running input call (a paste) and is refused
+    /// while the user has paused input.
     /// </summary>
     public static IReadOnlySet<string> WindowChangingTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window", "close_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch",
         "snap_windows_batch", "set_windows_state_batch", "apply_layout", "launch_application",
-        "launch_applications_batch", "launch_browser_with_debug"
+        "launch_applications_batch", "launch_browser_with_debug", "set_clipboard"
     };
 
     /// <summary>
@@ -70,8 +72,8 @@ public static class InputGateToolFilter
     };
 
     /// <summary>
-    /// Tools that only read windows, processes, monitors, the screen, UI Automation or a browser page, or
-    /// that write only layout files. They run without the gate.
+    /// Tools that only read windows, processes, monitors, the screen, UI Automation, a browser page or the clipboard, or
+    /// that write only layout files. They run without the gate (get_clipboard may ask the user, which must never hold it).
     /// </summary>
     public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -79,7 +81,7 @@ public static class InputGateToolFilter
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
         "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_control_status", "get_server_info"
+        "get_control_status", "get_server_info", "get_clipboard"
     };
 
     /// <summary>

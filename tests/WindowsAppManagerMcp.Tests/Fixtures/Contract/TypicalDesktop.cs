@@ -47,6 +47,9 @@ public static class TypicalDesktop
     public static string Article { get; } = string.Concat(Enumerable.Repeat(
         "Windows App Manager lets an agent find, arrange and read the windows on a desktop. ", 200))[..ArticleLength];
 
+    /// <summary>A paragraph of 300 characters the agent copied with send_keys '^c' (get_clipboard).</summary>
+    public static string CopiedParagraph { get; } = Article[..300];
+
     private static IReadOnlyList<WindowInfo> CreateWindows()
     {
         (string Title, string Process, string Class)[] apps =

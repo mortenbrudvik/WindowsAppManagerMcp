@@ -28,7 +28,7 @@ public class ToolEnumTests
         ToolEnumTypes().Select(row => (Type)row[0]).Should().BeEquivalentTo(new[]
         {
             typeof(WindowStateRequest), typeof(MonitorPositioning), typeof(SnapPosition), typeof(LayoutMatchBy),
-            typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser)
+            typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser), typeof(ClipboardFormat)
         });
     }
 

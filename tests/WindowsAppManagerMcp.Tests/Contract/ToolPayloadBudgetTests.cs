@@ -88,6 +88,11 @@ public class ToolPayloadBudgetTests
         ["mouse_move"] = 150, // 75
         ["type_text"] = 150, // 77: echoes the typed text
         ["send_keys"] = 150, // 67
+        ["scroll"] = 150, // 81
+
+        // Clipboard: a copied paragraph of 300 characters
+        ["get_clipboard"] = 200, // 104
+        ["set_clipboard"] = 100, // 19
 
         // Input Control
         ["get_control_status"] = 150, // 72

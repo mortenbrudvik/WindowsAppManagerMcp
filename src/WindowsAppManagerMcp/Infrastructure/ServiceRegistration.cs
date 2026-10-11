@@ -109,6 +109,13 @@ public static class ServiceRegistration
         services.AddSingleton<IInputSession, InputSession>();
         services.AddHostedService<InputSessionStartup>(); // starts the hotkey; releases held input when the server stops
 
+        // The clipboard (roadmap M2.16): get_clipboard returns only what the agent put there unless the user allows more
+        // (WAM_ALLOW_USER_CLIPBOARD, or a yes when asked); the input service tells the origin about the agent's copies
+        services.AddSingleton<INativeClipboardWrapper, NativeClipboardWrapper>();
+        services.AddSingleton<IClipboardOrigin, ClipboardOrigin>();
+        services.AddSingleton(_ => ClipboardOptions.FromEnvironment());
+        services.AddSingleton<IClipboardService, ClipboardService>();
+
         // MCP tool classes
         services.AddSingleton<WindowFinderTools>();
         services.AddSingleton<WindowManagerTools>();
@@ -121,6 +128,7 @@ public static class ServiceRegistration
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
+        services.AddSingleton<ClipboardTools>();
 
         return services;
     }
@@ -185,6 +193,7 @@ public static class ServiceRegistration
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()
+            .WithServerTools<ClipboardTools>()
             // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
             .WithToolsets(toolsets ?? ToolsetSelection.All());
     }

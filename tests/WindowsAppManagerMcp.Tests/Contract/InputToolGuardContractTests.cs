@@ -15,7 +15,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public class InputToolGuardContractTests
 {
-    private static readonly string[] InputTools = ["click", "right_click", "double_click", "mouse_move", "type_text", "send_keys"];
+    private static readonly string[] InputTools = ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"];
 
     private static readonly nint Terminal = 0x100;
     private static readonly nint Notepad = 0x200;
@@ -30,6 +30,7 @@ public class InputToolGuardContractTests
     private readonly Mock<IProcessSecurityProbe> _security = new();
     private readonly Mock<IHostGuard> _hostGuard = new();
     private readonly Mock<INativeThreadInputWrapper> _threads = new();
+    private readonly Mock<INativeSystemInfoWrapper> _systemInfo = new();
     private nint _inFront;
 
     public InputToolGuardContractTests()
@@ -60,6 +61,9 @@ public class InputToolGuardContractTests
         _input.Setup(i => i.GetCursorPos()).Returns((400, 300));
         _input.Setup(i => i.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
             .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
+
+        // "Scroll inactive windows when I hover over them" is on, as by default
+        _systemInfo.Setup(s => s.GetMouseWheelRouting()).Returns(MouseWheelRouting.MousePosition);
     }
 
     private void Window(nint handle, int processId, string processName, string title)
@@ -92,7 +96,8 @@ public class InputToolGuardContractTests
             _windows.Object, _hitTest.Object, _threads.Object, new Mock<INativeProcessWrapper>().Object,
             _windowService.Object, _foreground.Object, _security.Object, _hostGuard.Object,
             new TargetPolicy(TargetPolicySettings.Default), InputGuardOptions.Default);
-        var service = new InputSimulationService(monitors.Object, _input.Object, guard, new InputSession(_input.Object));
+        var service = new InputSimulationService(monitors.Object, _input.Object, guard, new InputSession(_input.Object),
+            hitTest: _hitTest.Object, systemInfo: _systemInfo.Object);
         return InProcessMcpServer.StartAsync(
             [],
             builder => builder.AddToolErrorReporting().WithServerTools(new InputSimulationTools(service)));
@@ -308,5 +313,92 @@ public class InputToolGuardContractTests
         payload.GetProperty("receivingWindow").GetProperty("title").GetString().Should().Be("Untitled - Notepad");
         payload.GetProperty("foregroundAfter").GetProperty("handle").GetInt64().Should().Be(Terminal);
         payload.GetProperty("actualX").GetInt32().Should().Be(400);
+    }
+
+    [Fact]
+    public async Task Scroll_WithWindowHandleOnly_TurnsTheWheelAtItsClientCentre_AndReportsTheWindowUnderThePointer()
+    {
+        // Arrange - Notepad's client area is centred on (400, 300); the terminal is in front
+        At(Notepad);
+        _inFront = Terminal;
+        _hitTest.Setup(h => h.GetClientAreaOnScreen(Notepad)).Returns(new WindowRect(200, 150, 400, 300));
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("scroll", new Dictionary<string, object?>
+        {
+            ["windowHandle"] = (long)Notepad,
+            ["deltaY"] = 3
+        }));
+
+        // Assert - one batch: the move to the point and three notches down
+        payload.GetProperty("success").GetBoolean().Should().BeTrue(payload.ToString());
+        payload.GetProperty("x").GetInt32().Should().Be(400);
+        payload.GetProperty("y").GetInt32().Should().Be(300);
+        payload.GetProperty("deltaY").GetInt32().Should().Be(3);
+        payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Notepad);
+        payload.GetProperty("foregroundAfter").GetProperty("handle").GetInt64().Should().Be(Terminal);
+        _input.Verify(i => i.SendInput(It.Is<IReadOnlyList<InputEvent>>(batch =>
+            batch.Count == 4 && batch.Skip(1).All(e => e == InputEvent.Wheel(-120)))), Times.Once);
+    }
+
+    [Fact]
+    public async Task Scroll_WithoutWindowHandle_OverTheTerminal_IsRefusedAsTheAgentHost()
+    {
+        At(Terminal);
+        await using var server = await StartServerAsync();
+
+        var payload = ParsePayload(await server.CallToolAsync("scroll", new Dictionary<string, object?>
+        {
+            ["x"] = 400,
+            ["y"] = 300,
+            ["deltaY"] = -5
+        }));
+
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.TargetIsAgentHost));
+        VerifyNothingSent();
+    }
+
+    [Fact]
+    public async Task Scroll_WhenTheWheelFollowsTheFocus_AndTheTerminalIsInFront_IsWheelFollowsFocus()
+    {
+        // Arrange - the user turned "scroll inactive windows" off: the wheel would scroll the agent's terminal
+        At(Notepad);
+        _inFront = Terminal;
+        _systemInfo.Setup(s => s.GetMouseWheelRouting()).Returns(MouseWheelRouting.Focus);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var payload = ParsePayload(await server.CallToolAsync("scroll", new Dictionary<string, object?>
+        {
+            ["x"] = 400,
+            ["y"] = 300,
+            ["deltaY"] = 2,
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        // Assert
+        payload.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.WheelFollowsFocus));
+        payload.GetProperty("error").GetString().Should().Contain("focus_window");
+        VerifyNothingSent();
+    }
+
+    [Theory]
+    [InlineData("""{ "deltaY": 3 }""", "windowHandle")]
+    [InlineData("""{ "x": 400, "deltaY": 3, "windowHandle": 512 }""", "both x and y")]
+    [InlineData("""{ "windowHandle": 512 }""", "not both 0")]
+    [InlineData("""{ "windowHandle": 512, "deltaY": 101 }""", "between -100 and 100")]
+    public async Task Scroll_InvalidArguments_AreAToolError_AndNothingIsSent(string arguments, string message)
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("scroll",
+            System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments)!);
+
+        result.IsError.Should().BeTrue();
+        var payload = JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
+        payload.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        payload.GetProperty("error").GetString().Should().Contain(message).And.Contain("Nothing was scrolled");
+        VerifyNothingSent();
     }
 }

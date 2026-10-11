@@ -596,10 +596,63 @@ public class WrapperGuardTests
     [Fact]
     public void InputEvent_CarriesOnlyADistance_WhichTheMoveRulesRead()
     {
-        // The zero-distance and destination rules read Dx and Dy; an InputEvent that gains other data
-        // must revisit FixtureOnlyCallPolicy.
+        // The zero-distance and destination rules read Dx and Dy; MouseData only carries how far a wheel event turns,
+        // which does not change where it goes (the wheel rule checks that). An InputEvent that gains other data must
+        // revisit FixtureOnlyCallPolicy.
         typeof(InputEvent).GetProperties().Select(p => p.Name).Should().BeEquivalentTo(
-            nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags), nameof(InputEvent.Dx), nameof(InputEvent.Dy));
+            nameof(InputEvent.Kind), nameof(InputEvent.Code), nameof(InputEvent.Flags), nameof(InputEvent.Dx), nameof(InputEvent.Dy),
+            nameof(InputEvent.MouseData));
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_AllowsAScrollOverTheFixture_WhileTheFixtureIsInFront()
+    {
+        // Arrange - the server's scroll: a move to the point, then the wheel notches (1920x1080 desktop)
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        inner.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>())).Returns(3u);
+        var desktop = new FakeDesktop { Foreground = FixtureWindow, Cursor = (500, 300), WindowAtCursor = FixtureWindow };
+        desktop.WindowsAtPoints[(500, 300)] = FixtureWindow;
+        var absolute = InputSimulationService.ToVirtualDesktopAbsolute(500, 300,
+            [new MonitorInfo(0, "\\\\.\\DISPLAY1", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0)]);
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        // Act & Assert
+        guarded.SendInput(InputSimulationService.ScrollInputs(absolute, deltaY: 2, deltaX: 0)).Should().Be(3u);
+    }
+
+    [Fact]
+    public void FixtureOnlyGuard_RefusesAScroll_WhileAnotherWindowIsInFront()
+    {
+        // The wheel can follow the keyboard focus ("scroll inactive windows" off), so it would scroll the window in front
+        var inner = new Mock<INativeInputWrapper>(MockBehavior.Strict);
+        var desktop = new FakeDesktop { Foreground = OtherWindow, Cursor = (500, 300), WindowAtCursor = FixtureWindow };
+        var guarded = WrapperGuard.Create(inner.Object, FixtureOnly(desktop));
+
+        var act = () => guarded.SendInput([InputEvent.Wheel(-120)]);
+
+        act.Should().Throw<E2EGuardException>().WithMessage("*mouse wheel input*");
+        inner.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NeitherTier_OpensTheClipboard(bool inputTier)
+    {
+        // The clipboard is the user's: a test must neither read what they copied nor replace it
+        var inner = new Mock<INativeClipboardWrapper>(MockBehavior.Strict);
+        inner.Setup(c => c.GetSequenceNumber()).Returns(7u);
+        IWrapperCallPolicy policy = inputTier
+            ? FixtureOnly(new FakeDesktop { Foreground = FixtureWindow })
+            : new ReadOnlyCallPolicy();
+        var guarded = WrapperGuard.Create(inner.Object, policy);
+
+        var read = () => guarded.Read(ClipboardFormat.Text, 100, readPrivateContent: false);
+        var write = () => guarded.WriteText("x");
+
+        read.Should().Throw<E2EGuardException>().WithMessage("*Read*");
+        write.Should().Throw<E2EGuardException>().WithMessage("*WriteText*");
+        guarded.GetSequenceNumber().Should().Be(7u, "the sequence number opens nothing");
     }
 
     [Fact]

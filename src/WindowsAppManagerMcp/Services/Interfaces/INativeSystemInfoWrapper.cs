@@ -23,4 +23,11 @@ public interface INativeSystemInfoWrapper
 
     /// <summary>The Remote Desktop Services session the server runs in, or null when it cannot be read.</summary>
     int? GetSessionId();
+
+    /// <summary>
+    /// Where Windows sends mouse wheel input (SystemParametersInfo SPI_GETMOUSEWHEELROUTING): to the window under the
+    /// pointer or to the window with the keyboard focus. Null when it cannot be read (Windows before 10 has no such
+    /// setting and sends the wheel to the focus window).
+    /// </summary>
+    MouseWheelRouting? GetMouseWheelRouting();
 }

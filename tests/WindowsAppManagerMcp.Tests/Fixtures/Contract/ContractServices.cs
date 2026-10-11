@@ -51,6 +51,7 @@ public sealed class ContractServices : IDisposable
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
+    public Mock<IClipboardService> Clipboard { get; } = new();
     public Mock<IPauseHotkey> Hotkey { get; } = new();
     public Mock<INativeSystemInfoWrapper> SystemInfo { get; } = new();
     public Mock<IProcessSecurityProbe> SecurityProbe { get; } = new();
@@ -72,6 +73,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
         services.AddSingleton(Input.Object);
+        services.AddSingleton(Clipboard.Object);
         services.AddSingleton(Hotkey.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
@@ -242,6 +244,18 @@ public sealed class ContractServices : IDisposable
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving
             });
+        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) => new ScrollResult(true, x ?? 1280, y ?? 760, deltaY, deltaX)
+            {
+                ReceivingWindow = receiving, ForegroundAfter = receiving, ActualX = x ?? 1280, ActualY = y ?? 760
+            });
+
+        // The agent copied a paragraph from Notepad with send_keys '^c'
+        Clipboard.Setup(c => c.ReadAsync(It.IsAny<ClipboardFormat>(), It.IsAny<int>(), It.IsAny<ClipboardConsent?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GetClipboardResult(true, ClipboardFormat.Text, Text: TypicalDesktop.CopiedParagraph,
+                Length: TypicalDesktop.CopiedParagraph.Length, Truncated: false, Origin: ClipboardContentOrigin.AgentInput));
+        Clipboard.Setup(c => c.SetText(It.IsAny<string>()))
+            .Returns((string text) => new SetClipboardResult(true, text.Length, ExcludedFromHistory: true));
 
         // The real capture pipeline (scaling, encoding, metadata) over blank pixels: a 2560 x 1440 monitor, a 1600 x 900 window
         var monitors = new Mock<IMonitorService>();
@@ -337,6 +351,16 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((string text, int _, InputTarget _, bool _, CancellationToken _) => new TypeTextResult(false, text, 0, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(false, keys, host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) =>
+                new ScrollResult(false, x ?? 0, y ?? 0, deltaY, deltaX, host, InputErrorCode.TargetIsAgentHost));
+
+        // The user copied something, and the test client cannot ask the user
+        Clipboard.Setup(c => c.ReadAsync(It.IsAny<ClipboardFormat>(), It.IsAny<int>(), It.IsAny<ClipboardConsent?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ClipboardFormat format, int _, ClipboardConsent? _, CancellationToken _) => new GetClipboardResult(false, format,
+                Error: "The clipboard holds content the agent did not put there", ErrorCode: ClipboardErrorCode.ClipboardNotFromAgent));
+        Clipboard.Setup(c => c.SetText(It.IsAny<string>()))
+            .Returns(new SetClipboardResult(false, 0, Error: "Another application kept the clipboard open", ErrorCode: ClipboardErrorCode.ClipboardBusy));
 
         var screenshots = new Mock<IScreenshotService>();
         var failed = TestDataFactory.CreateScreenCapture(TestDataFactory.CreateScreenshotResult(

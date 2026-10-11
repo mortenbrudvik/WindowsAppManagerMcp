@@ -5,7 +5,8 @@ namespace WindowsAppManagerMcp.Native;
 internal static partial class NativeMethods
 {
     /// <summary>
-    /// The DPI awareness of the calling thread and the foreground lock timeout (NativeSystemInfoWrapper). Read-only:
+    /// The DPI awareness of the calling thread, the foreground lock timeout and the mouse wheel routing
+    /// (NativeSystemInfoWrapper). Read-only:
     /// the awareness comes from the app manifest, and the server never sets it or any system parameter.
     /// </summary>
     internal static partial class User32
@@ -18,6 +19,12 @@ internal static partial class NativeMethods
 
         /// <summary>SystemParametersInfo action that reads the foreground lock timeout into a DWORD.</summary>
         public const uint SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000;
+
+        /// <summary>
+        /// SystemParametersInfo action that reads the mouse wheel routing into a DWORD (MOUSEWHEEL_ROUTING_FOCUS 0,
+        /// _HYBRID 1, _MOUSE_POS 2; Windows 10 and later).
+        /// </summary>
+        public const uint SPI_GETMOUSEWHEELROUTING = 0x201C;
 
         /// <summary>The calling thread's DPI awareness context (Windows 10 1607+). Not a handle; never freed.</summary>
         [LibraryImport("user32.dll")]
@@ -33,8 +40,8 @@ internal static partial class NativeMethods
 
         /// <summary>
         /// SystemParametersInfoW for a GET action that writes a DWORD. Only NativeSystemInfoWrapper calls it, with
-        /// <see cref="SPI_GETFOREGROUNDLOCKTIMEOUT"/> (NativeCallGuardTests pins the caller): a SET action would change a
-        /// system setting.
+        /// <see cref="SPI_GETFOREGROUNDLOCKTIMEOUT"/> and <see cref="SPI_GETMOUSEWHEELROUTING"/> (NativeCallGuardTests pins
+        /// the caller): a SET action would change a system setting.
         /// </summary>
         [LibraryImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

@@ -88,10 +88,11 @@ public static class ToolDocCatalog
             new("right_click", "Right click at coordinates", "x", "y", "windowHandle"),
             new("double_click", "Double left click", "x", "y", "delayMs", "windowHandle"),
             new("mouse_move", "Move cursor (no click)", "x", "y", "windowHandle"),
+            new("scroll", "Turn the mouse wheel over the named window", "windowHandle", "deltaY", "deltaX", "x", "y"),
             new("type_text", "Type text into the named window", "text", "windowHandle", "delayMs"),
             new("send_keys", "Send keys to the named window", "keys (e.g., `^c`, `{ENTER}`)", "windowHandle"),
         ],
-        SkillNote: "All six also take `allowHostTarget` (default false): only for input to your own host window, named as " +
+        SkillNote: "All seven also take `allowHostTarget` (default false): only for input to your own host window, named as " +
                    "`windowHandle`, when the user asked for it; and `releaseHeldModifiers` (default false): only for a stuck " +
                    "modifier key (see `ModifiersHeld`)."),
         new("Input Control",
@@ -105,6 +106,11 @@ public static class ToolDocCatalog
             new("launch_application", "Launch app by path/name/URI", "executable", "arguments", "workingDirectory", "waitForWindow"),
             new("list_processes", "List running processes", "nameFilter", "includeWindowless"),
             new("kill_process", "Close or terminate a process", "processId", "confirm", "forceKill", "expectedProcessName"),
+        ]),
+        new("Clipboard",
+        [
+            new("get_clipboard", "Read what the agent copied (text, html, files); the user's clipboard only with consent", "format", "maxLength"),
+            new("set_clipboard", "Put text on the clipboard, kept out of clipboard history", "text"),
         ]),
         new("Layout Presets",
         [

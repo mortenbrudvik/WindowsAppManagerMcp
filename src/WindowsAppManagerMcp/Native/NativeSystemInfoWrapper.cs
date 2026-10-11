@@ -37,6 +37,12 @@ public sealed class NativeSystemInfoWrapper : INativeSystemInfoWrapper
             ? (int)Math.Min(milliseconds, int.MaxValue)
             : null;
 
+    public MouseWheelRouting? GetMouseWheelRouting() =>
+        NativeMethods.User32.SystemParametersInfoW(NativeMethods.User32.SPI_GETMOUSEWHEELROUTING, 0, out var routing, 0) &&
+        Enum.IsDefined(typeof(MouseWheelRouting), (int)Math.Min(routing, int.MaxValue))
+            ? (MouseWheelRouting)routing
+            : null;
+
     public int? GetSessionId()
     {
         try

@@ -73,15 +73,17 @@ public class ToolAnnotationContractTests
     [Fact]
     public async Task TheToolsThatCanLoseWorkOrActForTheUser_AreDestructive()
     {
-        // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything, the
-        // launches (any program with any arguments, a shell command included) and the captures (overwrite:true replaces
-        // the image file at outputPath)
+        // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything (scroll:
+        // the wheel over a combo box, slider or number box changes its value), the launches (any program with any arguments,
+        // a shell command included), the captures (overwrite:true replaces the image file at outputPath) and set_clipboard
+        // (it replaces what the user copied)
         string[] destructive =
         [
             "close_window", "close_windows_batch", "kill_process", "delete_layout", "save_layout",
-            "click", "right_click", "double_click", "type_text", "send_keys",
+            "click", "right_click", "double_click", "scroll", "type_text", "send_keys",
             "launch_application", "launch_applications_batch",
-            "take_screenshot", "capture_region", "capture_window", "capture_with_elements"
+            "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
+            "set_clipboard"
         ];
 
         var tools = await ToolSurface.ListToolsAsync();
@@ -97,12 +99,14 @@ public class ToolAnnotationContractTests
         var readOnly = tools.Where(t => t!["annotations"]!["readOnlyHint"]!.GetValue<bool>())
             .Select(t => t!["name"]!.GetValue<string>()).ToList();
 
-        // Every find/get/list tool, the browser reads and the control status
+        // Every find/get/list tool, the browser reads, the control status and the clipboard read (it may ask the user, which
+        // changes nothing)
         readOnly.Should().BeEquivalentTo(
         [
             "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",
             "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
-            "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info"
+            "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info",
+            "get_clipboard"
         ]);
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only

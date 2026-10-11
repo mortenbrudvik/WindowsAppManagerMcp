@@ -4,7 +4,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Native;
 
 /// <summary>
 /// The real <see cref="NativeSystemInfoWrapper"/>, against the test process. Every member only reads (the DPI awareness
-/// context of the calling thread, SPI_GETFOREGROUNDLOCKTIMEOUT and the session ID), so these run in the default suite.
+/// context of the calling thread, SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_GETMOUSEWHEELROUTING and the session ID), so these run in the default suite.
 /// The test host has no app manifest of the server's, so its awareness is whatever its own manifest says.
 /// </summary>
 public class NativeSystemInfoWrapperTests
@@ -22,6 +22,13 @@ public class NativeSystemInfoWrapperTests
     public void GetForegroundLockTimeout_ReadsTheSetting()
     {
         _sut.GetForegroundLockTimeout().Should().NotBeNull().And.BeGreaterThanOrEqualTo(0);
+    }
+
+    [Fact]
+    public void GetMouseWheelRouting_ReadsTheSetting()
+    {
+        // Windows 10 and later have the setting (SPI_GETMOUSEWHEELROUTING); reading it changes nothing
+        _sut.GetMouseWheelRouting().Should().NotBeNull().And.BeDefined();
     }
 
     [Fact]

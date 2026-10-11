@@ -35,7 +35,14 @@ public enum WrapperCallKind
     /// window, but while it is registered the chord no longer reaches any other application, and the shared
     /// pause pauses the servers the user runs, so no E2E tier allows it.
     /// </summary>
-    GlobalHotkey
+    GlobalHotkey,
+
+    /// <summary>
+    /// Opens the clipboard to read or replace its content. The clipboard is the user's, shared with every app: a test
+    /// that read it could pull a password the user copied into the test output, and one that set it would replace what
+    /// the user copied. No E2E tier allows it; reading the sequence number, which opens nothing, is a read.
+    /// </summary>
+    Clipboard
 }
 
 /// <summary>
@@ -60,6 +67,8 @@ public sealed record WrapperMember(
     public static WrapperMember ThreadInputAttach { get; } = new(WrapperCallKind.ThreadInputAttach, [], []);
 
     public static WrapperMember GlobalHotkey { get; } = new(WrapperCallKind.GlobalHotkey, [], []);
+
+    public static WrapperMember Clipboard { get; } = new(WrapperCallKind.Clipboard, [], []);
 
     public static WrapperMember WindowAction(params string[] windowParameters) =>
         new(WrapperCallKind.WindowAction, windowParameters, []);
@@ -161,7 +170,16 @@ public static class WrapperCatalog
             {
                 [nameof(INativeSystemInfoWrapper.GetDpiAwareness)] = WrapperMember.Read,
                 [nameof(INativeSystemInfoWrapper.GetForegroundLockTimeout)] = WrapperMember.Read,
-                [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read
+                [nameof(INativeSystemInfoWrapper.GetSessionId)] = WrapperMember.Read,
+                [nameof(INativeSystemInfoWrapper.GetMouseWheelRouting)] = WrapperMember.Read
+            },
+            [typeof(INativeClipboardWrapper)] = new Dictionary<string, WrapperMember>
+            {
+                // A counter that changes with the content; it does not open the clipboard
+                [nameof(INativeClipboardWrapper.GetSequenceNumber)] = WrapperMember.Read,
+                // The user's clipboard: refused in every tier
+                [nameof(INativeClipboardWrapper.Read)] = WrapperMember.Clipboard,
+                [nameof(INativeClipboardWrapper.WriteText)] = WrapperMember.Clipboard
             },
             [typeof(INativeMonitorWrapper)] = new Dictionary<string, WrapperMember>
             {
@@ -199,7 +217,9 @@ public static class WrapperCatalog
             [typeof(INativeHitTestWrapper)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(INativeHitTestWrapper.WindowFromPoint)] = WrapperMember.Read,
-                [nameof(INativeHitTestWrapper.GetRootWindow)] = WrapperMember.Read
+                [nameof(INativeHitTestWrapper.GetRootWindow)] = WrapperMember.Read,
+                // GetClientRect and MapWindowPoints: where scroll points by default
+                [nameof(INativeHitTestWrapper.GetClientAreaOnScreen)] = WrapperMember.Read
             },
             [typeof(INativeSecurityWrapper)] = new Dictionary<string, WrapperMember>
             {
