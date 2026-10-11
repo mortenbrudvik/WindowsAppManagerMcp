@@ -24,12 +24,19 @@ public static class ServiceRegistration
     /// <see cref="LayoutStorageOptions.FromEnvironment"/>: %LOCALAPPDATA%\WindowsAppManagerMcp\layouts or
     /// WAM_LAYOUTS_PATH, outside the versioned plugin folder. Tests pass a temporary folder.
     /// </param>
+    /// <param name="auditLog">
+    /// Creates the audit log's options when <see cref="IAuditLog"/> is first resolved (roadmap M2.17). Defaults to
+    /// <see cref="AuditLogOptions.FromEnvironment"/>: %LOCALAPPDATA%\WindowsAppManagerMcp\audit or WAM_AUDIT_PATH.
+    /// Nothing is written until an audited tool is called; tests that call one pass a temporary folder.
+    /// </param>
     public static IServiceCollection AddWindowsAppManagerServices(
         this IServiceCollection services,
-        Func<LayoutStorageOptions>? layoutStorage = null)
+        Func<LayoutStorageOptions>? layoutStorage = null,
+        Func<AuditLogOptions>? auditLog = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var createLayoutStorage = layoutStorage ?? LayoutStorageOptions.FromEnvironment;
+        var createAuditLog = auditLog ?? AuditLogOptions.FromEnvironment;
 
         // Services
         services.AddSingleton<INativeWindowWrapper, NativeWindowWrapper>();
@@ -91,7 +98,12 @@ public static class ServiceRegistration
             sp.GetRequiredService<IPauseHotkey>(),
             sp.GetRequiredService<ILayoutService>(),
             sp.GetRequiredService<INativeWindowWrapper>(),
-            sp.GetService<ToolsetSelection>())); // registered by AddWindowsAppManagerTools
+            sp.GetService<ToolsetSelection>(), // registered by AddWindowsAppManagerTools
+            sp.GetRequiredService<IAuditLog>()));
+
+        // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
+        services.AddSingleton<IAuditLog>(sp => new AuditLog(
+            createAuditLog(), sp.GetRequiredService<INativeWindowWrapper>(), TimeProvider.System, sp.GetService<ILogger<AuditLog>>()));
 
         // The input guard (every input call, inside the input gate) and the target policy (input, close,
         // kill and window captures), both configured by the user in the server's environment
@@ -164,9 +176,13 @@ public static class ServiceRegistration
         // The SDK runs the first call-tool filter added as the outermost one (ServerFilterPipelineTests pins the
         // order; SDK 0.5's XML documentation said the opposite)
         return builder
+            // One audit log line per call of an input, close, kill, launch, layout or clipboard-writing tool (roadmap
+            // M2.17). Outermost, so it records the result the agent gets, including the error filter's error results
+            // and the calls the gate filter refuses while input is paused
+            .AddAuditLog()
             // Report tool exceptions to the agent (type + message, isError=true) and log them to stderr,
-            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added first, so it is the
-            // outermost filter: its call log includes the wait for the gate and the calls the gate filter
+            // instead of the SDK's opaque "An error occurred invoking '<tool>'." Added before the gate filter, so
+            // it is outside it: its call log includes the wait for the gate and the calls the gate filter
             // refuses while input is paused
             .AddToolErrorReporting()
             // Tools that can change which window is in front run inside the input gate, so they cannot

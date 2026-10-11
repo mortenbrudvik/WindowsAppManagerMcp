@@ -125,6 +125,7 @@ server configuration). No tool argument can change them.
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only apps the agent may act on; the deny list still wins |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
+| `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, close, kill, launch, layout or clipboard-write call, one file per day, kept 7 days |
 | `WAM_TOOLSETS` | the default toolsets (today: all) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process` |
 | `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, window changes, captures or process control) |
@@ -344,6 +345,7 @@ WindowsAppManagerMcp/
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
 - **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume, and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
 - **Protected Windows** - `close_window` and `close_windows_batch` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in unless `force` is true, and closing more than 3 windows in one batch requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`)
+- **Audit Log** - Every input, close, kill, launch, layout and clipboard-write call is appended to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, clipboard text, URLs and command-line arguments are never logged, only their lengths. Files are kept 7 days (see [Audit log](docs/TOOLS.md#audit-log))
 - **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), so a hung app cannot block the other tools
 - **Read-Only Mode** - `WAM_READ_ONLY=1` serves only the tools annotated read-only, and `WAM_TOOLSETS`/`WAM_EXCLUDE_TOOLS` leave out whole groups or single tools; a tool that is not served cannot be called (see [Toolsets](docs/TOOLS.md#toolsets))
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile.

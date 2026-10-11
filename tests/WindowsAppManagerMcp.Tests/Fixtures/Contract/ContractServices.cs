@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Infrastructure;
@@ -59,6 +60,30 @@ public sealed class ContractServices : IDisposable
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
 
+    /// <summary>The audit log's folder (roadmap M2.17), in the temporary folder; created by the first line written.</summary>
+    public string AuditFolder { get; } = Path.Combine(Path.GetTempPath(), "WamContractAudit", Guid.NewGuid().ToString("N"), "audit");
+
+    /// <summary>The audit log, writing to <see cref="AuditFolder"/>, reading windows from <see cref="NativeWindows"/>.</summary>
+    public IAuditLog Audit => _audit ??= new AuditLog(AuditLogOptions.ForFolder(AuditFolder), NativeWindows.Object, TimeProvider.System);
+
+    private IAuditLog? _audit;
+
+    /// <summary>Every line the audit log wrote, in order, from all its day files.</summary>
+    public IReadOnlyList<JsonElement> AuditLines() =>
+        !Directory.Exists(AuditFolder)
+            ? []
+            : Directory.GetFiles(AuditFolder, "*.jsonl").Order(StringComparer.Ordinal)
+                .SelectMany(File.ReadAllLines)
+                .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+                .ToList();
+
+    /// <summary>Puts a file where <see cref="AuditFolder"/> should be, so no line can be written.</summary>
+    public void BlockAuditFolder()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(AuditFolder)!);
+        File.WriteAllText(AuditFolder, "in the way");
+    }
+
     /// <summary>Registers the services, as configureServices of <see cref="InProcessMcpServer.StartAsync"/>.</summary>
     public void Register(IServiceCollection services)
     {
@@ -76,13 +101,22 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
         services.AddSingleton<ITargetPolicy>(new TargetPolicy(TargetPolicySettings.Default));
+        services.AddSingleton(Audit);
         // get_server_info: the real report over mocked sources, with the toolsets the server was registered with
         services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
             SystemInfo.Object, SecurityProbe.Object, Monitors.Object, Safety.Object, Session, Hotkey.Object, Layouts.Object,
-            NativeWindows.Object, sp.GetService<ToolsetSelection>()));
+            NativeWindows.Object, sp.GetService<ToolsetSelection>(), Audit));
     }
 
-    public void Dispose() => Session.Dispose();
+    public void Dispose()
+    {
+        Session.Dispose();
+        var root = Path.GetDirectoryName(AuditFolder)!;
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     /// <summary>
     /// The sources of get_server_info: a medium-integrity, per-monitor v2 server started from Windows Terminal (Typical),
@@ -115,8 +149,16 @@ public sealed class ContractServices : IDisposable
             30_500 => "pwsh",
             30_100 => "WindowsTerminal",
             30_700 => "OpenConsole",
+            _ when typical => TypicalDesktop.Windows.FirstOrDefault(w => w.ProcessId == id)?.ProcessName,
             _ => null
         });
+
+        // The windows the audit log reads before a call: the typical desktop's, or none
+        NativeWindows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns((nint h) => typical && TypicalDesktop.Windows.Any(w => w.Handle == h));
+        NativeWindows.Setup(w => w.GetWindowText(It.IsAny<nint>()))
+            .Returns((nint h) => TypicalDesktop.Windows.FirstOrDefault(w => w.Handle == h)?.Title ?? string.Empty);
+        NativeWindows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>()))
+            .Returns((nint h) => (uint)(TypicalDesktop.Windows.FirstOrDefault(w => w.Handle == h)?.ProcessId ?? 0));
         Layouts.Setup(l => l.LayoutsPath).Returns(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
     }
 

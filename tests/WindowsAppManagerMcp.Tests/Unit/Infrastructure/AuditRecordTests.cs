@@ -1,0 +1,307 @@
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
+using WindowsAppManagerMcp.Infrastructure;
+
+namespace WindowsAppManagerMcp.Tests.Unit.Infrastructure;
+
+/// <summary>
+/// What one audit log line holds (roadmap M2.17): the call's target, the window its input went to, its outcome and
+/// errorCode, and a summary of its arguments that never holds typed text, keys, clipboard text, URLs or command-line
+/// arguments, only their lengths or counts. Pure: no file and no window is touched.
+/// </summary>
+public class AuditRecordTests
+{
+    private static readonly DateTimeOffset Started = new(2026, 10, 10, 14, 3, 22, TimeSpan.FromHours(2));
+
+    private static AuditCall Call(
+        string tool,
+        object arguments,
+        IReadOnlyDictionary<long, AuditTarget>? windows = null,
+        IReadOnlyDictionary<int, string?>? processes = null) =>
+        new(tool, Arguments(arguments), "7", Started, 0, windows ?? new Dictionary<long, AuditTarget>(),
+            processes ?? new Dictionary<int, string?>());
+
+    private static Dictionary<string, JsonElement> Arguments(object arguments) =>
+        JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(arguments))!;
+
+    private static CallToolResult Result(object body, bool isError = false) => new()
+    {
+        IsError = isError,
+        Content = [new TextContentBlock { Text = JsonSerializer.Serialize(body, JsonSerializerOptions.Web) }]
+    };
+
+    private static AuditEntry Build(AuditCall call, CallToolResult? result, string outcome = AuditOutcome.Ok) =>
+        AuditRecord.Build(call, result, outcome, durationMs: 12, serverPid: 4242);
+
+    [Fact]
+    public void TypedText_IsRecordedAsItsLength_Only()
+    {
+        // Arrange
+        var call = Call("type_text", new { text = "hunter2 is my password", windowHandle = 100, delayMs = 0, allowHostTarget = false });
+        var result = Result(new
+        {
+            success = true, text = "hunter2 is my password", charactersTyped = 22,
+            receivingWindow = new { handle = 100, title = "Sign in", processName = "app", processId = 42 }
+        });
+
+        // Act
+        var entry = Build(call, result);
+        var line = AuditRecord.ToJsonLine(entry);
+
+        // Assert
+        line.Should().NotContain("hunter2");
+        entry.Args!["textLength"]!.GetValue<int>().Should().Be(22);
+        entry.Args.ContainsKey("text").Should().BeFalse();
+        entry.Args["windowHandle"]!.GetValue<long>().Should().Be(100);
+        entry.Args["delayMs"]!.GetValue<int>().Should().Be(0);
+        entry.Args["allowHostTarget"]!.GetValue<bool>().Should().BeFalse();
+        entry.Result!["charactersTyped"]!.GetValue<int>().Should().Be(22);
+        entry.Result.ContainsKey("text").Should().BeFalse();
+        entry.Result.ContainsKey("success").Should().BeFalse("the outcome says it");
+        entry.ReceivingWindow.Should().Be(new AuditTarget(100, "Sign in", "app", 42));
+    }
+
+    [Theory]
+    [InlineData("send_keys", "keys", "p4ssw0rd{ENTER}")]
+    [InlineData("set_clipboard", "text", "my secret token")]
+    [InlineData("launch_browser_with_debug", "url", "https://example.com/?token=secret")]
+    [InlineData("launch_application", "workingDirectory", @"C:\secret project")]
+    public void EveryOtherString_IsRecordedAsItsLength(string tool, string argument, string value)
+    {
+        var entry = Build(Call(tool, new Dictionary<string, object> { [argument] = value }), null);
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("secret").And.NotContain("p4ss");
+        entry.Args![argument + "Length"]!.GetValue<int>().Should().Be(value.Length);
+    }
+
+    [Theory]
+    [InlineData("processName", "notepad")]
+    [InlineData("expectedProcessName", "notepad")]
+    [InlineData("name", "Coding")]
+    [InlineData("matchBy", "processAndTitle")]
+    [InlineData("browser", "edge")]
+    public void StringsThatNameAProcessAPresetOrAFixedValue_AreKept(string argument, string value)
+    {
+        var entry = Build(Call("close_application", new Dictionary<string, object> { [argument] = value }), null);
+
+        entry.Args![argument]!.GetValue<string>().Should().Be(value);
+    }
+
+    [Fact]
+    public void ArraysAreCounted_AndObjectsAreLeftOut()
+    {
+        var call = Call("launch_application", new
+        {
+            executable = "pwsh.exe",
+            arguments = new[] { "-Command", "Set-Secret -Value hunter2" },
+            options = new { password = "hunter2" }
+        });
+
+        var entry = Build(call, null);
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("hunter2");
+        entry.Args!["argumentsCount"]!.GetValue<int>().Should().Be(2);
+        entry.Args.ContainsKey("options").Should().BeFalse();
+        entry.Args.ContainsKey("optionsCount").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("notepad", "notepad")]
+    [InlineData(@"C:\Program Files\App\app.exe", @"C:\Program Files\App\app.exe")]
+    [InlineData("ms-settings:display", "ms-settings:display")]
+    [InlineData("https://user:pw@example.com:8443/reset/page?token=abc#frag", "https://example.com:8443/reset/page")]
+    [InlineData("mailto:someone@example.com?subject=secret", "mailto:example.com")] // the address is user info
+    public void AnExecutable_KeepsItsPath_AndAUrlLosesItsCredentialsQueryAndFragment(string executable, string recorded)
+    {
+        AuditRecord.RedactExecutable(executable).Should().Be(recorded);
+
+        var entry = Build(Call("launch_application", new { executable }), null);
+        entry.Args!["executable"]!.GetValue<string>().Should().Be(recorded);
+        entry.Target!.Executable.Should().Be(recorded);
+    }
+
+    [Fact]
+    public void TheTarget_IsTheWindowAsItWasBeforeTheCall()
+    {
+        // close_window: the window is gone afterwards, so its title and process come from Begin's read
+        var windows = new Dictionary<long, AuditTarget> { [100] = new(100, "Untitled - Notepad", "notepad", 42) };
+        var call = Call("close_window", new { handle = 100, force = false }, windows);
+
+        var entry = Build(call, Result(new { success = true }));
+
+        entry.Target.Should().Be(new AuditTarget(100, "Untitled - Notepad", "notepad", 42));
+        entry.Outcome.Should().Be(AuditOutcome.Ok);
+        entry.ErrorCode.Should().BeNull();
+    }
+
+    [Fact]
+    public void AWindowThatCouldNotBeRead_IsRecordedByItsHandle()
+    {
+        var entry = Build(Call("click", new { x = 10, y = 20, windowHandle = 0x1234 }), null);
+
+        entry.Target.Should().Be(new AuditTarget(Handle: 0x1234));
+    }
+
+    [Fact]
+    public void AKill_NamesTheProcess_FromBeforeTheCall_OrElseFromTheResult()
+    {
+        var before = Build(Call("kill_process", new { processId = 42, forceKill = true }, processes: new Dictionary<int, string?> { [42] = "notepad" }),
+            Result(new { success = true, processId = 42, forced = true, exited = true }));
+        var after = Build(Call("kill_process", new { processId = 42 }),
+            Result(new { success = true, processId = 42, processName = "notepad", exited = true }));
+
+        before.Target.Should().Be(new AuditTarget(ProcessId: 42, Process: "notepad"));
+        after.Target.Should().Be(new AuditTarget(ProcessId: 42, Process: "notepad"));
+        before.Result!["forced"]!.GetValue<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public void ALaunch_NamesTheProcessAndWindowItStarted()
+    {
+        var entry = Build(Call("launch_application", new { executable = "notepad" }),
+            Result(new { success = true, processId = 42, windowHandle = 0x500 }));
+
+        entry.Target.Should().Be(new AuditTarget(Handle: 0x500, ProcessId: 42, Executable: "notepad"));
+    }
+
+    [Fact]
+    public void AnInputCallWithoutATarget_HasNoTarget_ButItsReceivingWindow()
+    {
+        var entry = Build(Call("send_keys", new { keys = "^s" }),
+            Result(new { success = false, keys = "^s", errorCode = "TargetIsAgentHost", receivingWindow = new { handle = 7, title = "pwsh", processName = "WindowsTerminal", processId = 9 } }, isError: true),
+            AuditOutcome.Error);
+
+        entry.Target.Should().BeNull();
+        entry.ReceivingWindow.Should().Be(new AuditTarget(7, "pwsh", "WindowsTerminal", 9));
+        entry.Outcome.Should().Be(AuditOutcome.Error);
+        entry.ErrorCode.Should().Be("TargetIsAgentHost");
+    }
+
+    [Fact]
+    public void AnErrorCodeThatIsNoIdentifier_IsLeftOut()
+    {
+        var entry = Build(Call("click", new { x = 1, y = 2 }), Result(new { success = false, errorCode = "Not a code: hunter2" }, isError: true));
+
+        entry.ErrorCode.Should().BeNull();
+    }
+
+    [Fact]
+    public void ABatch_RecordsEachItem_WithTheWindowsAsTheyWereBeforeTheCall()
+    {
+        var windows = new Dictionary<long, AuditTarget>
+        {
+            [1] = new(1, "Report.docx - Word", "WINWORD", 11),
+            [2] = new(2, "Budget.xlsx - Excel", "EXCEL", 22)
+        };
+        var call = Call("close_windows_batch", new { windows = new[] { new { handle = 1 }, new { handle = 2 } }, confirm = true }, windows);
+        var result = Result(new
+        {
+            totalRequested = 2, succeeded = 1, failed = 1,
+            results = new object[] { new { handle = 1, success = true }, new { handle = 2, success = false, error = "x", errorCode = "HandleMismatch" } }
+        });
+
+        var entry = Build(call, result);
+
+        entry.Items.Should().Equal(
+            new AuditItem(1, "Report.docx - Word", "WINWORD", 11, null, true, null),
+            new AuditItem(2, "Budget.xlsx - Excel", "EXCEL", 22, null, false, "HandleMismatch"));
+        entry.Args!["windowsCount"]!.GetValue<int>().Should().Be(2);
+        entry.Result!["failed"]!.GetValue<int>().Should().Be(1);
+        entry.Target.Should().BeNull("a batch names its targets in its items");
+    }
+
+    [Fact]
+    public void ACloseBatchRefusedAsAWhole_RecordsTheWindowsItAskedFor()
+    {
+        // PausedByUser: a tool error without results
+        var windows = new Dictionary<long, AuditTarget> { [1] = new(1, "Report.docx - Word", "WINWORD", 11) };
+        var call = Call("close_windows_batch", new { windows = new[] { new { handle = 1 }, new { handle = 2 } } }, windows);
+
+        var entry = Build(call, Result(new { success = false, error = "Paused", errorCode = "PausedByUser", tool = "close_windows_batch" }, isError: true),
+            AuditOutcome.Error);
+
+        entry.Items.Should().Equal(
+            new AuditItem(1, "Report.docx - Word", "WINWORD", 11, null, null, null),
+            new AuditItem(2, null, null, null, null, null, null));
+        entry.Target.Should().BeNull();
+        entry.ErrorCode.Should().Be("PausedByUser");
+    }
+
+    [Fact]
+    public void ALaunchBatch_RecordsEachExecutable_Redacted()
+    {
+        var call = Call("launch_applications_batch", new { applications = new[] { new { executable = "https://example.com/?t=secret" } } });
+        var result = Result(new
+        {
+            totalRequested = 1, succeeded = 1, failed = 0,
+            results = new object[] { new { executable = "https://example.com/?t=secret", success = true, processId = 5, windowHandle = 6 } }
+        });
+
+        var entry = Build(call, result);
+
+        entry.Items.Should().Equal(new AuditItem(6, null, null, 5, "https://example.com/", true, null));
+        AuditRecord.ToJsonLine(entry).Should().NotContain("secret");
+    }
+
+    [Fact]
+    public void ALongTitle_IsCut()
+    {
+        var title = new string('x', AuditRecord.MaxTitleLength + 50);
+        var entry = Build(Call("click", new { x = 1, y = 2 }),
+            Result(new { success = true, receivingWindow = new { handle = 1, title, processName = "p", processId = 2 } }));
+
+        entry.ReceivingWindow!.Title.Should().HaveLength(AuditRecord.MaxTitleLength);
+    }
+
+    [Fact]
+    public void ACallWithoutAResult_RecordsItsOutcome()
+    {
+        var entry = Build(Call("type_text", new { text = "abc" }), null, AuditOutcome.Cancelled);
+
+        entry.Outcome.Should().Be(AuditOutcome.Cancelled);
+        entry.Result.Should().BeNull();
+        entry.ReceivingWindow.Should().BeNull();
+    }
+
+    [Fact]
+    public void TheLine_IsOneLineOfCamelCaseJson_WithTheCallsIdentity()
+    {
+        var entry = Build(Call("click", new { x = 1, y = 2 }), Result(new { success = true }));
+
+        var line = AuditRecord.ToJsonLine(entry);
+
+        line.Should().NotContain("\n").And.NotContain("\r");
+        using var json = JsonDocument.Parse(line);
+        var root = json.RootElement;
+        root.GetProperty("ts").GetString().Should().Be("2026-10-10T14:03:22.000+02:00");
+        root.GetProperty("tool").GetString().Should().Be("click");
+        root.GetProperty("outcome").GetString().Should().Be("ok");
+        root.GetProperty("durationMs").GetInt64().Should().Be(12);
+        root.GetProperty("serverPid").GetInt32().Should().Be(4242);
+        root.GetProperty("requestId").GetString().Should().Be("7");
+        root.TryGetProperty("errorCode", out _).Should().BeFalse("nulls are left out");
+        root.EnumerateObject().First().Name.Should().Be("ts");
+    }
+
+    [Fact]
+    public void ATitleWithLineBreaks_StaysOnOneLine()
+    {
+        var entry = Build(Call("click", new { x = 1, y = 2 }),
+            Result(new { success = true, receivingWindow = new { handle = 1, title = "a\r\nb\u2028c", processName = "p", processId = 2 } }));
+
+        AuditRecord.ToJsonLine(entry).Should().NotContain("\n").And.NotContain("\r").And.NotContain("\u2028");
+    }
+
+    [Fact]
+    public void TheWindowsAndProcessesToReadBeforeTheCall_ComeFromTheArguments()
+    {
+        AuditRecord.WindowHandles(Arguments(new { windowHandle = 5 })).Should().Equal(5);
+        AuditRecord.WindowHandles(Arguments(new { handle = 6, processId = 7 })).Should().Equal(6);
+        AuditRecord.WindowHandles(Arguments(new { windows = new object?[] { new { handle = 8 }, null, new { handle = 9 } } })).Should().Equal(8, 9);
+        AuditRecord.WindowHandles(Arguments(new { windowHandle = (int?)null, x = 1 })).Should().BeEmpty();
+        AuditRecord.WindowHandles(Arguments(new { windows = Enumerable.Range(1, 500).Select(h => new { handle = h }) }))
+            .Should().HaveCount(AuditRecord.MaxWindowsRead);
+        AuditRecord.ProcessIds(Arguments(new { processId = 7 })).Should().Equal(7);
+        AuditRecord.ProcessIds(Arguments(new { processId = "7" })).Should().BeEmpty();
+    }
+}

@@ -56,7 +56,7 @@ public class ServerInfoToolContractTests
         info.GetProperty("host").GetProperty("windows")[0].GetProperty("processName").GetString().Should().Be("WindowsTerminal");
         info.GetProperty("input").GetProperty("hotkey").GetProperty("state").GetString().Should().Be("Registered");
         info.GetProperty("toolsets").GetProperty("source").GetString().Should().Be(ToolsetSelection.AllKeyword);
-        info.GetProperty("paths").TryGetProperty("auditLog", out _).Should().BeFalse("there is no audit log until roadmap M2.17");
+        info.GetProperty("paths").GetProperty("auditLog").GetString().Should().Be(services.AuditFolder);
         info.TryGetProperty("warnings", out _).Should().BeFalse("nothing is wrong on the typical desktop");
     }
 

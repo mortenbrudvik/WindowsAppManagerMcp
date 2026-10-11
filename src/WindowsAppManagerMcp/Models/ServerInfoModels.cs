@@ -112,7 +112,10 @@ public sealed record SafetySettingsInfo(
 
 /// <summary>Where the server keeps its files.</summary>
 /// <param name="Layouts">The layout presets folder (WAM_LAYOUTS_PATH).</param>
-/// <param name="AuditLog">The audit log of input and destructive actions; null until the audit log exists (roadmap M2.17).</param>
+/// <param name="AuditLog">
+/// The folder of the audit log of input and destructive actions (roadmap M2.17, WAM_AUDIT_PATH): one
+/// <c>&lt;yyyy-MM-dd&gt;.jsonl</c> file per day, kept for 7 days. Null when the server has no audit log.
+/// </param>
 public sealed record ServerPathsInfo(string Layouts, string? AuditLog = null);
 
 /// <summary>The tools the server serves (WAM_TOOLSETS, WAM_EXCLUDE_TOOLS, WAM_READ_ONLY).</summary>

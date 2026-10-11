@@ -9,7 +9,8 @@ namespace WindowsAppManagerMcp.Services;
 /// Reads get_server_info's report from the services that own each part: the security probe (integrity, elevation,
 /// desktop state), the system info wrapper (DPI awareness, foreground lock timeout, session), the monitors, the safety
 /// settings and the host the server recorded at start, the input session and the pause hotkey, the layout storage, and
-/// the toolset selection. Warnings name what will make tools fail or coordinates wrong.
+/// the toolset selection, and the audit log. Warnings name what will make tools fail or coordinates wrong, or (the audit
+/// log) what goes unrecorded.
 /// </summary>
 public sealed class ServerInfoService(
     INativeSystemInfoWrapper system,
@@ -20,7 +21,8 @@ public sealed class ServerInfoService(
     IPauseHotkey hotkey,
     ILayoutService layouts,
     INativeWindowWrapper windows,
-    ToolsetSelection? toolsets = null) : IServerInfoService
+    ToolsetSelection? toolsets = null,
+    IAuditLog? auditLog = null) : IServerInfoService
 {
     public ServerInfoResult Read(ServerConnectionInfo connection, int servedTools)
     {
@@ -33,6 +35,11 @@ public sealed class ServerInfoService(
         var settings = safety.Read();
         var selection = toolsets ?? ToolsetSelection.All();
         warnings.AddRange(selection.Warnings);
+        if (auditLog?.LastError is { } auditError)
+        {
+            warnings.Add($"The audit log in '{auditLog.Folder}' cannot be written ({auditError}): input and destructive actions are " +
+                         "not recorded. Tell the user.");
+        }
 
         return new ServerInfoResult(
             new ServerBuildInfo(
@@ -62,7 +69,7 @@ public sealed class ServerInfoService(
                 settings.Policy.AllowedProcesses,
                 settings.DestructiveChords,
                 settings.DestructiveChordSource),
-            new ServerPathsInfo(layouts.LayoutsPath),
+            new ServerPathsInfo(layouts.LayoutsPath, auditLog?.Folder),
             new ToolsetInfo(selection.Enabled, selection.Disabled, selection.Source, selection.ReadOnly, selection.ExcludedTools, servedTools),
             warnings.Count == 0 ? null : warnings);
     }

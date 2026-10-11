@@ -18,6 +18,7 @@ public sealed class ServerInfoServiceTests : IDisposable
     private readonly Mock<IPauseHotkey> _hotkey = new();
     private readonly Mock<ILayoutService> _layouts = new();
     private readonly Mock<INativeWindowWrapper> _windows = new();
+    private readonly Mock<IAuditLog> _audit = new();
     private readonly InputSession _session = new(new FakeInputWrapper());
 
     public ServerInfoServiceTests()
@@ -46,6 +47,7 @@ public sealed class ServerInfoServiceTests : IDisposable
         _safety.Setup(s => s.Read()).Returns(new InputSafetySnapshot(host, TargetPolicySettings.Default, ["%{F4}", "^w"], "default"));
         _hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, "default"));
         _layouts.Setup(l => l.LayoutsPath).Returns(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
+        _audit.Setup(a => a.Folder).Returns(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\audit");
         _windows.Setup(w => w.GetProcessName(It.IsAny<uint>())).Returns((uint id) => id switch
         {
             4242 => "WindowsAppManagerMcp",
@@ -61,7 +63,7 @@ public sealed class ServerInfoServiceTests : IDisposable
 
     private ServerInfoService CreateSut(ToolsetSelection? toolsets = null) => new(
         _system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object, _layouts.Object, _windows.Object,
-        toolsets);
+        toolsets, _audit.Object);
 
     [Fact]
     public void Read_ReportsTheBuildAndTheConnection()
@@ -123,7 +125,26 @@ public sealed class ServerInfoServiceTests : IDisposable
         info.Safety.AllowedProcesses.Should().BeNull();
         info.Safety.DestructiveChords.Should().Equal("%{F4}", "^w");
         info.Paths.Layouts.Should().Be(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
-        info.Paths.AuditLog.Should().BeNull("the audit log comes with roadmap M2.17");
+        info.Paths.AuditLog.Should().Be(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\audit");
+    }
+
+    [Fact]
+    public void Read_WithoutAnAuditLog_LeavesItsPathOut()
+    {
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object).Read(Connection, 48);
+
+        info.Paths.AuditLog.Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_WarnsWhenTheAuditLogCannotBeWritten()
+    {
+        _audit.Setup(a => a.LastError).Returns(@"Access to the path 'C:\Users\user\AppData\Local\WindowsAppManagerMcp\audit' is denied.");
+
+        var warning = CreateSut().Read(Connection, 48).Warnings.Should().ContainSingle().Subject;
+
+        warning.Should().Contain("audit log").And.Contain("is denied").And.Contain("not recorded").And.Contain("Tell the user");
     }
 
     [Fact]
