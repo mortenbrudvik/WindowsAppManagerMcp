@@ -10,9 +10,6 @@ internal static partial class NativeMethods
         public static partial nint CreateCompatibleDC(nint hdc);
 
         [LibraryImport("gdi32.dll")]
-        public static partial nint CreateCompatibleBitmap(nint hdc, int nWidth, int nHeight);
-
-        [LibraryImport("gdi32.dll")]
         public static partial nint SelectObject(nint hdc, nint hObject);
 
         [LibraryImport("gdi32.dll")]

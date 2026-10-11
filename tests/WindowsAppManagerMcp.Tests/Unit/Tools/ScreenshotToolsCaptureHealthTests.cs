@@ -254,6 +254,49 @@ public class ScreenshotToolsCaptureHealthTests
         _events.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData(ScreenshotErrorCode.WindowHidden)]
+    [InlineData(ScreenshotErrorCode.Cloaked)]
+    public async Task CaptureWindow_WithRestoreIfMinimized_OfAMinimizedWindowThatShowsNothing_RestoresNothing(ScreenshotErrorCode code)
+    {
+        // Arrange - minimized to the notification area (hidden), or minimized on another virtual desktop (cloaked):
+        // a restore would show a window its app hid, or work on another desktop
+        Minimized();
+        _screenshots.Setup(s => s.CheckWindow(Window)).Returns(new CaptureRefusal(code, "shows nothing"));
+
+        // Act
+        var result = await CreateSut().CaptureWindow(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be(code.ToString());
+        _events.Should().BeEmpty();
+        _screenshots.Verify(s => s.RestoreForCapture(It.IsAny<nint>(), It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(ScreenshotErrorCode.WindowHidden)]
+    [InlineData(ScreenshotErrorCode.Cloaked)]
+    public async Task CaptureWithElements_WithRestoreIfMinimized_OfAMinimizedWindowThatShowsNothing_RestoresNothing(ScreenshotErrorCode code)
+    {
+        // Arrange
+        Minimized();
+        _screenshots.Setup(s => s.CheckWindow(Window)).Returns(new CaptureRefusal(code, "shows nothing"));
+
+        // Act
+        var result = await CreateSut().CaptureWithElements(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be(code.ToString());
+        _events.Should().BeEmpty();
+        _screenshots.Verify(s => s.RestoreForCapture(It.IsAny<nint>(), It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+        VerifyNotCaptured();
+    }
+
     [Fact]
     public async Task CaptureWindow_WhenTheRestoreFails_ReportsItsCode_AndCapturesNothing()
     {
@@ -279,6 +322,11 @@ public class ScreenshotToolsCaptureHealthTests
     /// </summary>
     private void Minimized()
     {
+        // CheckWindow says WindowMinimized until the restore, and nothing while the window is restored
+        _screenshots.Setup(s => s.CheckWindow(Window)).Returns(() =>
+            _events.Contains("restore") && !_events.Contains("minimize")
+                ? null
+                : new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, ScreenshotService.MinimizedMessage));
         _screenshots.Setup(s => s.FindMinimizedWindow(Window)).Returns(Window);
         _screenshots.Setup(s => s.WindowsShownByRestore(Window)).Returns([Window]);
         _screenshots.Setup(s => s.RestoreForCapture(Window, Window, It.IsAny<bool>()))
@@ -294,6 +342,7 @@ public class ScreenshotToolsCaptureHealthTests
         var minimized = true;
         var native = new Mock<INativeWindowWrapper>();
         native.Setup(n => n.IsWindow(Window)).Returns(true);
+        native.Setup(n => n.IsWindowVisible(Window)).Returns(true);
         native.Setup(n => n.IsIconic(Window)).Returns(() => minimized);
         native.Setup(n => n.ShowWindow(Window, It.IsAny<int>())).Returns((nint _, int command) =>
         {
@@ -318,6 +367,7 @@ public class ScreenshotToolsCaptureHealthTests
     {
         // A window that stays minimized: the restore reports WindowMinimized
         var native = new Mock<INativeWindowWrapper>();
+        native.Setup(n => n.IsWindowVisible(Window)).Returns(true);
         native.Setup(n => n.IsIconic(Window)).Returns(true);
         var calls = new Mock<IWindowCallRunner>();
         calls.Setup(c => c.Run(It.IsAny<nint>(), It.IsAny<Func<bool>>())).Returns((nint _, Func<bool> call) => call());

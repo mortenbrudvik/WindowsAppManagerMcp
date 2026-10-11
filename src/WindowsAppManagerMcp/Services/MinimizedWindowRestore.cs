@@ -46,9 +46,25 @@ public sealed class MinimizedWindowRestore : IDisposable
     /// </summary>
     public IReadOnlyList<string> Warnings => _warnings;
 
-    /// <summary>Sends SW_SHOWNOACTIVATE and waits until the window is no longer minimized.</summary>
+    /// <summary>
+    /// Sends SW_SHOWNOACTIVATE and waits until the window is no longer minimized. A hidden or cloaked window is not
+    /// restored: SW_SHOWNOACTIVATE would show a window its app hid (an app minimized to the notification area), and
+    /// SW_SHOWMINNOACTIVE afterwards would leave it visible with a taskbar button; a cloaked one is on another desktop.
+    /// </summary>
     internal void Restore()
     {
+        if (!_windows.IsWindowVisible(Window))
+        {
+            Failure = new CaptureRefusal(ScreenshotErrorCode.WindowHidden, ScreenshotService.HiddenMessage);
+            return;
+        }
+
+        if (_windows.IsCloaked(Window))
+        {
+            Failure = new CaptureRefusal(ScreenshotErrorCode.Cloaked, ScreenshotService.CloakedMessage);
+            return;
+        }
+
         try
         {
             _restoreSent = true;
@@ -72,7 +88,9 @@ public sealed class MinimizedWindowRestore : IDisposable
         }
 
         _warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowRestored,
-            "the window was minimized; it was restored without activation for this capture and minimized again."));
+            "the window was minimized; it was restored without activation for this capture and minimized again. A window " +
+            "that was maximized before it was minimized is shown at its normal size, and the user's next restore may bring " +
+            "it back un-maximized."));
     }
 
     /// <summary>Notes that the window was still painting when the capture was taken.</summary>

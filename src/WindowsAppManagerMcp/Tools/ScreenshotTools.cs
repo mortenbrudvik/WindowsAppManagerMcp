@@ -58,7 +58,8 @@ public class ScreenshotTools
         "until it has painted, capture, then minimize it again without activating another window. Default: false, which " +
         "refuses a minimized window with WindowMinimized. While the window is restored the call holds the input gate, so " +
         "it fails with PausedByUser while input is paused, and it is refused with TargetDeniedByPolicy when the policy " +
-        "denies a window the restore would show.";
+        "denies a window the restore would show. A hidden or cloaked window is not restored. A window that was maximized " +
+        "before it was minimized is captured at its normal size and may restore un-maximized afterwards.";
 
     private readonly IScreenshotService _screenshotService;
     private readonly IUIElementService _uiElementService;
@@ -422,6 +423,13 @@ public class ScreenshotTools
         if (!restoreIfMinimized || _screenshotService.FindMinimizedWindow(windowHandle) is not { } minimized)
         {
             return RestoreScope.None;
+        }
+
+        // A window that is also hidden (its app minimized it to the notification area) or cloaked (another virtual
+        // desktop) is refused as it is: a restore would show a window its app hid, or work on a desktop nobody sees
+        if (_screenshotService.CheckWindow(windowHandle) is { Code: not ScreenshotErrorCode.WindowMinimized } unavailable)
+        {
+            return new RestoreScope(null, null, unavailable);
         }
 
         // Nothing is restored for a call that would fail anyway

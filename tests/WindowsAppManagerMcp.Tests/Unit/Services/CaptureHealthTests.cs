@@ -123,6 +123,35 @@ public class CaptureHealthTests
         CreateSut().CheckWindow(Window).Should().BeNull();
     }
 
+    [Fact]
+    public void CheckWindow_OfAMinimizedHiddenWindow_IsWindowHidden_WithoutTheRestoreAdvice()
+    {
+        // Arrange - an app minimized to the notification area: iconic, and hidden with SW_HIDE
+        _windows.Setup(w => w.IsIconic(Window)).Returns(true);
+        _windows.Setup(w => w.IsWindowVisible(Window)).Returns(false);
+
+        // Act
+        var refusal = CreateSut().CheckWindow(Window);
+
+        // Assert - restoreIfMinimized would show a window its app hid
+        refusal!.Code.Should().Be(ScreenshotErrorCode.WindowHidden);
+        refusal.Message.Should().NotContain("restoreIfMinimized");
+    }
+
+    [Fact]
+    public void CheckWindow_OfAMinimizedCloakedWindow_IsCloaked()
+    {
+        // Arrange - a minimized window on another virtual desktop
+        _windows.Setup(w => w.IsIconic(Window)).Returns(true);
+        _windows.Setup(w => w.IsCloaked(Window)).Returns(true);
+
+        // Act
+        var refusal = CreateSut().CheckWindow(Window);
+
+        // Assert
+        refusal!.Code.Should().Be(ScreenshotErrorCode.Cloaked);
+    }
+
     #endregion
 
     #region Hung windows
@@ -158,6 +187,24 @@ public class CaptureHealthTests
         metadata.CaptureMethod.Should().Be("ScreenBitBlt");
         metadata.CapturedRegion.Should().Be(new CapturedRegion(300, 200, 100, 80));
         metadata.Warnings.Should().ContainSingle().Which.Should().StartWith("WindowNotResponding:").And.Contain("covers");
+    }
+
+    [Fact]
+    public void CaptureWindow_WhenTheRunnerHasTooManyStuckCalls_GivesTheRunnersReason_NotABlameOnTheWindow()
+    {
+        // Arrange - the runner refuses at once because calls to other applications are stuck
+        _calls.Setup(c => c.Run(Window, It.IsAny<Func<CaptureResult>>()))
+            .Throws(new WindowNotRespondingException(Window, "8 earlier window calls are still waiting for applications that do not answer."));
+        _capture.Setup(c => c.CaptureWindowFromScreen(Window, true))
+            .Returns(new CaptureResult(Pattern(100, 80), 100, 80, 300, 200, "ScreenBitBlt"));
+
+        // Act
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: true, FullResolution).Metadata;
+
+        // Assert
+        var warning = metadata.Warnings.Should().ContainSingle().Which;
+        warning.Should().Contain("could not be asked to draw itself").And.Contain("8 earlier window calls");
+        warning.Should().NotContain("application is not responding");
     }
 
     [Fact]
@@ -406,6 +453,21 @@ public class CaptureHealthTests
     }
 
     [Fact]
+    public void CaptureRegion_WithAnEdgeOverTheLimit_IsInvalidRegion_AndCapturesNothing()
+    {
+        // Arrange - five 4K monitors side by side: 19200 x 2160 is under 64 megapixels, but the edge is over 16384
+        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 19200, 2160));
+
+        // Act
+        var metadata = CreateSut().CaptureRegion(0, 0, 19200, 2160, FullResolution).Metadata;
+
+        // Assert
+        metadata.ErrorCode.Should().Be("InvalidRegion");
+        metadata.Error.Should().Contain("16384");
+        _capture.Verify(c => c.CaptureScreenRegion(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public void Wrapper_RefusesACaptureOverThePixelBudget_BeforeAllocatingAnything()
     {
         // 16384 x 4097 is within the per-edge limit but over 64 megapixels; nothing is captured, so this reads no screen
@@ -453,13 +515,14 @@ public class CaptureHealthTests
     #region Encoding
 
     [Fact]
-    public void CaptureRegion_WhenTheImageCannotBeEncoded_IsEncodeFailed()
+    public void CaptureWindow_WhenTheImageCannotBeEncoded_IsEncodeFailed()
     {
-        // Arrange - JPEG cannot hold an edge longer than 65535 pixels; the pixels themselves were captured
-        _capture.Setup(c => c.GetVirtualScreenBounds()).Returns((0, 0, 70000, 10));
+        // Arrange - JPEG cannot hold an edge longer than 65535 pixels; the pixels themselves were captured (the real
+        // wrapper refuses such an edge, and capture_region refuses it before capturing, so only a fake gets this far)
+        _capture.Setup(c => c.CaptureWindow(Window, false)).Returns(new CaptureResult(Pattern(70000, 1), 70000, 1, 0, 0, "PrintWindow"));
 
         // Act
-        var metadata = CreateSut().CaptureRegion(0, 0, 70000, 1, new CaptureOptions { MaxDimension = 0, Format = "jpeg" }).Metadata;
+        var metadata = CreateSut().CaptureWindow(Window, includeFrame: false, new CaptureOptions { MaxDimension = 0, Format = "jpeg" }).Metadata;
 
         // Assert
         metadata.Success.Should().BeFalse();
@@ -598,6 +661,53 @@ public class CaptureHealthTests
         // Assert
         restore.Failure!.Code.Should().Be(ScreenshotErrorCode.WindowMinimized);
         restore.Failure.Message.Should().Contain("not responding");
+    }
+
+    [Fact]
+    public void RestoreForCapture_OfAHiddenWindow_ShowsNothing_AndFailsWithWindowHidden()
+    {
+        // Arrange - minimized to the notification area: SW_SHOWNOACTIVATE would show it, and SW_SHOWMINNOACTIVE
+        // would leave it visible with a taskbar button its app removed
+        var commands = SimulateMinimizedWindow();
+        _windows.Setup(w => w.IsWindowVisible(Window)).Returns(false);
+
+        // Act
+        var restore = CreateSut().RestoreForCapture(Window, Window, includeFrame: true);
+        restore.Dispose();
+
+        // Assert
+        restore.Failure!.Code.Should().Be(ScreenshotErrorCode.WindowHidden);
+        commands.Should().BeEmpty();
+        _capture.Verify(c => c.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void RestoreForCapture_OfACloakedWindow_ShowsNothing_AndFailsWithCloaked()
+    {
+        // Arrange - minimized on another virtual desktop
+        var commands = SimulateMinimizedWindow();
+        _windows.Setup(w => w.IsCloaked(Window)).Returns(true);
+
+        // Act
+        var restore = CreateSut().RestoreForCapture(Window, Window, includeFrame: true);
+        restore.Dispose();
+
+        // Assert
+        restore.Failure!.Code.Should().Be(ScreenshotErrorCode.Cloaked);
+        commands.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RestoreForCapture_SaysThatAMaximizedWindowIsShownAtItsNormalSize()
+    {
+        // Arrange
+        SimulateMinimizedWindow();
+
+        // Act
+        using var restore = CreateSut().RestoreForCapture(Window, Window, includeFrame: true);
+
+        // Assert - SW_SHOWNOACTIVATE restores to the normal size and clears restore-to-maximized
+        restore.Warnings.Should().ContainSingle().Which.Should().Contain("maximized");
     }
 
     [Fact]

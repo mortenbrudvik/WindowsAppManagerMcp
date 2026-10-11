@@ -177,6 +177,13 @@ public class ScreenshotService : IScreenshotService
                     "or one monitor at a time with take_screenshot.");
             }
 
+            if (region.Width > ScreenCaptureWrapper.MaxCaptureSize || region.Height > ScreenCaptureWrapper.MaxCaptureSize)
+            {
+                throw new CaptureException(ScreenshotErrorCode.InvalidRegion,
+                    $"The region on screen is {region.Width}x{region.Height} pixels, more than {ScreenCaptureWrapper.MaxCaptureSize} " +
+                    "pixels on an edge. Capture it in parts, or one monitor at a time with take_screenshot.");
+            }
+
             var warnings = new List<string>();
             if (region != requested)
             {
@@ -297,12 +304,9 @@ public class ScreenshotService : IScreenshotService
             return new CaptureRefusal(ScreenshotErrorCode.InvalidHandle, "Invalid window handle or window no longer exists");
         }
 
-        if (FindMinimizedWindow(windowHandle) != null)
-        {
-            return new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, MinimizedMessage);
-        }
-
-        // IsWindowVisible is false when the window or any window it is inside lacks WS_VISIBLE
+        // Hidden and cloaked come before minimized: WindowMinimized advises restoreIfMinimized, and restoring a window
+        // its app hid (minimized to the notification area) would show it, while one on another desktop stays unseen.
+        // IsWindowVisible is false when the window or any window it is inside lacks WS_VISIBLE.
         if (!_windows.IsWindowVisible(windowHandle))
         {
             return new CaptureRefusal(ScreenshotErrorCode.WindowHidden, HiddenMessage);
@@ -312,6 +316,11 @@ public class ScreenshotService : IScreenshotService
         if (_windows.IsCloaked(windowHandle) || (root != windowHandle && _windows.IsCloaked(root)))
         {
             return new CaptureRefusal(ScreenshotErrorCode.Cloaked, CloakedMessage);
+        }
+
+        if (FindMinimizedWindow(windowHandle) != null)
+        {
+            return new CaptureRefusal(ScreenshotErrorCode.WindowMinimized, MinimizedMessage);
         }
 
         return null;
@@ -422,12 +431,14 @@ public class ScreenshotService : IScreenshotService
         {
             capture = _windowCalls.Run(windowHandle, () => _captureWrapper.CaptureWindow(windowHandle, includeFrame));
         }
-        catch (WindowNotRespondingException)
+        catch (WindowNotRespondingException ex)
         {
+            // The runner also refuses at once while too many calls to other applications are stuck, so the warning
+            // gives its reason rather than blaming this window's application
             capture = _captureWrapper.CaptureWindowFromScreen(windowHandle, includeFrame);
             warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowNotResponding,
-                "the window's application is not responding, so the window was not asked to draw itself; the image is a " +
-                "copy of the screen there and shows any window that covers it."));
+                "the window could not be asked to draw itself, so the image is a copy of the screen there and shows any " +
+                $"window that covers it. Reason: {ex.Message}"));
         }
 
         ThrowIfIncomplete(capture);
