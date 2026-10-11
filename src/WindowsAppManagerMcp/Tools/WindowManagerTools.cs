@@ -370,9 +370,10 @@ public class WindowManagerTools
                  "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent " +
                  "for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt " +
                  "is never answered: ask the user which button to choose, and do not answer it yourself. " +
-                 "More than 3 windows, or force=true on a protected window, need a confirmation: when the MCP client can ask the user (elicitation), the user is asked, with each " +
-                 "window's title, process and PID, and nothing is closed unless they confirm (errorCode ConfirmationDeclined); otherwise " +
-                 "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
+                 "More than 3 windows need a confirmation, and so does force=true on a protected window when the MCP client can ask " +
+                 "the user (elicitation): the user is asked, with each window's title, process and PID, and nothing is closed unless " +
+                 "they confirm (errorCode ConfirmationDeclined). When the client cannot ask, more than 3 windows need confirm=true " +
+                 "(ConfirmationRequired), and force alone closes a protected window. A window that changed hands after the user confirmed is not closed " +
                  "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
