@@ -266,6 +266,91 @@ public class ElementSearchServiceTests
         result.Error.Should().StartWith("withinRef:");
     }
 
+    [Fact]
+    public async Task Find_AMatchAloneInTheWindow_KeepsItsRefWhenTheElementIsReCreated()
+    {
+        // Arrange - visibleOnly found one Save button; one more search proved no offscreen twin
+        var (window, save, _) = BuildEditor();
+        var saveRef = (await Find(Query(automationId: "SaveBtn"))).Elements!.Single().Ref;
+
+        // Act - the toolbar rebuilt its button
+        save.Vanish();
+        var recreated = new FakeUiaNode("Button", "Save") { AutomationId = "SaveBtn", ClassName = "Button" };
+        window.Children[0].Insert(0, recreated);
+        var resolution = _registry.Resolve(saveRef!, CancellationToken.None);
+
+        // Assert
+        resolution.Element!.Should().Match<ResolvedElement>(r =>
+            r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+    }
+
+    [Fact]
+    public async Task Find_AVisibleMatchWithAnOffscreenTwin_IsNotMovedToALookAlike()
+    {
+        // Arrange - the visible Save button, and the same button on a hidden page
+        var save = new FakeUiaNode("Button", "Save") { AutomationId = "SaveBtn" };
+        var page = new FakeUiaNode("Pane", "Page 1").With(save);
+        var window = new FakeUiaNode("Window", "Wizard").With(
+            page,
+            new FakeUiaNode("Pane", "Page 2") { IsOffscreen = true }.With(
+                new FakeUiaNode("Button", "Save") { AutomationId = "SaveBtn", IsOffscreen = true }));
+        _tree.WithWindow(Handle, window);
+        var found = await Find(Query(automationId: "SaveBtn"));
+        var saveRef = found.Elements!.Single().Ref;
+
+        // Act - the visible one is gone, a look-alike appears
+        save.Vanish();
+        page.With(new FakeUiaNode("Button", "Save") { AutomationId = "SaveBtn" });
+        var resolution = _registry.Resolve(saveRef!, CancellationToken.None);
+
+        // Assert
+        found.MatchCount.Should().Be(1);
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_ARowsTemplatedButton_IsNeverMovedToAnotherRowsButton()
+    {
+        // Arrange - every row has a Delete button with the same automation id
+        var deleteA = new FakeUiaNode("Button", "Delete") { AutomationId = "DeleteButton" };
+        var rowA = new FakeUiaNode("DataItem", "Row A") { AutomationId = "RowA" }.With(deleteA);
+        var rowB = new FakeUiaNode("DataItem", "Row B") { AutomationId = "RowB" }.With(
+            new FakeUiaNode("Button", "Delete") { AutomationId = "DeleteButton" });
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Orders").With(new FakeUiaNode("DataGrid", "Rows").With(rowA, rowB)));
+        var rowARef = _registry.Register(Handle, _tree.ReadElement(rowA), new ElementOrigin(1));
+        var scoped = (await Find(Query(automationId: "DeleteButton", withinRef: rowARef))).Elements!.Single().Ref;
+        var all = await Find(Query(automationId: "DeleteButton"));
+
+        // Act - row A was deleted (by the agent's click): only row B's button is left
+        rowA.Vanish();
+        deleteA.Vanish();
+        var resolution = _registry.Resolve(scoped!, CancellationToken.None);
+
+        // Assert - the click is never repeated on row B
+        all.Elements!.Select(e => e.Ref).Should().Contain(scoped);
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_WithinARefFoundAgainUnderItsOwnRef_ReportsTheRefItHasNow()
+    {
+        // Arrange - the Options group was re-created and the new one already has a ref of its own
+        var (window, _, options) = BuildEditor();
+        var oldRef = (await Find(Query(name: "Options", controlTypes: ["Group"]))).Elements!.Single().Ref;
+        options.Vanish();
+        var recreated = new FakeUiaNode("Group", "Options").With(new FakeUiaNode("Edit", "Search"));
+        window.Children[1].With(recreated);
+        var newRef = _registry.Register(Handle, _tree.ReadElement(recreated), new ElementOrigin(2));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Edit"], withinRef: oldRef));
+
+        // Assert - the asked-for ref was dropped; the result names the one to keep using
+        result.Success.Should().BeTrue();
+        result.WithinRef.Should().Be(newRef).And.NotBe(oldRef);
+        _registry.Lookup(oldRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
     #endregion
 
     #region Detail

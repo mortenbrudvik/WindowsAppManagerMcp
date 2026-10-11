@@ -41,14 +41,19 @@ public sealed record ElementSearchOutcome(
 /// <remarks>
 /// <para>One FindAll over a whole window cannot be stopped once it has started, and its cost grows with the window: a web
 /// page or a large document can hold tens of thousands of elements. So the search splits the tree first. It expands the
-/// top of the tree breadth first (at most <see cref="MaxExpansions"/> nodes; each costs one cheap listing of its children
+/// top of the tree breadth first (at most <see cref="MaxExpansions"/> nodes with several children, and up to
+/// <see cref="MaxChainExpansions"/> more with a single child; each costs one cheap listing of its children
 /// and, for a level of at most <see cref="MaxExpandWidth"/> children, one cached read of them, whose elements are tested
 /// here with <see cref="UiaConditionEvaluator"/>) until it has <see cref="TargetParts"/> parts. A level wider than that is
-/// left whole: one call searches it. Then it runs one provider-side FindAll per part, in tree order, and between parts it
-/// stops when the token is cancelled (<see cref="ElementSearchStop.Timeout"/>) or when the provider has matched
-/// <see cref="MaxCandidates"/> elements (<see cref="ElementSearchStop.CandidateLimit"/>), returning what it found. One
-/// part's FindAll is still a single call: the UIA3 engine's transaction timeout ends it after about 5 s (a
-/// TimeoutException, which ends the search with what it found), and the caller's worker deadline abandons it.</para>
+/// left whole: one call searches it. Then it runs one provider-side FindAll per part, in tree order. Between parts (and,
+/// when a client filter runs, between the elements of a part's results), it stops when the token is cancelled (<see cref="ElementSearchStop.Timeout"/>)
+/// or when the provider has matched <see cref="MaxCandidates"/> elements (<see cref="ElementSearchStop.CandidateLimit"/>),
+/// returning what it found. The limits are checked between provider calls, not inside one: a part's FindAll is a single
+/// call that returns every match of that part (a level wider than <see cref="MaxExpandWidth"/>, such as a list of ten
+/// thousand rows, is one part). The UIA3 engine's transaction timeout ends such a call after about 5 s (a
+/// TimeoutException, which ends the search with what it found); under the managed engine (WAM_UIA_ENGINE=uia2) only the
+/// caller's worker deadline abandons it, and the stuck thread counts against the application until it returns. Searching
+/// a wide level child by child instead would turn one call into thousands.</para>
 /// <para>Order: the matches of the expanded levels first, nearest the root first, then those of each part in tree order.</para>
 /// <para>A condition the evaluator cannot test on cached properties (FrameworkId, ProcessId) is not split: the root is
 /// searched in one call. A part that disappears or whose provider fails is skipped and counted; a timeout ends the search;
@@ -63,8 +68,14 @@ public sealed class ElementSearch
     /// <summary>The search stops once the provider has matched this many elements (before the client filter).</summary>
     public const int MaxCandidates = 2000;
 
-    /// <summary>At most this many nodes are expanded to split the tree.</summary>
+    /// <summary>At most this many nodes with several children are expanded to split the tree.</summary>
     public const int MaxExpansions = 16;
+
+    /// <summary>
+    /// A node with a single child is expanded without counting against <see cref="MaxExpansions"/>, at most this many
+    /// times: the wrapper panes at the top of a browser or Electron window would otherwise use up the split.
+    /// </summary>
+    public const int MaxChainExpansions = 32;
 
     /// <summary>The tree is split until it has this many parts.</summary>
     public const int TargetParts = 12;
@@ -127,8 +138,16 @@ public sealed class ElementSearch
                     continue;
                 }
 
+                // With a client filter (a name pattern), the limits also apply within one part's results: the filter is not
+                // run on more than MaxCandidates elements, or after the deadline. Without one, counting what the provider
+                // already returned costs nothing, and the counts stay exact
                 foreach (var element in found)
                 {
+                    if (_filter != null && StopRequested(cancellationToken))
+                    {
+                        break;
+                    }
+
                     Consider(element);
                 }
             }
@@ -163,6 +182,7 @@ public sealed class ElementSearch
         // The parts in tree order, each with its depth and whether it is to be searched whole
         var parts = new List<(IUiaNode Node, int Depth, bool Whole)> { (root, 0, false) };
         var expansions = 0;
+        var chainExpansions = 0;
         while (expansions < MaxExpansions && parts.Count < TargetParts && !StopRequested(cancellationToken))
         {
             // Breadth first: the shallowest part not yet expanded
@@ -197,6 +217,12 @@ public sealed class ElementSearch
                 {
                     parts[index] = (node, depth, true);
                     continue;
+                }
+
+                if (listed.Count == 1 && chainExpansions < MaxChainExpansions)
+                {
+                    chainExpansions++;
+                    expansions--;
                 }
 
                 children = _tree.GetChildElements(node, cancellationToken);

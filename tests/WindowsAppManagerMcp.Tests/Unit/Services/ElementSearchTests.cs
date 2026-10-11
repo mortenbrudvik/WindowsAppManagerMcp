@@ -100,6 +100,68 @@ public class ElementSearchTests
     }
 
     [Fact]
+    public void Run_StopsAtTheCandidateLimit_WithinOnePartsResults()
+    {
+        // Arrange - one list too wide to split: a single FindAll returns all of it
+        var window = new FakeUiaNode("Window", "App").With(WideList("Rows", 5000));
+        var filtered = 0;
+
+        // Act
+        var outcome = Search(window, IsButton, _ =>
+        {
+            filtered++;
+            return false;
+        });
+
+        // Assert - the client filter (a name pattern) never runs past the limit
+        outcome.Stop.Should().Be(ElementSearchStop.CandidateLimit);
+        outcome.Candidates.Should().Be(ElementSearch.MaxCandidates);
+        filtered.Should().Be(ElementSearch.MaxCandidates);
+    }
+
+    [Fact]
+    public void Run_StopsAtTheDeadline_WithinOnePartsResults()
+    {
+        // Arrange
+        using var deadline = new CancellationTokenSource();
+        var window = new FakeUiaNode("Window", "App").With(WideList("Rows", 500));
+        var filtered = 0;
+
+        // Act - the deadline passes while the tenth element is tested
+        var outcome = Search(window, IsButton, _ =>
+        {
+            if (++filtered == 10)
+            {
+                deadline.Cancel();
+            }
+
+            return true;
+        }, token: deadline.Token);
+
+        // Assert
+        outcome.Stop.Should().Be(ElementSearchStop.Timeout);
+        filtered.Should().Be(10);
+        outcome.MatchCount.Should().Be(10);
+    }
+
+    [Fact]
+    public void Run_ExpandsAChainOfSingleChildren_WithoutUsingUpTheSplit()
+    {
+        // Arrange - the wrapper panes of a browser window above a document with wide sections
+        var document = new FakeUiaNode("Document", "Page").With(
+            Enumerable.Range(1, 6).Select(i => new FakeUiaNode("Group", $"Section {i}").With(WideList($"List {i}", 60))).ToArray());
+        var window = new FakeUiaNode("Window", "Browser").With(Chain(20, document));
+
+        // Act
+        var outcome = Search(window, IsButton);
+
+        // Assert - the lists are the parts, not a pane near the top
+        outcome.MatchCount.Should().Be(360);
+        _tree.Finds.Should().Contain("List 1:Descendants").And.Contain("List 6:Descendants");
+        _tree.Finds.Should().NotContain(f => f.StartsWith("Level", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Run_KeepsTheFirstMatches_AndCountsTheRest()
     {
         var window = new FakeUiaNode("Window", "App").With(WideList("A", 80));

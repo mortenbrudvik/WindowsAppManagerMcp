@@ -3,32 +3,43 @@ using WindowsAppManagerMcp.Models;
 namespace WindowsAppManagerMcp.Services.Interfaces;
 
 /// <summary>
-/// The element registry (roadmap M3.4): gives the elements the read tools return a ref, such as "w12e5", and turns a ref
+/// The element registry (roadmap M3.4): gives the elements the read tools return a ref, such as "w4120035e17", and turns a ref
 /// back into the live element for the calls that act on it, wait for it or read it (M3.6 element_action, M3.8
 /// wait_for_element, M3.9 the text and table reads, M3.11 the marks of a capture).
 /// </summary>
 /// <remarks>
 /// <para><b>Refs.</b> "w&lt;window&gt;e&lt;element&gt;": the window number is given to a window the first time one of its
 /// elements is registered, and the element number counts up within it. A ref is never given to another element in the
-/// same server session: the same element (the same runtime id under the same window, with the same control type,
-/// automation id and class) keeps its ref across reads, and a new element gets a new number. Window numbers start at a
-/// random value per session, so a ref an agent kept from before a server restart practically never names an element of
-/// the new session (it is stale instead). Refs are case-insensitive and opaque: only their form is checked
+/// same server session: the same element (the same runtime id under the same window, with the same identity, see below)
+/// keeps its ref across reads, and a new element gets a new number. Window numbers start at a random value in eight
+/// million per session (<see cref="Services.ElementRegistry.FirstWindowNumberMin"/>), so a ref an agent kept from before a
+/// server restart is "not issued by this session" unless the new session happens to number the same window (about 1 in
+/// 80,000 per remembered window for a session that numbers 100): a probability, not a guarantee, since nothing of the
+/// old session survives. Refs are case-insensitive and opaque: only their form is checked
 /// (<see cref="Services.ElementRefs.IsWellFormed"/>).</para>
-/// <para><b>Lifetime.</b> An entry holds the element, its runtime id, its window, the selector that found it (find_ui_elements'
-/// identity criteria) or none (a tree walk, the focused element, the element at a point), its fingerprint (name, control
-/// type, automation id, class, index path), the generation of the read that last saw it and when it was last used. The
-/// registry keeps the <see cref="Services.ElementRegistry.DefaultCapacity"/> most recently used entries; the others expire.
-/// A window's entries are dropped when the window is gone (IsWindow fails, or its handle now belongs to another process).</para>
+/// <para><b>Identity.</b> The same control type and automation id, and the same class when both reads have one. The name
+/// is not compared ("Play" becomes "Pause"), except for a ListItem, TreeItem or DataItem without an automation id, whose
+/// name says which item it is: a virtualizing list reuses an item's element and runtime id for another row
+/// (<see cref="Services.ElementRegistry.NameIsIdentity"/>). An element inside such a recycled item whose own identity
+/// does not change (a check box of the row) cannot be told apart this way; M3.6 should read what it acts on.</para>
+/// <para><b>Lifetime.</b> An entry holds the element, its runtime id, its window, a selector (see below), its fingerprint
+/// (name, control type, automation id, class, index path), the generation of the read that last saw it and when it was
+/// last used. The registry keeps the <see cref="Services.ElementRegistry.DefaultCapacity"/> most recently used entries
+/// (twice the largest read); the others expire. A window's entries are dropped when the window is gone (IsWindow fails,
+/// or its handle now names a window of another process or class).</para>
+/// <para><b>Selector.</b> find_ui_elements' identity criteria, stored only when its search proved that they fit no other
+/// element of the window with this element's fingerprint (<see cref="ElementOrigin.Unique"/>: a complete search of the
+/// whole window, not below withinRef). A tree walk, the focused element and the element at a point store none.</para>
 /// <para><b>Resolution</b> (<see cref="Resolve"/>), in order: (1) a live read of the stored element (one call that asks the
-/// provider; a runtime id alone is answered from memory and cannot tell that the element is gone); if it is alive with the
-/// same runtime id, that is the element. (2) A search of the window for the runtime id, accepted when the element found has
-/// the stored control type, automation id and class. (3) The stored selector, or one made from the fingerprint (the
-/// automation id, else the name, with control type and class), run again and each result checked against the fingerprint
-/// (with the name too when there is no automation id): one result is the element, re-created, and the ref moves to it;
-/// several are <see cref="UIElementErrorCode.AmbiguousElement"/>, none <see cref="UIElementErrorCode.ElementStale"/>. A ref
-/// never silently resolves to a different element. Both searches are <see cref="Services.ElementSearch"/>es, bounded by the
-/// caller's deadline.</para>
+/// provider; a runtime id alone is answered from memory and cannot tell that the element is gone), accepted when it reads
+/// the stored runtime id and identity. (2) A search of the window for the runtime id, accepted when the element found has
+/// the stored identity. (3) Only with a stored selector: the selector run again and each result checked against the
+/// fingerprint (with the name too when there is no automation id): one result is the element, re-created, and the ref
+/// moves to it; several are <see cref="UIElementErrorCode.AmbiguousElement"/>, none
+/// <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
+/// sibling (another row's Delete button). A ref never silently resolves to a different element it can tell apart. Both
+/// searches are <see cref="Services.ElementSearch"/>es, bounded by the caller's deadline; a search that did not finish
+/// is OperationTimedOut, never a verdict that moves the ref.</para>
 /// <para><b>Threads.</b> Every member is thread safe. <see cref="Register"/> and <see cref="Lookup"/> make no UI Automation
 /// call. <see cref="Resolve"/> does: call it inside a read on an <see cref="IUiaWorker"/> thread (after the window's
 /// hung check), or use <see cref="ResolveAsync"/>, which does both.</para>
@@ -80,7 +91,14 @@ public interface IElementRegistry
 /// element is), or null when the element was not found by a query.</param>
 /// <param name="IndexPath">The element's index among its parent's children at each level below the window, when the read
 /// knows it (a tree walk), or null.</param>
-public sealed record ElementOrigin(long Generation, Services.ElementCriteria? Selector = null, IReadOnlyList<int>? IndexPath = null);
+/// <param name="Unique">Whether the read proved that <paramref name="Selector"/> fits no other element of the window with
+/// this element's fingerprint: true (the selector is kept, and a resolution may move the ref to the element re-created),
+/// false (another element fits it: a kept selector is dropped) or null (not known: nothing changes).</param>
+public sealed record ElementOrigin(
+    long Generation,
+    Services.ElementCriteria? Selector = null,
+    IReadOnlyList<int>? IndexPath = null,
+    bool? Unique = null);
 
 /// <summary>Who an element is, as it was last read: what a resolution checks an element found again against.</summary>
 /// <param name="ClassName">The class name, or null when the read did not get it (an element a walk read on its own); then
@@ -102,7 +120,7 @@ public enum ElementResolutionPath
     /// <summary>The stored element was gone, but the window holds an element with its runtime id and identity.</summary>
     RuntimeId,
 
-    /// <summary>The element was re-created: the stored selector found exactly one element with its fingerprint.</summary>
+    /// <summary>The element was re-created: its proven-unique selector found exactly one element with its fingerprint.</summary>
     Selector
 }
 

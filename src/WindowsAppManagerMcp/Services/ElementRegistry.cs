@@ -6,11 +6,11 @@ using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
 
-/// <summary>The form of element refs (roadmap M3.4): "w&lt;window&gt;e&lt;element&gt;", for example "w412e17".</summary>
+/// <summary>The form of element refs (roadmap M3.4): "w&lt;window&gt;e&lt;element&gt;", for example "w4120035e17".</summary>
 public static partial class ElementRefs
 {
     /// <summary>The description of a ref parameter, for the tools that take one.</summary>
-    public const string Example = "w412e17";
+    public const string Example = "w4120035e17";
 
     /// <summary>True when <paramref name="value"/> has the form of a ref (any letter case, no spaces).</summary>
     public static bool IsWellFormed(string? value) => value != null && RefPattern().IsMatch(value);
@@ -39,8 +39,23 @@ public static partial class ElementRefs
 /// <summary>The element registry (roadmap M3.4); see <see cref="IElementRegistry"/>.</summary>
 public sealed class ElementRegistry : IElementRegistry
 {
-    /// <summary>How many refs the registry keeps: the least recently used expire first.</summary>
-    public const int DefaultCapacity = 5000;
+    /// <summary>
+    /// How many refs the registry keeps: the least recently used expire first. Twice the most elements one read returns
+    /// (get_ui_elements' and capture_with_elements' maxElements limit), so one large read cannot expire the refs an agent
+    /// got just before it.
+    /// </summary>
+    public const int DefaultCapacity = 10_000;
+
+    /// <summary>
+    /// The production registry's first window number is drawn from [<see cref="FirstWindowNumberMin"/>,
+    /// <see cref="FirstWindowNumberMax"/>): eight million starting points, so a ref kept from before a server restart names
+    /// a window of the new session only when the new session happens to number that window too (about 1 in 80,000 per
+    /// remembered window for a session that numbers 100 windows). Seven digits leave room for a million windows.
+    /// </summary>
+    public const int FirstWindowNumberMin = 1_000_000;
+
+    /// <inheritdoc cref="FirstWindowNumberMin"/>
+    public const int FirstWindowNumberMax = 9_000_000;
 
     /// <summary>A resolution keeps this many matches of its searches: enough to tell one from several.</summary>
     private const int ResolutionKeep = 8;
@@ -52,19 +67,23 @@ public sealed class ElementRegistry : IElementRegistry
     private readonly TimeProvider _clock;
     private readonly int _capacity;
 
-    // Every window record this session created, by number (the issued check), and the live ones by handle
-    private readonly Dictionary<int, WindowRecord> _windowsBySeq = [];
+    // The live window records by handle. Window numbers are issued in order from _firstWindowSeq, so a number below
+    // _nextWindowSeq was issued; nothing is kept for a window once it is dropped
     private readonly Dictionary<nint, WindowRecord> _windowsByHandle = [];
     private readonly Dictionary<string, Entry> _byRef = new(StringComparer.Ordinal);
 
     // Most recently used first
     private readonly LinkedList<Entry> _lru = new();
+    private readonly int _firstWindowSeq;
     private int _nextWindowSeq;
     private long _generation;
 
-    /// <summary>The production registry: window numbers start at a random value in 1-899.</summary>
+    /// <summary>
+    /// The production registry: window numbers start at a random value in
+    /// [<see cref="FirstWindowNumberMin"/>, <see cref="FirstWindowNumberMax"/>).
+    /// </summary>
     public ElementRegistry(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper windows)
-        : this(tree, worker, windows, DefaultCapacity, Random.Shared.Next(1, 900), TimeProvider.System)
+        : this(tree, worker, windows, DefaultCapacity, Random.Shared.Next(FirstWindowNumberMin, FirstWindowNumberMax), TimeProvider.System)
     {
     }
 
@@ -82,7 +101,7 @@ public sealed class ElementRegistry : IElementRegistry
         _worker = worker;
         _windows = windows;
         _capacity = capacity;
-        _nextWindowSeq = firstWindowNumber;
+        _firstWindowSeq = _nextWindowSeq = firstWindowNumber;
         _clock = clock;
     }
 
@@ -130,8 +149,8 @@ public sealed class ElementRegistry : IElementRegistry
             return null;
         }
 
-        var processId = WindowProcess(windowHandle);
-        if (processId == null)
+        var identity = WindowIdentityOf(windowHandle);
+        if (identity == null)
         {
             return null;
         }
@@ -140,27 +159,33 @@ public sealed class ElementRegistry : IElementRegistry
         var fingerprint = Fingerprint(element, origin.IndexPath);
         lock (_gate)
         {
-            var record = WindowRecordFor(windowHandle, processId.Value);
+            var record = WindowRecordFor(windowHandle, identity.Value);
             if (record.Entries.TryGetValue(key, out var existing))
             {
                 if (SameIdentity(existing.Fingerprint, fingerprint))
                 {
                     existing.Node = element.Node;
                     existing.Fingerprint = Merge(existing.Fingerprint, fingerprint);
-                    existing.Selector ??= origin.Selector;
+                    existing.Selector = origin.Unique switch
+                    {
+                        true when origin.Selector != null => origin.Selector,
+                        false => null,
+                        _ => existing.Selector
+                    };
                     existing.Generation = Math.Max(existing.Generation, origin.Generation);
                     Touch(existing);
                     return existing.Ref;
                 }
 
-                // Another element has the runtime id of one that is gone: the old ref must not name it
+                // Another element has the runtime id of one that is gone (or a recycled list item shows another row): the
+                // old ref must not name it
                 Remove(existing);
             }
 
             var entry = new Entry(
                 ElementRefs.Format(record.Seq, ++record.LastElement), record, key, runtimeId.ToArray(), element.Node, fingerprint)
             {
-                Selector = origin.Selector,
+                Selector = origin.Unique == true ? origin.Selector : null,
                 Generation = origin.Generation
             };
             record.Entries[key] = entry;
@@ -294,11 +319,13 @@ public sealed class ElementRegistry : IElementRegistry
         }
 
         // 1. The stored element, if it is still there: a live read asks the provider (a runtime id alone is answered from
-        //    memory). The same runtime id means the same element, whatever its name says now
+        //    memory). Accepted only with the stored runtime id and identity: a proxy that now answers for another element,
+        //    a recycled list item that shows another row, or a read without a runtime id proves nothing
         try
         {
             var live = _tree.ReadElement(node);
-            if (live.RuntimeId == null || live.RuntimeId.SequenceEqual(entry.RuntimeId))
+            if (live.RuntimeId is { Count: > 0 } liveId && liveId.SequenceEqual(entry.RuntimeId) &&
+                SameIdentity(fingerprint, Fingerprint(live, null)))
             {
                 return Resolved(entry, node, live, ElementResolutionPath.Live);
             }
@@ -328,17 +355,27 @@ public sealed class ElementRegistry : IElementRegistry
             return Resolved(entry, byId.Matches[0].Node, byId.Matches[0], ElementResolutionPath.RuntimeId);
         }
 
-        // 3. Re-created: the stored selector, or one made from the fingerprint, each result checked against the fingerprint
-        var criteria = selector ?? FingerprintCriteria(fingerprint);
-        if (criteria == null)
+        // 3. Re-created: the stored selector, each result checked against the fingerprint. Only a selector the issuing read
+        //    proved to fit this one element of the window is stored (see Register); without one, a look-alike may be a
+        //    sibling (another row's Delete button), so the ref is not moved to it
+        if (selector == null)
         {
+            if (byId.Stop == ElementSearchStop.Timeout)
+            {
+                return ElementResolution.Failed(UIElementErrorCode.OperationTimedOut,
+                    $"Element ref '{entry.Ref}': its element ({Describe(fingerprint)}) did not answer, and the search for it did not " +
+                    "finish in time; the ref was not dropped. Try again with more time, or find the element with find_ui_elements.");
+            }
+
             return ElementResolution.Failed(UIElementErrorCode.ElementStale,
-                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is gone, and it has neither an " +
-                "automation id nor a name to find it again by. Find the element again with find_ui_elements.");
+                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is gone" +
+                (byId.Complete ? "" : " (the search of the window did not finish)") +
+                ", and the ref is not moved to a look-alike, because the read that issued it did not prove that its " +
+                "description fits only this element. Find the element again with find_ui_elements.");
         }
 
-        var (condition, filter) = criteria.Compile();
-        var found = Search(window, criteria, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e), cancellationToken);
+        var (condition, filter) = selector.Compile();
+        var found = Search(window, selector, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e), cancellationToken);
         switch (found.MatchCount)
         {
             case 1 when found.Complete:
@@ -444,7 +481,9 @@ public sealed class ElementRegistry : IElementRegistry
         {
             lock (_gate)
             {
-                issued = _windowsBySeq.TryGetValue(window, out var record) && element <= record.LastElement;
+                // A window still open also knows how far its element numbers went
+                issued = window >= _firstWindowSeq && window < _nextWindowSeq &&
+                         !_windowsByHandle.Values.Any(r => r.Seq == window && element > r.LastElement);
             }
         }
 
@@ -455,12 +494,15 @@ public sealed class ElementRegistry : IElementRegistry
               "Find the element again with find_ui_elements.";
     }
 
-    /// <summary>The window's record, created when the window has none (or its handle now belongs to another process).</summary>
-    private WindowRecord WindowRecordFor(nint handle, uint processId)
+    /// <summary>
+    /// The window's record, created when the window has none (or its handle now names a window of another process or
+    /// class).
+    /// </summary>
+    private WindowRecord WindowRecordFor(nint handle, WindowIdentity identity)
     {
         if (_windowsByHandle.TryGetValue(handle, out var record))
         {
-            if (record.ProcessId == processId)
+            if (record.Identity == identity)
             {
                 return record;
             }
@@ -468,14 +510,13 @@ public sealed class ElementRegistry : IElementRegistry
             DropWindow(record);
         }
 
-        record = new WindowRecord(_nextWindowSeq++, handle, processId);
+        record = new WindowRecord(_nextWindowSeq++, handle, identity);
         _windowsByHandle[handle] = record;
-        _windowsBySeq[record.Seq] = record;
         return record;
     }
 
-    /// <summary>The window's process, or null when the handle is no window.</summary>
-    private uint? WindowProcess(nint handle)
+    /// <summary>The window's process and class, or null when the handle is no window.</summary>
+    private WindowIdentity? WindowIdentityOf(nint handle)
     {
         try
         {
@@ -485,7 +526,7 @@ public sealed class ElementRegistry : IElementRegistry
             }
 
             var processId = _windows.GetWindowThreadProcessId(handle);
-            return processId == 0 ? null : processId;
+            return processId == 0 ? null : new WindowIdentity(processId, _windows.GetClassName(handle) ?? string.Empty);
         }
         catch (Exception)
         {
@@ -493,8 +534,12 @@ public sealed class ElementRegistry : IElementRegistry
         }
     }
 
-    /// <summary>True when the record's window still exists and belongs to the same process (its handle was not reused).</summary>
-    private bool IsSameWindow(WindowRecord record) => WindowProcess(record.Handle) == record.ProcessId;
+    /// <summary>
+    /// True when the record's window still exists with the same process and class: its handle was not reused by another
+    /// window. A reuse by a window of the same process and class is not told apart; it is rare, since a handle value comes
+    /// back only after its slot's 16-bit reuse counter wraps.
+    /// </summary>
+    private bool IsSameWindow(WindowRecord record) => WindowIdentityOf(record.Handle) == record.Identity;
 
     /// <summary>Drops a window and its refs. Under the lock.</summary>
     private void DropWindow(WindowRecord record)
@@ -539,7 +584,8 @@ public sealed class ElementRegistry : IElementRegistry
     private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
         string.Join('.', runtimeId.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
-    private static ElementFingerprint Fingerprint(UiaElement element, IReadOnlyList<int>? indexPath) =>
+    /// <summary>Who an element is, as read now.</summary>
+    internal static ElementFingerprint Fingerprint(UiaElement element, IReadOnlyList<int>? indexPath) =>
         new(
             EmptyToNull(element.Properties.Name),
             element.Properties.ControlType,
@@ -558,13 +604,26 @@ public sealed class ElementRegistry : IElementRegistry
 
     /// <summary>
     /// Whether an element read now can be the stored one: the same control type and automation id, and the same class when
-    /// both reads have one. The name is not compared: labels change ("Play" becomes "Pause").
+    /// both reads have one. The name is not compared, since labels change ("Play" becomes "Pause"), except for a list,
+    /// tree or grid item without an automation id (<see cref="NameIsIdentity"/>).
     /// </summary>
     internal static bool SameIdentity(ElementFingerprint stored, ElementFingerprint read) =>
         string.Equals(stored.ControlType, read.ControlType, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(stored.AutomationId ?? string.Empty, read.AutomationId ?? string.Empty, StringComparison.Ordinal) &&
         (stored.ClassName == null || read.ClassName == null ||
-         string.Equals(stored.ClassName, read.ClassName, StringComparison.Ordinal));
+         string.Equals(stored.ClassName, read.ClassName, StringComparison.Ordinal)) &&
+        (!NameIsIdentity(stored) || string.Equals(stored.Name ?? string.Empty, read.Name ?? string.Empty, StringComparison.Ordinal));
+
+    /// <summary>
+    /// True for a ListItem, TreeItem or DataItem without an automation id: its name says which item it is. A virtualizing
+    /// list (WinUI, WPF with recycling, many web lists) reuses an item's element, and its runtime id, for another row when
+    /// it scrolls, so the same runtime id with another name is another item.
+    /// </summary>
+    internal static bool NameIsIdentity(ElementFingerprint fingerprint) =>
+        fingerprint.AutomationId == null &&
+        (fingerprint.ControlType.Equals("ListItem", StringComparison.OrdinalIgnoreCase) ||
+         fingerprint.ControlType.Equals("TreeItem", StringComparison.OrdinalIgnoreCase) ||
+         fingerprint.ControlType.Equals("DataItem", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Whether an element found by a selector is the stored element re-created: the same identity, and, when it has no
@@ -575,24 +634,6 @@ public sealed class ElementRegistry : IElementRegistry
         var read = Fingerprint(element, null);
         return SameIdentity(stored, read) &&
                (stored.AutomationId != null || string.Equals(stored.Name ?? string.Empty, read.Name ?? string.Empty, StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// A selector made from a fingerprint: the automation id, else the name, with the control type and class; null when the
-    /// element has neither an automation id nor a name.
-    /// </summary>
-    internal static ElementCriteria? FingerprintCriteria(ElementFingerprint fingerprint)
-    {
-        if (fingerprint.AutomationId == null && fingerprint.Name == null)
-        {
-            return null;
-        }
-
-        return new ElementCriteria(
-            Name: fingerprint.AutomationId == null ? fingerprint.Name : null,
-            AutomationId: fingerprint.AutomationId,
-            ControlTypes: [fingerprint.ControlType],
-            ClassName: fingerprint.ClassName);
     }
 
     private static string Describe(ElementFingerprint fingerprint)
@@ -618,12 +659,15 @@ public sealed class ElementRegistry : IElementRegistry
 
     private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
-    /// <summary>A window whose elements have refs: its number, and the handle and process it was seen with.</summary>
-    private sealed class WindowRecord(int seq, nint handle, uint processId)
+    /// <summary>What tells a window apart from a later window that reuses its handle.</summary>
+    private readonly record struct WindowIdentity(uint ProcessId, string ClassName);
+
+    /// <summary>A window whose elements have refs: its number, and the handle, process and class it was seen with.</summary>
+    private sealed class WindowRecord(int seq, nint handle, WindowIdentity identity)
     {
         public int Seq { get; } = seq;
         public nint Handle { get; } = handle;
-        public uint ProcessId { get; } = processId;
+        public WindowIdentity Identity { get; } = identity;
 
         /// <summary>The number of the last element given a ref; numbers are never given twice.</summary>
         public int LastElement { get; set; }

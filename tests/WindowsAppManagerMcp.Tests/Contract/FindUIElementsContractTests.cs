@@ -28,7 +28,7 @@ public class FindUIElementsContractTests
     public async Task AStandardResult_PutsTheRefFirst_NamesItsStates_AndLeavesOutWhatDoesNotApply()
     {
         // Arrange
-        var wrap = new FoundElement("w412e40", "Word wrap", "CheckBox", "wrapBox", "CheckBox", new BoundsDto(10, 20, 100, 20),
+        var wrap = new FoundElement("w4120035e40", "Word wrap", "CheckBox", "wrapBox", "CheckBox", new BoundsDto(10, 20, 100, 20),
             new ScreenPoint(18, 30), true, false, ["Toggle"], ToggleState: UiaToggleState.On, HasKeyboardFocus: false, IsKeyboardFocusable: true);
 
         // Act
@@ -78,12 +78,12 @@ public class FindUIElementsContractTests
 
         // Act
         var result = await CallAsync(
-            new() { ["name"] = "Save", ["withinRef"] = "w412e9" },
+            new() { ["name"] = "Save", ["withinRef"] = "w4120035e9" },
             services =>
             {
                 arranged = services;
-                services.ElementRegistry.Setup(r => r.Lookup("w412e9")).Returns(new ElementLookup(
-                    "w412e9", 0, null, 0, UIElementErrorCode.ElementStale, "Element ref 'w412e9' is stale: its window closed."));
+                services.ElementRegistry.Setup(r => r.Lookup("w4120035e9")).Returns(new ElementLookup(
+                    "w4120035e9", 0, null, 0, UIElementErrorCode.ElementStale, "Element ref 'w4120035e9' is stale: its window closed."));
             });
 
         // Assert

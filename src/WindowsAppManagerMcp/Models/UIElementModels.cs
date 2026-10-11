@@ -13,7 +13,7 @@ namespace WindowsAppManagerMcp.Models;
 /// the window). Null in the tree format, where the nesting shows it.</param>
 /// <param name="Parent">format=flat only: the index in the flat list of the returned element this one is inside, or null
 /// when it is listed directly under the window.</param>
-/// <param name="Ref">The element's ref (roadmap M3.4), for example "w12e5": later calls name the element by it. The same
+/// <param name="Ref">The element's ref (roadmap M3.4), for example "w4120035e17": later calls name the element by it. The same
 /// element keeps its ref in every read of this server session, and a ref never names another element. Null when the
 /// element has no runtime id, or the walk ran without the element registry. Serialized first.</param>
 public record UIElementInfo(
@@ -133,8 +133,8 @@ public enum UIElementErrorCode
 
     /// <summary>
     /// An element ref (roadmap M3.4) no longer names an element: the element is gone and could not be found again for
-    /// certain, its window closed, the ref expired from the registry, or this server session never issued it (refs do
-    /// not survive a restart). Find the element again (find_ui_elements) and use the new ref.
+    /// certain, its window closed, the ref expired from the registry, or this server session never issued it (refs are
+    /// not meant to survive a restart). Find the element again (find_ui_elements) and use the new ref.
     /// </summary>
     ElementStale = 11,
 

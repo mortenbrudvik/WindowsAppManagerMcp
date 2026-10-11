@@ -109,7 +109,8 @@ public record FoundElement(
 
 /// <summary>Result of find_ui_elements (roadmap M3.4).</summary>
 /// <param name="WindowHandle">The window searched (the window of withinRef when only that was given).</param>
-/// <param name="WithinRef">The ref whose element's descendants were searched, or null for the whole window.</param>
+/// <param name="WithinRef">The ref whose element's descendants were searched, or null for the whole window: the ref asked
+/// for, or the ref the element has now when it was found again with a ref of its own (the asked-for one was dropped).</param>
 /// <param name="MatchCount">How many elements matched in the part of the window that was searched: all of it unless
 /// <paramref name="TruncationReason"/> is Timeout, SearchLimit or PartsSkipped.</param>
 /// <param name="Truncated">True when <paramref name="Elements"/> does not hold every match, or the search did not cover

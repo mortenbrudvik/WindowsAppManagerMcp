@@ -5,7 +5,7 @@ namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>
 /// The compact shapes of get_ui_elements' result (roadmap M3.1): format=flat lists every element once, and format=text
-/// writes one line per element, for example <c>w412e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]</c>.
+/// writes one line per element, for example <c>w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]</c>.
 /// </summary>
 /// <remarks>
 /// <para>A text line is: the element's ref (roadmap M3.4) when it has one; the control type; the name in single quotes (a quote or backslash inside is escaped with a

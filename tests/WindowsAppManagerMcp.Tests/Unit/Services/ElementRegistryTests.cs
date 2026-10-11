@@ -22,7 +22,14 @@ public class ElementRegistryTests
         _windows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>()))
             .Returns((nint h) => _processes.GetValueOrDefault(h));
         _windows.Setup(w => w.RespondsWithin(It.IsAny<nint>(), It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.GetClassName(It.IsAny<nint>())).Returns((nint h) => _classes.GetValueOrDefault(h, "AppWindow"));
     }
+
+    private readonly Dictionary<nint, string> _classes = [];
+
+    /// <summary>The identity criteria find_ui_elements would store for a button with this automation id.</summary>
+    private static ElementCriteria ByAutomationId(string automationId) =>
+        new(AutomationId: automationId, ControlTypes: ["Button"]);
 
     private ElementRegistry CreateSut(int capacity = ElementRegistry.DefaultCapacity) =>
         new(_tree, _worker, _windows.Object, capacity, firstWindowNumber: 1, TimeProvider.System);
@@ -37,8 +44,9 @@ public class ElementRegistryTests
     private static FakeUiaNode Button(string name, string? automationId = null, IReadOnlyList<int>? runtimeId = null) =>
         new("Button", name) { AutomationId = automationId, ClassName = "Button", RuntimeId = runtimeId ?? FakeUiaNode.NewRuntimeId() };
 
-    private string? Register(ElementRegistry sut, FakeUiaNode node, nint? handle = null, ElementCriteria? selector = null) =>
-        sut.Register(handle ?? Handle, _tree.ReadElement(node), new ElementOrigin(1, selector));
+    /// <summary>Registers a node; a selector counts as proven unique unless <paramref name="unique"/> says otherwise.</summary>
+    private string? Register(ElementRegistry sut, FakeUiaNode node, nint? handle = null, ElementCriteria? selector = null, bool? unique = true) =>
+        sut.Register(handle ?? Handle, _tree.ReadElement(node), new ElementOrigin(1, selector, Unique: selector == null ? null : unique));
 
     #region Refs
 
@@ -151,17 +159,57 @@ public class ElementRegistryTests
     }
 
     [Fact]
-    public void TheProductionRegistry_StartsWindowNumbersAtARandomValue()
+    public void Lookup_OfARefOfAClosedWindow_SaysItIsStale_NotThatItWasNeverIssued()
     {
-        // A ref kept from before a restart must practically never name an element of the new session
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+        _processes.Remove(Handle);
+        sut.NextGeneration();
+
+        sut.Lookup(save!).Error.Should().Contain("is stale").And.NotContain("not issued");
+    }
+
+    [Fact]
+    public void TheProductionRegistry_StartsWindowNumbersAtARandomValueInEightMillion()
+    {
+        // A ref kept from before a restart names a window of the new session only when both sessions number that window:
+        // the start is drawn from 1,000,000-8,999,999, seven digits that fit the ref form
         var numbers = Enumerable.Range(0, 20)
             .Select(_ => new ElementRegistry(_tree, _worker, _windows.Object))
             .Select(sut => sut.Register(Handle, _tree.ReadElement(Button("Save")), new ElementOrigin(1)))
             .Select(r => ElementRefs.TryParse(r, out var window, out _) ? window : 0)
             .ToList();
 
-        numbers.Should().OnlyContain(n => n >= 1 && n < 900);
-        numbers.Distinct().Should().HaveCountGreaterThan(1);
+        numbers.Should().OnlyContain(n => n >= ElementRegistry.FirstWindowNumberMin && n < ElementRegistry.FirstWindowNumberMax);
+        numbers.Distinct().Should().HaveCountGreaterThan(10);
+        (ElementRegistry.FirstWindowNumberMax - ElementRegistry.FirstWindowNumberMin).Should().BeGreaterThanOrEqualTo(8_000_000);
+        ElementRefs.IsWellFormed(ElementRefs.Format(ElementRegistry.FirstWindowNumberMax + 1_000_000, 99_999)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ARefOfAnotherSession_IsNotIssuedByThisOne()
+    {
+        // Arrange - two sessions whose window numbers do not overlap
+        var before = new ElementRegistry(_tree, _worker, _windows.Object, 100, firstWindowNumber: 4_120_035, TimeProvider.System);
+        var oldRef = before.Register(Handle, _tree.ReadElement(Button("Save")), new ElementOrigin(1));
+        var after = new ElementRegistry(_tree, _worker, _windows.Object, 100, firstWindowNumber: 6_000_000, TimeProvider.System);
+        after.Register(Handle, _tree.ReadElement(Button("Delete")), new ElementOrigin(1));
+
+        // Act
+        var resolution = after.Resolve(oldRef!, None);
+
+        // Assert
+        oldRef.Should().Be("w4120035e1");
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("not issued by this server session");
+    }
+
+    [Fact]
+    public void TheCapacity_OutlastsTheLargestRead()
+    {
+        // One get_ui_elements or capture_with_elements call registers at most MaxElementsLimit elements: refs from before
+        // it survive
+        ElementRegistry.DefaultCapacity.Should().BeGreaterThanOrEqualTo(2 * WindowsAppManagerMcp.Tools.UIElementTools.MaxElementsLimit);
     }
 
     #endregion
@@ -199,6 +247,22 @@ public class ElementRegistryTests
         // Assert
         next.Should().Be("w2e1");
         sut.Lookup(save!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void AWindowHandleReusedByAWindowOfAnotherClass_InTheSameProcess_DropsTheOldRefs()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+
+        // Act - the app closed the window and opened a dialog that got the same handle
+        _classes[Handle] = "#32770";
+        var lookup = sut.Lookup(save!);
+
+        // Assert
+        lookup.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        Register(sut, Button("OK")).Should().Be("w2e1");
     }
 
     [Fact]
@@ -250,7 +314,7 @@ public class ElementRegistryTests
         var save = Button("Save", "SaveButton");
         var toolbar = new FakeUiaNode("Pane", "Toolbar").With(save, Button("Open", "OpenButton"));
         Window(Handle, toolbar);
-        var saveRef = Register(sut, save);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
 
         // Act - the toolbar was rebuilt: a new element, a new runtime id, the same control (its label changed too)
         save.Vanish();
@@ -262,6 +326,68 @@ public class ElementRegistryTests
         resolution.Element!.Should().Match<ResolvedElement>(r =>
             r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
         sut.Resolve(saveRef!, None).Element!.Via.Should().Be(ElementResolutionPath.Live, "the ref now holds the new element");
+    }
+
+    [Fact]
+    public void Resolve_AWalkRefWhoseElementWasReCreated_IsStale_NotMovedToALookAlike()
+    {
+        // Arrange - a tree walk gave the ref: nothing proved that no other element looks like it
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        var toolbar = new FakeUiaNode("Pane", "Toolbar").With(save);
+        Window(Handle, toolbar);
+        var saveRef = Register(sut, save);
+
+        // Act
+        save.Vanish();
+        toolbar.With(Button("Save", "SaveButton"));
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("not moved to a look-alike").And.Contain("find_ui_elements");
+    }
+
+    [Fact]
+    public void Resolve_ARowsButtonWhoseRowIsGone_IsStale_NeverTheOtherRowsButton()
+    {
+        // Arrange - two rows with the same templated Delete button; the ref came from a search that saw both (not unique)
+        var sut = CreateSut();
+        var deleteA = Button("Delete", "DeleteButton");
+        var deleteB = Button("Delete", "DeleteButton");
+        var rowA = new FakeUiaNode("DataItem", "Row A") { AutomationId = "RowA" }.With(deleteA);
+        var rowB = new FakeUiaNode("DataItem", "Row B") { AutomationId = "RowB" }.With(deleteB);
+        var grid = new FakeUiaNode("DataGrid", "Rows").With(rowA, rowB);
+        Window(Handle, grid);
+        var deleteRef = Register(sut, deleteA, selector: ByAutomationId("DeleteButton"), unique: false);
+
+        // Act - row A was deleted: row B's button is now the only Delete button
+        rowA.Vanish();
+        deleteA.Vanish();
+        var resolution = sut.Resolve(deleteRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void Register_ASearchThatFoundATwin_DropsTheProvenSelector()
+    {
+        // Arrange - first found alone, later found next to a twin
+        var sut = CreateSut();
+        var delete = Button("Delete", "DeleteButton");
+        var list = new FakeUiaNode("List", "Rows").With(delete);
+        Window(Handle, list);
+        var deleteRef = Register(sut, delete, selector: ByAutomationId("DeleteButton"));
+        list.With(Button("Delete", "DeleteButton"));
+        Register(sut, delete, selector: ByAutomationId("DeleteButton"), unique: false).Should().Be(deleteRef);
+
+        // Act - the first one is gone
+        delete.Vanish();
+        var resolution = sut.Resolve(deleteRef!, None);
+
+        // Assert - not moved to the twin
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 
     [Fact]
@@ -308,12 +434,12 @@ public class ElementRegistryTests
     [Fact]
     public void Resolve_WhenSeveralElementsFitTheGoneOne_IsAmbiguous_AndMovesTheRefNowhere()
     {
-        // Arrange - an unnamed-id button is found again by its name, and two buttons are now named Delete
+        // Arrange - a button without an automation id, found alone by its name; now two buttons are named Delete
         var sut = CreateSut();
         var delete = Button("Delete");
         var list = new FakeUiaNode("List", "Rows").With(delete);
         Window(Handle, list);
-        var deleteRef = Register(sut, delete);
+        var deleteRef = Register(sut, delete, selector: new ElementCriteria(Name: "Delete", ControlTypes: ["Button"]));
         delete.Vanish();
         list.With(Button("Delete"), Button("Delete"));
 
@@ -335,7 +461,7 @@ public class ElementRegistryTests
         var save = Button("Save");
         var pane = new FakeUiaNode("Pane", "Toolbar").With(save);
         Window(Handle, pane);
-        var saveRef = Register(sut, save);
+        var saveRef = Register(sut, save, selector: new ElementCriteria(ControlTypes: ["Button"]));
 
         // Act - a button with another name took its place
         save.Vanish();
@@ -361,7 +487,7 @@ public class ElementRegistryTests
 
         // Assert
         resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
-        resolution.Error.Should().Contain("neither an automation id nor a name");
+        resolution.Error.Should().Contain("is gone");
     }
 
     [Fact]
@@ -393,7 +519,7 @@ public class ElementRegistryTests
         var save = Button("Save", "SaveButton");
         var pane = new FakeUiaNode("Pane", "Toolbar").With(save);
         Window(Handle, pane);
-        var oldRef = Register(sut, save);
+        var oldRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
         save.Vanish();
         var recreated = Button("Save", "SaveButton");
         pane.With(recreated);
@@ -415,13 +541,93 @@ public class ElementRegistryTests
         var save = Button("Save", "SaveButton");
         var pane = new FakeUiaNode("Pane", "Toolbar").With(save);
         Window(Handle, pane);
-        var saveRef = sut.Register(Handle, _tree.ReadElement(save) with { RuntimeId = [42, -1] }, new ElementOrigin(1));
+        var saveRef = sut.Register(Handle, _tree.ReadElement(save) with { RuntimeId = [42, -1] },
+            new ElementOrigin(1, ByAutomationId("SaveButton"), Unique: true));
 
         // Act
         var resolution = sut.Resolve(saveRef!, None);
 
-        // Assert - not accepted as live; found again by the fingerprint
+        // Assert - not accepted as live; found again by its proven selector
         resolution.Element!.Via.Should().Be(ElementResolutionPath.Selector);
+    }
+
+    [Fact]
+    public void Resolve_WhenTheLiveReadSeesAnotherControlWithTheStoredRuntimeId_DoesNotAcceptIt()
+    {
+        // Arrange - the stored proxy now answers as a check box (a reused child window, a recycled container)
+        var sut = CreateSut();
+        var id = FakeUiaNode.NewRuntimeId();
+        var node = new FakeUiaNode("CheckBox", "Save") { AutomationId = "SaveOption", RuntimeId = id };
+        Window(Handle, node);
+        var stored = _tree.ReadElement(node);
+        var saveRef = sut.Register(Handle, stored with
+        {
+            Properties = stored.Properties with { ControlType = "Button", AutomationId = "SaveButton" }
+        }, new ElementOrigin(1));
+
+        // Act
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.Success.Should().BeFalse();
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void Resolve_ARecycledListItemThatShowsAnotherRow_IsNotTheStoredItem()
+    {
+        // Arrange - a virtualizing list reused Item 3's element, runtime id and all, for Item 47
+        var sut = CreateSut();
+        var id = FakeUiaNode.NewRuntimeId();
+        var container = new FakeUiaNode("ListItem", "Item 47") { RuntimeId = id };
+        Window(Handle, new FakeUiaNode("List", "Items").With(container));
+        var read = _tree.ReadElement(container);
+        var itemRef = sut.Register(Handle, read with { Properties = read.Properties with { Name = "Item 3" } }, new ElementOrigin(1));
+
+        // Act
+        var resolution = sut.Resolve(itemRef!, None);
+        var nowRef = Register(sut, container);
+
+        // Assert - the ref of Item 3 never names Item 47, and Item 47 gets a ref of its own
+        resolution.Success.Should().BeFalse();
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        nowRef.Should().NotBe(itemRef);
+        sut.Lookup(itemRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void Resolve_AListItemWithAnAutomationId_KeepsItsRefWhenItsNameChanges()
+    {
+        // Arrange - an automation id says which item it is, so its name may change
+        var sut = CreateSut();
+        var id = FakeUiaNode.NewRuntimeId();
+        var item = new FakeUiaNode("ListItem", "Inbox (3)") { AutomationId = "Inbox", RuntimeId = id };
+        Window(Handle, new FakeUiaNode("List", "Folders").With(item));
+        var read = _tree.ReadElement(item);
+        var itemRef = sut.Register(Handle, read with { Properties = read.Properties with { Name = "Inbox (2)" } }, new ElementOrigin(1));
+
+        // Act
+        var resolution = sut.Resolve(itemRef!, None);
+
+        // Assert
+        resolution.Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
+    [Fact]
+    public void Resolve_WhenTheLiveReadHasNoRuntimeId_DoesNotAcceptItAsLive()
+    {
+        // Arrange - the stored node now reads without a runtime id: nothing says which element answered
+        var sut = CreateSut();
+        var node = new FakeUiaNode("Button", "Save") { AutomationId = "SaveButton", RuntimeId = null };
+        Window(Handle, node);
+        var saveRef = sut.Register(Handle, _tree.ReadElement(node) with { RuntimeId = [42, -7] }, new ElementOrigin(1));
+
+        // Act
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.Success.Should().BeFalse();
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 
     [Fact]

@@ -129,18 +129,18 @@ public class FindUIElementsToolTests
     [Fact]
     public void TextFormat_PutsTheRefFirst()
     {
-        var element = new UIElementInfo("Save", "Button", "SaveBtn", new BoundsDto(812, 44, 80, 24), true, false, Ref: "w412e17");
+        var element = new UIElementInfo("Save", "Button", "SaveBtn", new BoundsDto(812, 44, 80, 24), true, false, Ref: "w4120035e17");
 
-        UIElementTextFormat.Line(element).Should().Be("w412e17 Button 'Save' aid=SaveBtn @812,44 80x24");
+        UIElementTextFormat.Line(element).Should().Be("w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24");
     }
 
     [Fact]
     public void Refs_AreSerializedFirst()
     {
         var json = System.Text.Json.JsonSerializer.Serialize(
-            new UIElementInfo("Save", "Button", null, null, true, false, Ref: "w412e17"),
+            new UIElementInfo("Save", "Button", null, null, true, false, Ref: "w4120035e17"),
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
 
-        json.Should().StartWith("{\"ref\":\"w412e17\",\"name\":\"Save\"");
+        json.Should().StartWith("{\"ref\":\"w4120035e17\",\"name\":\"Save\"");
     }
 }

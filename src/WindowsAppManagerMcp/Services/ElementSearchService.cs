@@ -12,6 +12,12 @@ namespace WindowsAppManagerMcp.Services;
 /// (<see cref="ElementSearch"/>, keeping the first maxResults matches and counting the rest), then for each kept match its
 /// ref, its click point (UI Automation's clickable point, else the centre of its bounds; none for an offscreen element) and,
 /// for detail standard or full, its state, each one call per property group.</para>
+/// <para>Each match is registered with the search's identity criteria as its selector and whether they fit only it in the
+/// window (<see cref="ElementOrigin.Unique"/>), which decides whether a resolution may later move its ref to the element
+/// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or
+/// enabledOnly, when every match was kept, each one whose fingerprint no other match shares; with them, which can hide an
+/// offscreen or disabled twin, a single match is checked by one more search of the window for its identity alone, limited
+/// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique.</para>
 /// <para>A search the managed client cannot express (AppBar or SemanticZoom) runs again with the control types tested on
 /// the server. Reads of a match's details that fail leave those fields out; once the deadline has passed, or a provider did
 /// not answer in time, the remaining matches are described from what the search read (no further call). A read the worker
@@ -24,6 +30,9 @@ public sealed class ElementSearchService : IElementSearchService
 
     /// <summary>The default timeout of a search.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>The most time the search that proves a single match unique may take (it ends earlier at the deadline).</summary>
+    public static readonly TimeSpan UniquenessBudget = TimeSpan.FromSeconds(1);
 
     /// <summary>How long to keep waiting after the timeout for the search to stop and hand back what it found.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
@@ -114,7 +123,8 @@ public sealed class ElementSearchService : IElementSearchService
             // The worker gave up on a search stuck in an application that does not answer: what it found is still returned,
             // described from what the search read
             return started.Search is { } search && search.Snapshot() is { MatchCount: > 0 } partial
-                ? Result(query, started.Title, partial with { Stop = ElementSearchStop.Timeout }, Describe(query, criteria, partial.Matches, started.Generation, null, default), stopwatch)
+                ? Result(query, query.WithinRef, started.Title, partial with { Stop = ElementSearchStop.Timeout },
+                    Describe(query, criteria, partial.Matches, started.Generation, null, _ => null, default), stopwatch)
                 : Failure($"UI Automation did not answer in time: {ex.Message}", UIElementErrorCode.OperationTimedOut, started.Title);
         }
     }
@@ -158,6 +168,7 @@ public sealed class ElementSearchService : IElementSearchService
             var title = TryReadName(window);
             started.Title = title;
             var root = window;
+            var withinRef = query.WithinRef;
             if (query.WithinRef != null)
             {
                 var within = _registry.Resolve(query.WithinRef, token);
@@ -175,11 +186,16 @@ public sealed class ElementSearchService : IElementSearchService
                 }
 
                 root = resolved.Node;
+
+                // The ref the element has now: when it was found again and already had a ref of its own, the asked-for one
+                // was dropped
+                withinRef = resolved.Ref;
             }
 
             var generation = _registry.NextGeneration();
             started.Generation = generation;
             ElementSearchOutcome outcome;
+            var controlTypesOnServer = false;
             try
             {
                 outcome = Run(criteria.Compile(), maxResults, root, started, token);
@@ -187,6 +203,7 @@ public sealed class ElementSearchService : IElementSearchService
             catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
             {
                 // The managed client cannot search for AppBar or SemanticZoom: test the control types here
+                controlTypesOnServer = true;
                 outcome = Run(criteria.Compile(controlTypesOnServer: true), maxResults, root, started, token);
             }
 
@@ -198,7 +215,11 @@ public sealed class ElementSearchService : IElementSearchService
                     UIElementErrorCode.OperationTimedOut, title);
             }
 
-            return Result(query, title, outcome, Describe(query, criteria, outcome.Matches, generation, root, token), stopwatch);
+            var unique = query.WithinRef == null
+                ? Uniqueness(criteria, controlTypesOnServer, outcome, window, token)
+                : _ => null;
+            return Result(query, withinRef, title, outcome,
+                Describe(query, criteria, outcome.Matches, generation, root, unique, token), stopwatch);
         }
         catch (UiaElementUnavailableException ex)
         {
@@ -233,8 +254,84 @@ public sealed class ElementSearchService : IElementSearchService
         return search.Run(root, token);
     }
 
+    /// <summary>
+    /// Whether the criteria fit each kept match alone in the window (see the remarks): true, false, or null when that is
+    /// not known. <paramref name="outcome"/> is a search of the whole window.
+    /// </summary>
+    private Func<UiaElement, bool?> Uniqueness(
+        ElementCriteria criteria, bool controlTypesOnServer, ElementSearchOutcome outcome, IUiaNode window, CancellationToken token)
+    {
+        var matches = outcome.Matches;
+        var twins = new HashSet<UiaElement>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < matches.Count; i++)
+        {
+            for (var j = i + 1; j < matches.Count; j++)
+            {
+                if (ElementRegistry.SameElement(ElementRegistry.Fingerprint(matches[i], null), matches[j]))
+                {
+                    twins.Add(matches[i]);
+                    twins.Add(matches[j]);
+                }
+            }
+        }
+
+        if (!outcome.Complete)
+        {
+            return m => twins.Contains(m) ? false : null;
+        }
+
+        if (!criteria.VisibleOnly && !criteria.EnabledOnly)
+        {
+            // Every element the criteria fit was a match; when all were kept, the ones without a twin are alone
+            var allKept = outcome.MatchCount == matches.Count;
+            return m => twins.Contains(m) ? false : allKept ? true : null;
+        }
+
+        if (outcome.MatchCount != 1 || token.IsCancellationRequested)
+        {
+            return m => twins.Contains(m) ? false : null;
+        }
+
+        // A single match among the visible or enabled ones: an offscreen or disabled twin would not have been found, so
+        // search the window for its identity alone
+        var match = matches[0];
+        var proven = ProveAlone(criteria.Identity, controlTypesOnServer, match, window, token);
+        return m => ReferenceEquals(m, match) ? proven : null;
+    }
+
+    /// <summary>
+    /// True when one more search of the window finds no other element that the criteria and the match's fingerprint fit,
+    /// false when it finds one, null when it could not tell.
+    /// </summary>
+    private bool? ProveAlone(ElementCriteria identity, bool controlTypesOnServer, UiaElement match, IUiaNode window, CancellationToken token)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(UniquenessBudget);
+        try
+        {
+            var (condition, filter) = identity.Compile(controlTypesOnServer);
+            var fingerprint = ElementRegistry.Fingerprint(match, null);
+            var proof = new ElementSearch(
+                    _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2)
+                .Run(window, budget.Token);
+            return proof.MatchCount switch
+            {
+                > 1 => false,
+                1 when proof.Complete && proof.Matches[0].RuntimeId is { } id && match.RuntimeId is { } matchId &&
+                       id.SequenceEqual(matchId) => true,
+                _ => null
+            };
+        }
+        catch (Exception)
+        {
+            // Best effort: not proven (a name pattern that ran too long on an offscreen name, a provider failure)
+            return null;
+        }
+    }
+
     private static FindElementsResult Result(
-        ElementQuery query, string? title, ElementSearchOutcome outcome, IReadOnlyList<FoundElement> elements, Stopwatch stopwatch)
+        ElementQuery query, string? withinRef, string? title, ElementSearchOutcome outcome, IReadOnlyList<FoundElement> elements,
+        Stopwatch stopwatch)
     {
         ElementSearchTruncation? reason = outcome.Stop switch
         {
@@ -253,7 +350,7 @@ public sealed class ElementSearchService : IElementSearchService
             Truncated: reason != null,
             Elements: elements,
             ElapsedMilliseconds: Elapsed(stopwatch),
-            WithinRef: query.WithinRef,
+            WithinRef: withinRef,
             TruncationReason: reason);
     }
 
@@ -263,7 +360,7 @@ public sealed class ElementSearchService : IElementSearchService
     /// </summary>
     private List<FoundElement> Describe(
         ElementQuery query, ElementCriteria criteria, IReadOnlyList<UiaElement> matches, long generation, IUiaNode? root,
-        CancellationToken token)
+        Func<UiaElement, bool?> unique, CancellationToken token)
     {
         var mayRead = root != null;
         var found = new List<FoundElement>(matches.Count);
@@ -272,7 +369,8 @@ public sealed class ElementSearchService : IElementSearchService
             string? elementRef = null;
             try
             {
-                elementRef = _registry.Register(query.WindowHandle, match, new ElementOrigin(generation, criteria.Identity));
+                elementRef = _registry.Register(
+                    query.WindowHandle, match, new ElementOrigin(generation, criteria.Identity, Unique: unique(match)));
             }
             catch (Exception)
             {
