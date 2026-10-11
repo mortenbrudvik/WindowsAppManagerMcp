@@ -42,7 +42,7 @@ public class AppLauncherTools
         _gateWaitTimeout = gateWaitTimeout;
     }
 
-    [McpServerTool(Name = "launch_application", Title = "Launch Application", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
+    [McpServerTool(Name = "launch_application", Title = "Launch Application", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
     [Description("Launch an application by executable path, name, or protocol URI. Returns process ID and optionally the window handle if waitForWindow is true.")]
     public async Task<LaunchResultDto> LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com')")]
@@ -179,7 +179,7 @@ public class AppLauncherTools
     {
         var windows = _windowService?.FindWindows(new WindowQuery { ProcessId = processId })
             .Select(w => w.Title).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().Take(5).ToList() ?? [];
-        var windowText = windows.Count == 0 ? string.Empty : $" Its windows: {string.Join(", ", windows.Select(t => $"'{t}'"))}.";
+        var windowText = windows.Count == 0 ? string.Empty : $" Its windows: {string.Join(", ", windows.Select(t => UserConfirmation.Quote(t)))}.";
 
         if (!forceKill)
         {
@@ -197,8 +197,9 @@ public class AppLauncherTools
                $"{windowText} Allow it?";
     }
 
-    [McpServerTool(Name = "launch_applications_batch", Title = "Launch Applications (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = true)]
-    [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls.")]
+    [McpServerTool(Name = "launch_applications_batch", Title = "Launch Applications (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
+    [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls. " +
+                 "An item that is null fails alone with InvalidArguments; the others are still launched.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
         [Description("Array of applications to launch with executable, optional arguments, and optional workingDirectory")]
         ApplicationLaunchRequest[] applications,
@@ -209,23 +210,44 @@ public class AppLauncherTools
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var serviceApplications = applications.Select(a =>
-            (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
+        if (applications == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "applications must be an array of items, not null. Nothing was launched.");
+        }
+
+        // A null item fails alone (roadmap M2.1); the others go to the service, in request order
+        var requested = applications.Where(a => a != null).ToList();
+        var serviceApplications = requested.Select(a => (a.Executable, a.Arguments, a.WorkingDirectory)).ToList();
 
         // One application after another; the client gets "i of n" after each, and a cancelled call starts no more
         var results = await _processService.LaunchApplicationsBatchAsync(
             serviceApplications, waitForWindows, BoundedWait(waitTimeoutMs), ToolProgress.ForServices(progress), cancellationToken)
             .ConfigureAwait(false);
 
-        var items = results.Select((r, i) => new LaunchResultItem(
-            Executable: applications[i].Executable,
+        using var launched = results.Select((r, i) => new LaunchResultItem(
+            Executable: requested[i].Executable,
             Success: r.Success,
             ProcessId: r.ProcessId,
             WindowHandle: r.WindowHandle?.ToInt64(),
             Error: r.ErrorMessage,
             Warning: r.Warning,
             ErrorCode: r.ErrorCode
-        )).ToList();
+        )).GetEnumerator();
+        var items = new List<LaunchResultItem>(applications.Length);
+        for (var i = 0; i < applications.Length; i++)
+        {
+            if (applications[i] == null)
+            {
+                items.Add(new LaunchResultItem(string.Empty, false,
+                    Error: $"Item {i} of applications is null; each item needs an executable. Nothing was launched for it.",
+                    ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode));
+            }
+            else if (launched.MoveNext())
+            {
+                items.Add(launched.Current);
+            }
+        }
 
         return new BatchLaunchResult(
             TotalRequested: applications.Length,

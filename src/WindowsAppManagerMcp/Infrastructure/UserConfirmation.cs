@@ -90,4 +90,23 @@ public static class UserConfirmation
             ? "The user did not confirm."
             : $"The user {(answer.Action == "decline" ? "declined" : "dismissed")} the question.");
     }
+
+    /// <summary>The longest text from another app, such as a window title, that a question shows (<see cref="Quote"/>).</summary>
+    public const int MaxQuotedLength = 80;
+
+    /// <summary>
+    /// Text another app chose, such as a window title, as a question shows it: in single quotes, on one line (each
+    /// control character, line breaks and tabs included, becomes a space) and at most <see cref="MaxQuotedLength"/>
+    /// characters, cut with an ellipsis. An app's title must not be able to rewrite the question the user answers.
+    /// </summary>
+    public static string Quote(string? text)
+    {
+        var line = new string((text ?? string.Empty).Select(c => char.IsControl(c) ? ' ' : c).ToArray());
+        if (line.Length > MaxQuotedLength)
+        {
+            line = line[..(MaxQuotedLength - 1)].TrimEnd() + "…";
+        }
+
+        return $"'{line}'";
+    }
 }

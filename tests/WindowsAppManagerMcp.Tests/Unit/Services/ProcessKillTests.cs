@@ -241,6 +241,50 @@ public class ProcessKillTests
         _mockWrapper.Verify(w => w.OpenProcess(It.IsAny<int>()), Times.Never);
     }
 
+    /// <summary>
+    /// kill_process asks the user only about a kill that can work: a graceful close of a process without a main window
+    /// is refused before the question, as the kill itself would refuse it after the user's yes.
+    /// </summary>
+    [Fact]
+    public void CheckKillTarget_Graceful_ProcessWithoutAMainWindow_IsNoClosableWindow()
+    {
+        // Arrange
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(nint.Zero);
+
+        // Act
+        var check = CreateSut().CheckKillTarget(Pid, forceKill: false, gracefulTimeoutMs: 5000);
+
+        // Assert
+        check.Refusal.Should().NotBeNull();
+        check.Refusal!.ErrorCode.Should().Be(nameof(ProcessErrorCode.NoClosableWindow));
+        check.Refusal.ErrorMessage.Should().Contain("forceKill=true");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+        VerifyNeverForceKilled();
+    }
+
+    [Fact]
+    public void CheckKillTarget_Graceful_ProcessWithAMainWindow_CanBeAskedAbout()
+    {
+        // Arrange
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns((nint)0x1234);
+
+        // Act
+        var check = CreateSut().CheckKillTarget(Pid, forceKill: false, gracefulTimeoutMs: 5000);
+
+        // Assert
+        check.Refusal.Should().BeNull();
+        check.ProcessName.Should().Be("notepad");
+        _mockProcess.Verify(p => p.CloseMainWindow(), Times.Never);
+    }
+
+    [Fact]
+    public void CheckKillTarget_Forced_DoesNotNeedAMainWindow()
+    {
+        _mockProcess.Setup(p => p.RefreshMainWindowHandle()).Returns(nint.Zero);
+
+        CreateSut().CheckKillTarget(Pid, forceKill: true, gracefulTimeoutMs: 5000).Refusal.Should().BeNull();
+    }
+
     #endregion
 
     #region Force Mode

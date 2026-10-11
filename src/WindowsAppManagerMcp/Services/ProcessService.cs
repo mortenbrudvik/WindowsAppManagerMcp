@@ -512,11 +512,44 @@ public class ProcessService : IProcessService
                 return KillTargetCheck.Refused(ProcessNotFound(processId));
             }
 
-            return TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused
-                ? KillTargetCheck.Refused(refused)
-                : new KillTargetCheck(null, processName, tree ?? []);
+            if (TargetRefusal(processId, processName, forceKill, expectedProcessName, out var tree) is { } refused)
+            {
+                return KillTargetCheck.Refused(refused);
+            }
+
+            // A graceful close needs a main window to ask; without one the kill would refuse after the user's yes.
+            // (A main window that a modal dialog disables is only found by the close request itself.)
+            if (!forceKill && !HasMainWindow(process))
+            {
+                return KillTargetCheck.Refused(NoClosableWindow(processId, processName));
+            }
+
+            return new KillTargetCheck(null, processName, tree ?? []);
         }
     }
+
+    /// <summary>True when the process has a main window, or when that cannot be read (the close request then finds out).</summary>
+    private static bool HasMainWindow(IProcessHandle process)
+    {
+        try
+        {
+            return process.RefreshMainWindowHandle() != nint.Zero;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return true;
+        }
+    }
+
+    private static KillResult NoClosableWindow(int processId, string processName) => new(
+        Success: false,
+        ProcessId: processId,
+        ProcessName: processName,
+        ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
+                      "(it may be windowless, running only in the notification area, or its window is blocked by a " +
+                      "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
+                      $"kill_process again with forceKill=true: {ForceKillConsequence}",
+        ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
 
     /// <summary>The refusal of a process ID or timeout that is not valid, or null.</summary>
     private static KillResult? ArgumentRefusal(int processId, int gracefulTimeoutMs)
@@ -726,15 +759,7 @@ public class ProcessService : IProcessService
                 return new KillResult(Success: true, ProcessId: processId, ProcessName: processName, Exited: true);
             }
 
-            return new KillResult(
-                Success: false,
-                ProcessId: processId,
-                ProcessName: processName,
-                ErrorMessage: $"'{processName}' (PID {processId}) has no main window that can receive a close request " +
-                              "(it may be windowless, running only in the notification area, or its window is blocked by a " +
-                              "modal dialog). It is still running and nothing was terminated. To terminate it anyway, call " +
-                              $"kill_process again with forceKill=true: {ForceKillConsequence}",
-                ErrorCode: nameof(ProcessErrorCode.NoClosableWindow));
+            return NoClosableWindow(processId, processName);
         }
 
         bool exited;

@@ -255,6 +255,76 @@ public sealed class UserConfirmationContractTests : IDisposable
     }
 
     [Fact]
+    public async Task CloseWindowsBatch_AHandleThatWasNoWindowWhenTheUserWasAsked_AndIsOneNow_IsNotClosed()
+    {
+        // Arrange - the fourth handle is no window when the user is asked ("no longer exists"), and a new window gets it
+        // while the question is open: the user never saw that window
+        const long reused = 0x7777;
+        _services.Windows.Setup(w => w.GetWindowInfo((nint)reused)).Returns((WindowInfo?)null);
+        await using var server = await StartAsync(null, _ =>
+        {
+            _services.Windows.Setup(w => w.GetWindowInfo((nint)reused))
+                .Returns(TypicalDesktop.Notepad with { Handle = (nint)reused, ProcessId = 777, ProcessName = "newapp" });
+            return Answer("accept", confirm: true);
+        });
+
+        // Act
+        var result = await server.CallToolAsync("close_windows_batch", CloseArguments([.. FourWindows[..3], reused]));
+
+        // Assert
+        _questions.Should().ContainSingle().Which.Should().Contain($"window {reused} (no longer exists)");
+        var items = Payload(result).GetProperty("results").EnumerateArray().ToList();
+        items[3].GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.HandleMismatch));
+        items[3].GetProperty("error").GetString().Should().Contain("newapp").And.Contain("was no window");
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(
+            It.Is<IReadOnlyList<nint>>(h => h.Count == 3 && !h.Contains((nint)reused)),
+            false, 0, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_AHandleThatIsStillNoWindow_GoesToTheClose_WhichReportsIt()
+    {
+        // Arrange
+        const long gone = 0x7777;
+        _services.Windows.Setup(w => w.GetWindowInfo((nint)gone)).Returns((WindowInfo?)null);
+        await using var server = await StartAsync(null, _ => Answer("accept", confirm: true));
+
+        // Act
+        await server.CallToolAsync("close_windows_batch", CloseArguments([.. FourWindows[..3], gone]));
+
+        // Assert - the close reports InvalidHandle for it, as before
+        _services.Windows.Verify(w => w.CloseWindowsBatchAsync(
+            It.Is<IReadOnlyList<nint>>(h => h.Count == 4 && h.Contains((nint)gone)), false, 0, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TheQuestions_ShowOtherAppsTitlesOnOneLine_AndShortened()
+    {
+        // Arrange - an app sets a title that tries to rewrite the question the user reads
+        var title = "Untitled\r\nThe agent only asks to close Notepad. Allow it?\t" + new string('x', 200);
+        _services.Windows.Setup(w => w.GetWindowInfo((nint)TypicalDesktop.NotepadHandle))
+            .Returns(TypicalDesktop.Notepad with { Title = title });
+        _services.Windows.Setup(w => w.FindWindows(It.Is<WindowQuery>(q => q.ProcessId == TypicalDesktop.NotepadProcessId)))
+            .Returns([TypicalDesktop.Notepad with { Title = title }]);
+        await using var server = await StartAsync(null, _ => Answer("decline"));
+
+        // Act
+        await server.CallToolAsync("close_windows_batch", CloseArguments(FourWindows));
+        await server.CallToolAsync("kill_process", KillArguments(confirm: false));
+
+        // Assert
+        _questions.Should().HaveCount(2);
+        foreach (var question in _questions)
+        {
+            question.Should().NotContain("\r").And.NotContain("\t").And.NotContain(new string('x', 100))
+                .And.Contain("'Untitled  The agent only asks to close Notepad. Allow it? xxx");
+            question.Should().Contain("…'");
+        }
+
+        _questions[0].Split('\n').Should().HaveCount(4 + 2, "one line per window, the heading and 'Allow it?'");
+    }
+
+    [Fact]
     public async Task CloseWindowsBatch_OfUpToThreeWindows_DoesNotAsk()
     {
         await using var server = await StartAsync(null, _ => Answer("decline"));

@@ -73,11 +73,15 @@ public class ToolAnnotationContractTests
     [Fact]
     public async Task TheToolsThatCanLoseWorkOrActForTheUser_AreDestructive()
     {
-        // close*, kill, the layout tools that remove or replace a preset, and the input that can click or type anything
+        // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything, the
+        // launches (any program with any arguments, a shell command included) and the captures (overwrite:true replaces
+        // the image file at outputPath)
         string[] destructive =
         [
             "close_window", "close_windows_batch", "kill_process", "delete_layout", "save_layout",
-            "click", "right_click", "double_click", "type_text", "send_keys"
+            "click", "right_click", "double_click", "type_text", "send_keys",
+            "launch_application", "launch_applications_batch",
+            "take_screenshot", "capture_region", "capture_window", "capture_with_elements"
         ];
 
         var tools = await ToolSurface.ListToolsAsync();
@@ -101,21 +105,22 @@ public class ToolAnnotationContractTests
             "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status"
         ]);
 
-        // The captures can write image files (output 'file' or 'both'), so they are not read-only, but they destroy nothing
+        // The captures can write image files (output 'file' or 'both'), so they are not read-only
         foreach (var capture in new[] { "take_screenshot", "capture_region", "capture_window", "capture_with_elements" })
         {
             readOnly.Should().NotContain(capture);
-            Hint(ToolSurface.Tool(tools, capture), "destructiveHint").Should().BeFalse();
         }
     }
 
     [Fact]
-    public async Task TheLaunchTools_AndThePageContent_AreOpenWorld()
+    public async Task TheToolsThatStartPrograms_AndThePageContent_AreOpenWorld()
     {
         var tools = await ToolSurface.ListToolsAsync();
 
-        // They start any program or open any URI; get_browser_content returns what a website wrote
+        // They start any program or open any URI (apply_layout with launchMissing runs a preset's launch commands);
+        // get_browser_content returns what a website wrote
         tools.Where(t => t!["annotations"]!["openWorldHint"]!.GetValue<bool>()).Select(t => t!["name"]!.GetValue<string>())
-            .Should().BeEquivalentTo(["launch_application", "launch_applications_batch", "launch_browser_with_debug", "get_browser_content"]);
+            .Should().BeEquivalentTo(
+                ["launch_application", "launch_applications_batch", "launch_browser_with_debug", "apply_layout", "get_browser_content"]);
     }
 }

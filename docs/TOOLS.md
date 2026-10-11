@@ -69,11 +69,11 @@ automatically, what to run in parallel and what to ask the user about:
 | Hint | Tools |
 |------|-------|
 | `readOnlyHint: true` | The find, get and list tools, the browser reads (get_browser_url, get_active_browser_url, get_browser_content) and get_control_status. They change nothing and run without the input gate |
-| `destructiveHint: true` | close_window, close_windows_batch, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, type_text and send_keys (input can confirm, delete or send anything) |
+| `destructiveHint: true` | close_window, close_windows_batch, kill_process, delete_layout, save_layout (it replaces a preset of the same name), click, right_click, double_click, type_text and send_keys (input can confirm, delete or send anything), launch_application and launch_applications_batch (they start any program with any arguments, a shell with a command included), and the four captures (with `overwrite: true` they replace the image file at `outputPath`) |
 | `idempotentHint: true` | The read-only tools, and the changes that end in the same place when repeated: move, resize, bounds, snap and move-to-monitor (and their batches), focus_window, mouse_move, apply_layout, save_layout, delete_layout, resume_input and release_all_input |
-| `openWorldHint: true` | launch_application, launch_applications_batch and launch_browser_with_debug (they start any program or open any URI), and get_browser_content (its text comes from a website) |
+| `openWorldHint: true` | launch_application, launch_applications_batch and launch_browser_with_debug (they start any program or open any URI), apply_layout (with `launchMissing: true` it runs the launch commands in the preset file), and get_browser_content (its text comes from a website) |
 
-The captures are not read-only, because they can write image files (`output: "file"` or `"both"`), but they destroy nothing. set_window_state is not idempotent: `restore` twice can turn a maximized window back to normal.
+The captures are not read-only, because they can write image files (`output: "file"` or `"both"`); they are destructive only through `overwrite: true`, but the hint is per tool, so it says what the tool can do. launch_browser_with_debug is not destructive: it starts a supported browser with a fresh profile and no command of the agent's choosing. apply_layout is not destructive: the only programs it starts are the launch commands the user wrote into the preset file (save_layout never writes one). set_window_state is not idempotent: `restore` twice can turn a maximized window back to normal.
 
 ### Untrusted content
 
@@ -1035,7 +1035,7 @@ Each window is handled like [close_window](#close_window): a protected window (t
 
 A batch of more than 3 windows is closed only after a confirmation:
 
-- **When the MCP client can ask the user** (it supports elicitation), the server asks the user directly: the question lists each window's title, process name and PID, marks the agent's own window, and says when `force` is set. Only the user's ticked "confirm" closes the windows; a decline, a dismissal, an unticked answer or no answer within 2 minutes closes nothing and returns a tool error with `errorCode: "ConfirmationDeclined"`. The `confirm` argument is not needed then, and does not replace the user's answer. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it. A window whose handle belongs to another process by the time the user confirmed (it closed and its handle was reused) is not closed: its item fails with `HandleMismatch`.
+- **When the MCP client can ask the user** (it supports elicitation), the server asks the user directly: the question lists each window's title, process name and PID, marks the agent's own window, and says when `force` is set. Only the user's ticked "confirm" closes the windows; a decline, a dismissal, an unticked answer or no answer within 2 minutes closes nothing and returns a tool error with `errorCode: "ConfirmationDeclined"`. The `confirm` argument is not needed then, and does not replace the user's answer. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it. A window the user did not see is not closed: its item fails with `HandleMismatch` when its handle belongs to another process by the time the user confirmed (it closed and its handle was reused), or when the handle was no window when the user was asked (the question says "no longer exists") and a new window has it now. A handle that is still no window goes to the close, which reports `InvalidHandle`. Window titles in the question are shown on one line and cut to 80 characters, so an app's title cannot rewrite the question.
 - **When the client cannot ask the user**, `confirm: true` is required, as before: without it the batch closes nothing and returns a tool error with `errorCode: "ConfirmationRequired"`. Check the handles with [find_windows](#find_windows) before you confirm.
 
 While the user has paused input, the batch returns `PausedByUser` without asking anything.
@@ -1093,7 +1093,7 @@ Each item of `applications` contains:
 }
 ```
 
-Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). The applications are started one after another; with `waitForWindows`, each one's window is waited for (up to `waitTimeoutMs`) before the next starts, and the batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
+Each item is validated and resolved with the same rules as [launch_application](#launch_application). A failed item includes `error` and `errorCode` (for example `UnsafeBatchArguments`). An item that is null fails alone with `InvalidArguments` (its `executable` is `""`) and the others are still launched; a null `applications` array is a tool error with `InvalidArguments` and launches nothing. The applications are started one after another; with `waitForWindows`, each one's window is waited for (up to `waitTimeoutMs`) before the next starts, and the batch holds the input gate the whole time (see [Window Control](#window-control)), so keep the list short.
 
 ---
 
@@ -2952,7 +2952,7 @@ By default only processes with at least one visible, titled top-level window are
 
 ### kill_process
 
-Close or terminate a process by ID (requires confirmation). When the MCP client can ask the user (it supports elicitation), the server asks the user directly before anything is done: the question names the process, its PID and its windows, says whether it is closed (the app may ask to save) or terminated (unsaved work is lost), and for `forceKill` lists the child processes that end with it. Only the user's ticked "confirm" goes ahead; a decline, a dismissal, an unticked answer or no answer within 2 minutes does nothing and returns `success: false` with `errorCode: "ConfirmationDeclined"`. The PID is then pinned to the name the user saw, so a PID reused meanwhile fails with `ProcessNameMismatch`. A kill that would be refused anyway (a protected, denied or host process, an invalid PID or timeout) is refused without asking. When the client cannot ask the user, `confirm: true` is required (`ConfirmationRequired`), as before. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it; while input is paused, the call returns `PausedByUser` without asking.
+Close or terminate a process by ID (requires confirmation). When the MCP client can ask the user (it supports elicitation), the server asks the user directly before anything is done: the question names the process, its PID and its windows, says whether it is closed (the app may ask to save) or terminated (unsaved work is lost), and for `forceKill` lists the child processes that end with it. Only the user's ticked "confirm" goes ahead; a decline, a dismissal, an unticked answer or no answer within 2 minutes does nothing and returns `success: false` with `errorCode: "ConfirmationDeclined"`. The PID is then pinned to the name the user saw, so a PID reused meanwhile fails with `ProcessNameMismatch`. A kill that would be refused anyway (a protected, denied or host process, an invalid PID or timeout, or a graceful close of a process without a main window, `NoClosableWindow`) is refused without asking. Window titles in the question are shown on one line and cut to 80 characters, so an app's title cannot rewrite the question. When the client cannot ask the user, `confirm: true` is required (`ConfirmationRequired`), as before. The question is asked before the call waits for the input gate, so other input and window calls run while the user reads it; while input is paused, the call returns `PausedByUser` without asking.
 
 <!-- tools:begin params:kill_process -->
 **Parameters:**
@@ -3579,12 +3579,16 @@ sees now.
   window on the monitor it was on).
 - **Batches check every item.** A null item, an item without a size, position or state, or an unknown value fails
   that item alone with an `errorCode` (`InvalidArguments`, `InvalidSnapPosition`, `InvalidState`), where it used to
-  abort the whole call with an internal error. The window batches give every failed item an `errorCode`
+  abort the whole call with an internal error; in launch_applications_batch a null item fails alone with
+  `InvalidArguments`. A value of the wrong JSON type (a string `handle`, say) still fails the whole call with
+  `InvalidArguments`, before any item runs. The window batches give every failed item an `errorCode`
   (`InvalidHandle`, `NotResponding`, `AccessDenied`, `MoveFailed`, `StateChangeFailed`, ...), and every item reports
   its window's `newBounds` or `newState`, also when it failed.
 - **Titles and hints.** Every tool has a `title` and the four hints `readOnlyHint`, `destructiveHint`,
   `idempotentHint` and `openWorldHint` in tools/list (see [Tool annotations](#tool-annotations)). A client that
-  auto-approves read-only tools, or asks before destructive ones, now has what it needs.
+  auto-approves read-only tools, or asks before destructive ones, now has what it needs. Before, no tool had hints,
+  so the protocol's defaults called every tool destructive and open-world; most tools are now marked
+  non-destructive, and a client that asks before destructive tools asks less often.
 - **The user confirms kill_process and large close_windows_batch calls.** When the client supports elicitation, the
   server asks the user (see [kill_process](#kill_process) and [close_windows_batch](#close_windows_batch)): a
   call the user does not confirm fails with `ConfirmationDeclined`, and `confirm: true` from the model no longer
@@ -3597,8 +3601,9 @@ sees now.
 
 ### Tool errors
 
-Every failed call returns `isError: true`, so a client can tell a failure from a success without
-reading the result. Most tools report an expected failure in their normal result, with
+Every call whose result reports `success: false`, and every tool error, returns `isError: true`, so
+a client can tell a failure from a success without reading the result; a list or a batch summary
+does not (check each item's `success`). Most tools report an expected failure in their normal result, with
 `success: false`, `error` and `errorCode`; that result now goes out with `isError: true` (before,
 only the captures did that, and a failed move or click went out with `isError` unset). A list, or a
 batch summary whose items failed, is data and keeps `isError` unset: each batch item has its own
@@ -3706,7 +3711,7 @@ table, it gives more detail.
 | `FileWriteFailed` | [Screenshot](#screenshot) tools | The image file could not be written; `error` has the reason |
 | `FocusFailed` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)) | Windows kept another window in front; `foregroundTitle` and `error` say which and why. Also when another focus call was still running |
 | `GracefulCloseTimedOut` | [kill_process](#kill_process) | Graceful mode: the process was still running after the timeout and was left running |
-| `HandleMismatch` | [close_windows_batch](#close_windows_batch) (per window) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused); it was not closed |
+| `HandleMismatch` | [close_windows_batch](#close_windows_batch) (per window) | After the user confirmed, the window's handle belonged to another process than the one in the question (the window closed and its handle was reused), or to a new window although it was no window when the user was asked; it was not closed |
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InputBusy` | [Input Simulation](#input-simulation) tools; tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)) | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
@@ -3738,7 +3743,7 @@ table, it gives more detail.
 | `MouseInUse` | [click](#click), right_click, double_click, mouse_move | A mouse button is held down (the user is dragging or selecting), or another window has captured the mouse, so the input would go to that window instead of the one at the point, or the capture could not be read; nothing (more) was sent |
 | `MoveFailed` | move_window, set_window_bounds, snap_window, move_window_to_monitor (see [Window Control](#window-control)), their batches (per window) | Windows did not move the window (`error` gives the Win32 error), or move_window_to_monitor with `positioning: "maximize"` maximized it on another monitor than the one asked for |
 | `NoBrowserInForeground` | [get_active_browser_url](#get_active_browser_url) | The foreground window is not a browser |
-| `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running |
+| `NoClosableWindow` | [kill_process](#kill_process) | Graceful mode: the process has no closable main window and was left running (when the client can ask the user, a process without a main window is refused before the question) |
 | `NoForegroundWindow` | [get_foreground_window](#get_foreground_window) (tool error) | No window is in the foreground right now (windows are switching, or a UAC prompt or the lock screen is shown); call again shortly |
 | `None` | get_browser_url, get_active_browser_url, get_browser_content, the [Input Simulation](#input-simulation) tools, the [UI Automation](#ui-automation) tools, [resume_input](#resume_input), [release_all_input](#release_all_input) | No error: these results always include `errorCode`, and it is `None` when the call succeeded |
 | `NotABrowser` | [Browser Reading](#browser-reading) tools | The window's process is not a recognized browser |

@@ -84,6 +84,22 @@ public class WindowServiceOutcomeTests
         result.Error.Should().Contain("Win32 error 87");
     }
 
+    [Theory]
+    [MemberData(nameof(Placements))]
+    public void APlacementRefusedWithoutAWin32Error_DoesNotSayTheOperationCompleted(string operation, WindowErrorCode expected)
+    {
+        // Arrange - SetWindowPos returned FALSE without setting the last error (the window's thread refused the change)
+        _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
+            .Returns(Win32CallResult.Failure(0));
+
+        // Act
+        var result = Place(operation);
+
+        // Assert
+        result.ErrorCode.Should().Be(expected);
+        result.Error.Should().Contain("without giving a reason").And.NotContain("completed successfully").And.NotContain("Win32 error 0");
+    }
+
     [Fact]
     public void AWindowThatClosedDuringThePlacement_IsInvalidHandle()
     {

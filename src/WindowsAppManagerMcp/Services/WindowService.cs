@@ -428,6 +428,10 @@ public class WindowService : IWindowService
             "running with higher privileges, for example as administrator: User Interface Privilege Isolation blocks this " +
             "server from moving or resizing it. Nothing was changed; ask the user to do this step."),
         NativeEnums.ERROR_INVALID_WINDOW_HANDLE => WindowGone(handle),
+        // SetWindowPos can fail without setting the last error, and error 0's text is "The operation completed successfully"
+        0 => WindowChangeResult.Failed(handle, failure,
+            $"Windows refused to {(failure == WindowErrorCode.ResizeFailed ? "resize" : "move")} the window without giving a reason " +
+            "(the application may have rejected the change). Nothing was changed."),
         _ => WindowChangeResult.Failed(handle, failure,
             $"Windows did not {(failure == WindowErrorCode.ResizeFailed ? "resize" : "move")} the window (Win32 error {win32Error}: " +
             $"{new System.ComponentModel.Win32Exception(win32Error).Message}).")

@@ -73,7 +73,7 @@ public class ScreenshotTools
         return _screenshotService.ListScreens();
     }
 
-    [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a specific monitor. " + ImageResultDescription + ImageToScreenDescription +
                  " Use list_screens to get available monitor indices.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
@@ -102,7 +102,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureMonitor(index, options));
     }
 
-    [McpServerTool(Name = "capture_region", Title = "Capture Screen Region", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [McpServerTool(Name = "capture_region", Title = "Capture Screen Region", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture an arbitrary screen region given in screen coordinates. " + ImageResultDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult CaptureRegion(
@@ -135,7 +135,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureRegion(x, y, width, height, options));
     }
 
-    [McpServerTool(Name = "capture_window", Title = "Capture Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [McpServerTool(Name = "capture_window", Title = "Capture Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a specific window. Works even if the window is partially occluded by other windows, but not when it is minimized (CaptureFailed). " +
                  "A window of an app the user's policy denies is refused (TargetDeniedByPolicy). " +
                  ImageResultDescription +
@@ -177,7 +177,7 @@ public class ScreenshotTools
         return ToolImages.ToCallToolResult(_screenshotService.CaptureWindow((nint)handle, includeFrame, options));
     }
 
-    [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Capture a window with UI element bounding boxes drawn on it. " + ImageResultDescription +
                  "The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). " +
                  "Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +

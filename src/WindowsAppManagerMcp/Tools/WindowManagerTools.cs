@@ -193,7 +193,7 @@ public class WindowManagerTools
         // Nothing while the user has paused input, not even a question
         InputGateToolFilter.ThrowIfPaused(_session);
 
-        Dictionary<nint, int>? confirmedOwners = null;
+        Dictionary<nint, int?>? confirmedOwners = null;
         if (windows.Length > MaxCloseBatchWithoutConfirm)
         {
             if (UserConfirmation.CanAsk(server))
@@ -209,8 +209,8 @@ public class WindowManagerTools
                         $"{answer.Reason} Nothing was closed. Ask the user how to continue.");
                 }
 
-                confirmedOwners = targets.Where(t => t.Window != null).GroupBy(t => t.Handle)
-                    .ToDictionary(g => g.Key, g => g.First().Window!.ProcessId);
+                // Every handle the user was asked about, with its owner then (null: it was no window)
+                confirmedOwners = targets.GroupBy(t => t.Handle).ToDictionary(g => g.Key, g => g.First().Window?.ProcessId);
             }
             else if (!confirm)
             {
@@ -365,7 +365,7 @@ public class WindowManagerTools
     private static string CloseQuestion(IReadOnlyList<(nint Handle, WindowInfo? Window)> targets, bool force)
     {
         var lines = targets.Take(20).Select((t, i) => t.Window is { } w
-            ? $"{i + 1}. '{(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)}' ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
+            ? $"{i + 1}. {UserConfirmation.Quote(string.IsNullOrEmpty(w.Title) ? w.ClassName : w.Title)} ({w.ProcessName}, PID {w.ProcessId}){(w.IsAgentHost ? ", the agent's own window" : string.Empty)}"
             : $"{i + 1}. window {t.Handle} (no longer exists)");
         var more = targets.Count > 20 ? $"\n... and {targets.Count - 20} more" : string.Empty;
         var protection = force
@@ -376,17 +376,25 @@ public class WindowManagerTools
     }
 
     /// <summary>
-    /// HandleMismatch for a window that belongs to another process than when the user confirmed (its handle was
-    /// reused), or null. A window that is gone is left to the close, which reports InvalidHandle.
+    /// HandleMismatch for a window the user did not see: it belongs to another process than when the user confirmed, or
+    /// it was no window then and is one now (its handle was reused), or null. A window that is gone is left to the
+    /// close, which reports InvalidHandle.
     /// </summary>
-    private WindowResultItem? HandleMismatchRefusal(long handle, IReadOnlyDictionary<nint, int> confirmedOwners) =>
-        confirmedOwners.TryGetValue((nint)handle, out var asked) &&
-        _windowService.GetWindowInfo((nint)handle) is { } now && now.ProcessId != asked
-            ? new WindowResultItem(handle, false,
-                Error: $"Window {handle} now belongs to {now.ProcessName} (PID {now.ProcessId}), not to the process (PID {asked}) the user " +
-                       "confirmed: the window closed and its handle was reused. It was not closed.",
-                ErrorCode: nameof(HandleMismatch))
-            : null;
+    private WindowResultItem? HandleMismatchRefusal(long handle, IReadOnlyDictionary<nint, int?> confirmedOwners)
+    {
+        if (!confirmedOwners.TryGetValue((nint)handle, out var asked) || _windowService.GetWindowInfo((nint)handle) is not { } now ||
+            now.ProcessId == asked)
+        {
+            return null;
+        }
+
+        var then = asked is { } pid
+            ? $"not to the process (PID {pid}) the user confirmed: the window closed and its handle was reused"
+            : "but it was no window when the user was asked (the user saw it as 'no longer exists'): a new window got its handle";
+        return new WindowResultItem(handle, false,
+            Error: $"Window {handle} now belongs to {now.ProcessName} (PID {now.ProcessId}), {then}. It was not closed.",
+            ErrorCode: nameof(HandleMismatch));
+    }
 
     /// <summary>
     /// The refusal of a change before anything is sent: InvalidHandle, or TargetDeniedByPolicy for a window the user's

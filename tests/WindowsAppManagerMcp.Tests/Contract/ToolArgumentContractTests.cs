@@ -298,13 +298,44 @@ public sealed class ToolArgumentContractTests : IDisposable
         items.Take(2).Select(i => i.GetProperty("errorCode").GetString()).Should().AllBe(ToolErrorReporting.InvalidArgumentsErrorCode);
     }
 
-    [Fact]
-    public async Task ABatchWhoseArrayIsNull_IsInvalidArguments()
+    [Theory]
+    [InlineData("close_windows_batch", """{ "windows": null }""")]
+    [InlineData("set_windows_bounds_batch", """{ "placements": null }""")]
+    [InlineData("launch_applications_batch", """{ "applications": null }""")]
+    public async Task ABatchWhoseArrayIsNull_IsInvalidArguments(string tool, string arguments)
     {
-        var result = await CallAsync("close_windows_batch", """{ "windows": null }""");
+        var result = await CallAsync(tool, arguments);
 
         result.IsError.Should().BeTrue();
         Payload(result).GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        _services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(It.IsAny<IReadOnlyList<(string, string[]?, string?)>>(), It.IsAny<bool>(),
+            It.IsAny<int>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_ANullItem_FailsAlone_AndTheOthersAreLaunched()
+    {
+        // Act
+        var result = await CallAsync("launch_applications_batch", """
+            { "applications": [ { "executable": "notepad" }, null, { "executable": "calc", "arguments": ["-x"] } ] }
+            """);
+
+        // Assert - it used to fail the whole call with a NullReferenceException
+        result.IsError.Should().NotBe(true);
+        var payload = Payload(result);
+        payload.GetProperty("totalRequested").GetInt32().Should().Be(3);
+        payload.GetProperty("succeeded").GetInt32().Should().Be(2);
+        payload.GetProperty("failed").GetInt32().Should().Be(1);
+        var items = payload.GetProperty("results").EnumerateArray().ToList();
+        items.Select(i => i.GetProperty("success").GetBoolean()).Should().Equal(true, false, true);
+        items.Select(i => i.GetProperty("executable").GetString()).Should().Equal("notepad", "", "calc");
+        items[1].GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        items[1].GetProperty("error").GetString().Should().Contain("Item 1 of applications is null");
+        items[2].GetProperty("processId").GetInt32().Should().Be(20_001, "the service's results stay with their own items");
+        _services.Processes.Verify(p => p.LaunchApplicationsBatchAsync(
+            It.Is<IReadOnlyList<(string Executable, string[]? Arguments, string? WorkingDirectory)>>(a =>
+                a.Count == 2 && a[0].Executable == "notepad" && a[1].Executable == "calc"),
+            false, 5000, It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

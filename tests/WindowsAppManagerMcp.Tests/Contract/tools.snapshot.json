@@ -36,7 +36,7 @@
         "title": "Apply Layout",
         "destructiveHint": false,
         "idempotentHint": true,
-        "openWorldHint": false,
+        "openWorldHint": true,
         "readOnlyHint": false
       }
     },
@@ -134,7 +134,7 @@
       },
       "annotations": {
         "title": "Capture Screen Region",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
@@ -224,7 +224,7 @@
       },
       "annotations": {
         "title": "Capture Window",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
@@ -347,7 +347,7 @@
       },
       "annotations": {
         "title": "Capture Window with Element Boxes",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
@@ -1124,7 +1124,7 @@
       },
       "annotations": {
         "title": "Launch Application",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false
@@ -1133,7 +1133,7 @@
     {
       "name": "launch_applications_batch",
       "title": "Launch Applications (Batch)",
-      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls.",
+      "description": "Launch multiple applications in a single batch operation. More efficient than multiple individual calls. An item that is null fails alone with InvalidArguments; the others are still launched.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1186,7 +1186,7 @@
       },
       "annotations": {
         "title": "Launch Applications (Batch)",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true,
         "readOnlyHint": false
@@ -2052,7 +2052,7 @@
       },
       "annotations": {
         "title": "Capture Monitor",
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
