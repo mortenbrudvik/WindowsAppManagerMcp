@@ -104,12 +104,19 @@ public sealed record InputControlInfo(bool Paused, string? PausedBy, DateTimeOff
 /// <param name="AllowedProcesses">When set, the only apps the agent may act on; null when every app that is not denied is allowed.</param>
 /// <param name="DestructiveChords">The send_keys chords that need windowHandle (DestructiveChordNeedsTarget).</param>
 /// <param name="DestructiveChordSource">"default", or WAM_DESTRUCTIVE_CHORDS.</param>
+/// <param name="UserClipboardAllowed">
+/// WAM_ALLOW_USER_CLIPBOARD: true when get_clipboard returns what the user or another app copied without asking (content
+/// marked private never); false when only the agent's own content is, and the user's only after a yes.
+/// </param>
+/// <param name="AllowedProtocols">The URI schemes launch_application opens: the built-in ones, then those WAM_ALLOWED_PROTOCOLS adds.</param>
 public sealed record SafetySettingsInfo(
     IReadOnlyList<string> DeniedProcesses,
     string DenyListSource,
     IReadOnlyList<string>? AllowedProcesses,
     IReadOnlyList<string> DestructiveChords,
-    string DestructiveChordSource);
+    string DestructiveChordSource,
+    bool UserClipboardAllowed = false,
+    IReadOnlyList<string>? AllowedProtocols = null);
 
 /// <summary>Where the server keeps its files.</summary>
 /// <param name="Layouts">The layout presets folder (WAM_LAYOUTS_PATH).</param>

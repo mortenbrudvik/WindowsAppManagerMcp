@@ -35,6 +35,24 @@ public class ServerStartupLogTests
     }
 
     [Fact]
+    public async Task StartAsync_LogsTheClipboardAndProtocolSettings_WithAWarningForWhatWasIgnored()
+    {
+        // Arrange
+        _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.PerMonitorV2);
+        var sut = new ServerStartupLog(_system.Object, logger: _logger, clipboard: ClipboardOptions.FromEnvironment(_ => "ture"),
+            protocols: ProtocolAllowlist.Parse("vscode, javascript"));
+
+        // Act
+        await sut.StartAsync(CancellationToken.None);
+
+        // Assert
+        _logger.Entries.Should().Contain(e => e.Level == LogLevel.Information && e.Message.Contains("user's clipboard") &&
+                                              e.Message.Contains("off") && e.Message.Contains("vscode"));
+        _logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("'ture'"));
+        _logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("'javascript'"));
+    }
+
+    [Fact]
     public async Task StartAsync_PerMonitorV1_IsNoWarning()
     {
         // The manifest's fallback before Windows 10 1703: physical pixels on every monitor for a windowless server
