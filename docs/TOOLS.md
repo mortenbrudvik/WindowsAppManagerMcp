@@ -4445,7 +4445,7 @@ These changes (roadmap M2.1 to M2.17: honest results, typed parameters, geometry
 launch resolution and path hygiene, layout matching, capture health, annotations and confirmation by the user, server
 instructions and get_server_info, the SDK upgrade, toolsets, scroll, the clipboard and the audit log) change what some
 calls return. A client that followed the documented contract keeps working; the list says what a client that relied on
-the old behavior sees now. The plugin's committed exe gets them with the release after 1.13.0.
+the old behavior sees now. The plugin's committed exe has them since release 1.14.0.
 
 - **SDK and protocol.** The server runs on the stable MCP C# SDK, `ModelContextProtocol` 2.2.0 (it was 0.5.0-preview.1).
   It speaks the 2026-07-28 revision (`server/discover` instead of the `initialize` handshake, and elicitation as a
