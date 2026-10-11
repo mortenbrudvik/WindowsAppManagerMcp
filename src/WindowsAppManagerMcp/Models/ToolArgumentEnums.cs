@@ -114,3 +114,37 @@ public enum DebugBrowser
     [JsonStringEnumMemberName("brave")]
     Brave
 }
+
+/// <summary>The order find_windows lists the windows in (roadmap M2.4).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "sort order", NullMeans = "zorder")]
+public enum WindowSort
+{
+    /// <summary>Front to back: the window on top first, as Windows stacks them.</summary>
+    [JsonStringEnumMemberName("zorder")]
+    ZOrder,
+
+    /// <summary>By title, ignoring case; windows with the same title in z-order.</summary>
+    [JsonStringEnumMemberName("title")]
+    Title,
+
+    /// <summary>By process name, ignoring case; the windows of one process in z-order.</summary>
+    [JsonStringEnumMemberName("process")]
+    Process
+}
+
+/// <summary>How much get_window_info reports about a window (roadmap M2.4).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "detail level", NullMeans = "standard")]
+public enum WindowDetail
+{
+    /// <summary>Handle, title, process and state.</summary>
+    [JsonStringEnumMemberName("compact")]
+    Compact,
+
+    /// <summary>What find_windows reports for a window.</summary>
+    [JsonStringEnumMemberName("standard")]
+    Standard,
+
+    /// <summary>Standard, plus the visible and client bounds, foreground, z-order, topmost, enabled, responding and DPI.</summary>
+    [JsonStringEnumMemberName("full")]
+    Full
+}

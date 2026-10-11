@@ -377,6 +377,25 @@ public class LayoutServiceMatchingTests : IDisposable
         VerifyPlaced(ChromeRight, 960, 0, 960, 1040);
     }
 
+    [Fact]
+    public async Task Apply_MatchesTitlesAndProcessNames_AsTheWindowSelectorsDo()
+    {
+        // Arrange - Edge writes a U+200B zero-width space into "Microsoft Edge" and adds " and N more pages"; a hand-written
+        // preset names "Microsoft Edge" and "msedge.exe" (roadmap M2.4: the selectors' title normalizer and process-name rule)
+        var edge = Window(0x301, "Inbox and 2 more pages - Personal - Microsoft​ Edge", "msedge", 900, 0, 0, 960, 1040, "Chrome_WidgetWin_1");
+        var sut = CreateSut();
+        await SaveAsync(sut, "edge",
+            Placement(new WindowMatcher(TitleContains: "Inbox - Personal - Microsoft Edge", ProcessName: "msedge.exe"), 0, x: 0.5));
+        OpenWindows(edge);
+
+        // Act
+        var result = await sut.ApplyPresetAsync("edge");
+
+        // Assert
+        result.Placements!.Single().Status.Should().Be(LayoutPlacementStatus.Applied);
+        VerifyPlaced(edge, 960, 0, 960, 1040);
+    }
+
     #endregion
 
     #region Per-placement results and failures

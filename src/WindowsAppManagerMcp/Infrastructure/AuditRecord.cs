@@ -199,8 +199,10 @@ public static class AuditRecord
     }
 
     /// <summary>
-    /// The windows the arguments name, to read before the call: <c>windowHandle</c>, <c>handle</c>, and the
-    /// <c>handle</c> of each item of <c>windows</c> (a close batch), at most <see cref="MaxWindowsRead"/>.
+    /// The windows the arguments name, to read before the call: <c>windowHandle</c>, <c>handle</c>, the <c>handle</c> of a
+    /// <c>window</c> selector (roadmap M2.4), and the <c>handle</c> or <c>window.handle</c> of each item of <c>windows</c>
+    /// (a close batch), at most <see cref="MaxWindowsRead"/>. A selector without a handle names no window until the tool
+    /// resolves it; the result's <c>handle</c> then says which (<see cref="Build"/>).
     /// </summary>
     public static IReadOnlyList<long> WindowHandles(IReadOnlyDictionary<string, JsonElement> arguments)
     {
@@ -209,25 +211,44 @@ public static class AuditRecord
         var handles = new List<long>();
         foreach (var name in new[] { "windowHandle", "handle" })
         {
-            if (arguments.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var handle))
+            if (arguments.TryGetValue(name, out var value) && HandleIn(value) is { } handle)
             {
                 handles.Add(handle);
             }
+        }
+
+        if (arguments.TryGetValue("window", out var window) && SelectorHandle(window) is { } selected)
+        {
+            handles.Add(selected);
         }
 
         if (arguments.TryGetValue("windows", out var windows) && windows.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in windows.EnumerateArray())
             {
-                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("handle", out var value) &&
-                    value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var handle))
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (item.TryGetProperty("handle", out var value) && HandleIn(value) is { } handle)
                 {
                     handles.Add(handle);
+                }
+                else if (item.TryGetProperty("window", out var itemWindow) && SelectorHandle(itemWindow) is { } itemSelected)
+                {
+                    handles.Add(itemSelected);
                 }
             }
         }
 
         return handles.Distinct().Take(MaxWindowsRead).ToList();
+
+        static long? HandleIn(JsonElement value) =>
+            value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var handle) ? handle : null;
+
+        static long? SelectorHandle(JsonElement selector) =>
+            selector.ValueKind == JsonValueKind.Object && selector.TryGetProperty("handle", out var value) ? HandleIn(value) : null;
     }
 
     /// <summary>The processes the arguments name, to read before the call: <c>processId</c>.</summary>
@@ -297,8 +318,9 @@ public static class AuditRecord
             return target;
         }
 
-        // Completed from the result: the process a launch started and its window, a killed process's name
-        var resultHandle = Long(body, "windowHandle");
+        // Completed from the result: the process a launch started and its window, a killed process's name, and the window a
+        // window selector resolved to (roadmap M2.4: the window tools report it as handle)
+        var resultHandle = Long(body, "windowHandle") ?? (handles.Count == 0 ? Long(body, "handle") : null);
         var resultProcessId = Int(body, "processId");
         var resultProcess = String(body, "processName");
         if (target == null && resultHandle == null && resultProcessId == null)

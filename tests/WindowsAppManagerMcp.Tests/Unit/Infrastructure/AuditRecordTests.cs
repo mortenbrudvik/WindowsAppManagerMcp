@@ -254,6 +254,17 @@ public class AuditRecordTests
     }
 
     [Fact]
+    public void AWindowNamedByASelector_IsRecordedByTheHandleTheResultReports()
+    {
+        // move_window with a window selector (roadmap M2.4): the arguments hold no handle, the result names the window moved
+        var entry = Build(Call("move_window", new { x = 10, y = 20, window = new { processName = "notepad" } }),
+            Result(new { success = true, handle = 0x1234, state = "normal" }));
+
+        entry.Target.Should().Be(new AuditTarget(Handle: 0x1234));
+        entry.Args!.ContainsKey("window").Should().BeFalse("a selector's titles can be content, so objects are left out");
+    }
+
+    [Fact]
     public void AKill_NamesTheProcess_FromBeforeTheCall_OrElseFromTheResult()
     {
         var before = Build(Call("kill_process", new { processId = 42, forceKill = true }, processes: new Dictionary<int, string?> { [42] = "notepad" }),
@@ -410,6 +421,11 @@ public class AuditRecordTests
         AuditRecord.WindowHandles(Arguments(new { handle = 6, processId = 7 })).Should().Equal(6);
         AuditRecord.WindowHandles(Arguments(new { windows = new object?[] { new { handle = 8 }, null, new { handle = 9 } } })).Should().Equal(8, 9);
         AuditRecord.WindowHandles(Arguments(new { windowHandle = (int?)null, x = 1 })).Should().BeEmpty();
+        // A window selector that names a handle (roadmap M2.4), also as a close batch item
+        AuditRecord.WindowHandles(Arguments(new { window = new { handle = 10, processId = 7 } })).Should().Equal(10);
+        AuditRecord.WindowHandles(Arguments(new { window = new { processName = "notepad" } })).Should().BeEmpty();
+        AuditRecord.WindowHandles(Arguments(new { windows = new object[] { new { window = new { handle = 11 } }, new { handle = 12 } } }))
+            .Should().Equal(11, 12);
         AuditRecord.WindowHandles(Arguments(new { windows = Enumerable.Range(1, 500).Select(h => new { handle = h }) }))
             .Should().HaveCount(AuditRecord.MaxWindowsRead);
         AuditRecord.ProcessIds(Arguments(new { processId = 7 })).Should().Equal(7);

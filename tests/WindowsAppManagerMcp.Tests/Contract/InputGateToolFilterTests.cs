@@ -51,6 +51,10 @@ public class InputGateToolFilterTests
     [InlineData("close_windows_batch")]
     [InlineData("close_application")]
     [InlineData("close_window")] // sends inside the gate it takes itself, and waits for the window outside it (roadmap M2.5)
+    [InlineData("focus_window")] // resolves its window selector before it takes the gate itself (roadmap M2.4)
+    [InlineData("move_window")]
+    [InlineData("set_window_state")]
+    [InlineData("set_windows_bounds_batch")]
     public async Task AToolThatAsksTheUser_IsNotHeldInTheGateByTheFilter(string tool)
     {
         // Arrange - it takes the gate itself, after its question (UserConfirmationContractTests)
@@ -70,11 +74,11 @@ public class InputGateToolFilterTests
     }
 
     [Theory]
-    [InlineData("focus_window")]
-    [InlineData("move_window")]
+    [InlineData("launch_browser_with_debug")]
+    [InlineData("set_clipboard")]
     [InlineData("launch_application")]
     [InlineData("apply_layout")]
-    [InlineData("set_window_state")]
+    [InlineData("launch_applications_batch")]
     [InlineData("a_tool_nobody_classified")] // fails safe
     public async Task WindowChangingTool_WaitsWhileAnInputCallHoldsTheGate(string tool)
     {
@@ -132,7 +136,7 @@ public class InputGateToolFilterTests
         });
 
         // Act
-        await handler(CreateRequest("focus_window"), CancellationToken.None);
+        await handler(CreateRequest("apply_layout"), CancellationToken.None);
 
         // Assert - and the gate was released again: an input call can take it
         heldDuringTheCall.Should().BeTrue();
@@ -145,7 +149,7 @@ public class InputGateToolFilterTests
     {
         var handler = InputGateToolFilter.Filter((_, _) => throw new InvalidOperationException("tool failed"));
 
-        var call = async () => await handler(CreateRequest("move_window"), CancellationToken.None);
+        var call = async () => await handler(CreateRequest("launch_application"), CancellationToken.None);
 
         await call.Should().ThrowAsync<InvalidOperationException>();
         var next = Task.Run(() => InputGate.Enter().Dispose());
@@ -166,7 +170,7 @@ public class InputGateToolFilterTests
         using (InputGate.Enter())
         {
             // Act
-            var call = handler(CreateRequest("focus_window"), cancellation.Token).AsTask();
+            var call = handler(CreateRequest("apply_layout"), cancellation.Token).AsTask();
             cancellation.Cancel();
 
             // Assert
@@ -178,11 +182,11 @@ public class InputGateToolFilterTests
     }
 
     [Theory]
-    [InlineData("focus_window")]
+    [InlineData("apply_layout")]
     [InlineData("launch_application")]
-    [InlineData("snap_window")]
-    [InlineData("move_window")]
-    [InlineData("set_window_state")]
+    [InlineData("set_clipboard")]
+    [InlineData("launch_browser_with_debug")]
+    [InlineData("launch_applications_batch")]
     [InlineData("a_tool_nobody_classified")] // fails safe
     public async Task WhilePaused_AWindowChangingTool_ReturnsPausedByUser_AndDoesNotRun(string tool)
     {
@@ -230,7 +234,7 @@ public class InputGateToolFilterTests
     [Fact]
     public async Task APauseWhileWaitingForTheGate_StopsTheWindowChangingTool()
     {
-        // Arrange - an input call holds the gate, so focus_window (not paused yet) waits for it
+        // Arrange - an input call holds the gate, so apply_layout (not paused yet) waits for it
         var session = new InputSession(new FakeInputWrapper());
         var ran = false;
         var handler = InputGateToolFilter.Filter((_, _) =>
@@ -239,7 +243,7 @@ public class InputGateToolFilterTests
             return ValueTask.FromResult(new CallToolResult());
         });
         var gate = InputGate.Enter();
-        var call = handler(CreateRequest("focus_window", session), CancellationToken.None).AsTask();
+        var call = handler(CreateRequest("apply_layout", session), CancellationToken.None).AsTask();
 
         // Act - the user pauses meanwhile, then the input call ends
         session.Pause(InputControlSources.Hotkey);
@@ -264,7 +268,7 @@ public class InputGateToolFilterTests
         using var gate = InputGate.Enter();
 
         // Act
-        var result = await handler(CreateRequest("move_window"), CancellationToken.None).AsTask().WaitAsync(Timeout);
+        var result = await handler(CreateRequest("launch_application"), CancellationToken.None).AsTask().WaitAsync(Timeout);
 
         // Assert
         ran.Should().BeFalse();
@@ -281,7 +285,7 @@ public class InputGateToolFilterTests
         var session = new InputSession(new FakeInputWrapper());
         var handler = InputGateToolFilter.Filter((_, _) => ValueTask.FromResult(new CallToolResult()));
         using var gate = InputGate.Enter();
-        var call = handler(CreateRequest("focus_window", session), CancellationToken.None).AsTask();
+        var call = handler(CreateRequest("apply_layout", session), CancellationToken.None).AsTask();
 
         // Act
         session.Pause(InputControlSources.Hotkey);

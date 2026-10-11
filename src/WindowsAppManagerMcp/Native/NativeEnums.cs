@@ -56,6 +56,7 @@ internal static class NativeEnums
     public const uint WS_DISABLED = 0x08000000;
 
     // Extended window styles (GWL_EXSTYLE)
+    public const long WS_EX_TOPMOST = 0x00000008;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const long WS_EX_APPWINDOW = 0x00040000;
     public const long WS_EX_NOACTIVATE = 0x08000000;

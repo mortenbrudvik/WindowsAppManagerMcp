@@ -100,7 +100,7 @@ public static class Toolsets
                     "find_windows", "get_all_windows", "get_foreground_window", "focus_window", "move_window", "resize_window",
                     "set_window_bounds", "set_window_state", "snap_window", "move_window_to_monitor", "close_window",
                     "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch", "close_windows_batch",
-                    "get_owned_windows"
+                    "get_owned_windows", "get_window_info"
                 ]),
             new("monitors", OnByDefault: true,
                 "The monitors: bounds, work areas, scale factors.",

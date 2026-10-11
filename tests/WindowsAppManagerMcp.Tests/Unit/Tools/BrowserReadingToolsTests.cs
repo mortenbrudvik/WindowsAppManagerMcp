@@ -122,7 +122,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        await sut.GetBrowserContent(handle, maxLength, textOnly: true);
+        await sut.GetBrowserContent(handle, maxLength: maxLength, textOnly: true);
 
         // Assert
         _mockBrowserReadingService.Verify(s => s.GetBrowserContentAsync(

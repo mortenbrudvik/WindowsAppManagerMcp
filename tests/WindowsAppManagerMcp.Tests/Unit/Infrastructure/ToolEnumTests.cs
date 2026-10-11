@@ -28,7 +28,8 @@ public class ToolEnumTests
         ToolEnumTypes().Select(row => (Type)row[0]).Should().BeEquivalentTo(new[]
         {
             typeof(WindowStateRequest), typeof(MonitorPositioning), typeof(SnapPosition), typeof(LayoutMatchBy),
-            typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser), typeof(ClipboardFormat)
+            typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser), typeof(ClipboardFormat),
+            typeof(WindowSort), typeof(WindowDetail)
         });
     }
 
@@ -42,9 +43,11 @@ public class ToolEnumTests
         // Assert
         info.Names.Should().HaveCount(Enum.GetValues(enumType).Length).And.OnlyHaveUniqueItems();
         info.SchemaValues.Should().StartWith(info.Names);
+        // A parameter's own code, or InvalidArguments for a parameter that has none (find_windows sort, get_window_info detail)
         var declaredCodes = typeof(ToolEnumInfo).Assembly.GetTypes()
             .Where(t => t.IsEnum && t.Name.EndsWith("ErrorCode", StringComparison.Ordinal))
-            .SelectMany(Enum.GetNames);
+            .SelectMany(Enum.GetNames)
+            .Append(ToolErrorReporting.InvalidArgumentsErrorCode);
         declaredCodes.Should().Contain(info.ErrorCode);
         foreach (var value in Enum.GetValues(enumType))
         {

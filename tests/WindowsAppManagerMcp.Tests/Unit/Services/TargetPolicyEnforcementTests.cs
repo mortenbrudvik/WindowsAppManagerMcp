@@ -178,7 +178,7 @@ public class TargetPolicyEnforcementTests
     }
 
     [Fact]
-    public void WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
+    public async Task WindowTools_DeniedWindow_ReturnTargetDeniedByPolicy()
     {
         // Arrange
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
@@ -188,12 +188,12 @@ public class TargetPolicyEnforcementTests
         // Act
         var results = new[]
         {
-            tools.MoveWindow(keePass, 10, 10),
-            tools.ResizeWindow(keePass, 400, 300),
-            tools.SetWindowBounds(keePass, 10, 10, 400, 300),
-            tools.SetWindowState(keePass, WindowStateRequest.Restore),
-            tools.SnapWindow(keePass, SnapPosition.LeftHalf),
-            tools.MoveWindowToMonitor(keePass, 0)
+            await tools.MoveWindow(10, 10, handle: keePass),
+            await tools.ResizeWindow(400, 300, handle: keePass),
+            await tools.SetWindowBounds(10, 10, 400, 300, handle: keePass),
+            await tools.SetWindowState(WindowStateRequest.Restore, handle: keePass),
+            await tools.SnapWindow(SnapPosition.LeftHalf, handle: keePass),
+            await tools.MoveWindowToMonitor(0, handle: keePass)
         };
 
         // Assert
@@ -215,11 +215,11 @@ public class TargetPolicyEnforcementTests
 
         // Act
         var bounds = await tools.SetWindowsBoundsBatch(
-            [new WindowBoundsPlacement(notepad, 0, 0, 400, 300), new WindowBoundsPlacement(keePass, 0, 0, 400, 300)], delayBetweenMs: 0);
+            [new WindowBoundsPlacement(0, 0, 400, 300, Handle: notepad), new WindowBoundsPlacement(0, 0, 400, 300, Handle: keePass)], delayBetweenMs: 0);
         var snaps = await tools.SnapWindowsBatch(
-            [new WindowSnapPlacement(keePass, "left_half", 0), new WindowSnapPlacement(notepad, "right_half", 0)], delayBetweenMs: 0);
+            [new WindowSnapPlacement("left_half", Handle: keePass, MonitorIndex: 0), new WindowSnapPlacement("right_half", Handle: notepad, MonitorIndex: 0)], delayBetweenMs: 0);
         var states = await tools.SetWindowsStateBatch(
-            [new WindowStateChange(notepad, "maximize"), new WindowStateChange(keePass, "restore")], delayBetweenMs: 0);
+            [new WindowStateChange("maximize", Handle: notepad), new WindowStateChange("restore", Handle: keePass)], delayBetweenMs: 0);
 
         // Assert
         foreach (var batch in new[] { bounds, snaps, states })
@@ -393,6 +393,27 @@ public class TargetPolicyEnforcementTests
         _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()), Times.Never);
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
             It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_AndCaptureWithElements_ByASelector_CheckThePolicyOnTheResolvedWindow()
+    {
+        // Arrange - the selector names KeePass, which the policy denies (roadmap M2.4: a selector never gets past it)
+        var sut = CreateScreenshotTools(0x300, "KeePass");
+        var keePass = new WindowSelector { ProcessName = "KeePass" };
+        _windows.Setup(w => w.ResolveWindow(keePass))
+            .Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(0x300, "KeePass window", "KeePass", 3001)));
+
+        // Act
+        var capture = await sut.CaptureWindow(window: keePass);
+        var annotated = await sut.CaptureWithElements(window: keePass);
+
+        // Assert
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

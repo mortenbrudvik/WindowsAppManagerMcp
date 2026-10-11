@@ -41,17 +41,25 @@ public class UIElementTools
         "This filter drops whole subtrees: everything inside an element reported as offscreen is left out too. " +
         "Pass false if the control may be scrolled out of view.";
 
-    public UIElementTools(IUIElementService uiElementService, IElementInspectionService inspectionService)
+    private readonly IWindowService? _windowService;
+
+    /// <param name="uiElementService">The UI Automation walk.</param>
+    /// <param name="inspectionService">The focused-element and element-at-point reads.</param>
+    /// <param name="windowService">Resolves the window selector (roadmap M2.4); the server always passes it.</param>
+    public UIElementTools(IUIElementService uiElementService, IElementInspectionService inspectionService, IWindowService? windowService = null)
     {
         _uiElementService = uiElementService;
         _inspectionService = inspectionService;
+        _windowService = windowService;
     }
 
     [McpServerTool(Name = "get_ui_elements", Title = "Get UI Element Tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true (OperationTimedOut when no element matching the filters was found yet).")]
     public async Task<UIElementResult> GetUIElements(
-        [Description("Window handle (as integer) from find_windows or get_all_windows")]
-        long handle,
+        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description("How many levels below the window to read (default: 5, max: 10). 1 returns only the window's direct children. When depthReached in the result equals depth, there may be more elements below.")]
         int maxDepth = DefaultDepth,
         [Description(ControlTypesDescription)]
@@ -69,6 +77,7 @@ public class UIElementTools
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         var filter = new UIElementFilter(
             ControlTypes: ParseControlTypes(controlTypes),
             InteractableOnly: interactableOnly,
@@ -76,7 +85,7 @@ public class UIElementTools
             MinWidth: minWidth,
             MinHeight: minHeight);
 
-        return await ReadTreeAsync(_uiElementService, (nint)handle, maxDepth, filter, timeoutMs, progress, cancellationToken)
+        return await ReadTreeAsync(_uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken)
             .ConfigureAwait(false);
     }
 

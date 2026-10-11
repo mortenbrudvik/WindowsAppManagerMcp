@@ -85,22 +85,21 @@ public class InputSimulationServiceConcurrencyTests
     [Fact]
     public async Task FocusWindow_DuringTypeText_WaitsUntilTypingFinishes()
     {
-        // Arrange - focus_window as the server runs it: through the input gate filter
+        // Arrange - focus_window as the server runs it: it takes the input gate itself (roadmap M2.4)
         var wrapper = new HoldingInputWrapper();
         var sut = CreateSut(wrapper);
         var operationsWhenFocusRan = -1;
-        var focusWindow = WindowsAppManagerMcp.Infrastructure.InputGateToolFilter.Filter((_, _) =>
-        {
-            operationsWhenFocusRan = wrapper.Operations.Count;
-            return ValueTask.FromResult(new ModelContextProtocol.Protocol.CallToolResult());
-        });
-        var request = new ModelContextProtocol.Server.RequestContext<ModelContextProtocol.Protocol.CallToolRequestParams>(
-            new Mock<ModelContextProtocol.Server.McpServer>().Object,
-            new ModelContextProtocol.Protocol.JsonRpcRequest { Method = ModelContextProtocol.Protocol.RequestMethods.ToolsCall },
-            new ModelContextProtocol.Protocol.CallToolRequestParams { Name = "focus_window" });
+        var foreground = new Mock<IForegroundService>();
+        foreground.Setup(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()))
+            .Returns((nint handle, int _) =>
+            {
+                operationsWhenFocusRan = wrapper.Operations.Count;
+                return new FocusOutcome { Target = handle, IsForeground = true, ForegroundHandle = handle };
+            });
+        var tools = new WindowsAppManagerMcp.Tools.WindowManagerTools(Mock.Of<IWindowService>(), foreground.Object);
 
         // Act - the agent races focus_window (its own terminal) against type_text
-        await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => focusWindow(request, CancellationToken.None).AsTask());
+        await RunOverlapping(wrapper, () => sut.TypeTextAsync(As), () => tools.FocusWindow(handle: 4242));
 
         // Assert - it could not change the foreground between the guard's check and the typed text
         operationsWhenFocusRan.Should().Be(2, "both batches of the text were sent before focus_window ran");

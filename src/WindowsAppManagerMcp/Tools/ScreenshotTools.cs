@@ -169,8 +169,10 @@ public class ScreenshotTools
                  ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public async Task<CallToolResult> CaptureWindow(
-        [Description("Window handle (as integer) from find_windows or get_all_windows")]
-        long handle,
+        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description("Whether to include the window frame/decoration (title bar, borders). Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
@@ -193,7 +195,7 @@ public class ScreenshotTools
         bool restoreIfMinimized = false,
         CancellationToken cancellationToken = default)
     {
-        var windowHandle = (nint)handle;
+        var windowHandle = WindowTargeting.Require(_windowService, handle, window);
         if (PolicyRefusal(windowHandle) is { } refusal)
         {
             return WindowFailure(nameof(ScreenshotErrorCode.TargetDeniedByPolicy), refusal);
@@ -232,8 +234,10 @@ public class ScreenshotTools
                  WarningsDescription + ImageToScreenDescription)]
     [ToolResultPayload(typeof(AnnotatedScreenshotResult))]
     public async Task<CallToolResult> CaptureWithElements(
-        [Description("Window handle (as integer) from find_windows or get_all_windows")]
-        long handle,
+        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description("Whether to include the window frame/decoration. Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
@@ -270,18 +274,19 @@ public class ScreenshotTools
         CancellationToken cancellationToken = default)
     {
         var options = Options(format, quality, maxDimension, output, outputPath, overwrite, saveToFile, maxWidth);
-        var windowHandle = (nint)handle;
+        var windowHandle = WindowTargeting.Require(_windowService, handle, window);
+        var reported = windowHandle.ToInt64();
 
         // Reject bad options and dead windows before the UI Automation walk, which can take seconds.
         if (CaptureRequest.Validate(options) is { } invalid)
         {
-            return AnnotatedFailure(handle, null, invalid.Code.ToString(), invalid.Message);
+            return AnnotatedFailure(reported, null, invalid.Code.ToString(), invalid.Message);
         }
 
         // IsWindow only: untitled windows (popups, menus) are captured too
         if (!_windowService.IsValidWindow(windowHandle))
         {
-            return AnnotatedFailure(handle, null, ScreenshotErrorCode.InvalidHandle.ToString(),
+            return AnnotatedFailure(reported, null, ScreenshotErrorCode.InvalidHandle.ToString(),
                 "Window not found or handle is invalid");
         }
 
@@ -292,14 +297,14 @@ public class ScreenshotTools
         // Neither the pixels nor the element texts of a window the user's policy denies
         if (windowInfo != null && _targetPolicy.Evaluate(windowInfo) is { Allowed: false } verdict)
         {
-            return AnnotatedFailure(handle, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
+            return AnnotatedFailure(reported, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
         }
 
         var restore = await RestoreIfMinimizedAsync(windowHandle, includeFrame, restoreIfMinimized, options, cancellationToken)
             .ConfigureAwait(false);
         if (restore.Refusal is { } refused)
         {
-            return AnnotatedFailure(handle, windowTitle, refused.Code.ToString(), refused.Message);
+            return AnnotatedFailure(reported, windowTitle, refused.Code.ToString(), refused.Message);
         }
 
         ScreenCapture<AnnotatedScreenshotResult> capture;
@@ -308,7 +313,7 @@ public class ScreenshotTools
             // A minimized, hidden or cloaked window shows nothing and its elements are offscreen: refuse before the walk
             if (_screenshotService.CheckWindow(windowHandle) is { } unavailable)
             {
-                return AnnotatedFailure(handle, windowTitle, unavailable.Code.ToString(), unavailable.Message);
+                return AnnotatedFailure(reported, windowTitle, unavailable.Code.ToString(), unavailable.Message);
             }
 
             // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync)
@@ -322,7 +327,7 @@ public class ScreenshotTools
             // An unknown control type name is the agent's mistake, not a failed walk
             if (elementsResult.ErrorCode == UIElementErrorCode.InvalidControlType)
             {
-                return AnnotatedFailure(handle, windowTitle, elementsResult.ErrorCode.ToString(), elementsResult.Error ?? "Unknown control type");
+                return AnnotatedFailure(reported, windowTitle, elementsResult.ErrorCode.ToString(), elementsResult.Error ?? "Unknown control type");
             }
 
             // The pixels do not depend on the walk: a failed walk still returns the image, without overlays

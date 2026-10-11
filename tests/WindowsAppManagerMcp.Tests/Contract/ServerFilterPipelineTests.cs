@@ -46,11 +46,11 @@ public class ServerFilterPipelineTests
         await using var server = await StartServerAsync(session);
 
         // Act
-        var result = await server.CallToolAsync("focus_window", new Dictionary<string, object?> { ["handle"] = 4242 });
+        var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work" });
 
         // Assert - the gate filter refused it without running it, and the error filter logged the outcome
         result.IsError.Should().BeTrue();
-        var lines = CallLines(server, "focus_window");
+        var lines = CallLines(server, "apply_layout");
         lines.Should().HaveCount(2);
         lines[0].Should().Contain("started");
         lines[1].Should().EndWith(": isError PausedByUser");

@@ -41,7 +41,8 @@ public class WindowManagerTools
     /// <summary>The per-window errors of the window batches.</summary>
     private const string BatchErrors =
         " Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is " +
-        "null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), " +
+        "null or misses a field, WindowNotFound, AmbiguousWindow (with candidates) or HandleMismatch for an item whose window " +
+        "selector names no single window, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), " +
         "AccessDenied, NotResponding (the window's app does not answer within 5 s). Each item reports its window afterwards, " +
         "failed or not: bounds (visible frame), outerBounds, state and monitorIndex.";
 
@@ -81,20 +82,27 @@ public class WindowManagerTools
     [Description("Move a window so that its visible frame's top-left corner is at x, y; it keeps its size." + PlacementRules +
                  GeometryResult + WindowChangeErrors +
                  " MoveFailed: Windows did not move it, or it did not return to normal from minimized or maximized (error has the reason).")]
-    public WindowOperationResult MoveWindow(
-        [Description("Window handle (as integer) from find_windows")]
-        long handle,
+    public async Task<WindowOperationResult> MoveWindow(
         [Description("X coordinate of the visible frame's left edge")]
         int x,
         [Description("Y coordinate of the visible frame's top edge")]
         int y,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description(BringToFrontDescription)]
         bool bringToFront = true,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.MoveWindow(hwnd, x, y, bringToFront), settleMs);
+        }
     }
 
     [McpServerTool(Name = "resize_window", Title = "Resize Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -102,19 +110,30 @@ public class WindowManagerTools
                  GeometryResult + WindowChangeErrors +
                  " ResizeFailed: Windows did not resize it, or it did not return to normal from minimized or maximized (error has the reason). " +
                  "InvalidArguments: width or height is not positive. An app can keep a minimum or maximum size: compare bounds with what you asked for.")]
-    public WindowOperationResult ResizeWindow(
-        [Description("Window handle (as integer)")]
-        long handle,
+    public async Task<WindowOperationResult> ResizeWindow(
         [Description("New width of the visible frame in pixels (at least 1)")]
         int width,
         [Description("New height of the visible frame in pixels (at least 1)")]
         int height,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return SizeRefusal(width, height) ?? Precheck(hwnd) ??
-               Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
+        if (SizeRefusal(width, height) is { } invalid)
+        {
+            return invalid;
+        }
+
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.ResizeWindow(hwnd, width, height), settleMs);
+        }
     }
 
     [McpServerTool(Name = "set_window_bounds", Title = "Set Window Bounds", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -123,9 +142,7 @@ public class WindowManagerTools
                  GeometryResult + WindowChangeErrors +
                  " MoveFailed: Windows did not place it, or it did not return to normal from minimized or maximized (error has the reason). " +
                  "InvalidArguments: width or height is not positive.")]
-    public WindowOperationResult SetWindowBounds(
-        [Description("Window handle (as integer)")]
-        long handle,
+    public async Task<WindowOperationResult> SetWindowBounds(
         [Description("X coordinate of the visible frame's left edge")]
         int x,
         [Description("Y coordinate of the visible frame's top edge")]
@@ -134,14 +151,27 @@ public class WindowManagerTools
         int width,
         [Description("New height of the visible frame in pixels (at least 1)")]
         int height,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description(BringToFrontDescription)]
         bool bringToFront = true,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return SizeRefusal(width, height) ?? Precheck(hwnd) ??
-               Change(hwnd, () => _windowService.SetWindowFrame(hwnd, x, y, width, height, bringToFront), settleMs);
+        if (SizeRefusal(width, height) is { } invalid)
+        {
+            return invalid;
+        }
+
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowFrame(hwnd, x, y, width, height, bringToFront), settleMs);
+        }
     }
 
     [McpServerTool(Name = "set_window_state", Title = "Minimize, Maximize or Restore Window", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
@@ -150,17 +180,24 @@ public class WindowManagerTools
                  WindowChangeErrors +
                  " StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). " +
                  "An unknown state fails with InvalidState and the allowed values.")]
-    public WindowOperationResult SetWindowState(
-        [Description("Window handle (as integer)")]
-        long handle,
+    public async Task<WindowOperationResult> SetWindowState(
         [Description("Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' are accepted too). " +
                      "Restore returns a minimized window to its previous state (normal, or maximized if it was maximized before) and makes a maximized window normal.")]
         WindowStateRequest state,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), settleMs);
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SetWindowState(hwnd, state), settleMs);
+        }
     }
 
     [McpServerTool(Name = "focus_window", Title = "Focus Window", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -171,11 +208,19 @@ public class WindowManagerTools
         "errorCode: FocusFailed, NotResponding, Cloaked, WindowHidden (the window is hidden, so keys would go to a window the user cannot see), " +
         "TargetDeniedByPolicy (the user's policy denies the app), PausedByUser or InvalidHandle. " +
         "The foreground can change again before your next call, so confirm with get_foreground_window immediately before keyboard or mouse input.")]
-    public FocusResult FocusWindow(
-        [Description("Window handle (as integer)")]
-        long handle)
+    public async Task<FocusResult> FocusWindow(
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
+        CancellationToken cancellationToken = default)
     {
-        return FocusResult.From(_foregroundService.EnsureForeground((nint)handle));
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return FocusResult.From(_foregroundService.EnsureForeground(hwnd));
+        }
     }
 
     /// <summary>close_windows_batch and close_application close at most this many windows without confirm=true.</summary>
@@ -226,8 +271,10 @@ public class WindowManagerTools
                  "and NotResponding when the app's message queue is full (it is hung). " +
                  "InvalidArguments: waitMs is outside 0-30000. To close every window of an app, use close_application.")]
     public async Task<CloseWindowResult> CloseWindow(
-        [Description("Window handle (as integer)")]
-        long handle,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description(ForceDescription)]
         bool force = false,
         [Description(WaitDescription)]
@@ -236,13 +283,15 @@ public class WindowManagerTools
     {
         if (WaitRefusal(waitMs, nameof(waitMs)) is { } invalid)
         {
-            return new CloseWindowResult(false, Error: invalid, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode);
+            return new CloseWindowResult(false, Error: invalid, ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode, Handle: handle);
         }
 
-        var hwnd = (nint)handle;
+        // The selector is resolved before the gate; the close guards check the window it names as they check any handle
+        var hwnd = WindowTargeting.Require(_windowService, handle, window, requireNamedWindow: true);
+        var reported = hwnd.ToInt64();
         if (!_windowService.IsValidWindow(hwnd))
         {
-            return new CloseWindowResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle));
+            return new CloseWindowResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle), Handle: reported);
         }
 
         // Only the close message is sent inside the input gate; the wait for the window runs outside it, so a slow app or a
@@ -250,25 +299,27 @@ public class WindowManagerTools
         InputGateToolFilter.ThrowIfPaused(_session);
         var shownBefore = waitMs == 0 ? EmptyHandles : _closeVerifier.ShownWindows([hwnd]);
         WindowCloseResult sent;
-        using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
+            // The window the selector named must still be that window: it may have changed while the call waited
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
             sent = _windowService.CloseWindow(hwnd, force);
         }
 
         if (!sent.Success)
         {
-            return new CloseWindowResult(false, Error: sent.Error, ErrorCode: sent.ErrorCode.ToString());
+            return new CloseWindowResult(false, Error: sent.Error, ErrorCode: sent.ErrorCode.ToString(), Handle: reported);
         }
 
         if (waitMs == 0)
         {
-            return new CloseWindowResult(true, CloseNames.Of(CloseStatus.Requested));
+            return new CloseWindowResult(true, CloseNames.Of(CloseStatus.Requested), Handle: reported);
         }
 
         var observed = await _closeVerifier.WaitForCloseAsync([hwnd], shownBefore, TimeSpan.FromMilliseconds(waitMs), cancellationToken)
             .ConfigureAwait(false);
         var outcome = Outcome(observed[0], waitMs);
-        return new CloseWindowResult(outcome.Success, outcome.Status, outcome.Prompt, outcome.Error, outcome.ErrorCode);
+        return new CloseWindowResult(outcome.Success, outcome.Status, outcome.Prompt, outcome.Error, outcome.ErrorCode, reported);
     }
 
     [McpServerTool(Name = "close_windows_batch", Title = "Close Windows (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -280,10 +331,11 @@ public class WindowManagerTools
                  "confirm=true is required (ConfirmationRequired). A window that changed hands after the user confirmed is not closed " +
                  "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
-                 "the other windows are still closed. An item that is null fails alone with InvalidArguments. InvalidArguments (the whole " +
-                 "call): waitMs is outside 0-30000.")]
+                 "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
+                 "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
+                 "AmbiguousWindow (with candidates) or HandleMismatch. InvalidArguments (the whole call): waitMs is outside 0-30000.")]
     public async Task<BatchWindowResult> CloseWindowsBatch(
-        [Description("Array of window handles to close")]
+        [Description("Array of windows to close, each with handle or window (a selector, as close_window takes it)")]
         WindowCloseRequest[] windows,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
@@ -306,13 +358,17 @@ public class WindowManagerTools
         // Nothing while the user has paused input, not even a question
         InputGateToolFilter.ThrowIfPaused(_session);
 
+        // Each item's window, resolved before the question and the gate (roadmap M2.4); an item that names no single window
+        // fails alone
+        var items = ResolveItems(windows, nameof(windows), "a handle or a window", w => w.Handle, w => w.Window, requireNamedWindow: true);
+
         Dictionary<nint, int?>? confirmedOwners = null;
         if (windows.Length > MaxCloseBatchWithoutConfirm)
         {
             if (UserConfirmation.CanAsk(server))
             {
                 // Ask the user, not the model, and before the input gate: a waiting user must not hold up every input call
-                var targets = windows.Where(w => w != null).Select(w => (Handle: (nint)w.Handle, Window: _windowService.GetWindowInfo((nint)w.Handle)))
+                var targets = items.Where(t => t.Refusal == null).Select(t => (t.Handle, Window: _windowService.GetWindowInfo(t.Handle)))
                     .ToList();
                 var answer = await UserConfirmation.AskAsync(server!, CloseQuestion(targets, force), $"Close these {targets.Count} windows",
                     _answerTimeout, cancellationToken).ConfigureAwait(false);
@@ -337,17 +393,17 @@ public class WindowManagerTools
         // Which windows the user could see before the close: only those can be reported hidden
         var shownBefore = waitMs == 0
             ? EmptyHandles
-            : _closeVerifier.ShownWindows(windows.Where(w => w != null).Select(w => (nint)w.Handle).ToList());
+            : _closeVerifier.ShownWindows(items.Where(t => t.Refusal == null).Select(t => t.Handle).ToList());
 
         List<WindowResultItem?> refusals;
         IReadOnlyList<WindowCloseResult> results;
-        using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
         {
             // A window the user was asked about must still belong to the same process; a reused handle is not closed
-            refusals = windows.Select((w, i) => w == null
-                ? NullItem(i, nameof(windows), "a handle")
-                : confirmedOwners == null ? null : HandleMismatchRefusal(w.Handle, confirmedOwners)).ToList();
-            var handles = windows.Where((_, i) => refusals[i] == null).Select(w => (nint)w.Handle).ToList();
+            refusals = items.Select((t, i) => t.Refusal ??
+                (confirmedOwners == null ? null : HandleMismatchRefusal(t.Handle.ToInt64(), confirmedOwners)) ??
+                ItemRecheck(i, t.Handle, windows[i].Window)).ToList();
+            var handles = items.Where((_, i) => refusals[i] == null).Select(t => t.Handle).ToList();
 
             results = await _windowService.CloseWindowsBatchAsync(handles, force, delayBetweenMs, cancellationToken).ConfigureAwait(false);
         }
@@ -381,7 +437,7 @@ public class WindowManagerTools
     [Description("Close an application gracefully: send WM_CLOSE to each of its windows the user can switch to (the Alt+Tab set: visible, " +
                  "not owned, not tool windows; never hidden helper or tray windows), then wait up to timeoutMs. It never forces: apps may ask " +
                  "to save, and kill_process is the way to end an app that will not close. Name the app by exactly one of handle (one of its " +
-                 "windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed " +
+                 "windows), window (a selector for one of its windows), processId or processName (every process with that name that has such a window). A packaged (UWP) app is closed " +
                  "through its frame window, and its processId is the app's own (as find_windows reports it), not ApplicationFrameHost's; " +
                  "a frame whose app cannot be told is closed only by its own handle, alone. Of the shell's process (explorer) only File " +
                  "Explorer windows are closed. Returns status closed (every window gone; exited says whether the processes ended, " +
@@ -395,6 +451,9 @@ public class WindowManagerTools
     public async Task<CloseApplicationResult> CloseApplication(
         [Description("A window of the application (as integer); its process is closed")]
         long? handle = null,
+        [Description("Alternative to handle: a window of the application as a window selector (find_windows' filters), resolved to " +
+                     "exactly one window; its process is closed.")]
+        WindowSelector? window = null,
         [Description("The application's process ID")]
         int? processId = null,
         [Description("The application's process name, with or without .exe (e.g. 'notepad'); matched exactly, ignoring case")]
@@ -412,10 +471,17 @@ public class WindowManagerTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, invalidWait);
         }
 
-        var name = ApplicationName(handle, processId, processName);
+        var name = ApplicationName(handle, window != null, processId, processName);
 
         // Nothing while the user has paused input, not even a question
         InputGateToolFilter.ThrowIfPaused(_session);
+
+        // A window selector names the application by one of its windows, as handle does (roadmap M2.4); it is resolved
+        // before anything is asked or sent, and the window it names goes through the same checks as a handle
+        if (window != null)
+        {
+            handle = WindowTargeting.Require(_windowService, null, window, requireNamedWindow: true).ToInt64();
+        }
 
         var appWindows = _windowService.GetApplicationWindows();
         var application = TargetApplication(handle, processId, name, appWindows);
@@ -470,6 +536,12 @@ public class WindowManagerTools
         var sent = new List<nint>();
         using (await InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout).ConfigureAwait(false))
         {
+            // The window the selector named the application by must still be that window, or nothing is closed
+            if (window != null && handle is { } named)
+            {
+                WindowTargeting.ThrowIfChanged(_windowService, window, (nint)named);
+            }
+
             foreach (var target in targets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -613,16 +685,16 @@ public class WindowManagerTools
             : $"{name} must be between 0 and {MaxCloseWaitMs} milliseconds, but it is {waitMs}. Nothing was closed.";
 
     /// <summary>
-    /// close_application's one target, checked: exactly one of handle, processId and processName, and the name without
-    /// ".exe". Returns the name (null unless processName was given).
+    /// close_application's one target, checked: exactly one of handle, window, processId and processName, and the name
+    /// without ".exe". Returns the name (null unless processName was given).
     /// </summary>
-    private static string? ApplicationName(long? handle, int? processId, string? processName)
+    private static string? ApplicationName(long? handle, bool window, int? processId, string? processName)
     {
-        var given = (handle.HasValue ? 1 : 0) + (processId.HasValue ? 1 : 0) + (processName != null ? 1 : 0);
+        var given = (handle.HasValue ? 1 : 0) + (window ? 1 : 0) + (processId.HasValue ? 1 : 0) + (processName != null ? 1 : 0);
         if (given != 1)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"Pass exactly one of handle, processId and processName ({given} given). Nothing was closed.");
+                $"Pass exactly one of handle, window, processId and processName ({given} given). Nothing was closed.");
         }
 
         if (processId is <= 0)
@@ -710,20 +782,27 @@ public class WindowManagerTools
                  PlacementRules + GeometryResult + WindowChangeErrors +
                  " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
                  "or it did not return to normal from minimized or maximized.")]
-    public WindowOperationResult SnapWindow(
-        [Description("Window handle (as integer)")]
-        long handle,
+    public async Task<WindowOperationResult> SnapWindow(
         [Description("Snap position: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen")]
         SnapPosition position,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description("Target monitor index (0-based, see get_monitors). Defaults to the window's current monitor. An index that is not a monitor fails with InvalidMonitorIndex.")]
         int? monitorIndex = null,
         [Description(BringToFrontDescription)]
         bool bringToFront = true,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront), settleMs);
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ?? Change(hwnd, () => _windowService.SnapWindow(hwnd, position, monitorIndex, bringToFront), settleMs);
+        }
     }
 
     [McpServerTool(Name = "move_window_to_monitor", Title = "Move Window to Monitor", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -734,21 +813,28 @@ public class WindowManagerTools
                  " InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, " +
                  "it did not return to normal from minimized or maximized, or it is not on that monitor afterwards (with 'maximize': not " +
                  "maximized there). An unknown positioning fails with InvalidPositioning.")]
-    public WindowOperationResult MoveWindowToMonitor(
-        [Description("Window handle (as integer)")]
-        long handle,
+    public async Task<WindowOperationResult> MoveWindowToMonitor(
         [Description("Target monitor index (0-based, see get_monitors)")]
         int monitorIndex,
+        [Description(HandleDescription)]
+        long? handle = null,
+        [Description(WindowTargeting.WindowDescription)]
+        WindowSelector? window = null,
         [Description("Position on the monitor's work area: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's normal size, fitted to the work area), 'maximize' (moved there, then maximized) or 'restore' (normal size, at the work area's top-left corner)")]
         MonitorPositioning positioning = MonitorPositioning.Center,
         [Description(BringToFrontDescription + ". Positioning 'maximize' ignores it and activates the window: Windows has no maximize that does not activate.")]
         bool bringToFront = true,
         [Description(SettleDescription)]
-        int settleMs = 0)
+        int settleMs = 0,
+        CancellationToken cancellationToken = default)
     {
-        var hwnd = (nint)handle;
-        return Precheck(hwnd) ??
-               Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront), settleMs);
+        var hwnd = Target(handle, window);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            WindowTargeting.ThrowIfChanged(_windowService, window, hwnd);
+            return Precheck(hwnd) ??
+                   Change(hwnd, () => _windowService.MoveWindowToMonitor(hwnd, monitorIndex, positioning, bringToFront), settleMs);
+        }
     }
 
     [McpServerTool(Name = "set_windows_bounds_batch", Title = "Set Window Bounds (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -756,24 +842,40 @@ public class WindowManagerTools
                  "each window's visible frame. More efficient than multiple individual calls." + PlacementRules + BatchErrors +
                  " MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SetWindowsBoundsBatch(
-        [Description("Array of window placements with handle, x, y, width, height (the visible frame), and optional bringToFront (raises the window without activating it)")]
+        [Description("Array of window placements, each with x, y, width, height (the visible frame), the window as handle or window " +
+                     "(a selector, as the single-window tools take it), and optional bringToFront (raises the window without activating it)")]
         WindowBoundsPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
         RequireItems(placements, nameof(placements));
+        InputGateToolFilter.ThrowIfPaused(_session);
 
-        // Items that are invalid, or for windows the policy denies, get their result here; the others go to the service
-        var refusals = placements.Select((p, i) => p == null
-            ? NullItem(i, nameof(placements), "handle, x, y, width and height")
-            : ItemSizeRefusal(p.Handle, p.Width, p.Height) ?? BatchPolicyRefusal(p.Handle)).ToList();
-        var servicePlacements = placements.Where((_, i) => refusals[i] == null).Select(p =>
-            ((nint)p.Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront)).ToList();
+        // Each item's window, resolved before the gate (roadmap M2.4); an item that names no single window fails alone
+        var items = ResolveItems(placements, nameof(placements), "x, y, width, height and a handle or window", p => p.Handle, p => p.Window);
+        var invalid = items.Select((t, i) => t.Refusal ?? ItemSizeRefusal(t.Handle.ToInt64(), placements[i].Width, placements[i].Height))
+            .ToList();
 
-        var results = await _windowService.SetWindowBoundsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // Items for windows the policy denies get their result here; the others go to the service
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, placements[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var servicePlacements = new List<(nint, int, int, int, int, bool)>();
+            for (var i = 0; i < placements.Length; i++)
+            {
+                if (refusals[i] == null)
+                {
+                    var p = placements[i];
+                    servicePlacements.Add((items[i].Handle, p.X, p.Y, p.Width, p.Height, p.BringToFront));
+                }
+            }
 
-        return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
+            var results = await _windowService.SetWindowBoundsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+
+            return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
+        }
     }
 
     [McpServerTool(Name = "snap_windows_batch", Title = "Snap Windows (Batch)", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -781,32 +883,47 @@ public class WindowManagerTools
                  " InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. " +
                  "MoveFailed: Windows did not place the window, or it did not return to normal from minimized or maximized.")]
     public async Task<BatchWindowResult> SnapWindowsBatch(
-        [Description("Array of snap placements with handle, position, optional monitorIndex, and optional bringToFront (raises the window without activating it; a minimized or maximized window is restored first, without activating it)")]
+        [Description("Array of snap placements, each with position, the window as handle or window (a selector, as the single-window " +
+                     "tools take it), optional monitorIndex, and optional bringToFront (raises the window without activating it; a " +
+                     "minimized or maximized window is restored first, without activating it)")]
         WindowSnapPlacement[] placements,
         [Description("Delay between operations in milliseconds (0-5000, default: 50)")]
         int delayBetweenMs = 50,
         CancellationToken cancellationToken = default)
     {
         RequireItems(placements, nameof(placements));
+        InputGateToolFilter.ThrowIfPaused(_session);
 
-        // An item's position is checked here, so one bad item fails alone instead of failing the call
+        // Each item's window, resolved before the gate, and its position, checked here, so one bad item fails alone
+        var items = ResolveItems(placements, nameof(placements), "a position and a handle or window", p => p.Handle, p => p.Window);
         var positions = new SnapPosition[placements.Length];
-        var refusals = placements.Select((p, i) =>
+        var invalid = items.Select((t, i) =>
         {
-            if (p == null)
-                return NullItem(i, nameof(placements), "handle and position");
+            if (t.Refusal != null)
+                return t.Refusal;
 
-            return ToolEnum<SnapPosition>.TryParse(p.Position, out positions[i], out var error)
-                ? BatchPolicyRefusal(p.Handle)
-                : new WindowResultItem(p.Handle, false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
+            return ToolEnum<SnapPosition>.TryParse(placements[i].Position, out positions[i], out var error)
+                ? null
+                : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidSnapPosition));
         }).ToList();
-        var servicePlacements = placements.Select((p, i) => (Placement: p, Index: i)).Where(x => refusals[x.Index] == null)
-            .Select(x => ((nint)x.Placement.Handle, positions[x.Index], x.Placement.MonitorIndex, x.Placement.BringToFront))
-            .ToList();
 
-        var results = await _windowService.SnapWindowsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, placements[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var servicePlacements = new List<(nint, SnapPosition, int?, bool)>();
+            for (var i = 0; i < placements.Length; i++)
+            {
+                if (refusals[i] == null)
+                {
+                    servicePlacements.Add((items[i].Handle, positions[i], placements[i].MonitorIndex, placements[i].BringToFront));
+                }
+            }
 
-        return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
+            var results = await _windowService.SnapWindowsBatchAsync(servicePlacements, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+
+            return Summary(placements.Length, InOrder(refusals, results.Select(r => Item(r))));
+        }
     }
 
     [McpServerTool(Name = "set_windows_state_batch", Title = "Set Window States (Batch)", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
@@ -814,31 +931,45 @@ public class WindowManagerTools
                  "when its window was seen in that state afterwards, and state reports the state it is in." + BatchErrors +
                  " InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.")]
     public async Task<BatchWindowResult> SetWindowsStateBatch(
-        [Description("Array of state changes with handle and state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' are accepted too)")]
+        [Description("Array of state changes, each with state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' " +
+                     "are accepted too) and the window as handle or window (a selector, as the single-window tools take it)")]
         WindowStateChange[] changes,
         [Description("Delay between operations in milliseconds (0-5000, default: 30)")]
         int delayBetweenMs = 30,
         CancellationToken cancellationToken = default)
     {
         RequireItems(changes, nameof(changes));
+        InputGateToolFilter.ThrowIfPaused(_session);
 
+        var items = ResolveItems(changes, nameof(changes), "a state and a handle or window", c => c.Handle, c => c.Window);
         var states = new WindowStateRequest[changes.Length];
-        var refusals = changes.Select((c, i) =>
+        var invalid = items.Select((t, i) =>
         {
-            if (c == null)
-                return NullItem(i, nameof(changes), "handle and state");
+            if (t.Refusal != null)
+                return t.Refusal;
 
-            return ToolEnum<WindowStateRequest>.TryParse(c.State, out states[i], out var error)
-                ? BatchPolicyRefusal(c.Handle)
-                : new WindowResultItem(c.Handle, false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidState));
+            return ToolEnum<WindowStateRequest>.TryParse(changes[i].State, out states[i], out var error)
+                ? null
+                : new WindowResultItem(t.Handle.ToInt64(), false, Error: $"Item {i}: {error}", ErrorCode: nameof(InvalidState));
         }).ToList();
-        var serviceChanges = changes.Select((c, i) => (Change: c, Index: i)).Where(x => refusals[x.Index] == null)
-            .Select(x => ((nint)x.Change.Handle, states[x.Index]))
-            .ToList();
 
-        var results = await _windowService.SetWindowStateBatchAsync(serviceChanges, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+        using (await EnterGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var refusals = invalid.Select((r, i) => r ?? ItemRecheck(i, items[i].Handle, changes[i].Window) ??
+                BatchPolicyRefusal(items[i].Handle.ToInt64())).ToList();
+            var serviceChanges = new List<(nint, WindowStateRequest)>();
+            for (var i = 0; i < changes.Length; i++)
+            {
+                if (refusals[i] == null)
+                {
+                    serviceChanges.Add((items[i].Handle, states[i]));
+                }
+            }
 
-        return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r))));
+            var results = await _windowService.SetWindowStateBatchAsync(serviceChanges, delayBetweenMs, cancellationToken).ConfigureAwait(false);
+
+            return Summary(changes.Length, InOrder(refusals, results.Select(r => Item(r))));
+        }
     }
 
     /// <summary>The question close_windows_batch asks the user: every window, with its title, process and PID.</summary>
@@ -884,13 +1015,86 @@ public class WindowManagerTools
     {
         if (!_windowService.IsValidWindow(handle))
         {
-            return new WindowOperationResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle));
+            return new WindowOperationResult(false, Error: WindowService.InvalidHandleMessage, ErrorCode: nameof(InvalidHandle),
+                Handle: handle.ToInt64());
         }
 
         return _windowService.EvaluateTargetPolicy(handle) is { Allowed: false } verdict
-            ? new WindowOperationResult(false, Error: WindowService.WindowChangeRefusal(handle, verdict), ErrorCode: nameof(TargetDeniedByPolicy))
+            ? new WindowOperationResult(false, Error: WindowService.WindowChangeRefusal(handle, verdict), ErrorCode: nameof(TargetDeniedByPolicy),
+                Handle: handle.ToInt64())
             : null;
     }
+
+    /// <summary>The handle parameter of the single-window tools: kept for compatibility beside the window selector (roadmap M2.4).</summary>
+    private const string HandleDescription = "Window handle (as integer) from find_windows. Pass handle or window, not both.";
+
+    /// <summary>
+    /// The window a window-changing tool acts on (roadmap M2.4). Nothing while the user has paused input; then the handle,
+    /// or the selector resolved, before the tool takes the input gate: resolution only reads windows, and the window then
+    /// goes through the same checks (<see cref="Precheck"/>, the service's own) as a handle the caller passed.
+    /// </summary>
+    /// <exception cref="ToolErrorException">Input is paused, or the arguments name no single window.</exception>
+    private nint Target(long? handle, WindowSelector? window)
+    {
+        InputGateToolFilter.ThrowIfPaused(_session);
+        return WindowTargeting.Require(_windowService, handle, window);
+    }
+
+    /// <summary>
+    /// The input gate for a window-changing tool, after its window was resolved: waits, refuses (InputBusy) and reports a
+    /// pause (PausedByUser) exactly as the gate filter does for the tools it gates.
+    /// </summary>
+    private Task<IDisposable> EnterGateAsync(CancellationToken cancellationToken) =>
+        InputGateToolFilter.EnterAsync(_session, cancellationToken, _gateWaitTimeout);
+
+    /// <summary>
+    /// The window of each item of a batch, resolved before the gate (roadmap M2.4): its handle, or its selector resolved.
+    /// An item that is null, that names no window, or whose selector names no single window gets its refusal (InvalidArguments,
+    /// WindowNotFound, AmbiguousWindow with candidates, HandleMismatch, InvalidHandle) and fails alone.
+    /// </summary>
+    private List<(nint Handle, WindowResultItem? Refusal)> ResolveItems<T>(
+        T[] items, string array, string fields, Func<T, long?> handleOf, Func<T, WindowSelector?> windowOf,
+        bool requireNamedWindow = false) where T : class
+    {
+        var resolved = new List<(nint, WindowResultItem?)>(items.Length);
+        for (var i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+            if (item == null)
+            {
+                resolved.Add((nint.Zero, NullItem(i, array, fields)));
+                continue;
+            }
+
+            var target = WindowTargeting.Resolve(_windowService, handleOf(item), windowOf(item), requireNamedWindow: requireNamedWindow);
+            if (target == null)
+            {
+                resolved.Add((nint.Zero, new WindowResultItem(0, false,
+                    Error: $"Item {i} of {array} names no window; each item needs {fields}. Nothing was done for it.",
+                    ErrorCode: ToolErrorReporting.InvalidArgumentsErrorCode)));
+            }
+            else if (target.Refusal is { } refusal)
+            {
+                resolved.Add((nint.Zero, new WindowResultItem(0, false, Error: $"Item {i}: {refusal.Error}", ErrorCode: refusal.ErrorCode,
+                    Candidates: refusal.Candidates)));
+            }
+            else
+            {
+                resolved.Add((target.Handle, null));
+            }
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// An item's resolved window checked again inside the input gate (<see cref="WindowTargeting.Recheck"/>): HandleMismatch
+    /// when it no longer matches the item's selector, so that item fails alone; null otherwise.
+    /// </summary>
+    private WindowResultItem? ItemRecheck(int index, nint handle, WindowSelector? window) =>
+        WindowTargeting.Recheck(_windowService, window, handle) is { } refusal
+            ? new WindowResultItem(handle.ToInt64(), false, Error: $"Item {index}: {refusal.Error}", ErrorCode: refusal.ErrorCode)
+            : null;
 
     /// <summary>
     /// Runs a window change and reports its outcome with the window as it is afterwards (roadmap M2.3): its visible frame,
@@ -924,7 +1128,8 @@ public class WindowManagerTools
             State: State(window),
             MonitorIndex: window?.MonitorIndex,
             Error: result.Error,
-            ErrorCode: result.ErrorCodeName);
+            ErrorCode: result.ErrorCodeName,
+            Handle: handle.ToInt64());
     }
 
     /// <summary>A batch item for the service's result, with the window as it is afterwards.</summary>
@@ -1026,7 +1231,8 @@ public class WindowManagerTools
 /// The result of a single-window tool. The geometry tools (roadmap M2.3) report the window as it is afterwards, failed or
 /// not (left out for an invalid handle): Bounds is its visible frame, OuterBounds its window rect with the invisible
 /// resize borders (the bounds find_windows reports), State normal, minimized or maximized, MonitorIndex its monitor. A
-/// minimized window has no bounds. close_window reports only success and the error.
+/// minimized window has no bounds. Handle is the window the tool acted on (roadmap M2.4: the one a window selector
+/// resolved to); it is left out when the arguments named no window.
 /// </summary>
 public record WindowOperationResult(
     bool Success,
@@ -1035,5 +1241,6 @@ public record WindowOperationResult(
     string? State = null,
     int? MonitorIndex = null,
     string? Error = null,
-    string? ErrorCode = null
+    string? ErrorCode = null,
+    long? Handle = null
 );

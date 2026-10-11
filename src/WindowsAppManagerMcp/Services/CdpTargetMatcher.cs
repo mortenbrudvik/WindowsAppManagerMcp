@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -22,7 +20,7 @@ public static class CdpTargetMatcher
     private static readonly string[] Separators = [" - ", " — ", " – "];
 
     private static readonly Regex EdgeMorePagesSegment = new(
-        @"^ and \d+ more pages?(?: - |$)",
+        "^" + WindowTitles.MorePagesPattern + "(?: - |$)",
         RegexOptions.CultureInvariant);
 
     private const int MaxListedCandidates = 5;
@@ -86,37 +84,9 @@ public static class CdpTargetMatcher
     /// <summary>
     /// Normalizes a title for comparison: removes invisible format characters (such as the
     /// U+200B zero-width space in Edge window titles), collapses whitespace runs to one space, and trims.
+    /// The window selectors use the same normalizer (<see cref="WindowTitles.Normalize"/>).
     /// </summary>
-    public static string NormalizeTitle(string? title)
-    {
-        if (string.IsNullOrEmpty(title))
-            return string.Empty;
-
-        var builder = new StringBuilder(title.Length);
-        var pendingSpace = false;
-
-        foreach (var c in title)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.Format)
-                continue;
-
-            if (char.IsWhiteSpace(c))
-            {
-                pendingSpace = builder.Length > 0;
-                continue;
-            }
-
-            if (pendingSpace)
-            {
-                builder.Append(' ');
-                pendingSpace = false;
-            }
-
-            builder.Append(c);
-        }
-
-        return builder.ToString();
-    }
+    public static string NormalizeTitle(string? title) => WindowTitles.Normalize(title);
 
     private static bool IsTitleShownByWindow(string window, string tabTitle)
     {

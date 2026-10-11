@@ -98,8 +98,10 @@ public enum WindowErrorCode
     ConfirmationDeclined = 31,
 
     /// <summary>
-    /// The window changed after the user confirmed: its handle now belongs to a different process than the one the
-    /// user was asked about. Nothing was sent to it.
+    /// The window is not the one the call expected: after the user confirmed a close, its handle belongs to a different
+    /// process than the one the user was asked about (roadmap M2.10); or a window selector named a handle together with
+    /// what the window must be (processId, processName, a title or className), and the window no longer matches it, so
+    /// the handle was most likely reused by another window (roadmap M2.4). Nothing was sent to it.
     /// </summary>
     HandleMismatch = 32,
 
@@ -115,7 +117,22 @@ public enum WindowErrorCode
     /// The close message was sent, but the window waits for an answer to a prompt (a "Save changes?" dialog); the result
     /// describes the prompt. Nothing was answered.
     /// </summary>
-    PromptShown = 34
+    PromptShown = 34,
+
+    // Window selectors (roadmap M2.4):
+
+    /// <summary>
+    /// No window matches the call's window selector (or its index is past the matches). Nothing was done. The listing
+    /// rules of find_windows apply: cloaked and untitled windows only with includeCloaked and includeUntitled, and
+    /// processName is the whole process name unless processNameContains is set.
+    /// </summary>
+    WindowNotFound = 35,
+
+    /// <summary>
+    /// More than one window matches the call's window selector, and it has no index. Nothing was done; the error lists up
+    /// to 5 candidates (handle, title, process and class) so the caller can name one exactly.
+    /// </summary>
+    AmbiguousWindow = 36
 }
 
 /// <summary>
