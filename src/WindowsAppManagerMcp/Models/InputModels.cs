@@ -372,8 +372,9 @@ public enum InputErrorCode
     /// <summary>
     /// The input pastes (Ctrl+V, Shift+Insert, the SYN character, Win+V, or a right click in a terminal), and the
     /// clipboard holds content get_clipboard would not return: the user's (not allowed by the user), content marked
-    /// private, or clipboard history; or the clipboard could not be checked. A paste followed by a read would disclose it.
-    /// Nothing (more) was sent.
+    /// private, or clipboard history; or the clipboard could not be checked; or the call copies and then pastes (copy
+    /// keys, or the ETX or CAN character, before the paste), or copy keys sent moments ago have not copied yet, so the
+    /// paste would paste a copy no check saw. A paste followed by a read would disclose it. Nothing (more) was sent.
     /// </summary>
     PasteNotAllowed = 44
 }

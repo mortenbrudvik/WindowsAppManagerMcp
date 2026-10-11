@@ -56,7 +56,90 @@ public class ClipboardPasteGuardTests
 
         var refusal = Guard().Check(Keys(keys), Editor);
 
-        refusal.Should().NotBeNull().And.Contain("in a call of their own");
+        refusal.Should().NotBeNull().And.Contain("separate calls").And.Contain("Nothing was sent");
+    }
+
+    [Theory]
+    [InlineData("^c^v")]
+    [InlineData("^c{TAB}^v")]
+    [InlineData("^x^v")]
+    [InlineData("^{INSERT}+{INSERT}")]
+    [InlineData("+{DELETE}^v")]
+    [InlineData("^c")]
+    [InlineData("")]
+    [InlineData("^v")]
+    public void CopyThenPasteInOneCall_IsRefused_EvenWhenTheClipboardHoldsSetClipboardsText(string keys)
+    {
+        // The paste would paste what the copy takes, which is never checked: a password manager's private copy included
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        var reads = 0;
+        _clipboard.OnSequenceRead = () => reads++;
+
+        var refusal = Guard().Check(Keys(System.Text.RegularExpressions.Regex.Unescape(keys)), Editor);
+
+        refusal.Should().NotBeNull().And.Contain("copies and then pastes").And.Contain("separate calls").And.Contain("Nothing was sent");
+        reads.Should().Be(0, "the order of the keys alone refuses it");
+    }
+
+    [Fact]
+    public void CopyThenPasteInOneCall_IsRefused_AfterTheAgentsOwnCopy_AndWithWamAllowUserClipboard()
+    {
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+        _clipboard.AppCopies(AppProcessId, "the selection");
+
+        Guard().Check(Keys("^c^v"), Editor).Should().Contain("separate calls");
+        Guard(allowUserClipboard: true).Check(Keys("^c^v"), Editor).Should().Contain("separate calls");
+    }
+
+    [Fact]
+    public void CopyAfterThePaste_IsCheckedAsAPlainPaste()
+    {
+        // The paste comes first, so it pastes what is on the clipboard now, which the check reads
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+
+        Guard().Check(Keys("^v^a^c"), Editor).Should().BeNull();
+
+        _clipboard.UserCopies("hunter2");
+        Guard().Check(Keys("^v^c"), Editor).Should().Contain("did not put there").And.NotContain("separate calls");
+    }
+
+    [Fact]
+    public void ARightClickInATerminal_AfterCopyKeys_IsRefused()
+    {
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        var batch = Keys("^c").Concat(RightClick).ToList();
+
+        Guard().Check(batch, Terminal).Should().Contain("separate calls");
+    }
+
+    [Fact]
+    public void APasteRightAfterCopyKeysTheAppHasNotActedOnYet_IsRefused_UntilTheCopyWindowPasses()
+    {
+        // The copy keys of the previous call wait in the app's queue ahead of the paste: checked now, the paste would
+        // paste what the copy takes next, unchecked
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+
+        Guard().Check(Keys("^v"), Editor).Should().Contain("not copied yet").And.Contain("Nothing was sent");
+
+        _clock.Advance(ClipboardOrigin.CopyKeysWindow + TimeSpan.FromMilliseconds(1));
+        Guard().Check(Keys("^v"), Editor).Should().BeNull("the copy window passed without a copy");
+    }
+
+    [Fact]
+    public void ThePrivateCopyOfThePreviousCall_IsRefusedInTheNextCall()
+    {
+        // The split the refusal asks for: the paste in its own call is checked against what the copy put there
+        var outcome = _clipboard.WriteText("Meeting notes");
+        _origin.ServerWrote(outcome.SequenceNumber, "Meeting notes");
+        _origin.InputSent(_origin.BeforeInput(Keys("^c"), AppProcessId)!);
+        _clipboard.AppCopies(AppProcessId, "hunter2", ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing);
+
+        Guard().Check(Keys("^v"), Editor).Should().Contain("marked private");
     }
 
     [Fact]

@@ -167,6 +167,12 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     /// <summary>The SYN control character: an edit control takes it, typed as a character, as Ctrl+V.</summary>
     public const char PasteCharacter = '\u0016';
 
+    /// <summary>The ETX control character: an edit control takes it, typed as a character, as Ctrl+C.</summary>
+    public const char CopyCharacter = '\u0003';
+
+    /// <summary>The CAN control character: an edit control takes it, typed as a character, as Ctrl+X.</summary>
+    public const char CutCharacter = '\u0018';
+
     /// <summary>
     /// The window classes of terminals in which a right click pastes the clipboard: the console host (with QuickEdit),
     /// Windows Terminal, PuTTY and KiTTY, mintty and ConEmu.
@@ -218,9 +224,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     public static ClipboardCopyTrigger? CopyTrigger(IReadOnlyList<InputEvent> batch)
     {
         ArgumentNullException.ThrowIfNull(batch);
-        if (SendKeysParser.Chords(batch).Any(chord => chord.Kind == InputEventKind.VirtualKey &&
-                (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code is VkC or VkX or NativeEnums.VK_INSERT) ||
-                 ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_DELETE))))
+        if (SendKeysParser.Chords(batch).Any(IsCopyKeys))
         {
             return ClipboardCopyTrigger.CopyKeys;
         }
@@ -254,11 +258,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             return ClipboardPasteKind.History;
         }
 
-        if (chords.Any(chord =>
-                (chord.Kind == InputEventKind.VirtualKey &&
-                 (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code == VkV) ||
-                  ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_INSERT))) ||
-                (chord.Kind == InputEventKind.Unicode && chord.Code == PasteCharacter)))
+        if (chords.Any(IsPasteKeys))
         {
             return ClipboardPasteKind.Paste;
         }
@@ -268,6 +268,68 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             ? ClipboardPasteKind.Paste
             : null;
     }
+
+    /// <summary>
+    /// True when <paramref name="batch"/> copies and then pastes: copy keys (Ctrl+C, Ctrl+X, Ctrl+Insert, Shift+Delete),
+    /// or the ETX or CAN character (<see cref="CopyCharacter"/>, <see cref="CutCharacter"/>), followed later in the batch
+    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right click when
+    /// <paramref name="receivingClass"/> is a terminal's). Such a paste pastes what the copy takes, which no check made
+    /// before the batch is sent can see.
+    /// </summary>
+    /// <param name="batch">The input of one call.</param>
+    /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
+    public static bool CopiesBeforePaste(IReadOnlyList<InputEvent> batch, string? receivingClass = null)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        var chords = SendKeysParser.IndexedChords(batch);
+        var firstCopy = -1;
+        foreach (var (chord, index) in chords)
+        {
+            if (IsCopyKeys(chord) || (chord.Kind == InputEventKind.Unicode && chord.Code is CopyCharacter or CutCharacter))
+            {
+                firstCopy = index;
+                break;
+            }
+        }
+
+        if (firstCopy < 0)
+        {
+            return false;
+        }
+
+        if (chords.Any(c => c.Index > firstCopy && IsPasteKeys(c.Chord)))
+        {
+            return true;
+        }
+
+        if (receivingClass == null || !RightClickPasteClasses.Contains(receivingClass))
+        {
+            return false;
+        }
+
+        for (var i = firstCopy + 1; i < batch.Count; i++)
+        {
+            if (batch[i].Kind == InputEventKind.Mouse && (batch[i].Flags & NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Ctrl+C, Ctrl+X or Ctrl+Insert (with any other modifiers), or Shift+Delete.</summary>
+    private static bool IsCopyKeys(KeyChord chord) =>
+        chord.Kind == InputEventKind.VirtualKey &&
+        (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code is VkC or VkX or NativeEnums.VK_INSERT) ||
+         ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_DELETE));
+
+    /// <summary>Ctrl+V or Shift+Insert (with any other modifiers), or the SYN character.</summary>
+    private static bool IsPasteKeys(KeyChord chord) =>
+        (chord.Kind == InputEventKind.VirtualKey &&
+         (((chord.Modifiers & KeyModifiers.Control) != 0 && chord.Code == VkV) ||
+          ((chord.Modifiers & KeyModifiers.Shift) != 0 && chord.Code == NativeEnums.VK_INSERT))) ||
+        (chord.Kind == InputEventKind.Unicode && chord.Code == PasteCharacter);
 
     public ClipboardCopyMark? BeforeInput(IReadOnlyList<InputEvent> batch, int targetProcessId, nint receivingWindow = 0,
         nint anchorWindow = 0)

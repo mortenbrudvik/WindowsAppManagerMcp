@@ -29,6 +29,12 @@ public interface IClipboardPasteGuard
 /// A clipboard that cannot be checked refuses the paste.
 /// </para>
 /// <para>
+/// Input that copies and then pastes in one call (copy keys or the ETX or CAN character before the paste) is refused
+/// whatever the clipboard holds: its paste would paste what its copy takes, which no check made before the input can
+/// see. Split into two calls, the paste is checked against what the copy put there. A paste while copy keys the agent
+/// sent moments ago have not copied yet is refused for the same reason: they wait in the application's queue ahead of it.
+/// </para>
+/// <para>
 /// Not covered: paste through an application's own menu (Edit, Paste, or a context menu's Paste item chosen by a click
 /// or by its access key), drag and drop, and paste shortcuts an application or the user defined. The check runs right
 /// before the input; content the user copies in the instant between the check and the input can still be pasted.
@@ -59,6 +65,13 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
         // The class of the window is read only for a right click, the one mouse input that can paste
         var rightButton = batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & Native.NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0);
         var receivingClass = rightButton && receivingWindow != nint.Zero ? _windows.GetClassName(receivingWindow) : null;
+
+        // A paste after a copy in the same call pastes what the copy takes, which this check cannot see
+        if (CopyThenPasteRefusal(batch, receivingClass) is { } copyThenPaste)
+        {
+            return copyThenPaste;
+        }
+
         switch (ClipboardOrigin.PasteTrigger(batch, receivingClass))
         {
             case null:
@@ -77,14 +90,20 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
 
         // Decided on the number read while the clipboard is open, which belongs to the content that would be pasted
         var before = _clipboard.GetSequenceNumber();
+
+        // Copy keys of an earlier call the application has not acted on yet wait in its queue ahead of the paste, which
+        // would then paste what they copy, unchecked
+        if (_origin.IsCopyPending(before))
+        {
+            return $"{what}, but the copy keys the agent sent moments ago have not copied yet, and the paste would paste what " +
+                   "they copy without a check. Nothing was sent. Send the paste again in a moment, or call get_clipboard " +
+                   "first, which waits for the copy.";
+        }
+
         var kind = _origin.Classify(before);
         if (!IsAgents(kind) && !UserAllowed(before))
         {
-            // Copy keys in the same batch have not copied yet when the paste is checked
-            return ClipboardOrigin.CanCopy(batch)
-                ? NotFromAgent(what) + " The copy keys in this call have not copied yet when the paste is checked: send them " +
-                  "in a call of their own first, then the paste."
-                : NotFromAgent(what);
+            return NotFromAgent(what);
         }
 
         var snapshot = _clipboard.Read(ClipboardFormat.Text, ServerTextProbe, kind == ClipboardOriginKind.SetClipboard ? before : 0);
@@ -114,6 +133,24 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
 
         return null;
     }
+
+    /// <summary>
+    /// Why input that copies and then pastes in the same call (<see cref="ClipboardOrigin.CopiesBeforePaste"/>) must not be
+    /// sent; null when it does not. Its paste would paste what its copy takes, which no check made before the input can
+    /// see: content a password manager marks private included. The input tools refuse it whatever the clipboard holds.
+    /// </summary>
+    /// <param name="input">All the input of the call.</param>
+    /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
+    /// <param name="nothingDone">What the refusal says was not done.</param>
+    public static string? CopyThenPasteRefusal(IReadOnlyList<InputEvent> input, string? receivingClass,
+        string nothingDone = "Nothing was sent.") =>
+        ClipboardOrigin.CopiesBeforePaste(input, receivingClass)
+            ? "The input copies and then pastes in the same call (copy keys, or the ETX or CAN character, before Ctrl+V, " +
+              "Shift+Insert, the SYN character or a right click in a terminal). The paste would paste what the copy takes " +
+              "before the server can check it, content a password manager marks private included. " + nothingDone +
+              " Send the copy and the paste in separate calls: the paste is then checked against what the copy put on " +
+              "the clipboard."
+            : null;
 
     private bool UserAllowed(uint sequenceNumber) => _options.AllowUserClipboard || _origin.IsUserAllowed(sequenceNumber);
 
