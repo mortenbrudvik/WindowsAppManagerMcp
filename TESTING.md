@@ -2151,8 +2151,9 @@ registers it with `WithServerTools(instance)`, not the SDK's `WithTools(instance
 as the server binds them.
 
 `Contract/ToolAnnotationContractTests` holds every tool to a title and all four hints (roadmap M2.10), and pins
-the read-only, destructive and open-world sets. `Contract/UserConfirmationContractTests` covers kill_process and
-close_windows_batch asking the user through elicitation on both protocol paths. Its elicitation handler takes the
+the read-only, destructive and open-world sets. `Contract/UserConfirmationContractTests` covers kill_process,
+close_windows_batch, close_application and close_window's `force` asking the user through elicitation (the main cases
+on both protocol paths). Its elicitation handler takes the
 input gate (`InputGate.TryEnterAsync`) while the question is open: a tool that asked while holding the gate would
 fail it after 5 seconds instead of blocking every input call.
 
@@ -2227,6 +2228,27 @@ gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
 keeps the server instructions at 15 to 20 lines that name only served tools.
+
+### Audit log and clipboard in tests
+
+Two production services write to the user's machine, so a test never uses them as they are configured for the
+server:
+
+- **The audit log** (roadmap M2.17). `ServiceRegistration.AddWindowsAppManagerServices` defaults to
+  `AuditLogOptions.FromEnvironment`, the real `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` folder (or
+  `WAM_AUDIT_PATH`). A test that builds the server with the production registrations and calls an audited tool must
+  pass a temporary folder: `auditLog: () => AuditLogOptions.ForFolder(<temp folder>)`, as
+  `Integration/DependencyInjectionTests` does; the contract services (`Fixtures/Contract/ContractServices.cs`) write
+  their audit log into a temporary folder of their own, and the E2E `ServerHarness` into its temporary layouts folder.
+  Nothing is written until an audited tool is called. `Unit/Services/AuditLogTests` covers the writer (retention, the
+  background writer and its 2-second wait, shared files), `Unit/Infrastructure/AuditRecordTests` what a line holds, and
+  `Contract/AuditLogContractTests` which tools are audited and that no string argument reaches the file.
+- **The clipboard** (roadmap M2.16). Every clipboard test runs against `Fixtures/FakeClipboardWrapper`, an in-memory
+  `INativeClipboardWrapper` with a sequence number, formats, an owner process and the privacy markers, or against a
+  mocked `IClipboardService` (the contract services); none opens the real clipboard, which belongs to the user. The E2E
+  wrapper catalog refuses reading or writing the clipboard's content in every tier. `ClipboardOriginTests` covers which copies
+  count as the agent's, `ClipboardPasteGuardTests` the paste rule, `ClipboardServiceTests` the reads and writes, and
+  `Contract/ClipboardToolContractTests` the two tools over MCP, the user's consent included.
 
 ### Visual Studio
 

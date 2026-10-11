@@ -61,7 +61,8 @@ public static class InputGateToolFilter
     /// exactly as this filter does. kill_process and the close tools may ask the user to confirm (elicitation, roadmap
     /// M2.10): the user may take minutes to answer, and every input and window call would wait for them. The close tools
     /// (roadmap M2.5) also send their close messages inside the gate and release it before they wait for the windows to
-    /// close: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
+    /// close, and kill_process sends its close request or termination inside it and releases it before it waits for the
+    /// process to exit: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
     /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
     /// selector (roadmap M2.4) before they take the gate, and act inside it.
     /// </summary>

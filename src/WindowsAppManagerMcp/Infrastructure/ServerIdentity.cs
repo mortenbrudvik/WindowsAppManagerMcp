@@ -16,7 +16,7 @@ public static class ServerIdentity
 
     private static readonly string[] InstructionLines =
     [
-        "Windows App Manager acts on the user's real Windows desktop: windows, monitors, screenshots, UI Automation, mouse and keyboard input, launches and layouts. Work in a loop: locate, activate and verify, act, verify.",
+        "Windows App Manager acts on the user's real Windows desktop: windows, monitors, screenshots, UI Automation, mouse and keyboard input, the clipboard, launches and layouts. Work in a loop: locate, activate and verify, act, verify.",
         "- Locate: find_windows (or launch_application with waitForWindow) gives window handles; a tool can name its window instead with a window selector such as {\"processName\": \"notepad\"}. get_ui_elements, get_focused_element and get_element_at_point give elements with their screen bounds.",
         "- Activate and verify: focus_window brings a window to the front and reports what is in front; check it before you type.",
         "- Act: pass the target window as windowHandle (or a window selector) to every input tool (click, right_click, double_click, mouse_move, scroll, type_text, send_keys). Prefer element bounds from get_ui_elements or the screenBounds of capture_with_elements over points read off an image. Close windows with close_window, not with key chords.",
