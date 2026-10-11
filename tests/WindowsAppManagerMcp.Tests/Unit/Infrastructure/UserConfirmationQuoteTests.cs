@@ -45,6 +45,42 @@ public class UserConfirmationQuoteTests
     }
 
     [Theory]
+    [InlineData("\U000E0001")] // language tag
+    [InlineData("\U000E0041")] // tag Latin capital letter A
+    [InlineData("\U000E007F")] // cancel tag
+    [InlineData("\U0001BCA0")] // shorthand format letter overlap
+    [InlineData("\U0001D173")] // musical symbol begin beam
+    public void FormatCharactersOutsideTheBasicPlane_AreRemoved(string format)
+    {
+        UserConfirmation.Quote($"Untitled{format}{format} - Notepad").Should().Be("'Untitled - Notepad'");
+    }
+
+    [Fact]
+    public void LoneSurrogates_AreRemoved()
+    {
+        // Built here, not as theory data: test discovery does not keep a lone surrogate intact
+        foreach (var lone in new[] { "\uD800", "\uDC00", "\uDBFF\uDBFF", "\uDC00\uD800" })
+        {
+            UserConfirmation.Quote($"Untitled{lone} - Notepad").Should().Be("'Untitled - Notepad'", $"U+{(int)lone[0]:X4} is removed");
+        }
+    }
+
+    [Fact]
+    public void CharactersOutsideTheBasicPlane_ThatAreNoFormatCharacters_AreKept()
+    {
+        UserConfirmation.Quote("Party \U0001F389 - Notepad").Should().Be("'Party \U0001F389 - Notepad'");
+    }
+
+    [Fact]
+    public void ALongTitle_IsNotCutInsideASurrogatePair()
+    {
+        var quoted = UserConfirmation.Quote(new string('a', UserConfirmation.MaxQuotedLength - 2) + "\U0001F389\U0001F389\U0001F389");
+
+        quoted.Should().Be($"'{new string('a', UserConfirmation.MaxQuotedLength - 2)}\u2026'");
+        quoted.Any(char.IsSurrogate).Should().BeFalse();
+    }
+
+    [Theory]
     [InlineData('\u2028')]
     [InlineData('\u2029')]
     [InlineData('\n')]

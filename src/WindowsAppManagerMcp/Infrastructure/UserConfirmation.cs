@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -109,21 +111,57 @@ public static class UserConfirmation
     /// format characters (the bidirectional overrides and isolates that reorder what follows, zero-width characters), with
     /// each single quote or look-alike inside it shown as a double quote (so the title cannot close the quotes and
     /// append a fake process and PID), and at most <see cref="MaxQuotedLength"/> characters, cut with an ellipsis. An
-    /// app's title must not be able to rewrite the question the user answers.
+    /// app's title must not be able to rewrite the question the user answers. The text is read as Unicode code points,
+    /// so format characters outside the Basic Multilingual Plane (the tag characters U+E0000 to U+E007F, for example)
+    /// are removed too; a lone surrogate, which is no character, is removed, and the cut never splits a surrogate pair.
     /// </summary>
     public static string Quote(string? text)
     {
-        var line = new string((text ?? string.Empty)
-            .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.Format)
-            .Select(c => char.IsControl(c) || CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
-                ? ' '
-                : QuoteLookAlikes.Contains(c) ? '"' : c)
-            .ToArray());
-        if (line.Length > MaxQuotedLength)
+        var source = (text ?? string.Empty).AsSpan();
+        var line = new StringBuilder(source.Length);
+        Span<char> units = stackalloc char[2];
+        while (!source.IsEmpty)
         {
-            line = line[..(MaxQuotedLength - 1)].TrimEnd() + "…";
+            if (Rune.DecodeFromUtf16(source, out var rune, out var consumed) != OperationStatus.Done)
+            {
+                // A lone surrogate
+                source = source[consumed..];
+                continue;
+            }
+
+            source = source[consumed..];
+            var category = Rune.GetUnicodeCategory(rune);
+            if (category == UnicodeCategory.Format)
+            {
+                continue;
+            }
+
+            if (Rune.IsControl(rune) || category is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator)
+            {
+                line.Append(' ');
+            }
+            else if (rune.IsBmp && QuoteLookAlikes.Contains((char)rune.Value))
+            {
+                line.Append('"');
+            }
+            else
+            {
+                line.Append(units[..rune.EncodeToUtf16(units)]);
+            }
         }
 
-        return $"'{line}'";
+        var quoted = line.ToString();
+        if (quoted.Length > MaxQuotedLength)
+        {
+            var cut = MaxQuotedLength - 1;
+            if (char.IsHighSurrogate(quoted[cut - 1]))
+            {
+                cut--;
+            }
+
+            quoted = quoted[..cut].TrimEnd() + "…";
+        }
+
+        return $"'{quoted}'";
     }
 }
