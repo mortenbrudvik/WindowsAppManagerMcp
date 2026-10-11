@@ -95,10 +95,15 @@ public static class TypicalDesktop
     public static IReadOnlyList<UIElementInfo> UiTree()
     {
         var y = 0;
+        var element = 0;
+
+        // Every element has a ref (roadmap M3.4), as in a real walk, numbered in the order the walk would register them
         UIElementInfo Leaf(string name, string type, string id) =>
-            new(name, type, id, new BoundsDto(40, 60 + (y += 24) % 1200, 220, 22), IsEnabled: true, IsOffscreen: false);
+            new(name, type, id, new BoundsDto(40, 60 + (y += 24) % 1200, 220, 22), IsEnabled: true, IsOffscreen: false,
+                Ref: $"w412e{++element}");
         UIElementInfo Group(string name, string type, string id, IReadOnlyList<UIElementInfo> children) =>
-            new(name, type, id, new BoundsDto(0, 40, 1280, 600), IsEnabled: true, IsOffscreen: false, Children: children);
+            new(name, type, id, new BoundsDto(0, 40, 1280, 600), IsEnabled: true, IsOffscreen: false, Children: children,
+                Ref: $"w412e{++element}");
 
         var menu = Group("Application", "MenuBar", "MenuBar",
             new[] { "File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help" }
@@ -117,6 +122,15 @@ public static class TypicalDesktop
         var document = Leaf("README.md", "Document", "editor");
         return [pane, document];
     }
+
+    /// <summary>What find_ui_elements returns for "the Save button": two matches, at the default detail.</summary>
+    public static IReadOnlyList<FoundElement> FoundButtons { get; } =
+    [
+        new("w412e9", "Save", "Button", "cmd.save", "Button", new BoundsDto(64, 88, 28, 28), new ScreenPoint(78, 102), true, false,
+            ["Invoke"]),
+        new("w412e31", "Save all", "Button", "cmd.saveAll", "Button", new BoundsDto(96, 88, 28, 28), new ScreenPoint(110, 102), true, false,
+            ["Invoke"]),
+    ];
 
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));

@@ -56,6 +56,7 @@ public class EveryToolContractTests
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
             ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
             ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["find_ui_elements"] = Args("""{ "handle": 1706796, "name": "Save", "controlType": "Button" }"""),
             ["get_focused_element"] = Args("{}"),
             ["get_element_at_point"] = Args("""{ "x": 560, "y": 110 }"""),
             ["get_browser_url"] = Args("""{ "handle": 2821181 }"""),

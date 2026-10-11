@@ -70,6 +70,23 @@ public interface IUiaTree
     UiaNodeIdentity ReadIdentity(IUiaNode node);
 
     /// <summary>
+    /// The node with the properties a walk reads (<see cref="UiaElement"/>: its runtime id, class and patterns included),
+    /// read now in one cross-process call. Unlike <see cref="GetRuntimeId"/>, which an engine may answer from what it
+    /// read before, this always asks the provider, so it tells whether the element still exists (roadmap M3.4: the element
+    /// registry's liveness check): an element that is gone throws <see cref="UiaElementUnavailableException"/>.
+    /// </summary>
+    UiaElement ReadElement(IUiaNode node);
+
+    /// <summary>
+    /// A point on the node that a click would hit (UI Automation's clickable point), in physical screen pixels, or null
+    /// when the provider reports none (it is offscreen, covered, or the provider does not compute one).
+    /// </summary>
+    UiaPoint? GetClickablePoint(IUiaNode node);
+
+    /// <summary>The node's help text, access and accelerator keys and localized control type.</summary>
+    UiaNodeDescription ReadDescription(IUiaNode node);
+
+    /// <summary>
     /// The node's value through the Value pattern, or null when it has none. Never call this for a
     /// password field (<see cref="UiaNodeIdentity.IsPassword"/>).
     /// </summary>
@@ -95,7 +112,8 @@ public interface IUiaTree
     /// The elements in <paramref name="scope"/> of <paramref name="root"/> in the control view that match
     /// <paramref name="condition"/>, in tree order, with their properties, searched in the provider's process in one
     /// call. Nothing limits its cost: every element in the scope is tested and every match read with all the walk's
-    /// properties, in one call that cannot be stopped once started. Search a small root, or the children of one.
+    /// properties, in one call that cannot be stopped once started. Search a small root, or the children of one;
+    /// <see cref="Services.ElementSearch"/> splits a large root into parts and stops between them (roadmap M3.4).
     /// </summary>
     /// <exception cref="NotSupportedException">The engine cannot express the condition (the managed client has no
     /// id for the AppBar and SemanticZoom control types).</exception>
@@ -154,6 +172,20 @@ public record UiaNodeInteraction(
     bool IsKeyboardFocusable,
     bool HasKeyboardFocus,
     IReadOnlyList<string> ActionPatterns);
+
+/// <summary>How a node describes itself to assistive technology (<see cref="IUiaTree.ReadDescription"/>).</summary>
+/// <param name="HelpText">The help text (often a tooltip), or null.</param>
+/// <param name="AccessKey">The access key, for example "Alt+F", or null.</param>
+/// <param name="AcceleratorKey">The shortcut, for example "Ctrl+S", or null.</param>
+/// <param name="LocalizedControlType">The control type in the display language, for example "button", or null.</param>
+public record UiaNodeDescription(
+    string? HelpText,
+    string? AccessKey,
+    string? AcceleratorKey,
+    string? LocalizedControlType);
+
+/// <summary>A point in physical screen pixels.</summary>
+public readonly record struct UiaPoint(int X, int Y);
 
 /// <summary>Who provides a node.</summary>
 /// <param name="NativeWindowHandle">The window handle of the element, or 0 when the element is not a window

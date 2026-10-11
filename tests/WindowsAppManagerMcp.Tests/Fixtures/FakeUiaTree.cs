@@ -13,6 +13,7 @@ public sealed class FakeUiaTree : IUiaTree
     private readonly ConcurrentQueue<string> _reads = new();
     private readonly ConcurrentQueue<string> _cachedFetches = new();
     private readonly ConcurrentQueue<string> _childListings = new();
+    private readonly ConcurrentQueue<string> _finds = new();
 
     /// <summary>The engine the fake claims to be.</summary>
     public UiaEngine Engine { get; set; } = UiaEngine.Uia3;
@@ -28,6 +29,9 @@ public sealed class FakeUiaTree : IUiaTree
 
     /// <summary>What <see cref="FromPoint"/> returns for a point; null by default.</summary>
     public Func<int, int, FakeUiaNode?> AtPoint { get; set; } = (_, _) => null;
+
+    /// <summary>Runs when any search starts, with its root and condition (it can throw, as a provider would).</summary>
+    public Action<FakeUiaNode, UiaCondition>? OnFindAll { get; set; }
 
     /// <summary>Thrown by <see cref="FromHandle"/> when set.</summary>
     public Exception? FromHandleException { get; set; }
@@ -118,6 +122,32 @@ public sealed class FakeUiaTree : IUiaTree
         return new UiaNodeIdentity(fake.ClassName, fake.FrameworkId, fake.ProcessId, fake.NativeWindowHandle, fake.IsPassword);
     }
 
+    /// <summary>A fresh read of the walk's properties: logged as "Element:Name"; fails like <see cref="Read"/>.</summary>
+    public UiaElement ReadElement(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"Element:{fake.Name}");
+        fake.OnRead?.Invoke();
+        ThrowIfSet(fake.ReadException);
+        return Cached(fake);
+    }
+
+    public UiaPoint? GetClickablePoint(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"Clickable:{fake.Name}");
+        ThrowIfSet(fake.ClickablePointException);
+        return fake.ClickablePoint;
+    }
+
+    public UiaNodeDescription ReadDescription(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"Description:{fake.Name}");
+        ThrowIfSet(fake.ReadException);
+        return new UiaNodeDescription(fake.HelpText, fake.AccessKey, fake.AcceleratorKey, fake.LocalizedControlType);
+    }
+
     public string? ReadValue(IUiaNode node)
     {
         var fake = Fake(node);
@@ -157,6 +187,10 @@ public sealed class FakeUiaTree : IUiaTree
     {
         var fake = Fake(root);
         cancellationToken.ThrowIfCancellationRequested();
+        _finds.Enqueue($"{fake.Name ?? fake.ControlType}:{scope}");
+        OnFindAll?.Invoke(fake, condition);
+        fake.OnFindAll?.Invoke(condition);
+        ThrowIfSet(fake.FindAllException);
         IEnumerable<FakeUiaNode> candidates = scope switch
         {
             UiaScope.Children => fake.Children,
@@ -206,6 +240,9 @@ public sealed class FakeUiaTree : IUiaTree
         return fake.PatternObjects.TryGetValue(typeof(TPattern), out var pattern) ? (TPattern)pattern : null;
     }
 
+    /// <summary>Every <see cref="FindAll"/> call as "RootName:Scope", in call order.</summary>
+    public IReadOnlyList<string> Finds => _finds.ToList();
+
     /// <summary>The nodes whose children were fetched with <see cref="GetChildElements"/>, by name, in call order.</summary>
     public IReadOnlyList<string> CachedFetches => _cachedFetches.ToList();
 
@@ -218,7 +255,11 @@ public sealed class FakeUiaTree : IUiaTree
         node.OnRead?.Invoke();
         ThrowIfSet(node.ReadException);
         ThrowIfSet(node.InteractionException);
-        return new UiaElement(
+        return Cached(node);
+    }
+
+    private static UiaElement Cached(FakeUiaNode node) =>
+        new UiaElement(
             node,
             new UiaNodeProperties(node.Name, node.ControlType, node.AutomationId, node.Bounds, node.IsEnabled, node.IsOffscreen),
             node.ClassName,
@@ -226,7 +267,6 @@ public sealed class FakeUiaTree : IUiaTree
             node.Patterns,
             node.RuntimeId,
             UiaControlTypes.GetId(node.ControlType));
-    }
 
     private static IEnumerable<FakeUiaNode> Descendants(FakeUiaNode node) =>
         node.Children.SelectMany(child => Descendants(child).Prepend(child));
@@ -255,8 +295,14 @@ public sealed class FakeUiaTree : IUiaTree
             UiaProperty.IsEnabled => node.IsEnabled,
             UiaProperty.IsOffscreen => node.IsOffscreen,
             UiaProperty.IsKeyboardFocusable => node.IsKeyboardFocusable,
+            UiaProperty.RuntimeId => node.RuntimeId,
             _ => throw new ArgumentOutOfRangeException(nameof(condition))
         };
+        if (condition.Property == UiaProperty.RuntimeId)
+        {
+            return actual is IReadOnlyList<int> runtimeId && runtimeId.SequenceEqual((IReadOnlyList<int>)condition.Value);
+        }
+
         return actual is string text && condition.Value is string expected
             ? string.Equals(text, expected,
                 condition.IgnoreCase || condition.Property == UiaProperty.ControlType ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
@@ -314,6 +360,22 @@ public sealed class FakeUiaNode : IUiaNode
     /// <summary>The Window pattern's IsModal, or null when the node has no Window pattern.</summary>
     public bool? IsModal { get; init; }
 
+    /// <summary>What <see cref="FakeUiaTree.GetClickablePoint"/> returns.</summary>
+    public UiaPoint? ClickablePoint { get; set; }
+
+    public Exception? ClickablePointException { get; set; }
+
+    public string? HelpText { get; init; }
+    public string? AccessKey { get; init; }
+    public string? AcceleratorKey { get; init; }
+    public string? LocalizedControlType { get; init; }
+
+    /// <summary>Thrown by <see cref="FakeUiaTree.FindAll"/> searches rooted at this node.</summary>
+    public Exception? FindAllException { get; set; }
+
+    /// <summary>Runs when a search rooted at this node starts, with its condition.</summary>
+    public Action<UiaCondition>? OnFindAll { get; set; }
+
     public Exception? ReadException { get; set; }
     public Exception? InteractionException { get; set; }
     public Exception? IdentityException { get; set; }
@@ -324,7 +386,10 @@ public sealed class FakeUiaNode : IUiaNode
     public Exception? CachedChildrenException { get; set; }
 
     /// <summary>A runtime id unique among the fake nodes of the test run.</summary>
-    public IReadOnlyList<int>? RuntimeId { get; init; } = [42, Interlocked.Increment(ref _nextRuntimeId)];
+    public IReadOnlyList<int>? RuntimeId { get; init; } = NewRuntimeId();
+
+    /// <summary>A runtime id no other fake node has.</summary>
+    public static IReadOnlyList<int> NewRuntimeId() => [42, Interlocked.Increment(ref _nextRuntimeId)];
 
     /// <summary>
     /// The patterns the node reports as available: its <see cref="ActionPatterns"/> by name, plus
@@ -366,6 +431,24 @@ public sealed class FakeUiaNode : IUiaNode
             _children.Add(child);
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// The element disappears: it leaves its parent's children, so no search finds it, and every read of it fails as a
+    /// read of a vanished element does.
+    /// </summary>
+    public void Vanish()
+    {
+        Parent?._children.Remove(this);
+        ReadException = FakeUiaTree.Vanished();
+    }
+
+    /// <summary>Puts <paramref name="child"/> at <paramref name="index"/> of this node's children and returns this node.</summary>
+    public FakeUiaNode Insert(int index, FakeUiaNode child)
+    {
+        child.Parent = this;
+        _children.Insert(index, child);
         return this;
     }
 

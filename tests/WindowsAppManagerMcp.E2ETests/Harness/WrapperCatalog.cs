@@ -278,6 +278,11 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.IsInteractable)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadIdentity)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadValue)] = WrapperMember.Read,
+                // Roadmap M3.4: a fresh read of the walk's properties (the element registry's liveness check), the clickable
+                // point (a hit test the provider answers) and the description properties: reads only
+                [nameof(IUiaTree.ReadElement)] = WrapperMember.Read,
+                [nameof(IUiaTree.GetClickablePoint)] = WrapperMember.Read,
+                [nameof(IUiaTree.ReadDescription)] = WrapperMember.Read,
                 // WindowPattern.Current.IsModal: a property read (verified close looks for an in-window prompt)
                 [nameof(IUiaTree.ReadIsModal)] = WrapperMember.Read,
                 // Cached reads of a level, a search and a small subtree (roadmap M3.1/M3.2): they only read

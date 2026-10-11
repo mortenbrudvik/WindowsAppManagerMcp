@@ -84,7 +84,7 @@ public static class InputGateToolFilter
         "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
-        "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
+        "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
         "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info",
         // Waits up to a minute; holding the gate meanwhile would stall every window and input call (roadmap M3.7)
         "wait_for_window"

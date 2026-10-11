@@ -907,7 +907,8 @@ public class ScreenshotService : IScreenshotService
                     ImageBounds: new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
                     ScreenBounds: screenBounds,
                     IsEnabled: element.IsEnabled,
-                    OverlayColor: colorName
+                    OverlayColor: colorName,
+                    Ref: element.Ref
                 ));
             }
         }

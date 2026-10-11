@@ -76,6 +76,10 @@ public static class ServiceRegistration
         services.AddSingleton<IUiaWorker, UiaWorker>();
         services.AddSingleton<INativeHitTestWrapper, NativeHitTestWrapper>();
         services.AddSingleton<IElementInspectionService, ElementInspectionService>();
+        // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
+        // the provider evaluating its criteria, and the tools that act on a ref resolve it here
+        services.AddSingleton<IElementRegistry, ElementRegistry>();
+        services.AddSingleton<IElementSearchService, ElementSearchService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {

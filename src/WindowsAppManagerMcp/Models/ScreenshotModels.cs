@@ -149,6 +149,8 @@ public record AnnotatedScreenshotResult(
 /// <see cref="ImageBounds"/> are pixels of the output image, scaled when the capture is scaled down.
 /// <see cref="ScreenBounds"/> stay in screen pixels and are not scaled.
 /// </summary>
+/// <param name="Ref">The element's ref (roadmap M3.4), as get_ui_elements reports it; null when it has none. Serialized
+/// first.</param>
 public record AnnotatedElement(
     string? Name,
     string ControlType,
@@ -156,7 +158,8 @@ public record AnnotatedElement(
     BoundsDto ImageBounds,
     BoundsDto ScreenBounds,
     bool IsEnabled,
-    string OverlayColor
+    string OverlayColor,
+    [property: System.Text.Json.Serialization.JsonPropertyOrder(-1)] string? Ref = null
 );
 
 /// <summary>An encoded image: PNG or JPEG bytes and their MIME type.</summary>

@@ -27,6 +27,8 @@ public sealed class ContractServices : IDisposable
     public ContractServices(ContractMode mode)
     {
         Mode = mode;
+        ElementRegistry.Setup(r => r.Lookup(It.IsAny<string>()))
+            .Returns((string elementRef) => new ElementLookup(elementRef, (nint)TypicalDesktop.NotepadHandle, null, 1));
         Session = new InputSession(new FakeInputWrapper());
         Hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, PauseHotkeyOptions.DefaultSource));
         SetUpServerInfoSources();
@@ -51,6 +53,10 @@ public sealed class ContractServices : IDisposable
     public Mock<ILayoutService> Layouts { get; } = new();
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
+    public Mock<IElementSearchService> ElementSearch { get; } = new();
+
+    /// <summary>The element registry (roadmap M3.4): every ref belongs to Notepad's window unless a test arranges otherwise.</summary>
+    public Mock<IElementRegistry> ElementRegistry { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
     public Mock<IClipboardService> Clipboard { get; } = new();
     public Mock<IPauseHotkey> Hotkey { get; } = new();
@@ -103,6 +109,8 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Layouts.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
+        services.AddSingleton(ElementSearch.Object);
+        services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
         services.AddSingleton(Hotkey.Object);
@@ -312,6 +320,9 @@ public sealed class ContractServices : IDisposable
         Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(true, TypicalDesktop.FocusedEdit, TypicalDesktop.NotepadHandle, notepad.Title,
                 notepad.ProcessId, notepad.ProcessName, 12.5));
+        ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
+                true, query.WindowHandle, notepad.Title, MatchCount: 2, Truncated: false, TypicalDesktop.FoundButtons, 21.5));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -450,6 +461,9 @@ public sealed class ContractServices : IDisposable
                 new UIElementResult(false, handle, null, null, 0, 0, 1.5, invalid, UIElementErrorCode.InvalidHandle));
         Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(false, null, null, null, null, null, 5000, "UI Automation did not answer", UIElementErrorCode.OperationTimedOut));
+        ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
+                false, query.WindowHandle, null, 0, false, null, 1.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));
