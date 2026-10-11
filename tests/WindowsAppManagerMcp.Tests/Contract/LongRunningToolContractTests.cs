@@ -17,7 +17,7 @@ public class LongRunningToolContractTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
-    public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision };
+    public static TheoryData<string?> Revisions => InProcessMcpServer.Revisions();
 
     private static Task<InProcessMcpServer> StartAsync(
         ContractServices services,
@@ -161,6 +161,7 @@ public class LongRunningToolContractTests
         JsonDocument.Parse(focus.Content.OfType<TextContentBlock>().Single().Text).RootElement
             .GetProperty("success").GetBoolean().Should().BeTrue();
 
+        await server.AssertNoResponseSentAsync(id);
         clientGivesUp.Cancel();
         await FluentActions.Awaiting(() => call).Should().ThrowAsync<Exception>("the cancelled call gets no result");
         server.Logs.Entries.Should().Contain(e => e.Category == ToolErrorReporting.CallLoggerCategory &&

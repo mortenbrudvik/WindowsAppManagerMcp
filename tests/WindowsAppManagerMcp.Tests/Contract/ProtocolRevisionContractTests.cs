@@ -15,12 +15,12 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// </summary>
 public class ProtocolRevisionContractTests
 {
-    public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision, "2025-11-25" };
+    public static TheoryData<string?> Revisions => InProcessMcpServer.Revisions();
 
     [Theory]
     [InlineData(null, InProcessMcpServer.LatestRevision)]
     [InlineData(InProcessMcpServer.InitializeRevision, InProcessMcpServer.InitializeRevision)]
-    [InlineData("2025-11-25", "2025-11-25")]
+    [InlineData(InProcessMcpServer.NewestInitializeRevision, InProcessMcpServer.NewestInitializeRevision)]
     public async Task TheClient_NegotiatesTheRevisionItAsksFor(string? requested, string negotiated)
     {
         await using var server = await InProcessMcpServer.StartAsync(
@@ -29,16 +29,36 @@ public class ProtocolRevisionContractTests
         server.Client.NegotiatedProtocolVersion.Should().Be(negotiated);
     }
 
-    [Fact]
-    public async Task ToolsList_IsTheSameOnTheInitializeHandshake_AsInTheSnapshot()
+    [Theory]
+    [InlineData(InProcessMcpServer.InitializeRevision)]
+    [InlineData(InProcessMcpServer.NewestInitializeRevision)]
+    public async Task ToolsList_IsTheSameOnTheInitializeHandshake_AsInTheSnapshot(string revision)
     {
         // The snapshot is listed on the SDK client's default revision; the CI guard lists the built exe's tools with
-        // the initialize handshake (2025-06-18) and compares them with the same file
+        // the initialize handshake (NewestInitializeRevision) and compares them with the same file. SDK 2.x builds a
+        // tool's wire form per revision, so a difference would show here first.
         var latest = await ToolSurface.ListToolsAsync();
 
-        var initialize = await ToolSurface.ListToolsFromServerAsync(InProcessMcpServer.InitializeRevision);
+        var initialize = await ToolSurface.ListToolsFromServerAsync(revision);
 
         JsonNode.DeepEquals(initialize, latest).Should().BeTrue("a client on either revision must see the same tools");
+    }
+
+    [Fact]
+    public async Task AnInitializeForAnUnknownRevision_IsAnsweredWithTheNewestInitializeRevision()
+    {
+        // The revision the SDK's server prefers on the initialize path. The CI guard and the tests' NewestInitializeRevision
+        // follow it, so an SDK upgrade that moves it fails here instead of leaving them on a stale revision.
+        await using var connection = await RawMcpConnection.StartAsync(builder => builder.AddWindowsAppManagerTools());
+
+        await connection.SendAsync("""
+            { "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": { "protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": { "name": "test", "version": "1.0.0" } } }
+            """);
+        var response = await connection.ReadResponseAsync(1);
+
+        response.GetProperty("result").GetProperty("protocolVersion").GetString()
+            .Should().Be(InProcessMcpServer.NewestInitializeRevision);
     }
 
     [Theory]
