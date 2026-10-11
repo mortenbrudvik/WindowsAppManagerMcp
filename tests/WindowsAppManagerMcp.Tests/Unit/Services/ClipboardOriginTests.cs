@@ -779,6 +779,51 @@ public class ClipboardOriginTests
         ClipboardOrigin.PasteTrigger(LeftClick, "ConsoleWindowClass").Should().BeNull();
     }
 
+    /// <summary>
+    /// Terminals whose window class is not their own (roadmap M2 follow-up F2): the class of Electron apps
+    /// (Chrome_WidgetWin_1) is shared with every Chromium browser, and Alacritty keeps winit's default class ("Window
+    /// Class"), so their process decides. WezTerm's default class (org.wezfurlong.wezterm) is its own, but its --class
+    /// option replaces it, so its process counts too.
+    /// </summary>
+    [Theory]
+    [InlineData("Chrome_WidgetWin_1", "Code")]
+    [InlineData("Chrome_WidgetWin_1", "Code - Insiders")]
+    [InlineData("Chrome_WidgetWin_1", "VSCodium")]
+    [InlineData("Chrome_WidgetWin_1", "Cursor")]
+    [InlineData("Chrome_WidgetWin_1", "Windsurf")]
+    [InlineData("Chrome_WidgetWin_1", "Hyper")]
+    [InlineData("Chrome_WidgetWin_1", "Tabby")]
+    [InlineData("Chrome_WidgetWin_1", "code")]
+    [InlineData("Window Class", "alacritty")]
+    [InlineData("org.wezfurlong.wezterm", "wezterm-gui")]
+    [InlineData("org.wezfurlong.wezterm", null)]
+    [InlineData("my-wezterm-class", "wezterm-gui")]
+    public void ARightClickPastes_InTheVsCodeElectronAlacrittyAndWezTermTerminals(string className, string? processName)
+    {
+        InputEvent[] rightClick = [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp)];
+
+        ClipboardOrigin.PasteTrigger(rightClick, className, processName).Should().Be(ClipboardPasteKind.Paste);
+        ClipboardOrigin.CopiesBeforePaste(SendKeysParser.Parse("^c").Concat(rightClick).ToList(), className, processName)
+            .Should().BeTrue();
+        ClipboardOrigin.IsRightClickPasteWindow(className, processName).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("Chrome_WidgetWin_1", "chrome")]
+    [InlineData("Chrome_WidgetWin_1", "msedge")]
+    [InlineData("Chrome_WidgetWin_1", "slack")]
+    [InlineData("Chrome_WidgetWin_1", null)]
+    [InlineData("Window Class", "some-winit-app")]
+    [InlineData("Window Class", null)]
+    [InlineData(null, null)]
+    public void ARightClick_InABrowserOrAnotherAppSharingTheClass_DoesNotPaste(string? className, string? processName)
+    {
+        InputEvent[] rightClick = [InputEvent.MouseMoveAbsolute(1, 1), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp)];
+
+        ClipboardOrigin.PasteTrigger(rightClick, className, processName).Should().BeNull();
+        ClipboardOrigin.IsRightClickPasteWindow(className, processName).Should().BeFalse();
+    }
+
     [Fact]
     public void ContentTheUserAllowed_IsRemembered_UntilOtherContentIsAllowed()
     {

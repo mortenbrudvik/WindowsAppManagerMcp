@@ -185,11 +185,27 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
 
     /// <summary>
     /// The window classes of terminals in which a right click pastes the clipboard: the console host (with QuickEdit),
-    /// Windows Terminal, PuTTY and KiTTY, mintty and ConEmu.
+    /// Windows Terminal, PuTTY and KiTTY, mintty, ConEmu, and WezTerm's default class (its <c>--class</c> option can
+    /// replace it, so <see cref="RightClickPasteProcesses"/> names its process too).
     /// </summary>
     public static IReadOnlySet<string> RightClickPasteClasses { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PuTTY", "KiTTY", "mintty", "VirtualConsoleClass"
+        "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PuTTY", "KiTTY", "mintty", "VirtualConsoleClass",
+        "org.wezfurlong.wezterm"
+    };
+
+    /// <summary>
+    /// The processes (names without .exe) of terminals whose window class is not their own, so that a right click in any
+    /// of their windows counts as a paste: VS Code and the editors built on it (Code - Insiders, VSCodium, Cursor,
+    /// Windsurf), whose integrated terminal pastes on a right click by default on Windows, and the Electron terminals
+    /// Hyper and Tabby, all with the class every Chromium browser uses (Chrome_WidgetWin_1); Alacritty, whose class is
+    /// winit's default ("Window Class"); and WezTerm's GUI process. The server cannot tell an editor's terminal panel
+    /// from the rest of its window, nor read a terminal's own right-click setting, so the rule errs on the side of
+    /// refusing: a right click anywhere in these windows pastes only what the agent may paste.
+    /// </summary>
+    public static IReadOnlySet<string> RightClickPasteProcesses { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Code", "Code - Insiders", "VSCodium", "Cursor", "Windsurf", "Hyper", "Tabby", "alacritty", "wezterm-gui"
     };
 
     private const ushort VkC = 0x43, VkV = 0x56, VkX = 0x58;
@@ -249,10 +265,21 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     public static bool CanCopy(IReadOnlyList<InputEvent> batch) => CopyTrigger(batch) != null;
 
     /// <summary>
+    /// True when a right click in a top-level window of class <paramref name="className"/> and process
+    /// <paramref name="processName"/> pastes the clipboard: the class is a terminal's (<see cref="RightClickPasteClasses"/>)
+    /// or the process is (<see cref="RightClickPasteProcesses"/>).
+    /// </summary>
+    /// <param name="className">The window class; null when not known.</param>
+    /// <param name="processName">The name of the window's process, without .exe; null when not known.</param>
+    public static bool IsRightClickPasteWindow(string? className, string? processName) =>
+        (className != null && RightClickPasteClasses.Contains(className)) ||
+        (processName != null && RightClickPasteProcesses.Contains(processName));
+
+    /// <summary>
     /// What in <paramref name="batch"/> makes an application paste: <see cref="ClipboardPasteKind.History"/> when it
     /// presses Win+V; <see cref="ClipboardPasteKind.Paste"/> when it presses Ctrl+V or Shift+Insert (with any other
-    /// modifiers), sends the SYN character (<see cref="PasteCharacter"/>), or presses the right mouse button and
-    /// <paramref name="receivingClass"/> is a terminal's (<see cref="RightClickPasteClasses"/>); otherwise null.
+    /// modifiers), sends the SYN character (<see cref="PasteCharacter"/>), or presses the right mouse button in a
+    /// terminal's window (<see cref="IsRightClickPasteWindow"/>); otherwise null.
     /// </summary>
     /// <remarks>
     /// Paste through an application's own menu (Edit, Paste, or a context menu's Paste chosen by a click or its access
@@ -260,7 +287,9 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     /// </remarks>
     /// <param name="batch">The input.</param>
     /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
-    public static ClipboardPasteKind? PasteTrigger(IReadOnlyList<InputEvent> batch, string? receivingClass = null)
+    /// <param name="receivingProcess">The name of that window's process, without .exe; null when not known.</param>
+    public static ClipboardPasteKind? PasteTrigger(IReadOnlyList<InputEvent> batch, string? receivingClass = null,
+        string? receivingProcess = null)
     {
         ArgumentNullException.ThrowIfNull(batch);
         var chords = SendKeysParser.Chords(batch);
@@ -274,7 +303,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             return ClipboardPasteKind.Paste;
         }
 
-        return receivingClass != null && RightClickPasteClasses.Contains(receivingClass) &&
+        return IsRightClickPasteWindow(receivingClass, receivingProcess) &&
                batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0)
             ? ClipboardPasteKind.Paste
             : null;
@@ -283,13 +312,15 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
     /// <summary>
     /// True when <paramref name="batch"/> copies and then pastes: copy keys (Ctrl+C, Ctrl+X, Ctrl+Insert, Shift+Delete),
     /// or the ETX or CAN character (<see cref="CopyCharacter"/>, <see cref="CutCharacter"/>), followed later in the batch
-    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right click when
-    /// <paramref name="receivingClass"/> is a terminal's). Such a paste pastes what the copy takes, which no check made
-    /// before the batch is sent can see.
+    /// by input that pastes what is on the clipboard (Ctrl+V, Shift+Insert, the SYN character, or a right click in a
+    /// terminal's window, <see cref="IsRightClickPasteWindow"/>). Such a paste pastes what the copy takes, which no check
+    /// made before the batch is sent can see.
     /// </summary>
     /// <param name="batch">The input of one call.</param>
     /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
-    public static bool CopiesBeforePaste(IReadOnlyList<InputEvent> batch, string? receivingClass = null)
+    /// <param name="receivingProcess">The name of that window's process, without .exe; null when not known.</param>
+    public static bool CopiesBeforePaste(IReadOnlyList<InputEvent> batch, string? receivingClass = null,
+        string? receivingProcess = null)
     {
         ArgumentNullException.ThrowIfNull(batch);
         var chords = SendKeysParser.IndexedChords(batch);
@@ -313,7 +344,7 @@ public sealed class ClipboardOrigin : IClipboardOrigin, IDisposable
             return true;
         }
 
-        if (receivingClass == null || !RightClickPasteClasses.Contains(receivingClass))
+        if (!IsRightClickPasteWindow(receivingClass, receivingProcess))
         {
             return false;
         }

@@ -62,17 +62,18 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
     {
         ArgumentNullException.ThrowIfNull(batch);
 
-        // The class of the window is read only for a right click, the one mouse input that can paste
+        // The class and process of the window are read only for a right click, the one mouse input that can paste
         var rightButton = batch.Any(e => e.Kind == InputEventKind.Mouse && (e.Flags & Native.NativeEnums.MOUSEEVENTF_RIGHTDOWN) != 0);
         var receivingClass = rightButton && receivingWindow != nint.Zero ? _windows.GetClassName(receivingWindow) : null;
+        var receivingProcess = rightButton && receivingWindow != nint.Zero ? ProcessNameOf(receivingWindow) : null;
 
         // A paste after a copy in the same call pastes what the copy takes, which this check cannot see
-        if (CopyThenPasteRefusal(batch, receivingClass) is { } copyThenPaste)
+        if (CopyThenPasteRefusal(batch, receivingClass, receivingProcess: receivingProcess) is { } copyThenPaste)
         {
             return copyThenPaste;
         }
 
-        switch (ClipboardOrigin.PasteTrigger(batch, receivingClass))
+        switch (ClipboardOrigin.PasteTrigger(batch, receivingClass, receivingProcess))
         {
             case null:
                 return null;
@@ -142,15 +143,23 @@ public sealed class ClipboardPasteGuard : IClipboardPasteGuard
     /// <param name="input">All the input of the call.</param>
     /// <param name="receivingClass">The window class of the top-level window the input goes to; null when not known.</param>
     /// <param name="nothingDone">What the refusal says was not done.</param>
+    /// <param name="receivingProcess">The name of that window's process, without .exe; null when not known.</param>
     public static string? CopyThenPasteRefusal(IReadOnlyList<InputEvent> input, string? receivingClass,
-        string nothingDone = "Nothing was sent.") =>
-        ClipboardOrigin.CopiesBeforePaste(input, receivingClass)
+        string nothingDone = "Nothing was sent.", string? receivingProcess = null) =>
+        ClipboardOrigin.CopiesBeforePaste(input, receivingClass, receivingProcess)
             ? "The input copies and then pastes in the same call (copy keys, or the ETX or CAN character, before Ctrl+V, " +
               "Shift+Insert, the SYN character or a right click in a terminal). The paste would paste what the copy takes " +
               "before the server can check it, content a password manager marks private included. " + nothingDone +
               " Send the copy and the paste in separate calls: the paste is then checked against what the copy put on " +
               "the clipboard."
             : null;
+
+    /// <summary>The name of the process of <paramref name="window"/> (a terminal may share its class with browsers); null when unknown.</summary>
+    private string? ProcessNameOf(nint window)
+    {
+        var processId = _windows.GetWindowThreadProcessId(window);
+        return processId == 0 ? null : _windows.GetProcessName(processId);
+    }
 
     private bool UserAllowed(uint sequenceNumber) => _options.AllowUserClipboard || _origin.IsUserAllowed(sequenceNumber);
 
