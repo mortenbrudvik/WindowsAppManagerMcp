@@ -960,6 +960,22 @@
       }
     },
     {
+      "name": "get_server_info",
+      "title": "Server info",
+      "description": "The server's build and environment in one read-only call: version and commit, MCP SDK and protocol version, integrity level and elevation (Windows drops input to windows above it: TargetElevated), the DPI awareness in force (PerMonitorV2 means every coordinate is a physical pixel), whether input can reach the desktop (locked session, UAC prompt), the foreground lock timeout, the monitors with their DPI, the agent host windows and processes input never reaches (TargetIsAgentHost), whether the user paused input and the pause hotkey, the target policy and destructive chords, the layouts folder, and the toolsets, excluded tools and read-only mode in force (a tool you do not see may be turned off there). warnings lists what will make tools fail or coordinates wrong. Call it first, and whenever tools behave unexpectedly. Changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "title": "Server info",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "get_ui_elements",
       "title": "Get UI Element Tree",
       "description": "Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. If the timeout passes, the elements read so far are returned with truncated=true (OperationTimedOut when no element matching the filters was found yet).",

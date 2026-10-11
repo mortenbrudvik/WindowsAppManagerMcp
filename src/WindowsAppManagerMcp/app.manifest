@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The server's application manifest. Windows reads the DPI awareness from here before any code runs, so the
+  server sees physical pixels on every monitor without calling SetProcessDpiAwareness(Context), which fails with
+  ACCESS_DENIED once a manifest (or anything else) has set the awareness. get_server_info reports the effective
+  awareness, and the server logs a warning at start when it is not PerMonitorV2 (see AppManifestTests).
+-->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="WindowsAppManagerMcp.app" />
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <!-- Runs with the integrity of whoever starts it, as without a manifest -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- Windows 10 1607 and later: per-monitor v2, or per-monitor (v1) where v2 is unknown (before 1703) -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <!-- Windows 8.1 and Windows 10 before 1607: per-monitor -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </windowsSettings>
+  </application>
+</assembly>

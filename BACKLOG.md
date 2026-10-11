@@ -178,7 +178,7 @@
 
 ---
 
-## MCP Tools Summary (47 Tools)
+## MCP Tools Summary (48 Tools)
 
 | Tool Name | Category | Description |
 |-----------|----------|-------------|
@@ -229,6 +229,7 @@
 | `save_layout` | Layout Presets | Save current arrangement |
 | `apply_layout` | Layout Presets | Apply saved preset |
 | `delete_layout` | Layout Presets | Delete a preset |
+| `get_server_info` | Server Info | Build, protocol, integrity, DPI awareness, desktop state, host, pause, policy and toolsets, with warnings |
 
 ---
 
@@ -532,10 +533,10 @@ M1 is complete on the integration branch `m1-see-and-type-safely` and reaches us
 | M2.8 | Faithful layout apply with one-to-one matching and per-placement results | ⏳ Pending | P1 | M | Today N Chrome windows collapse onto one placement, an empty matcher matches every window, apply reports success when nothing matched, and a freshly launched untitled window causes an NRE. Recording a few identity… |
 | M2.9 | Capture health: never drop pixels, typed capture errors and warnings | ⏳ Pending | P1 | M | capture_with_elements drops the image on any UIA failure. Minimized, cloaked, hung, blank or off-screen captures all report Success=true. GDI misuse costs extra copies and can corrupt pixels. |
 | M2.10 | Tool annotations, titles and human confirmation through elicitation | ⏳ Pending | P1 | S | No tool sets ReadOnly, Destructive, Idempotent, OpenWorld or Title, so clients must treat find_windows like kill_process. Irreversible actions rely on a confirm flag that the model sets for itself. |
-| M2.11 | Server instructions, get_server_info and an observe-act-verify skill | ⏳ Pending | P1 | S | Clients without the plugin get no guidance at all. Nothing reports the build, integrity level, DPI mode, host windows or pause state. SKILL.md needs a rewrite around verified actions. |
-| M2.12 | In-process MCP contract tests, shared DI and generated docs | ⏳ Pending | P1 | M | Test the server the way an agent sees it, over MCP. Snapshot the tool surface, enforce payload budgets and catch stale binaries. Generate the tool tables in the docs so they stop drifting. This is the safety net for… |
-| M2.13 | Upgrade the MCP SDK to stable; cancellation and progress everywhere | ⏳ Pending | P1 | M | Move off ModelContextProtocol 0.5.0-preview.1 right after the contract tests exist, before M3-M5 add about 30 tools. Porting 42 tools now is cheaper than porting about 75 later. |
-| M2.14 | Toolsets with a curated default and a read-only mode | ⏳ Pending | P1 | S | This roadmap grows the surface from 42 to about 70-75 tools, and every schema sits in context on every turn. A curated core of about 20-25 tools by default, with everything else opt-in, keeps tool selection reliable. |
+| M2.11 | Server instructions, get_server_info and an observe-act-verify skill | ✅ Complete | P1 | S | Branch `m2-server-info-toolsets`. 17 lines of server instructions for every client; get_server_info (build, protocol, integrity, effective DPI awareness, desktop state, monitors with DPI, host, pause, policy, paths, toolsets, warnings); PerMonitorV2 from app.manifest instead of the API call, logged at start; SKILL.md rewritten around locate, activate and verify, act, verify. Per-window DPI stays with M2.3. |
+| M2.12 | In-process MCP contract tests, shared DI and generated docs | ✅ Complete | P1 | M | Branch `m2-foundation`. tools/list snapshot, every tool called over MCP (isError/null ratchets for M2.1), payload budgets, generated tool tables, CI guard on the built exes. Follow-up (`m2-server-info-toolsets`): initialize result snapshot per revision, UPDATE_SNAPSHOTS refused in CI, guard on 2025-11-25. |
+| M2.13 | Upgrade the MCP SDK to stable; cancellation and progress everywhere | ✅ Complete | P1 | M | Branch `m2-foundation`. ModelContextProtocol 2.2.0; cancellation for UIA walks, launches, layouts, window batches and kill_process; progress for walks, batch launches and apply_layout; contract tests on 2026-07-28 and the initialize revisions (2025-11-25 added in `m2-server-info-toolsets`). |
+| M2.14 | Toolsets with a curated default and a read-only mode | ✅ Complete | P1 | S | Branch `m2-server-info-toolsets`. WAM_TOOLSETS, WAM_EXCLUDE_TOOLS and WAM_READ_ONLY (keyed on readOnlyHint), read before the registrations; ten toolsets, all on by default today, with opt-in groups for the tools of M3-M6; observer and other env profiles in docs/TOOLS.md. run_steps (M6.2) must honour them. |
 | M2.15 | scroll primitive (pulled forward) | ⏳ Pending | P1 | S | Most list items in Settings, Explorer or Outlook cannot be reached without scrolling. The wheel constants already exist, and scroll needs only the M1 guard, not the M4 keyboard rewrite. |
 | M2.16 | Clipboard get/set with a privacy guard (pulled forward) | ⏳ Pending | P1 | S | Copy-then-read is the cheapest way to extract text from apps with poor UIA (terminals, Electron, canvases, RDP). Reading the user's clipboard could leak passwords, so reads are guarded. |
 | M2.17 | Audit log of injected input and destructive actions | ⏳ Pending | P2 | S | When an action does damage, neither the user nor the agent can reconstruct what was sent where. A cheap append-only log builds trust in a server that types into the desktop. |

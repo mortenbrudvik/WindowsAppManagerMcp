@@ -20,7 +20,7 @@ public class UIElementToolContractTests
     private readonly FakeUiaTree _tree = new();
     private readonly Mock<IElementInspectionService> _inspection = new();
 
-    public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision };
+    public static TheoryData<string?> Revisions => InProcessMcpServer.Revisions();
 
     private Task<InProcessMcpServer> StartServerAsync(
         string? revision = null,
@@ -97,6 +97,7 @@ public class UIElementToolContractTests
         await Task.Delay(200);
         _tree.ReadNodes.Count.Should().BeLessThanOrEqualTo(read + 1, "the walk does not go on after the call ended");
 
+        await server.AssertNoResponseSentAsync(id);
         clientGivesUp.Cancel();
         await FluentActions.Awaiting(() => call).Should().ThrowAsync<Exception>("the cancelled call gets no result");
     }

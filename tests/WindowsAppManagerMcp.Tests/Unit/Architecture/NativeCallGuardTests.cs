@@ -118,6 +118,11 @@ public class NativeCallGuardTests
         ["User32.GetUserObjectInformationW"] = "reads the name of a desktop",
         ["Wtsapi32.WTSQuerySessionInformationW"] = "reads whether the server's session is locked or disconnected",
         ["Wtsapi32.WTSFreeMemory"] = "frees memory that WTSQuerySessionInformationW returned",
+
+        // The effective DPI awareness for get_server_info and the log at start (NativeSystemInfoWrapper)
+        ["User32.GetThreadDpiAwarenessContext"] = "reads the DPI awareness context of the calling thread",
+        ["User32.GetAwarenessFromDpiAwarenessContext"] = "reads the awareness of a context value",
+        ["User32.AreDpiAwarenessContextsEqual"] = "compares two context values",
     };
 
     /// <summary>
@@ -151,12 +156,15 @@ public class NativeCallGuardTests
     };
 
     /// <summary>
-    /// Reviewed calls outside the action wrappers that change something, keyed by (full name of the
-    /// calling type, "Class.Method").
+    /// Reviewed calls outside the action wrappers to APIs that can also change something, keyed by (full
+    /// name of the calling type, "Class.Method"): only that caller may make them, and only in the way the
+    /// reason says. The DPI awareness is no longer set through the API (app.manifest declares it).
     /// </summary>
     private static readonly Dictionary<(string Caller, string Api), string> SanctionedNativeCalls = new()
     {
-        [("Program", "Shcore.SetProcessDpiAwareness")] = "sets the DPI awareness of the server process itself, at startup",
+        [("WindowsAppManagerMcp.Native.NativeSystemInfoWrapper", "User32.SystemParametersInfoW")] =
+            "reads the foreground lock timeout (SPI_GETFOREGROUNDLOCKTIMEOUT) and nothing else; a SET action would change a " +
+            "system setting",
     };
 
     /// <summary>

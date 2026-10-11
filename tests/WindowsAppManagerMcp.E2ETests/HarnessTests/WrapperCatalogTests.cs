@@ -25,6 +25,7 @@ public class WrapperCatalogTests
             typeof(ITcpPortOwnerResolver),
             typeof(INativeHitTestWrapper),
             typeof(INativeSecurityWrapper),
+            typeof(INativeSystemInfoWrapper),
             typeof(INativeThreadInputWrapper),
             typeof(INativeHotkeyWrapper),
             typeof(IDesktopPauseFlag),

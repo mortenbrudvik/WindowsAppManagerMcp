@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using WindowsAppManagerMcp.Infrastructure;
 
 namespace WindowsAppManagerMcp.Tests.Contract;
 
@@ -8,11 +9,16 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// A change to a tool's name, parameters, defaults, descriptions or annotations, or an SDK upgrade that changes
 /// how they are sent, fails here until the snapshot is regenerated with UPDATE_SNAPSHOTS=1 and the diff is
 /// reviewed. CI also compares the tools/list of the built exe with the same file (scripts/Test-ToolsSnapshot.ps1),
-/// which catches an exe that is not built from these sources. Runs an in-process MCP server; no tool is called.
+/// which catches an exe that is not built from these sources. The result of the client's first request (initialize, or
+/// server/discover) is snapshotted the same way, per revision, in Contract/initialize.snapshot.json: the negotiated
+/// revision, serverInfo, the instructions and the capabilities a client acts on. Runs in-process MCP servers; no tool is
+/// called.
 /// </summary>
 public class ToolSurfaceSnapshotTests
 {
     private const int MaxReportedPaths = 40;
+
+    private static readonly Lazy<Task<JsonObject>> HandshakeResults = new(ServerHandshake.ReadResultsAsync);
 
     [Fact]
     public async Task ToolsList_MatchesTheCheckedInSnapshot()
@@ -43,6 +49,56 @@ public class ToolSurfaceSnapshotTests
             "tools/list differs from Contract/tools.snapshot.json. If the change is intended, regenerate the snapshot and the " +
             $"generated docs with {Snapshots.UpdateVariable}=1 (see TESTING.md) and review the diff.\n" +
             string.Join("\n", differences.DefaultIfEmpty("(only the formatting of the file differs)")));
+    }
+
+    [Fact]
+    public async Task InitializeResult_MatchesTheCheckedInSnapshot()
+    {
+        // Arrange
+        var live = await HandshakeResults.Value;
+        var expected = ServerHandshake.ToSnapshotText(live);
+
+        // Act
+        var committed = Snapshots.ReadNormalized(ServerHandshake.SnapshotPath);
+
+        // Assert
+        if (committed == expected)
+        {
+            return;
+        }
+
+        if (Snapshots.UpdateRequested)
+        {
+            Snapshots.WritePreservingFormat(ServerHandshake.SnapshotPath, expected);
+            return;
+        }
+
+        var paths = new List<string>();
+        if (committed != null)
+        {
+            ChangedPaths(JsonNode.Parse(committed)!["results"], live, "results", paths);
+        }
+
+        Assert.Fail(
+            "The result of the client's first request (initialize, server/discover) differs from Contract/initialize.snapshot.json. " +
+            "An SDK upgrade may have changed the revisions, the capabilities or serverInfo, or the instructions changed. If that " +
+            $"is intended, regenerate the snapshots with {Snapshots.UpdateVariable}=1 (see TESTING.md) and review the diff.\n" +
+            string.Join("\n", committed == null
+                ? [$"{ServerHandshake.SnapshotPath} does not exist."]
+                : paths.Take(MaxReportedPaths).Select(path => $"changed: {path}").DefaultIfEmpty("(only the formatting of the file differs)")));
+    }
+
+    [Fact]
+    public async Task EveryRevision_GetsTheInstructionsAndTheToolsCapability_AndNegotiatesItself()
+    {
+        foreach (var (revision, node) in await HandshakeResults.Value)
+        {
+            var result = node!.AsObject();
+            ServerHandshake.RevisionsOf(result).Should().Contain(revision);
+            ((string?)ServerHandshake.ServerInfoOf(result)?["name"]).Should().Be(ServerIdentity.Name);
+            ((string?)result["instructions"]).Should().Be(ServerIdentity.Instructions, "clients without the plugin skill get them ({0})", revision);
+            result["capabilities"]?["tools"].Should().NotBeNull("the server serves tools ({0})", revision);
+        }
     }
 
     [Fact]
@@ -90,6 +146,17 @@ public class ToolSurfaceSnapshotTests
             .And.Contain("./scripts/Test-ToolsSnapshot.ps1 -ExePath ./bin/WindowsAppManagerMcp.exe -OnlyIfCurrent");
         script.Should().Contain($"'{string.Join('/', ToolSurface.SnapshotRelativePath)}'",
             "the script's default snapshot is the file this test keeps current");
+    }
+
+    [Fact]
+    public void TheGuardScript_ListsTheToolsOnTheNewestInitializeRevision()
+    {
+        // Claude Code and other stdio clients use the initialize handshake; the script asks for the newest revision of
+        // it that the SDK speaks (ProtocolRevisionContractTests pins that revision), not one an upgrade left behind
+        var script = Snapshots.ReadNormalized(RepositoryFiles.PathOf("scripts", "Test-ToolsSnapshot.ps1"))!;
+
+        script.Should().Contain($"[string]$ProtocolVersion = '{InProcessMcpServer.NewestInitializeRevision}'")
+            .And.Contain("protocolVersion = $ProtocolVersion");
     }
 
     [Fact]

@@ -105,6 +105,9 @@ public class ToolPayloadBudgetTests
         ["save_layout"] = 100, // 19
         ["apply_layout"] = 150, // 72
         ["delete_layout"] = 100, // 4
+
+        // Server Info: the default deny list, five host processes, two monitors
+        ["get_server_info"] = 850, // 543
     };
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();

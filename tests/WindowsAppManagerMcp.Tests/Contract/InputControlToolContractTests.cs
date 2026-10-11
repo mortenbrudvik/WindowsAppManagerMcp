@@ -17,11 +17,12 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 /// the client closes the server's stdin. The input layer, the hotkey and the shared pause are fakes: nothing is
 /// sent, registered or opened for real. The elicitation, cancellation and stdin EOF tests run on both protocol paths
 /// (<see cref="Revisions"/>): the SDK client's default revision, where elicitation is a multi-round-trip request, and the
-/// initialize handshake of today's stdio clients, where it is a request from the server while the call is open.
+/// initialize handshake of today's stdio clients (2025-06-18 and 2025-11-25), where it is a request from the server
+/// while the call is open.
 /// </summary>
 public sealed class InputControlToolContractTests : IDisposable
 {
-    public static TheoryData<string?> Revisions => new() { null, InProcessMcpServer.InitializeRevision };
+    public static TheoryData<string?> Revisions => InProcessMcpServer.Revisions();
 
     private const uint KeyDown = 0x0000, KeyUp = 0x0002;
     private const ushort VkControl = 0x11, VkLControl = 0xA2, VkLMenu = 0xA4, VkLShift = 0xA0, VkLWin = 0x5B;
@@ -523,6 +524,7 @@ public sealed class InputControlToolContractTests : IDisposable
         _input.Batches.Count.Should().BeLessThan(text.Length, "typing stopped before the end of the text");
         _session.ServerHeld.Should().BeEmpty();
 
+        await server.AssertNoResponseSentAsync(id);
         clientGivesUp.Cancel();
         await FluentActions.Awaiting(() => call).Should().ThrowAsync<Exception>("the cancelled call gets no result");
     }

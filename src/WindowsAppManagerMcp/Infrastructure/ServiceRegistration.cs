@@ -78,6 +78,21 @@ public static class ServiceRegistration
         services.AddSingleton<IHostGuard, HostGuard>();
         services.AddHostedService<HostGuardStartup>();
 
+        // The effective DPI awareness (from app.manifest), the foreground lock timeout and the session, for
+        // get_server_info and the log at start
+        services.AddSingleton<INativeSystemInfoWrapper, NativeSystemInfoWrapper>();
+        services.AddHostedService<ServerStartupLog>(); // logs the versions, the DPI awareness and the toolsets in force
+        services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
+            sp.GetRequiredService<INativeSystemInfoWrapper>(),
+            sp.GetRequiredService<IProcessSecurityProbe>(),
+            sp.GetRequiredService<IMonitorService>(),
+            sp.GetRequiredService<IInputSafetyInfo>(),
+            sp.GetRequiredService<IInputSession>(),
+            sp.GetRequiredService<IPauseHotkey>(),
+            sp.GetRequiredService<ILayoutService>(),
+            sp.GetRequiredService<INativeWindowWrapper>(),
+            sp.GetService<ToolsetSelection>())); // registered by AddWindowsAppManagerTools
+
         // The input guard (every input call, inside the input gate) and the target policy (input, close,
         // kill and window captures), both configured by the user in the server's environment
         services.AddSingleton<ITargetPolicy>(_ => new TargetPolicy(TargetPolicySettings.FromEnvironment()));
@@ -105,6 +120,7 @@ public static class ServiceRegistration
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
+        services.AddSingleton<ServerInfoTools>();
 
         return services;
     }
@@ -113,8 +129,9 @@ public static class ServiceRegistration
     /// The server's log levels: Warning and above for everything, plus the per-call lines of
     /// <see cref="ToolErrorReporting.CallLoggerCategory"/> (tool, duration and outcome of every call)
     /// and the agent host that <see cref="HostGuard"/> records, the safety settings that
-    /// <see cref="InputSafetyStartup"/> reports once at start and the pause hotkey that
-    /// <see cref="InputSessionStartup"/> registers, at Information.
+    /// <see cref="InputSafetyStartup"/> reports once at start, the pause hotkey that
+    /// <see cref="InputSessionStartup"/> registers and the versions, DPI awareness and toolsets that
+    /// <see cref="ServerStartupLog"/> reports, at Information.
     /// Program.cs writes them to stderr; stdout carries the MCP protocol.
     /// </summary>
     public static ILoggingBuilder AddWindowsAppManagerLogLevels(this ILoggingBuilder logging)
@@ -126,13 +143,21 @@ public static class ServiceRegistration
             .AddFilter(ToolErrorReporting.CallLoggerCategory, LogLevel.Information)
             .AddFilter(typeof(HostGuard).FullName, LogLevel.Information)
             .AddFilter(typeof(InputSafetyStartup).FullName, LogLevel.Information)
-            .AddFilter(typeof(InputSessionStartup).FullName, LogLevel.Information);
+            .AddFilter(typeof(InputSessionStartup).FullName, LogLevel.Information)
+            .AddFilter(typeof(ServerStartupLog).FullName, LogLevel.Information);
     }
 
     /// <summary>
-    /// Registers the tool error filter and every tool of the server with the MCP server.
+    /// Registers the call filters and the server's tools with the MCP server, and serves the ones
+    /// <paramref name="toolsets"/> chooses (roadmap M2.14).
     /// </summary>
-    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder)
+    /// <param name="builder">The MCP server builder.</param>
+    /// <param name="toolsets">
+    /// The toolsets, excluded tools and read-only mode; Program.cs reads them from the environment
+    /// (<see cref="ToolsetSelection.FromEnvironment()"/>). Null serves every tool (<see cref="ToolsetSelection.All"/>),
+    /// the whole surface the tests and the tools/list snapshot check.
+    /// </param>
+    public static IMcpServerBuilder AddWindowsAppManagerTools(this IMcpServerBuilder builder, ToolsetSelection? toolsets = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
@@ -158,6 +183,9 @@ public static class ServiceRegistration
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<InputSimulationTools>()
-            .WithServerTools<InputControlTools>();
+            .WithServerTools<InputControlTools>()
+            .WithServerTools<ServerInfoTools>()
+            // Last: removes the tools the user's toolsets, exclusions or read-only mode leave out
+            .WithToolsets(toolsets ?? ToolsetSelection.All());
     }
 }

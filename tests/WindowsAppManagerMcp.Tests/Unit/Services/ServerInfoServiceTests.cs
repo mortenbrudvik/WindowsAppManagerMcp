@@ -1,0 +1,204 @@
+using WindowsAppManagerMcp.Infrastructure;
+
+namespace WindowsAppManagerMcp.Tests.Unit.Services;
+
+/// <summary>
+/// get_server_info's report (roadmap M2.11): the build, the process's integrity and DPI awareness, the desktop state,
+/// the monitors with their DPI, the host the server recorded, the pause, the policy, the paths and the toolsets, and a
+/// warning for each thing that will make tools fail or coordinates wrong. Every source is a mock or a fake.
+/// </summary>
+public sealed class ServerInfoServiceTests : IDisposable
+{
+    private static readonly ServerConnectionInfo Connection = new("2025-11-25", "claude-code", "2.1.0");
+
+    private readonly Mock<INativeSystemInfoWrapper> _system = new();
+    private readonly Mock<IProcessSecurityProbe> _probe = new();
+    private readonly Mock<IMonitorService> _monitors = new();
+    private readonly Mock<IInputSafetyInfo> _safety = new();
+    private readonly Mock<IPauseHotkey> _hotkey = new();
+    private readonly Mock<ILayoutService> _layouts = new();
+    private readonly Mock<INativeWindowWrapper> _windows = new();
+    private readonly InputSession _session = new(new FakeInputWrapper());
+
+    public ServerInfoServiceTests()
+    {
+        _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.PerMonitorV2);
+        _system.Setup(s => s.GetForegroundLockTimeout()).Returns(200_000);
+        _system.Setup(s => s.GetSessionId()).Returns(1);
+        _probe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(4242, IntegrityLevel.Medium, ProcessIntegrity.MediumRid, false, null));
+        _probe.Setup(p => p.IsInputDesktopAvailable()).Returns(true);
+        _probe.Setup(p => p.IsSessionLocked()).Returns(false);
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(
+        [
+            new MonitorInfo(0, @"\\.\DISPLAY1", true, new MonitorRect(0, 0, 2560, 1440), new MonitorRect(0, 0, 2560, 1392), 1.25),
+            new MonitorInfo(1, @"\\.\DISPLAY2", false, new MonitorRect(-1920, 0, 1920, 1080), new MonitorRect(-1920, 0, 1920, 1040), 1.0)
+        ]);
+        var host = new HostSnapshot(
+            4242,
+            [new HostProcess(3100, null), new HostProcess(2900, null)],
+            ConsoleWindow: 0x1001,
+            ConsoleHostWindow: new HostWindow(0x2002, new HostProcess(2800, null)),
+            StartupForegroundWindow: new HostWindow(0x2002, new HostProcess(2800, null)),
+            ShellProcessId: 1500)
+        {
+            ConsoleServerProcesses = [new HostProcess(3300, null)]
+        };
+        _safety.Setup(s => s.Read()).Returns(new InputSafetySnapshot(host, TargetPolicySettings.Default, ["%{F4}", "^w"], "default"));
+        _hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, "default"));
+        _layouts.Setup(l => l.LayoutsPath).Returns(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
+        _windows.Setup(w => w.GetProcessName(It.IsAny<uint>())).Returns((uint id) => id switch
+        {
+            4242 => "WindowsAppManagerMcp",
+            3100 => "node",
+            2900 => "pwsh",
+            2800 => "WindowsTerminal",
+            3300 => "OpenConsole",
+            _ => null
+        });
+    }
+
+    public void Dispose() => _session.Dispose();
+
+    private ServerInfoService CreateSut(ToolsetSelection? toolsets = null) => new(
+        _system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object, _layouts.Object, _windows.Object,
+        toolsets);
+
+    [Fact]
+    public void Read_ReportsTheBuildAndTheConnection()
+    {
+        var info = CreateSut().Read(Connection, servedTools: 48);
+
+        info.Server.Name.Should().Be("windows-app-manager");
+        info.Server.Version.Should().Be(ServerVersion.Current);
+        info.Server.GitSha.Should().Be(ServerVersion.GitSha);
+        info.Server.SdkVersion.Should().Be(ServerVersion.SdkVersion);
+        info.Server.Runtime.Should().StartWith(".NET");
+        info.Server.Os.Should().Contain("Windows");
+        info.Connection.Should().Be(Connection);
+    }
+
+    [Fact]
+    public void Read_ReportsTheProcessAndTheDesktop()
+    {
+        var info = CreateSut().Read(Connection, 48);
+
+        info.Process.Should().Be(new ServerProcessInfo(Environment.ProcessId, 1, IntegrityLevel.Medium, false, DpiAwareness.PerMonitorV2));
+        info.Desktop.Should().Be(new DesktopStateInfo(InputDesktopAvailable: true, SessionLocked: false, ForegroundLockTimeoutMs: 200_000));
+    }
+
+    [Fact]
+    public void Read_ReportsTheMonitorsWithTheirDpi()
+    {
+        var info = CreateSut().Read(Connection, 48);
+
+        info.Monitors.Should().Equal(
+            new ServerMonitorInfo(0, @"\\.\DISPLAY1", true, new BoundsDto(0, 0, 2560, 1440), 120, 1.25),
+            new ServerMonitorInfo(1, @"\\.\DISPLAY2", false, new BoundsDto(-1920, 0, 1920, 1080), 96, 1.0));
+    }
+
+    [Fact]
+    public void Read_ReportsTheHostTheServerRecorded()
+    {
+        var info = CreateSut().Read(Connection, 48);
+
+        info.Host.Windows.Should().Equal(
+            new AgentHostWindow(0x2002, "console", 2800, "WindowsTerminal"),
+            new AgentHostWindow(0x2002, "startupForeground", 2800, "WindowsTerminal"));
+        info.Host.Processes.Should().Equal(
+            new AgentHostProcess(4242, "server", "WindowsAppManagerMcp"),
+            new AgentHostProcess(3100, "ancestor", "node"),
+            new AgentHostProcess(2900, "ancestor", "pwsh"),
+            new AgentHostProcess(3300, "consoleServer", "OpenConsole"));
+    }
+
+    [Fact]
+    public void Read_ReportsThePauseThePolicyAndThePaths()
+    {
+        var info = CreateSut().Read(Connection, 48);
+
+        info.Input.Paused.Should().BeFalse();
+        info.Input.Hotkey.State.Should().Be(PauseHotkeyState.Registered);
+        info.Safety.DeniedProcesses.Should().Equal(TargetPolicySettings.Default.DeniedProcesses);
+        info.Safety.DenyListSource.Should().Be("default");
+        info.Safety.AllowedProcesses.Should().BeNull();
+        info.Safety.DestructiveChords.Should().Equal("%{F4}", "^w");
+        info.Paths.Layouts.Should().Be(@"C:\Users\user\AppData\Local\WindowsAppManagerMcp\layouts");
+        info.Paths.AuditLog.Should().BeNull("the audit log comes with roadmap M2.17");
+    }
+
+    [Fact]
+    public void Read_ReportsTheToolsets()
+    {
+        var selection = ToolsetSelection.FromEnvironment(
+            name => name switch
+            {
+                ToolsetSelection.ToolsetsVariable => "-browser",
+                ToolsetSelection.ExcludeToolsVariable => "kill_process",
+                _ => null
+            },
+            Toolsets.Server);
+
+        var info = CreateSut(selection).Read(Connection, servedTools: 43);
+
+        info.Toolsets.Enabled.Should().NotContain("browser").And.Contain(Toolsets.ServerToolset);
+        info.Toolsets.Disabled.Should().Equal("browser");
+        info.Toolsets.Source.Should().Be(ToolsetSelection.ToolsetsVariable);
+        info.Toolsets.ExcludedTools.Should().Equal("kill_process");
+        info.Toolsets.ReadOnly.Should().BeFalse();
+        info.Toolsets.ServedTools.Should().Be(43);
+    }
+
+    [Fact]
+    public void Read_WithoutASelection_ReportsEveryToolset()
+    {
+        CreateSut().Read(Connection, 48).Toolsets.Source.Should().Be(ToolsetSelection.AllKeyword);
+    }
+
+    [Fact]
+    public void Read_AHealthyServer_HasNoWarnings()
+    {
+        CreateSut().Read(Connection, 48).Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_WarnsAboutWhatWillMakeToolsFail()
+    {
+        // Arrange - everything at once
+        _system.Setup(s => s.GetDpiAwareness()).Returns(DpiAwareness.System);
+        _probe.Setup(p => p.IsSessionLocked()).Returns(true);
+        _probe.Setup(p => p.IsInputDesktopAvailable()).Returns(false);
+        _probe.Setup(p => p.ServerIntegrity).Returns(new ProcessIntegrity(4242, IntegrityLevel.Low, ProcessIntegrity.LowRid, false, null));
+        _hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Failed, "default", "the chord is in use"));
+        _session.Pause(InputControlSources.Hotkey);
+        var toolsets = ToolsetSelection.FromEnvironment(name => name == ToolsetSelection.ToolsetsVariable ? "widnows" : null, Toolsets.Server);
+
+        // Act
+        var warnings = CreateSut(toolsets).Read(Connection, 48).Warnings;
+
+        // Assert
+        warnings.Should().NotBeNull();
+        warnings.Should().Contain(w => w.Contains("System") && w.Contains("PerMonitorV2") && w.Contains("scaled"));
+        warnings.Should().Contain(w => w.Contains("locked"));
+        warnings.Should().NotContain(w => w.Contains("secure desktop"), "a locked session explains the unavailable input desktop");
+        warnings.Should().Contain(w => w.Contains("Low") && w.Contains("integrity"));
+        warnings.Should().Contain(w => w.Contains("PausedByUser"));
+        warnings.Should().Contain(w => w.Contains("pause hotkey") && w.Contains("the chord is in use"));
+        warnings.Should().Contain(w => w.Contains("'widnows'"));
+    }
+
+    [Fact]
+    public void Read_AnUnreachableInputDesktop_IsAWarning()
+    {
+        _probe.Setup(p => p.IsInputDesktopAvailable()).Returns(false);
+
+        CreateSut().Read(Connection, 48).Warnings.Should().ContainSingle().Which.Should().Contain("secure desktop");
+    }
+
+    [Fact]
+    public void Read_AHotkeyOfAnotherServerThatCannotShareItsPause_IsAWarning()
+    {
+        _hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.OtherServer, "default"));
+
+        CreateSut().Read(Connection, 48).Warnings.Should().ContainSingle().Which.Should().Contain("does not pause this server");
+    }
+}

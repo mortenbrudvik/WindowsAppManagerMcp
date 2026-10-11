@@ -75,6 +75,7 @@ public class EveryToolContractTests
             ["save_layout"] = Args("""{ "name": "layout-1", "description": "Editor left, browser right" }"""),
             ["apply_layout"] = Args("""{ "name": "layout-1" }"""),
             ["delete_layout"] = Args("""{ "name": "layout-1" }"""),
+            ["get_server_info"] = Args("{}"),
         };
 
     /// <summary>The failing call of these tools fails differently than the mode's defaults.</summary>

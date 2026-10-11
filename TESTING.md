@@ -2052,7 +2052,12 @@ in-process server with the production registrations (`ServiceRegistration.AddWin
 call Program.cs makes) and compares every tool object, as the server sends it (name, title, description,
 annotations, inputSchema, outputSchema), with the checked-in
 `tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`, sorted by tool name. A failure names the
-added, removed and changed tools and the JSON paths that changed.
+added, removed and changed tools and the JSON paths that changed. The same class snapshots what the server answers a
+client's first request on each protocol revision into `Contract/initialize.snapshot.json`: the `initialize` result on
+2025-06-18 and 2025-11-25, and the `server/discover` result on 2026-07-28 (where serverInfo sits in `_meta`), with
+`serverInfo.version` masked. A client acts on more than the tool list (the negotiated revision, the capabilities object,
+the instructions), so an SDK upgrade that starts advertising a capability, or drops a revision, fails here too. The
+whole tool surface is snapshotted: `AddWindowsAppManagerTools()` without a toolset selection serves every toolset.
 
 When a change to the tool surface is intended (a new tool or parameter, a new default, a description, an
 annotation, an SDK upgrade that changes the schemas), regenerate the snapshot and the generated docs in one
@@ -2071,14 +2076,22 @@ git diff
 UPDATE_SNAPSHOTS=1 dotnet test --filter "FullyQualifiedName~ToolSurfaceSnapshotTests|FullyQualifiedName~GeneratedToolDocsTests"
 ```
 
-`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the snapshot, and the
+`UPDATE_SNAPSHOTS=1` only makes these tests rewrite their files instead of failing: the two snapshots, and the
 generated regions of README.md, docs/TOOLS.md and SKILL.md. It changes nothing else about a run (desktop
-tests stay skipped). Without it, CI fails on a stale snapshot or table.
+tests stay skipped). Without it, CI fails on a stale snapshot or table. A run where `CI`, `GITHUB_ACTIONS` or
+`TF_BUILD` is `true` refuses it (the tests fail with a message), because there it would turn the guards into rewrites
+that pass. Each regenerated file replaces the old one in one step, so a test that reads it in parallel never sees it
+half written. Set the variable after any `env -u` options: `env -u WAM_ALLOW_DESKTOP_TESTS UPDATE_SNAPSHOTS=1 dotnet test ...`.
 
 **The CI guard on the built exes.** A version or commit check cannot tell whether an exe serves the tools
 its sources define. `.github/workflows/build.yml` therefore runs `scripts/Test-ToolsSnapshot.ps1`, which
-starts an exe (with `WAM_PAUSE_HOTKEY=none`), sends `initialize` and `tools/list` over stdio, closes it, and
-compares every tool object with the snapshot. It checks the exe the workflow has just published from the
+starts an exe (with `WAM_PAUSE_HOTKEY=none`, `WAM_TOOLSETS=all` and neither `WAM_EXCLUDE_TOOLS` nor `WAM_READ_ONLY`,
+so it serves the whole surface), sends `initialize` and `tools/list` over stdio, closes it, and compares every tool
+object with the snapshot. It asks for the newest revision with the `initialize` handshake (`-ProtocolVersion`,
+default `2025-11-25`, the one Claude Code most likely negotiates); `ProtocolRevisionContractTests` checks that this is
+the revision the SDK answers an unknown request with, and `ToolSurfaceSnapshotTests` that the script still asks for
+it, so an SDK upgrade cannot leave the guard on a stale revision. Relative `-ExePath` and `-SnapshotPath` values are
+resolved against the PowerShell location. It checks the exe the workflow has just published from the
 checkout, always, and the committed `bin/WindowsAppManagerMcp.exe` with `-OnlyIfCurrent`: only when that exe
 is a build of the current build inputs (the checks of `scripts/Test-PluginBinary.ps1`); a stale committed exe
 is expected until the next release and is skipped with a notice. The script runs the server, so it is not
@@ -2094,6 +2107,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 |------|--------|----------|
 | README.md | `tool-table` | "Available Tools (N)" and the category table |
 | docs/TOOLS.md | `summary` | The introduction with the tool count, and the quick reference |
+| docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
 | SKILL.md | `count` | The sentence with the tool count |
 | SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
@@ -2113,6 +2127,9 @@ To add a tool to the docs:
    with an empty region pair: `<!-- tools:begin params:tool_name -->` and `<!-- tools:end params:tool_name -->`.
 3. Run the tests with `UPDATE_SNAPSHOTS=1` (above), then edit the generated parameter descriptions in
    docs/TOOLS.md if they need it.
+
+A new tool also needs a toolset: add it to one of `Toolsets.Server` (src/WindowsAppManagerMcp/Infrastructure/Toolsets.cs);
+`ToolsetContractTests` fails until every served tool is in one, and the `toolsets` region lists it.
 
 ### Every tool over MCP and payload budgets
 
@@ -2153,6 +2170,7 @@ The largest typical results, measured in October 2026:
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows | 989 | 1,500 |
+| `get_server_info` | The default deny list, five host processes, two monitors | 543 | 850 |
 
 Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
@@ -2166,15 +2184,19 @@ and the tests that depend on the difference run on both:
   (`InProcessMcpServer.LatestRevision`): `server/discover` instead of the `initialize` handshake, and
   elicitation as a multi-round-trip request (the tool call returns `input_required`, and the client retries it
   with the answer).
-- **The earlier revisions with the `initialize` handshake**, which stdio clients such as Claude Code and the CI
-  guard (`scripts/Test-ToolsSnapshot.ps1`, `2025-06-18`) use: elicitation is a request from the server while the
-  call is open. Pass `InProcessMcpServer.WithRevision(options, InProcessMcpServer.InitializeRevision)` as the
-  client options to test this path.
+- **The revisions with the `initialize` handshake**, which stdio clients use: `2025-11-25`
+  (`InProcessMcpServer.NewestInitializeRevision`), the newest one, which the SDK prefers on that path, Claude Code
+  most likely negotiates and the CI guard (`scripts/Test-ToolsSnapshot.ps1`) asks for; and `2025-06-18`
+  (`InProcessMcpServer.InitializeRevision`), which older clients still use. Elicitation is a request from the server
+  while the call is open (2025-11-25 added its form and url modes). Pass
+  `InProcessMcpServer.WithRevision(options, revision)` as the client options to test this path.
 
-`Contract/ProtocolRevisionContractTests` checks that both list exactly the snapshot's tools and return captures
-and tool errors alike. The elicitation (resume_input), cancellation and stdin EOF tests of
-`InputControlToolContractTests`, and the progress and cancellation tests of `UIElementToolContractTests` and
-`LongRunningToolContractTests`, are theories over `Revisions` (both paths). A new test of something
+`Contract/ProtocolRevisionContractTests` checks that every revision lists exactly the snapshot's tools and returns
+captures and tool errors alike, and (through `Fixtures/RawMcpConnection`, which writes JSON-RPC by hand) that an
+`initialize` for a revision the SDK does not know is answered with `2025-11-25`. The elicitation (resume_input),
+cancellation and stdin EOF tests of `InputControlToolContractTests`, the progress and cancellation tests of
+`UIElementToolContractTests` and `LongRunningToolContractTests`, and the session report of
+`ServerInfoToolContractTests` are theories over `InProcessMcpServer.Revisions()` (all three). A new test of something
 protocol-level (elicitation, progress, cancellation, notifications) should be one too.
 
 **Progress.** Check progress notifications where the server wrote them: `InProcessMcpServer.ServerMessages`
@@ -2189,7 +2211,22 @@ on the reporting thread.
 `StartAsync` in `LongRunningToolContractTests`), as any MCP client does, instead of relying on when the SDK
 client sends it for its own token. A tool that changes windows waits for the input gate first, and the gate is
 shared by every test in the process: wait until the tool itself runs before you cancel, or the cancellation only
-ends the wait for the gate. A cancelled call gets no result, and the call log reports it as `cancelled`.
+ends the wait for the gate. A cancelled call gets no result, and the call log reports it as `cancelled`: the
+cancellation tests check the wire with `server.AssertNoResponseSentAsync(id)` (no result or error with that id in
+`ServerMessages`). The client's own call is no evidence, because the SDK client ends its pending call as soon as
+`notifications/cancelled` is sent for it, answered or not.
+
+### Toolsets and server info
+
+`Contract/ToolsetContractTests` checks the toolset mechanism (roadmap M2.14) over MCP with fixture tools and a
+fixture catalog that has an opt-in toolset: `WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS` and `WAM_READ_ONLY` decide what
+tools/list lists, and a call to a tool that is not served is an unknown tool. Against the production catalog it
+checks that every served tool is in exactly one toolset, that the default serves every toolset today, that read-only
+mode serves exactly the tools annotated `readOnlyHint: true`, and that each of those is a read-only tool of the input
+gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
+`get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
+`Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
+keeps the server instructions at 15 to 20 lines that name only served tools.
 
 ### Visual Studio
 

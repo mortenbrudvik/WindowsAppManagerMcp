@@ -114,6 +114,10 @@ public static class ToolDocCatalog
             new("apply_layout", "Restore saved preset", "name", "matchBy", "launchMissing"),
             new("delete_layout", "Delete a preset", "name"),
         ]),
+        new("Server Info",
+        [
+            new("get_server_info", "Build, DPI awareness, desktop state, host, pause, policy and toolsets; warnings first"),
+        ]),
     ];
 
     /// <summary>Every tool of the catalog, in category order.</summary>

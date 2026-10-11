@@ -32,11 +32,25 @@ public sealed class InProcessMcpServer : IAsyncDisposable
     public const string LatestRevision = "2026-07-28";
 
     /// <summary>
-    /// A revision with the initialize handshake, as stdio clients such as Claude Code and the CI guard
-    /// (scripts/Test-ToolsSnapshot.ps1) negotiate it: elicitation is a request from the server to the client while the
-    /// tool call is open. Pass <see cref="WithRevision"/> as the client options to test this path.
+    /// An earlier revision with the initialize handshake, which stdio clients that have not moved to
+    /// <see cref="NewestInitializeRevision"/> still negotiate: elicitation is a request from the server to the client
+    /// while the tool call is open. Pass <see cref="WithRevision"/> as the client options to test this path.
     /// </summary>
     public const string InitializeRevision = "2025-06-18";
+
+    /// <summary>
+    /// The newest revision with the initialize handshake: SDK 2.2.0's default on that path (the revision it answers a
+    /// client that asks for one it does not know), the one stdio clients such as Claude Code most likely negotiate,
+    /// and the one the CI guard (scripts/Test-ToolsSnapshot.ps1) asks for. It added the form and url modes of
+    /// elicitation.
+    /// </summary>
+    public const string NewestInitializeRevision = "2025-11-25";
+
+    /// <summary>
+    /// The revisions a protocol-level contract test (elicitation, progress, cancellation, notifications) runs on: the SDK
+    /// client's default (<see cref="LatestRevision"/>, null here) and both initialize-handshake revisions.
+    /// </summary>
+    public static TheoryData<string?> Revisions() => new() { null, InitializeRevision, NewestInitializeRevision };
 
     /// <summary>
     /// <paramref name="options"/> (or new options) pinned to <paramref name="revision"/>; null leaves the SDK's default,
@@ -118,6 +132,43 @@ public sealed class InProcessMcpServer : IAsyncDisposable
 
     private static bool IsProgressNotification(JsonElement message) =>
         message.TryGetProperty("method", out var method) && method.GetString() == NotificationMethods.ProgressNotification;
+
+    /// <summary>
+    /// The responses (a result or an error) the server wrote to request <paramref name="id"/>. Requests and notifications
+    /// the server sent itself are not responses, even when their id happens to be the same.
+    /// </summary>
+    public IReadOnlyList<string> ResponsesTo(RequestId id) =>
+        ServerMessages
+            .Where(message =>
+            {
+                var root = JsonDocument.Parse(message).RootElement;
+                return !root.TryGetProperty("method", out _) &&
+                       root.TryGetProperty("id", out var messageId) &&
+                       IdText(messageId) == id.ToString() &&
+                       (root.TryGetProperty("result", out _) || root.TryGetProperty("error", out _));
+            })
+            .ToList();
+
+    /// <summary>
+    /// Checks that the server sent no response to the cancelled request <paramref name="id"/>: MCP says the receiver of
+    /// notifications/cancelled should not answer the request. Call it after the call ended on the server; it first gives
+    /// a late response time to reach the output and makes a round trip (tools/list: ping does not exist on every revision).
+    /// It reads the wire, not the client's call: the SDK client ends its own pending call when notifications/cancelled is
+    /// sent for it, answered or not.
+    /// </summary>
+    public async Task AssertNoResponseSentAsync(RequestId id)
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        using (var timeout = new CancellationTokenSource(StepTimeout))
+        {
+            await Client.ListToolsAsync(cancellationToken: timeout.Token);
+        }
+
+        ResponsesTo(id).Should().BeEmpty("the server must not answer a request the client cancelled (request {0})", id);
+    }
+
+    private static string? IdText(JsonElement id) =>
+        id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
 
     /// <summary>The server's services, for checking what it did.</summary>
     public IServiceProvider Services => _host.Services;
@@ -262,6 +313,9 @@ internal sealed class MessageRecordingStream(Stream inner) : Stream
     private readonly StringBuilder _pending = new();
     private readonly List<string> _messages = [];
 
+    // Keeps the bytes of a character that a write splits from one write to the next
+    private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
+
     public IReadOnlyList<string> Messages
     {
         get
@@ -323,7 +377,9 @@ internal sealed class MessageRecordingStream(Stream inner) : Stream
     {
         lock (_lock)
         {
-            _pending.Append(Encoding.UTF8.GetString(bytes));
+            var chars = new char[_decoder.GetCharCount(bytes, flush: false)];
+            var count = _decoder.GetChars(bytes, chars, flush: false);
+            _pending.Append(chars, 0, count);
             var text = _pending.ToString();
             var end = text.LastIndexOf('\n');
             if (end < 0)

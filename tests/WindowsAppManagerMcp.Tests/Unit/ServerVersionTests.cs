@@ -42,6 +42,34 @@ public class ServerVersionTests
         result.Should().Be("0.0.0");
     }
 
+    [Theory]
+    [InlineData("1.13.0+0e58ea9c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a69", "0e58ea9c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a69")]
+    [InlineData("1.13.0", null)]
+    [InlineData("1.13.0+", null)]
+    public void GitShaOf_IsTheBuildMetadata(string version, string? sha)
+    {
+        ServerVersion.GitShaOf(version).Should().Be(sha);
+    }
+
+    [Theory]
+    [InlineData("2.2.0+5c1f2b7e", "2.2.0")]
+    [InlineData("2.2.0", "2.2.0")]
+    public void WithoutBuildMetadata_DropsTheCommit(string version, string expected)
+    {
+        ServerVersion.WithoutBuildMetadata(version).Should().Be(expected);
+    }
+
+    [Fact]
+    public void SdkVersion_IsTheVersionOfTheMcpSdkTheServerRuns()
+    {
+        // The project pins one ModelContextProtocol package; get_server_info and the start log report it
+        var project = System.Xml.Linq.XDocument.Load(RepositoryFiles.PathOf("src", "WindowsAppManagerMcp", "WindowsAppManagerMcp.csproj"));
+        var pinned = project.Descendants("PackageReference")
+            .Single(e => e.Attribute("Include")?.Value == "ModelContextProtocol").Attribute("Version")!.Value;
+
+        ServerVersion.SdkVersion.Should().Be(pinned);
+    }
+
     [Fact]
     public void Current_ReportsVersionFromDirectoryBuildProps()
     {
