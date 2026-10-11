@@ -179,8 +179,10 @@ public interface IWindowService
 
     /// <summary>
     /// The application windows on other virtual desktops: windows that would be in <see cref="GetApplicationWindows"/>
-    /// but that the shell cloaks (DWM_CLOAKED_SHELL). close_application leaves them alone and reports them, so an
-    /// application with unsaved work on another desktop is never reported closed without a word.
+    /// but that the shell cloaks (DWM_CLOAKED_SHELL), and that the virtual desktop manager does not put on the current
+    /// desktop or on none (a suspended or prelaunched Store frame is cloaked the same way, and is on no desktop); a window
+    /// it cannot place is kept. close_application leaves them alone and reports them, so an application with unsaved work
+    /// on another desktop is never reported closed without a word.
     /// </summary>
     IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops();
 

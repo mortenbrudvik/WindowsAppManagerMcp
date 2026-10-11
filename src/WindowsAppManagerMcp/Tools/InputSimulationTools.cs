@@ -96,7 +96,7 @@ public class InputSimulationTools
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." +
-                 " In a terminal (console, Windows Terminal, PuTTY) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
+                 " In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
     public ClickResult RightClick(
         [Description(XDescription)]
         int x,

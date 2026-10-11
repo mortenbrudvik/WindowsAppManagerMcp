@@ -48,6 +48,8 @@ public static class ServiceRegistration
         // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
         // so a window tool cannot hold the input gate until the application recovers
         services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
+        // Tells windows on other virtual desktops from suspended or prelaunched frames the shell cloaks the same way
+        services.AddSingleton<INativeVirtualDesktopWrapper, NativeVirtualDesktopWrapper>();
         services.AddSingleton<IWindowService, WindowService>();
         // Verified close (roadmap M2.5): waits for closed windows and reads their prompts through UI Automation
         services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();

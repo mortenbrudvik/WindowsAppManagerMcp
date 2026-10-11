@@ -38,11 +38,11 @@ public class ToolPayloadBudgetTests
     private static readonly IReadOnlyDictionary<string, int> TextTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         // Window Discovery: 15 windows
-        ["find_windows"] = 1_500, // 989
-        ["get_all_windows"] = 1_500, // 989
-        ["get_foreground_window"] = 100, // 58
+        ["find_windows"] = 1_850, // 1,213: each window with visibleBounds
+        ["get_all_windows"] = 1_850, // 1,213
+        ["get_foreground_window"] = 110, // 72
         ["get_owned_windows"] = 150, // 76: one Save As dialog
-        ["get_window_info"] = 150, // 86: detail full, by a window selector (roadmap M2.4)
+        ["get_window_info"] = 150, // 100: detail full, by a window selector (roadmap M2.4)
 
         // Window Control
         ["move_window"] = 100, // 43: handle (roadmap M2.4), bounds, outerBounds, state, monitorIndex (roadmap M2.3)
@@ -59,7 +59,7 @@ public class ToolPayloadBudgetTests
         ["snap_windows_batch"] = 160, // 104
         ["set_windows_state_batch"] = 160, // 104
         ["close_windows_batch"] = 100, // 41: each window with its status
-        ["launch_applications_batch"] = 320, // 212 (with each window found)
+        ["launch_applications_batch"] = 370, // 242 (with each window found)
 
         // Monitor Info: 2 monitors
         ["get_monitors"] = 150, // 98
@@ -67,10 +67,10 @@ public class ToolPayloadBudgetTests
 
         // Screenshot: metadata only; the image is checked against ImageTokenBudget
         ["list_screens"] = 200, // 116
-        ["take_screenshot"] = 150, // 97
-        ["capture_region"] = 150, // 79
-        ["capture_window"] = 150, // 94
-        ["capture_with_elements"] = 9_500, // 6,026: the 120 elements, each with imageBounds and screenBounds
+        ["take_screenshot"] = 150, // 125
+        ["capture_region"] = 150, // 112
+        ["capture_window"] = 150, // 120
+        ["capture_with_elements"] = 9_500, // 6,052: the 120 elements, each with imageBounds and screenBounds
 
         // UI Automation
         ["get_ui_elements"] = 8_500, // 5,397: 120 elements at the default depth (roadmap M6 aims for at most 4,000)
@@ -102,7 +102,7 @@ public class ToolPayloadBudgetTests
         ["release_all_input"] = 100, // 21
 
         // App Launch
-        ["launch_application"] = 140, // 89 (with the window it found)
+        ["launch_application"] = 160, // 103 (with the window it found)
         ["list_processes"] = 2_000, // 1,328: 40 processes
         ["kill_process"] = 100, // 28
         ["close_application"] = 100, // 49: one Notepad window
@@ -115,7 +115,7 @@ public class ToolPayloadBudgetTests
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors
-        ["get_server_info"] = 850, // 543
+        ["get_server_info"] = 850, // 598
     };
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();

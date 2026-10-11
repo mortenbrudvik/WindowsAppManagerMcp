@@ -333,6 +333,25 @@ public class NativeCallGuardTests
     }
 
     [Fact]
+    public void ComInterfaceDeclarations_AreOnlyInTheNativeWrappers_AndCannotMoveAWindowToADesktop()
+    {
+        // Arrange - a [ComImport] interface is a native call the P/Invoke scans above do not see: it belongs to a wrapper in
+        // the Native namespace, behind a seam the tests fake (the virtual desktop manager: INativeVirtualDesktopWrapper)
+        var comInterfaces = ServerTypes()
+            .Where(t => t.IsInterface && t.IsDefined(typeof(System.Runtime.InteropServices.ComImportAttribute), inherit: false))
+            .ToList();
+
+        // Assert
+        comInterfaces.Select(t => t.Name).Should().Contain("IVirtualDesktopManager", "the scan must see the server's own COM interfaces");
+        comInterfaces.Where(t => t.Namespace != typeof(NativeWindowWrapper).Namespace)
+            .Select(t => t.FullName)
+            .Should().BeEmpty("COM interfaces belong to the Native wrappers");
+        comInterfaces.Single(t => t.Name == "IVirtualDesktopManager").GetMethods().Select(m => m.Name)
+            .Should().BeEquivalentTo(["IsWindowOnCurrentVirtualDesktop", "GetWindowDesktopId"],
+                "the server only reads where a window is; MoveWindowToDesktop must stay undeclared");
+    }
+
+    [Fact]
     public void UiAutomationActions_AreOnlyCalledByUIAutomationWrapper()
     {
         // Act

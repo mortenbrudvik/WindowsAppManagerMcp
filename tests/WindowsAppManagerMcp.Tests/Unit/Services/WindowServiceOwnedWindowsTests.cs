@@ -21,8 +21,9 @@ public class WindowServiceOwnedWindowsTests
     private readonly FakeDesktop _desktop = new();
     private readonly Mock<IHostGuard> _hostGuard = new();
 
-    private WindowService CreateSut(ITargetPolicy? policy = null) =>
-        new(TestDataFactory.CreateMockMonitorService().Object, _desktop.Native.Object, _hostGuard.Object, policy);
+    private WindowService CreateSut(ITargetPolicy? policy = null, INativeVirtualDesktopWrapper? virtualDesktops = null) =>
+        new(TestDataFactory.CreateMockMonitorService().Object, _desktop.Native.Object, _hostGuard.Object, policy,
+            virtualDesktops: virtualDesktops);
 
     #region get_owned_windows
 
@@ -238,6 +239,61 @@ public class WindowServiceOwnedWindowsTests
         window.Handle.Should().Be(elsewhere);
         window.IsCloaked.Should().BeTrue();
         CreateSut().GetApplicationWindows().Select(w => w.Handle).Should().NotContain(elsewhere);
+    }
+
+    /// <summary>
+    /// M2 follow-up F4: the shell cloaks a suspended or prelaunched Store frame as it cloaks a window on another desktop,
+    /// so the virtual desktop manager decides. A window it puts on no desktop, or on the current one, is not on another
+    /// desktop; one it cannot place is still reported, so a window with unsaved work is never left out.
+    /// </summary>
+    [Fact]
+    public void GetApplicationWindowsOnOtherDesktops_AskTheVirtualDesktopManager_AboutTheWindowsTheShellCloaks()
+    {
+        // Arrange - four windows the shell cloaks (DWM_CLOAKED_SHELL), one not cloaked
+        _desktop.Add("notes.txt - Notepad", "Notepad", processId: 700, processName: "notepad");
+        var elsewhere = ShellCloaked("draft.txt - Notepad", 700, "notepad");
+        var prelaunched = ShellCloaked("Photos", 701, "Photos");
+        var current = ShellCloaked("Settings", 702, "SystemSettings");
+        var unknown = ShellCloaked("todo.txt - Notepad", 700, "notepad");
+        var placements = new Dictionary<nint, VirtualDesktopPlacement>
+        {
+            [elsewhere] = VirtualDesktopPlacement.OtherDesktop,
+            [prelaunched] = VirtualDesktopPlacement.NoDesktop,
+            [current] = VirtualDesktopPlacement.CurrentDesktop,
+            [unknown] = VirtualDesktopPlacement.Unknown
+        };
+        var asked = new List<nint>();
+        var desktops = new Mock<INativeVirtualDesktopWrapper>(MockBehavior.Strict);
+        desktops.Setup(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()))
+            .Returns((IReadOnlyList<nint> windows) =>
+            {
+                asked.AddRange(windows);
+                return windows.Select(w => placements[w]).ToList();
+            });
+
+        // Act
+        var windows = CreateSut(virtualDesktops: desktops.Object).GetApplicationWindowsOnOtherDesktops();
+
+        // Assert
+        windows.Select(w => w.Handle).Should().Equal(elsewhere, unknown);
+        asked.Should().BeEquivalentTo([elsewhere, prelaunched, current, unknown], "only the windows the shell cloaks are asked about");
+        desktops.Verify(d => d.GetPlacements(It.IsAny<IReadOnlyList<nint>>()), Times.Once(), "one question for all of them");
+    }
+
+    [Fact]
+    public void GetApplicationWindowsOnOtherDesktops_WithoutWindowsTheShellCloaks_DoNotAskTheVirtualDesktopManager()
+    {
+        _desktop.Add("notes.txt - Notepad", "Notepad", processId: 700, processName: "notepad");
+        var desktops = new Mock<INativeVirtualDesktopWrapper>(MockBehavior.Strict);
+
+        CreateSut(virtualDesktops: desktops.Object).GetApplicationWindowsOnOtherDesktops().Should().BeEmpty();
+    }
+
+    private nint ShellCloaked(string title, uint processId, string processName)
+    {
+        var window = _desktop.Add(title, "AppWindowClass", cloaked: true, processId: processId, processName: processName);
+        _desktop.Native.Setup(n => n.GetCloakReason(window)).Returns(2);
+        return window;
     }
 
     [Fact]

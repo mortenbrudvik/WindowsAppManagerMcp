@@ -323,7 +323,7 @@ public class AuditLogContractTests
         {
             begin.Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
                 new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
-            audit.Setup(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
+            audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
         }
 
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(),
@@ -338,8 +338,39 @@ public class AuditLogContractTests
 
         // Assert
         result.IsError.Should().NotBe(true);
-        audit.Verify(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()),
+        audit.Verify(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()),
             beginThrows ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnAuditLogWhoseEndFaultsOrNeverFinishes_HoldsUpTheCall_AtMostTheCallDelay(bool neverFinishes)
+    {
+        // Arrange - an IAuditLog that breaks its contract: its wait faults, or never ends
+        using var services = new ContractServices(ContractMode.Typical);
+        var audit = new Mock<IAuditLog>();
+        audit.Setup(a => a.Begin(It.IsAny<string>(), It.IsAny<IEnumerable<KeyValuePair<string, JsonElement>>?>(),
+                It.IsAny<string?>(), It.IsAny<JsonElement?>()))
+            .Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
+                new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
+        audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()))
+            .Returns(neverFinishes ? new TaskCompletionSource().Task : Task.FromException(new IOException("end")));
+
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(),
+            configureServices: s =>
+            {
+                services.Register(s);
+                s.AddSingleton(audit.Object);
+            });
+
+        // Act
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var result = await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        watch.Elapsed.Should().BeLessThan(AuditLog.MaxCallDelay + TimeSpan.FromSeconds(10), "the filter bounds the wait");
     }
 
     [Fact]

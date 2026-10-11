@@ -81,6 +81,9 @@ public static class TypicalDesktop
                 IsVisible: true,
                 MonitorIndex: i % 4 == 1 ? 1 : 0)
             {
+                // The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) without the invisible resize borders of Windows 10 and 11:
+                // 7 pixels left, right and bottom at 100%. The service reads it for every window, minimized ones included
+                VisibleBounds = new WindowRect((i % 2 == 0 ? 0 : 1280) + 7, i % 3 * 100, 1280 - 14, 1392 - i % 3 * 100 - 7),
                 ClassName = app.Class,
                 HostProcessName = app.Class == "ApplicationFrameWindow" ? "ApplicationFrameHost" : null,
                 HostProcessId = app.Class == "ApplicationFrameWindow" ? 9_120 : null
