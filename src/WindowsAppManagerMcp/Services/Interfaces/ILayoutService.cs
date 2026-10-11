@@ -52,7 +52,7 @@ public interface ILayoutService
     /// </param>
     Task<LayoutApplyResult> ApplyPresetAsync(
         string name,
-        string matchBy = "process_and_title",
+        LayoutMatchBy matchBy = LayoutMatchBy.ProcessAndTitle,
         bool launchMissing = false,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default);

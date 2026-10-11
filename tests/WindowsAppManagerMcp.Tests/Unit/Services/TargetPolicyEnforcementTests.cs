@@ -127,16 +127,16 @@ public class TargetPolicyEnforcementTests
     public static TheoryData<string> WindowChanges() =>
         new() { "move", "resize", "bounds", "minimize", "restore", "maximize", "snap", "monitor" };
 
-    private static bool Change(WindowService sut, nint handle, string change) => change switch
+    private static WindowChangeResult Change(WindowService sut, nint handle, string change) => change switch
     {
         "move" => sut.MoveWindow(handle, 10, 10),
         "resize" => sut.ResizeWindow(handle, 400, 300),
         "bounds" => sut.SetWindowBounds(handle, 10, 10, 400, 300),
-        "minimize" => sut.SetWindowState(handle, WindowState.Minimized),
-        "restore" => sut.SetWindowState(handle, WindowState.Normal),
-        "maximize" => sut.SetWindowState(handle, WindowState.Maximized),
+        "minimize" => sut.SetWindowState(handle, WindowStateRequest.Minimize),
+        "restore" => sut.SetWindowState(handle, WindowStateRequest.Restore),
+        "maximize" => sut.SetWindowState(handle, WindowStateRequest.Maximize),
         "snap" => sut.SnapWindow(handle, SnapPosition.LeftHalf, monitorIndex: 0),
-        _ => sut.MoveWindowToMonitor(handle, 0, "restore")
+        _ => sut.MoveWindowToMonitor(handle, 0, MonitorPositioning.Restore)
     };
 
     private void VerifyWindowUntouched()
@@ -158,7 +158,8 @@ public class TargetPolicyEnforcementTests
         var changed = Change(CreateWindowService(Policy()), keePass, change);
 
         // Assert
-        changed.Should().BeFalse();
+        changed.Success.Should().BeFalse();
+        changed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
         VerifyWindowUntouched();
     }
 
@@ -169,11 +170,11 @@ public class TargetPolicyEnforcementTests
         // Arrange
         var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
         _native.Setup(n => n.GetWindowRect(notepad)).Returns((0, 0, 800, 600));
-        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
-        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, notepad);
 
         // Act & Assert
-        Change(CreateWindowService(Policy()), notepad, change).Should().BeTrue();
+        Change(CreateWindowService(Policy()), notepad, change).Success.Should().BeTrue();
     }
 
     [Fact]
@@ -190,8 +191,8 @@ public class TargetPolicyEnforcementTests
             tools.MoveWindow(keePass, 10, 10),
             tools.ResizeWindow(keePass, 400, 300),
             tools.SetWindowBounds(keePass, 10, 10, 400, 300),
-            tools.SetWindowState(keePass, "restore"),
-            tools.SnapWindow(keePass, "left_half"),
+            tools.SetWindowState(keePass, WindowStateRequest.Restore),
+            tools.SnapWindow(keePass, SnapPosition.LeftHalf),
             tools.MoveWindowToMonitor(keePass, 0)
         };
 
@@ -208,8 +209,8 @@ public class TargetPolicyEnforcementTests
         var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
         _native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((0, 0, 800, 600));
-        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(true);
-        _native.Setup(n => n.ShowWindow(notepad, It.IsAny<int>())).Returns(true);
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, notepad);
         var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
 
         // Act

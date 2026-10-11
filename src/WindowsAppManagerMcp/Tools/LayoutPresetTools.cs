@@ -103,8 +103,8 @@ public class LayoutPresetTools
     public async Task<ApplyLayoutResultDto> ApplyLayout(
         [Description("Name of the layout preset to apply")]
         string name,
-        [Description("How to match saved windows to current windows: 'process_and_title', 'process_only', or 'title_only' (default: process_and_title)")]
-        string matchBy = "process_and_title",
+        [Description("How to match saved windows to current windows: 'process_and_title' (default), 'process_only' or 'title_only'. Any other value fails with InvalidMatchBy.")]
+        LayoutMatchBy matchBy = LayoutMatchBy.ProcessAndTitle,
         [Description("Attempt to launch applications for missing windows (default: false)")]
         bool launchMissing = false,
         IProgress<ProgressNotificationValue>? progress = null,

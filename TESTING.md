@@ -2120,10 +2120,18 @@ To add a tool to the docs:
 tool and filter registrations and mocked services (`Fixtures/Contract/ContractServices.cs`; nothing native
 runs). The typical call of each tool must return JSON content with `success` true and no `isError`, and a
 capture its image block first. The failing call (the services report invalid handles, errors and empty lists)
-must return `isError` equal to `!success`. Roadmap M2.1 makes every tool do that; until then the tools that
-still return `isError: false` on failure, or a null result, are listed in `IsErrorPendingM21` and
-`NullResultPendingM21`. These lists can only shrink: a listed tool that reports `isError` fails until its
-entry is removed. A new tool needs typical arguments in `EveryToolContractTests.Arguments`.
+must return non-empty content and `isError` equal to `!success` (roadmap M2.1: the outermost call filter sets
+`isError` from a result's top-level `success`, see `Infrastructure/ToolOutcome.cs`; no tool returns null). A
+list or a batch summary has no top-level `success` and keeps `isError` unset. A new tool needs typical
+arguments in `EveryToolContractTests.Arguments`.
+
+`Contract/ToolArgumentContractTests` covers the fixed-value parameters (roadmap M2.2) the same way, through the
+production registrations: the input schema lists every allowed value, an unknown value fails with the
+parameter's own errorCode and the allowed values while nothing is done, the documented aliases and other
+casings still bind, and a bad batch item fails alone. The enums themselves (names, aliases, collisions) are
+checked by `Unit/Infrastructure/ToolEnumTests`. A test that serves one tool class with its own services
+registers it with `WithServerTools(instance)`, not the SDK's `WithTools(instance)`, so its arguments are bound
+as the server binds them.
 
 `Contract/ToolPayloadBudgetTests` measures the typical result of every tool on `TypicalDesktop` (two
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout

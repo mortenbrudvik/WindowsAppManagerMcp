@@ -46,7 +46,7 @@ public class ScreenshotOptionTests
         var sut = CreateSut();
 
         // Act
-        sut.TakeScreenshot(monitorIndex: 0, format: "png", quality: 60, maxDimension: 1200, output: "both",
+        sut.TakeScreenshot(monitorIndex: 0, format: CaptureFormat.Png, quality: 60, maxDimension: 1200, output: CaptureOutputMode.Both,
             outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
@@ -60,7 +60,7 @@ public class ScreenshotOptionTests
         var sut = CreateSut();
 
         // Act
-        sut.CaptureRegion(10, 20, 300, 200, format: "png", quality: 60, maxDimension: 1200, output: "both",
+        sut.CaptureRegion(10, 20, 300, 200, format: CaptureFormat.Png, quality: 60, maxDimension: 1200, output: CaptureOutputMode.Both,
             outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
@@ -74,7 +74,7 @@ public class ScreenshotOptionTests
         var sut = CreateSut();
 
         // Act
-        sut.CaptureWindow(12345, format: "png", quality: 60, maxDimension: 1200, output: "both",
+        sut.CaptureWindow(12345, format: CaptureFormat.Png, quality: 60, maxDimension: 1200, output: CaptureOutputMode.Both,
             outputPath: OutputPath, overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert
@@ -90,7 +90,7 @@ public class ScreenshotOptionTests
         var options = Expected with { OutputPath = null };
 
         // Act
-        sut.CaptureWithElements(12345, format: "png", quality: 60, maxDimension: 1200, output: "both",
+        sut.CaptureWithElements(12345, format: CaptureFormat.Png, quality: 60, maxDimension: 1200, output: CaptureOutputMode.Both,
             overwrite: true, saveToFile: true, maxWidth: 800);
 
         // Assert

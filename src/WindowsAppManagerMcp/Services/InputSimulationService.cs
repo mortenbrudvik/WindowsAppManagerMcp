@@ -121,7 +121,8 @@ public class InputSimulationService : IInputSimulationService
                     case null:
                         return held.Apply(Finish(new MouseMoveResult(false, x, y, PausedMessage("The pointer was not moved."), InputErrorCode.PausedByUser), approved));
                     case false:
-                        return held.Apply(Finish(new MouseMoveResult(false, x, y, "Failed to set cursor position", InputErrorCode.SendInputFailed), approved));
+                        return held.Apply(Finish(new MouseMoveResult(false, x, y, CursorPositionFailedMessage("The pointer was not moved."),
+                            InputErrorCode.CursorPositionFailed), approved));
                 }
 
                 switch (PointerIsAt(x, y, out var actual))
@@ -303,6 +304,14 @@ public class InputSimulationService : IInputSimulationService
         try
         {
             inputs = SendKeysParser.Parse(keys);
+        }
+        catch (KeySyntaxException ex)
+        {
+            return new SendKeysResult(
+                Success: false,
+                Keys: keys,
+                Error: ex.Message,
+                ErrorCode: InputErrorCode.InvalidKeySpecification);
         }
         catch (ArgumentException ex)
         {
@@ -492,7 +501,7 @@ public class InputSimulationService : IInputSimulationService
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage("Nothing was clicked."), InputErrorCode.PausedByUser), approved));
                     case false:
                         return held.Apply(Finish(new ClickResult(false, x, y, clickType,
-                            clicks == 1 ? "SendInput failed" : "Failed to set cursor position", InputErrorCode.SendInputFailed), approved));
+                            CursorPositionFailedMessage("Nothing was clicked."), InputErrorCode.CursorPositionFailed), approved));
                 }
 
                 // Small delay so that a popup the pointer opens there (a hover menu or tooltip) shows up in the re-check
@@ -744,6 +753,10 @@ public class InputSimulationService : IInputSimulationService
               $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, pass " +
               $"releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release {them}.";
     }
+
+    private static string CursorPositionFailedMessage(string done) =>
+        $"Windows did not move the mouse pointer to the point (SetCursorPos failed). {done} The input desktop may not be " +
+        "reachable (a UAC prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.";
 
     private string PausedMessage(string done) =>
         $"{done} Input is paused: the user pressed the pause hotkey{(_session.PauseChord is { } chord ? $" ({chord})" : string.Empty)}. " +

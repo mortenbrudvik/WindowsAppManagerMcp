@@ -303,7 +303,7 @@ public class LayoutPresetToolsTests
             Errors: new List<string>());
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
             It.IsAny<string>(),
-            It.IsAny<string>(),
+            It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
@@ -313,13 +313,13 @@ public class LayoutPresetToolsTests
         // Act
         await sut.ApplyLayout(
             name: "test-layout",
-            matchBy: "process_only",
+            matchBy: LayoutMatchBy.ProcessOnly,
             launchMissing: true);
 
         // Assert
         _mockLayoutService.Verify(l => l.ApplyPresetAsync(
             "test-layout",
-            "process_only",
+            LayoutMatchBy.ProcessOnly,
             true,
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -338,7 +338,7 @@ public class LayoutPresetToolsTests
             Errors: null);
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
             It.IsAny<string>(),
-            It.IsAny<string>(),
+            It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
@@ -351,7 +351,7 @@ public class LayoutPresetToolsTests
         // Assert
         _mockLayoutService.Verify(l => l.ApplyPresetAsync(
             "test",
-            "process_and_title",
+            LayoutMatchBy.ProcessAndTitle,
             false,
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -370,7 +370,7 @@ public class LayoutPresetToolsTests
             Errors: new List<string> { "Warning: something" });
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
             It.IsAny<string>(),
-            It.IsAny<string>(),
+            It.IsAny<LayoutMatchBy>(),
             It.IsAny<bool>(),
             It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()))
@@ -401,7 +401,7 @@ public class LayoutPresetToolsTests
             ForegroundProcess: "WindowsTerminal", Error: "SetForegroundWindow was refused (foreground lock)",
             ErrorCode: nameof(WindowErrorCode.FocusFailed));
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
                 It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
@@ -569,7 +569,7 @@ public class LayoutPresetToolsTests
     public async Task ApplyLayout_MapsErrorCode()
     {
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(),
                 It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
@@ -610,9 +610,9 @@ public class LayoutPresetToolsTests
         using var call = new CancellationTokenSource();
         CancellationToken serviceToken = default;
         _mockLayoutService.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Callback((string _, string _, bool _, IProgress<OperationProgress>? progress, CancellationToken token) =>
+            .Callback((string _, LayoutMatchBy _, bool _, IProgress<OperationProgress>? progress, CancellationToken token) =>
             {
                 serviceToken = token;
                 progress!.Report(new OperationProgress(1, 2, "1 of 2: placement 1 (process 'code') was arranged"));

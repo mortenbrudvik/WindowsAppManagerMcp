@@ -501,7 +501,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        await sut.LaunchBrowserWithDebug(browser, url, port, userDataDir);
+        await sut.LaunchBrowserWithDebug(DebugBrowser.Edge, url, port, userDataDir);
 
         // Assert
         _mockProcessService.Verify(s => s.LaunchBrowserWithDebugAsync(
@@ -544,36 +544,6 @@ public class BrowserReadingToolsTests
     }
 
     [Fact]
-    public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnUnsupportedBrowser()
-    {
-        // Arrange
-        _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DebugBrowserLaunchResult(
-                Success: false,
-                ProcessId: null,
-                WindowHandle: null,
-                CdpPort: null,
-                UserDataDir: null,
-                Error: "Unsupported browser 'firefox'. Supported browsers: chrome, edge, brave.",
-                ErrorCode: "UnsupportedBrowser"));
-        var sut = CreateSut();
-
-        // Act
-        var result = await sut.LaunchBrowserWithDebug("firefox");
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.ProcessId.Should().BeNull();
-        result.WindowHandle.Should().BeNull();
-        result.CdpPort.Should().BeNull();
-        result.UserDataDir.Should().BeNull();
-        result.Error.Should().Contain("Unsupported browser");
-        result.ErrorCode.Should().Be("UnsupportedBrowser");
-    }
-
-    [Fact]
     public async Task LaunchBrowserWithDebug_ReturnsMappedDto_OnBrowserNotFound()
     {
         // Arrange
@@ -591,7 +561,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchBrowserWithDebug("chrome");
+        var result = await sut.LaunchBrowserWithDebug(DebugBrowser.Chrome);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -652,10 +622,10 @@ public class BrowserReadingToolsTests
     }
 
     [Theory]
-    [InlineData("chrome")]
-    [InlineData("edge")]
-    [InlineData("brave")]
-    public async Task LaunchBrowserWithDebug_AcceptsSupportedBrowsers(string browser)
+    [InlineData(DebugBrowser.Chrome, "chrome")]
+    [InlineData(DebugBrowser.Edge, "edge")]
+    [InlineData(DebugBrowser.Brave, "brave")]
+    public async Task LaunchBrowserWithDebug_PassesTheBrowsersNameToTheService(DebugBrowser requested, string browser)
     {
         // Arrange
         _mockProcessService.Setup(s => s.LaunchBrowserWithDebugAsync(
@@ -671,7 +641,7 @@ public class BrowserReadingToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.LaunchBrowserWithDebug(browser);
+        var result = await sut.LaunchBrowserWithDebug(requested);
 
         // Assert
         result.Success.Should().BeTrue();

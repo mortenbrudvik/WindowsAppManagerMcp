@@ -93,9 +93,9 @@ public class LongRunningToolContractTests
         // Arrange
         using var services = new ContractServices(ContractMode.Typical);
         services.Layouts.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string name, string _, bool _, IProgress<OperationProgress>? progress, CancellationToken _) =>
+            .ReturnsAsync((string name, LayoutMatchBy _, bool _, IProgress<OperationProgress>? progress, CancellationToken _) =>
             {
                 progress?.Report(new OperationProgress(1, 2, "1 of 2: placement 1 (process 'code') was arranged"));
                 progress?.Report(new OperationProgress(2, 2, "2 of 2: placement 2 (process 'msedge') was arranged"));
@@ -122,9 +122,9 @@ public class LongRunningToolContractTests
         var running = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tokenCancelled = false;
         services.Layouts.Setup(l => l.ApplyPresetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<string>(), It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(async (string name, string _, bool _, IProgress<OperationProgress>? _, CancellationToken token) =>
+            .Returns(async (string name, LayoutMatchBy _, bool _, IProgress<OperationProgress>? _, CancellationToken token) =>
             {
                 running.TrySetResult();
                 try

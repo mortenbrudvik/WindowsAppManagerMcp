@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -64,11 +65,15 @@ public class WindowFinderTools
     }
 
     [McpServerTool(Name = "get_foreground_window")]
-    [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. Null means no window is in the foreground.")]
-    public WindowInfoDto? GetForegroundWindow()
+    [Description("Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.")]
+    public WindowInfoDto GetForegroundWindow()
     {
-        var window = _windowService.GetForegroundWindow();
-        return window != null ? ToDto(window) : null;
+        // Never null: the SDK sends null as empty content, which tells the agent nothing (roadmap M2.1)
+        var window = _windowService.GetForegroundWindow()
+            ?? throw new ToolErrorException(nameof(WindowErrorCode.NoForegroundWindow),
+                "No window is in the foreground right now: windows may be switching, or a UAC prompt or the lock screen is shown. " +
+                "Call get_foreground_window again shortly; do not send keyboard input until a window is in the foreground.");
+        return ToDto(window);
     }
 
     private static WindowInfoDto ToDto(WindowInfo info) => new(

@@ -124,7 +124,7 @@ public class FixtureInputGuardTests
         var checkBox = e2e.Fixture.Ready.Element(FixtureContract.Ids.CheckBox);
 
         e2e.Server.Windows.SetWindowBounds(document, checkBox.CenterX - 150, checkBox.CenterY - 100, 300, 200, bringToFront: true)
-            .Should().BeTrue();
+            .Success.Should().BeTrue();
         var toDocument = e2e.Server.Foreground.EnsureForeground(document);
         toDocument.IsForeground.Should().BeTrue(toDocument.Error);
         var point = new E2ENative.POINT { X = checkBox.CenterX, Y = checkBox.CenterY };

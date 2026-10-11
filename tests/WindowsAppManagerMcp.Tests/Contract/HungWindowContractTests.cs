@@ -44,11 +44,11 @@ public sealed class HungWindowContractTests : IDisposable
 
         // The hung application stopped answering a moment ago, so Windows does not report it hung yet
         _native.Setup(n => n.SetWindowPos((nint)Hung, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(() => _hungAnswers.Wait(Long));
+            .Returns(() => _hungAnswers.Wait(Long) ? Win32CallResult.Ok : Win32CallResult.Failure(0));
         _native.Setup(n => n.ShowWindow((nint)Hung, It.IsAny<int>())).Returns(() => _hungAnswers.Wait(Long));
         _native.Setup(n => n.SetWindowPos((nint)Responsive, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(true);
-        _native.Setup(n => n.ShowWindow((nint)Responsive, It.IsAny<int>())).Returns(true);
+            .Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, (nint)Responsive);
     }
 
     public void Dispose()
@@ -139,7 +139,7 @@ public sealed class HungWindowContractTests : IDisposable
                 // The server's filters, in the server's order (ServiceRegistration.AddWindowsAppManagerTools)
                 .AddToolErrorReporting()
                 .AddInputGateSerialization()
-                .WithTools(new WindowManagerTools(windows, Mock.Of<IForegroundService>())));
+                .WithServerTools(new WindowManagerTools(windows, Mock.Of<IForegroundService>())));
     }
 
     private static Dictionary<string, object?> Arguments(long handle, params (string Name, object Value)[] more)

@@ -147,15 +147,17 @@ public static class ServiceRegistration
             // Tools that can change which window is in front run inside the input gate, so they cannot
             // change it between an input call's guard check and its input
             .AddInputGateSerialization()
-            .WithTools<WindowFinderTools>()
-            .WithTools<WindowManagerTools>()
-            .WithTools<MonitorInfoTools>()
-            .WithTools<AppLauncherTools>()
-            .WithTools<LayoutPresetTools>()
-            .WithTools<BrowserReadingTools>()
-            .WithTools<ScreenshotTools>()
-            .WithTools<UIElementTools>()
-            .WithTools<InputSimulationTools>()
-            .WithTools<InputControlTools>();
+            // WithTools<T>() with the server's argument binding and schemas: fixed-value parameters are enums whose
+            // values the input schema lists and that are bound strictly (ToolJson, roadmap M2.2)
+            .WithServerTools<WindowFinderTools>()
+            .WithServerTools<WindowManagerTools>()
+            .WithServerTools<MonitorInfoTools>()
+            .WithServerTools<AppLauncherTools>()
+            .WithServerTools<LayoutPresetTools>()
+            .WithServerTools<BrowserReadingTools>()
+            .WithServerTools<ScreenshotTools>()
+            .WithServerTools<UIElementTools>()
+            .WithServerTools<InputSimulationTools>()
+            .WithServerTools<InputControlTools>();
     }
 }

@@ -110,12 +110,30 @@ public class WindowFinderToolContractTests
         window.GetProperty("className").GetString().Should().Be("#32768");
     }
 
+    [Fact]
+    public async Task GetForegroundWindow_WithNoWindowInFront_IsAnErrorWithNoForegroundWindow_NotEmptyContent()
+    {
+        // Arrange - for a moment during a switch, or on the secure desktop, no window is in the foreground
+        _windowService.Setup(w => w.GetForegroundWindow()).Returns((WindowInfo?)null);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var result = await server.CallToolAsync("get_foreground_window");
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        var payload = ParsePayload(result);
+        payload.GetProperty("success").GetBoolean().Should().BeFalse();
+        payload.GetProperty("errorCode").GetString().Should().Be("NoForegroundWindow");
+        payload.GetProperty("error").GetString().Should().Contain("No window is in the foreground");
+    }
+
     private Task<InProcessMcpServer> StartServerAsync() =>
         InProcessMcpServer.StartAsync(
             [],
             builder => builder
                 .AddToolErrorReporting()
-                .WithTools(new WindowFinderTools(_windowService.Object)));
+                .WithServerTools(new WindowFinderTools(_windowService.Object)));
 
     private static JsonElement ParsePayload(CallToolResult result)
     {

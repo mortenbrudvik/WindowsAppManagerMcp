@@ -10,16 +10,24 @@ public record WindowBoundsPlacement(
     bool BringToFront = true
 );
 
+/// <summary>
+/// A snap_windows_batch item. Position is checked per item (an unknown one fails that item with InvalidSnapPosition);
+/// the input schema lists the positions.
+/// </summary>
 public record WindowSnapPlacement(
     long Handle,
-    string Position,
+    [ToolValues(typeof(SnapPosition))] string Position,
     int? MonitorIndex = null,
     bool BringToFront = true
 );
 
+/// <summary>
+/// A set_windows_state_batch item. State is checked per item (an unknown one fails that item with InvalidState); the
+/// input schema lists the states.
+/// </summary>
 public record WindowStateChange(
     long Handle,
-    string State
+    [ToolValues(typeof(WindowStateRequest))] string State
 );
 
 public record ApplicationLaunchRequest(

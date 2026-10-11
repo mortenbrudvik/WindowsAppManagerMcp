@@ -22,7 +22,7 @@ public class ScreenshotTools
         "scaleFactor is the monitor's DPI scale, for information only; never multiply by it.";
 
     internal const string FormatDescription =
-        "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. " +
+        "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). " +
         "With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.";
 
     internal const string QualityDescription = "JPEG quality (1-100). Only used for JPEG. Default: 80";
@@ -33,7 +33,7 @@ public class ScreenshotTools
 
     internal const string OutputDescription =
         "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), " +
-        "'both' (image, file and metadata) or 'metadata' (only the metadata, no image).";
+        "'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.";
 
     internal const string OutputPathDescription =
         "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. " +
@@ -81,13 +81,13 @@ public class ScreenshotTools
         [Description("Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -115,13 +115,13 @@ public class ScreenshotTools
         [Description("Height of the region in pixels")]
         int height,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -148,13 +148,13 @@ public class ScreenshotTools
         [Description("Whether to include the window frame/decoration (title bar, borders). Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description(MaxDimensionDescription)]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -190,7 +190,7 @@ public class ScreenshotTools
         [Description("Whether to include the window frame/decoration. Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
-        string format = "auto",
+        CaptureFormat format = CaptureFormat.Auto,
         [Description(QualityDescription)]
         int quality = CaptureOptions.DefaultQuality,
         [Description("How many levels below the window to read (1-10). 1 reads only the window's direct children. Default: 5")]
@@ -208,7 +208,7 @@ public class ScreenshotTools
         [Description(MaxDimensionDescription + " imageBounds are scaled with the image; screenBounds stay in screen pixels.")]
         int? maxDimension = null,
         [Description(OutputDescription)]
-        string output = "image",
+        CaptureOutputMode output = CaptureOutputMode.Image,
         [Description(OutputPathDescription)]
         string? outputPath = null,
         [Description(OverwriteDescription)]
@@ -293,21 +293,22 @@ public class ScreenshotTools
         "the user in the server's environment; no tool argument changes it.";
 
     private static CaptureOptions Options(
-        string? format,
+        CaptureFormat format,
         int quality,
         int? maxDimension,
-        string? output,
+        CaptureOutputMode output,
         string? outputPath,
         bool overwrite,
         bool saveToFile,
         int? maxWidth) =>
         new()
         {
-            Format = format,
+            // The service takes the names; the enums were checked when the arguments were bound
+            Format = ToolEnum<CaptureFormat>.Name(format),
             Quality = quality,
             MaxDimension = maxDimension,
             MaxWidth = maxWidth,
-            Output = output,
+            Output = ToolEnum<CaptureOutputMode>.Name(output),
             OutputPath = outputPath,
             Overwrite = overwrite,
             SaveToFile = saveToFile

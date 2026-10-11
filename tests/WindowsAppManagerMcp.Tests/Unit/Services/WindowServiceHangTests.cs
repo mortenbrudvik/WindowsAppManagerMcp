@@ -36,7 +36,7 @@ public class WindowServiceHangTests
         }
 
         _native.Setup(n => n.SetWindowPos(Responsive, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
     }
 
     private WindowService CreateSut(TimeSpan? deadline = null) =>
@@ -62,7 +62,7 @@ public class WindowServiceHangTests
         // Arrange - the application stops answering only now, so Windows does not report it hung yet
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.SetWindowPos(Hung, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(() => answer.Wait(Long));
+            .Returns(() => answer.Wait(Long) ? Win32CallResult.Ok : Win32CallResult.Failure(0));
         var sut = CreateSut(BlockedDeadline);
         var stopwatch = Stopwatch.StartNew();
 
@@ -76,10 +76,10 @@ public class WindowServiceHangTests
     }
 
     [Theory]
-    [InlineData(WindowState.Minimized)]
-    [InlineData(WindowState.Maximized)]
-    [InlineData(WindowState.Normal)]
-    public void SetWindowState_WhenShowWindowBlocks_GivesUpAtTheDeadline(WindowState state)
+    [InlineData(WindowStateRequest.Minimize)]
+    [InlineData(WindowStateRequest.Maximize)]
+    [InlineData(WindowStateRequest.Restore)]
+    public void SetWindowState_WhenShowWindowBlocks_GivesUpAtTheDeadline(WindowStateRequest state)
     {
         using var answer = new ManualResetEventSlim();
         _native.Setup(n => n.ShowWindow(Hung, It.IsAny<int>())).Returns(() => answer.Wait(Long));
@@ -151,7 +151,7 @@ public class WindowServiceHangTests
         call.Cancel();
 
         // Act
-        var act = () => sut.SetWindowStateBatchAsync([(Responsive, WindowState.Normal)], cancellationToken: call.Token);
+        var act = () => sut.SetWindowStateBatchAsync([(Responsive, WindowStateRequest.Restore)], cancellationToken: call.Token);
 
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();

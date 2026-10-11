@@ -12,9 +12,14 @@
             "type": "string"
           },
           "matchBy": {
-            "description": "How to match saved windows to current windows: 'process_and_title', 'process_only', or 'title_only' (default: process_and_title)",
+            "description": "How to match saved windows to current windows: 'process_and_title' (default), 'process_only' or 'title_only'. Any other value fails with InvalidMatchBy.",
+            "default": "process_and_title",
             "type": "string",
-            "default": "process_and_title"
+            "enum": [
+              "process_and_title",
+              "process_only",
+              "title_only"
+            ]
           },
           "launchMissing": {
             "description": "Attempt to launch applications for missing windows (default: false)",
@@ -50,9 +55,15 @@
             "type": "integer"
           },
           "format": {
-            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "default": "auto",
             "type": "string",
-            "default": "auto"
+            "enum": [
+              "auto",
+              "png",
+              "jpeg",
+              "jpg"
+            ]
           },
           "quality": {
             "description": "JPEG quality (1-100). Only used for JPEG. Default: 80",
@@ -68,9 +79,15 @@
             "default": null
           },
           "output": {
-            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image).",
+            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.",
+            "default": "image",
             "type": "string",
-            "default": "image"
+            "enum": [
+              "image",
+              "file",
+              "both",
+              "metadata"
+            ]
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
@@ -123,9 +140,15 @@
             "default": true
           },
           "format": {
-            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "default": "auto",
             "type": "string",
-            "default": "auto"
+            "enum": [
+              "auto",
+              "png",
+              "jpeg",
+              "jpg"
+            ]
           },
           "quality": {
             "description": "JPEG quality (1-100). Only used for JPEG. Default: 80",
@@ -141,9 +164,15 @@
             "default": null
           },
           "output": {
-            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image).",
+            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.",
+            "default": "image",
             "type": "string",
-            "default": "image"
+            "enum": [
+              "image",
+              "file",
+              "both",
+              "metadata"
+            ]
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
@@ -193,9 +222,15 @@
             "default": true
           },
           "format": {
-            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "default": "auto",
             "type": "string",
-            "default": "auto"
+            "enum": [
+              "auto",
+              "png",
+              "jpeg",
+              "jpg"
+            ]
           },
           "quality": {
             "description": "JPEG quality (1-100). Only used for JPEG. Default: 80",
@@ -244,9 +279,15 @@
             "default": null
           },
           "output": {
-            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image).",
+            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.",
+            "default": "image",
             "type": "string",
-            "default": "image"
+            "enum": [
+              "image",
+              "file",
+              "both",
+              "metadata"
+            ]
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",
@@ -342,7 +383,7 @@
     },
     {
       "name": "close_windows_batch",
-      "description": "Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed.",
+      "description": "Close multiple windows gracefully in a single batch operation. Applications may prompt to save unsaved work. More than 3 windows require confirm=true. Protected windows (the desktop shell, the agent's own terminal or editor) are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; the other windows are still closed. An item that is null fails alone with InvalidArguments.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -579,7 +620,7 @@
             "type": "integer"
           },
           "maxLength": {
-            "description": "Maximum length of content to return. If not specified, returns all available content.",
+            "description": "Maximum length of content to return, at least 1. If not specified, returns all available content. 0 or less fails with InvalidArguments.",
             "type": [
               "integer",
               "null"
@@ -704,7 +745,7 @@
     },
     {
       "name": "get_foreground_window",
-      "description": "Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. Null means no window is in the foreground.",
+      "description": "Get information about the currently focused (foreground) window. Untitled windows such as menus, popups and the taskbar are reported too, with an empty title and their className. When no window is in the foreground (for a moment while windows switch, or while a UAC prompt or the lock screen is shown), the call fails with errorCode NoForegroundWindow: call it again shortly.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -950,9 +991,14 @@
         "type": "object",
         "properties": {
           "browser": {
-            "description": "Browser to launch: chrome, edge, or brave",
+            "description": "Browser to launch: chrome (default), edge or brave. Any other value fails with UnsupportedBrowser.",
+            "default": "chrome",
             "type": "string",
-            "default": "chrome"
+            "enum": [
+              "chrome",
+              "edge",
+              "brave"
+            ]
           },
           "url": {
             "description": "URL to open (optional)",
@@ -963,7 +1009,7 @@
             "default": null
           },
           "port": {
-            "description": "CDP debug port (default: 9222). Use this port value with get_browser_content's cdpPort parameter.",
+            "description": "CDP debug port, 1-65535 (default: 9222). Use this port value with get_browser_content's cdpPort parameter.",
             "type": "integer",
             "default": 9222
           },
@@ -1057,7 +1103,7 @@
     },
     {
       "name": "move_window",
-      "description": "Move a window to a specific position. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Move a window to a specific position. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not move it (error has the reason).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1088,7 +1134,7 @@
     },
     {
       "name": "move_window_to_monitor",
-      "description": "Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Move a window to a specific monitor, optionally positioning it. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it, or with positioning 'maximize' it was not maximized on that monitor. An unknown positioning fails with InvalidPositioning.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1097,13 +1143,22 @@
             "type": "integer"
           },
           "monitorIndex": {
-            "description": "Target monitor index (0-based)",
+            "description": "Target monitor index (0-based, see get_monitors)",
             "type": "integer"
           },
           "positioning": {
-            "description": "Position on monitor: 'center', 'topleft', 'topright', 'bottomleft', 'bottomright', 'maximize', or 'restore' (default: center)",
+            "description": "Position on the monitor: 'center' (default), 'topleft', 'topright', 'bottomleft', 'bottomright' (each at the window's current size), 'maximize' (moved there, then maximized) or 'restore' (current size, at the work area's top-left corner)",
+            "default": "center",
             "type": "string",
-            "default": "center"
+            "enum": [
+              "center",
+              "topleft",
+              "topright",
+              "bottomleft",
+              "bottomright",
+              "maximize",
+              "restore"
+            ]
           },
           "bringToFront": {
             "description": "Raise the window to the top of the z-order without activating it: keyboard input does not move to it (use focus_window for that). A minimized window is restored first, and restoring can activate it; positioning 'maximize' ignores bringToFront and can activate it too. Default: true",
@@ -1133,7 +1188,7 @@
     },
     {
       "name": "resize_window",
-      "description": "Resize a window to specific dimensions. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Resize a window to specific dimensions. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). ResizeFailed: Windows did not resize it (error has the reason). InvalidArguments: width or height is not positive.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1142,11 +1197,11 @@
             "type": "integer"
           },
           "width": {
-            "description": "New width in pixels",
+            "description": "New width in pixels (at least 1)",
             "type": "integer"
           },
           "height": {
-            "description": "New height in pixels",
+            "description": "New height in pixels (at least 1)",
             "type": "integer"
           }
         },
@@ -1280,7 +1335,7 @@
     },
     {
       "name": "set_window_bounds",
-      "description": "Move and resize a window in a single operation. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Move and resize a window in a single operation. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). MoveFailed: Windows did not place it (error has the reason). InvalidArguments: width or height is not positive.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1297,11 +1352,11 @@
             "type": "integer"
           },
           "width": {
-            "description": "New width in pixels",
+            "description": "New width in pixels (at least 1)",
             "type": "integer"
           },
           "height": {
-            "description": "New height in pixels",
+            "description": "New height in pixels (at least 1)",
             "type": "integer"
           },
           "bringToFront": {
@@ -1321,7 +1376,7 @@
     },
     {
       "name": "set_window_state",
-      "description": "Set the window state (minimize, maximize, restore). Returns success and the window's newState. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Set the window state (minimize, maximize, restore). success is true only when the window was seen in that state afterwards (within 300 ms); newState reports the state it is in (minimized, maximized or normal). errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). StateChangeFailed: the window did not reach the state (the app refused or delayed it, or it runs as administrator). An unknown state fails with InvalidState and the allowed values.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1330,8 +1385,16 @@
             "type": "integer"
           },
           "state": {
-            "description": "Desired state: 'minimize', 'maximize', or 'restore' ('minimized', 'maximized' and 'normal' also work; any other value restores the window)",
-            "type": "string"
+            "description": "Desired state: 'minimize', 'maximize' or 'restore' ('minimized', 'maximized' and 'normal' are accepted too). Restore returns a minimized window to its previous state (normal, or maximized if it was maximized before) and makes a maximized window normal.",
+            "type": "string",
+            "enum": [
+              "minimize",
+              "maximize",
+              "restore",
+              "minimized",
+              "maximized",
+              "normal"
+            ]
           }
         },
         "required": [
@@ -1342,7 +1405,7 @@
     },
     {
       "name": "set_windows_bounds_batch",
-      "description": "Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own: a window the user's policy denies fails with errorCode TargetDeniedByPolicy and is not changed; an invalid handle or a window whose app does not answer within 5 s fails with an error message.",
+      "description": "Move and resize multiple windows in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). MoveFailed: Windows did not place the window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1394,12 +1457,12 @@
     },
     {
       "name": "set_windows_state_batch",
-      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each window is handled on its own: a window the user's policy denies fails with errorCode TargetDeniedByPolicy and is not changed; an invalid handle or a window whose app does not answer within 5 s fails with an error message.",
+      "description": "Set the state (minimize, maximize, restore) of multiple windows in a single batch operation. Each item's success is true only when its window was seen in that state afterwards, and newState reports the state it is in. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). InvalidState: the item's state is missing or unknown (error lists the states). StateChangeFailed: the window did not reach the state.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "changes": {
-            "description": "Array of state changes with handle and state",
+            "description": "Array of state changes with handle and state ('minimize', 'maximize' or 'restore'; 'minimized', 'maximized' and 'normal' are accepted too)",
             "type": "array",
             "items": {
               "type": "object",
@@ -1408,7 +1471,15 @@
                   "type": "integer"
                 },
                 "state": {
-                  "type": "string"
+                  "type": "string",
+                  "enum": [
+                    "minimize",
+                    "maximize",
+                    "restore",
+                    "minimized",
+                    "maximized",
+                    "normal"
+                  ]
                 }
               },
               "required": [
@@ -1430,7 +1501,7 @@
     },
     {
       "name": "snap_window",
-      "description": "Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it).",
+      "description": "Snap a window to predefined screen positions (like Windows Snap Assist). Supported positions: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen; any other position fails with errorCode InvalidSnapPosition. Returns success and the window's newBounds. errorCode: InvalidHandle; TargetDeniedByPolicy (the user's policy denies the app: nothing is changed, ask the user); AccessDenied (Windows blocked the change: the window belongs to an app running as administrator; ask the user); NotResponding (the window's app is hung or did not answer within 5 s, or an earlier call to it, or 8 calls to apps that do not answer, are still blocked; a minimized window may already have been restored, and a call that timed out can still take effect once the app answers, so check the window before acting on it). InvalidMonitorIndex: monitorIndex is not a monitor (error gives the valid range). MoveFailed: Windows did not place it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1440,10 +1511,26 @@
           },
           "position": {
             "description": "Snap position: left_half, right_half, top_half, bottom_half, top_left_quarter, top_right_quarter, bottom_left_quarter, bottom_right_quarter, left_third, center_third, right_third, left_two_thirds, right_two_thirds, fullscreen",
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "left_half",
+              "right_half",
+              "top_half",
+              "bottom_half",
+              "top_left_quarter",
+              "top_right_quarter",
+              "bottom_left_quarter",
+              "bottom_right_quarter",
+              "left_third",
+              "center_third",
+              "right_third",
+              "left_two_thirds",
+              "right_two_thirds",
+              "fullscreen"
+            ]
           },
           "monitorIndex": {
-            "description": "Target monitor index (0-based). Defaults to current monitor if not specified.",
+            "description": "Target monitor index (0-based, see get_monitors). Defaults to the window's current monitor. An index that is not a monitor fails with InvalidMonitorIndex.",
             "type": [
               "integer",
               "null"
@@ -1464,7 +1551,7 @@
     },
     {
       "name": "snap_windows_batch",
-      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own: a window the user's policy denies fails with errorCode TargetDeniedByPolicy and is not changed; an invalid handle or a window whose app does not answer within 5 s fails with an error message.",
+      "description": "Snap multiple windows to predefined positions in a single batch operation. More efficient than multiple individual calls. Each window is handled on its own and has its own success, error and errorCode: InvalidArguments for an item that is null or misses a field, InvalidHandle, TargetDeniedByPolicy (the user's policy denies the app; it is not changed), AccessDenied, NotResponding (the window's app does not answer within 5 s). InvalidSnapPosition: the item's position is missing or unknown (error lists the positions). InvalidMonitorIndex: its monitorIndex is not a monitor. MoveFailed: Windows did not place the window.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1478,7 +1565,23 @@
                   "type": "integer"
                 },
                 "position": {
-                  "type": "string"
+                  "type": "string",
+                  "enum": [
+                    "left_half",
+                    "right_half",
+                    "top_half",
+                    "bottom_half",
+                    "top_left_quarter",
+                    "top_right_quarter",
+                    "bottom_left_quarter",
+                    "bottom_right_quarter",
+                    "left_third",
+                    "center_third",
+                    "right_third",
+                    "left_two_thirds",
+                    "right_two_thirds",
+                    "fullscreen"
+                  ]
                 },
                 "monitorIndex": {
                   "type": [
@@ -1524,9 +1627,15 @@
             "default": null
           },
           "format": {
-            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg'. With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "description": "Image format: 'auto' (default: JPEG, or PNG when the image's long edge is at most 512 pixels), 'png' (lossless, larger) or 'jpeg' ('jpg' is accepted too). With outputPath, 'auto' follows the file extension. Any other value is rejected with InvalidFormat.",
+            "default": "auto",
             "type": "string",
-            "default": "auto"
+            "enum": [
+              "auto",
+              "png",
+              "jpeg",
+              "jpg"
+            ]
           },
           "quality": {
             "description": "JPEG quality (1-100). Only used for JPEG. Default: 80",
@@ -1542,9 +1651,15 @@
             "default": null
           },
           "output": {
-            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image).",
+            "description": "What to return: 'image' (default: the image and the metadata), 'file' (write the image to a file and return only the metadata with filePath), 'both' (image, file and metadata) or 'metadata' (only the metadata, no image). Any other value is rejected with InvalidOutputMode.",
+            "default": "image",
             "type": "string",
-            "default": "image"
+            "enum": [
+              "image",
+              "file",
+              "both",
+              "metadata"
+            ]
           },
           "outputPath": {
             "description": "Absolute path on a drive letter (no network or device paths) of the image file for output 'file' or 'both', ending in .png, .jpg or .jpeg to match the format. The folder must exist; it is not created. Default: a new file in %TEMP%\\WindowsAppManagerMcp\\captures.",

@@ -258,7 +258,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void Click_WhenSetCursorPosFails_ReturnsSendInputFailed()
+    public void Click_WhenSetCursorPosFails_ReturnsCursorPositionFailed()
     {
         // Arrange
         SetupSingleMonitor();
@@ -268,9 +268,10 @@ public class InputSimulationServiceTests
         // Act
         var result = sut.Click(500, 300);
 
-        // Assert
+        // Assert - roadmap M2.2: not SendInputFailed, which means the input itself was not accepted
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.ErrorCode.Should().Be(InputErrorCode.CursorPositionFailed);
+        result.Error.Should().Contain("Nothing was clicked");
         _sentEvents.Should().BeEmpty();
     }
 
@@ -430,7 +431,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void MoveMouse_WhenSetCursorPosFails_ReturnsSendInputFailed()
+    public void MoveMouse_WhenSetCursorPosFails_ReturnsCursorPositionFailed()
     {
         // Arrange
         SetupSingleMonitor();
@@ -442,7 +443,7 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.ErrorCode.Should().Be(InputErrorCode.CursorPositionFailed);
     }
 
     [Fact]
@@ -790,9 +791,9 @@ public class InputSimulationServiceTests
         // Act
         var result = await sut.SendKeysAsync("{ENTER");
 
-        // Assert
+        // Assert - a syntax error to fix, not a key name to change (roadmap M2.2)
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.UnknownKey);
+        result.ErrorCode.Should().Be(InputErrorCode.InvalidKeySpecification);
         result.Error.Should().Contain("Unclosed brace");
         VerifyNoInputSent();
     }

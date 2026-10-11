@@ -143,7 +143,7 @@ public class ToolResultSerializationTests
     {
         // Arrange - the placement with focus was arranged, but Windows kept the terminal in front
         var layoutService = new Mock<ILayoutService>();
-        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+        layoutService.Setup(l => l.ApplyPresetAsync("work-setup", It.IsAny<LayoutMatchBy>(), It.IsAny<bool>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LayoutApplyResult(
                 Success: false,
                 PresetName: "work-setup",
@@ -157,7 +157,7 @@ public class ToolResultSerializationTests
                         ErrorCode: nameof(WindowErrorCode.FocusFailed))
                 ]));
         await using var server = await InProcessMcpServer.StartAsync(
-            [], builder => builder.WithTools(new LayoutPresetTools(layoutService.Object)));
+            [], builder => builder.WithServerTools(new LayoutPresetTools(layoutService.Object)));
 
         // Act - goes through the SDK's own argument binding and result serialization
         var result = await server.CallToolAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "work-setup" });

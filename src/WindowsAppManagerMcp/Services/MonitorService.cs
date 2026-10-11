@@ -130,12 +130,20 @@ public class MonitorService : IMonitorService
         return monitor?.Index ?? 0;
     }
 
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="monitorIndex"/> is not a monitor, or <paramref name="position"/> is not a snap position. Never
+    /// falls back to the primary monitor (roadmap M2.2): the window would land on another monitor than the one asked for.
+    /// </exception>
     public MonitorRect CalculateSnapBounds(int monitorIndex, SnapPosition position)
     {
         var snapshot = GetSnapshot();
-        var monitor = monitorIndex >= 0 && monitorIndex < snapshot.Infos.Length
-            ? snapshot.Infos[monitorIndex]
-            : GetPrimaryMonitor(snapshot);
+        if (monitorIndex < 0 || monitorIndex >= snapshot.Infos.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(monitorIndex), monitorIndex,
+                $"Monitor index {monitorIndex} does not exist; there are {snapshot.Infos.Length} monitors.");
+        }
+
+        var monitor = snapshot.Infos[monitorIndex];
 
         var workArea = monitor.WorkArea;
 
@@ -182,7 +190,7 @@ public class MonitorService : IMonitorService
 
             SnapPosition.Fullscreen => workArea,
 
-            _ => workArea
+            _ => throw new ArgumentOutOfRangeException(nameof(position), position, "Not a snap position.")
         };
     }
 }

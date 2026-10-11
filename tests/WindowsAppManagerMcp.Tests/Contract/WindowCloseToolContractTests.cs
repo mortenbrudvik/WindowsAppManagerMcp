@@ -46,7 +46,7 @@ public class WindowCloseToolContractTests
         var result = await server.CallToolAsync("close_window", new Dictionary<string, object?> { ["handle"] = (long)Desktop });
 
         // Assert
-        result.IsError.Should().NotBe(true, "a refusal is an ordinary result with success: false");
+        result.IsError.Should().BeTrue("a refusal has success false, so it goes out with isError (roadmap M2.1)");
         var payload = ParsePayload(result);
         payload.GetProperty("success").GetBoolean().Should().BeFalse();
         payload.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ProtectedWindow));
@@ -160,7 +160,7 @@ public class WindowCloseToolContractTests
             [],
             builder => builder
                 .AddToolErrorReporting()
-                .WithTools(new WindowManagerTools(windowService, Mock.Of<IForegroundService>())));
+                .WithServerTools(new WindowManagerTools(windowService, Mock.Of<IForegroundService>())));
     }
 
     private static JsonElement ParsePayload(CallToolResult result)

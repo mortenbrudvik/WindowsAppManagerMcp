@@ -127,7 +127,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "png", Quality = 95 };
 
         // Act
-        sut.TakeScreenshot(format: "png", quality: 95);
+        sut.TakeScreenshot(format: CaptureFormat.Png, quality: 95);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureMonitor(It.IsAny<int>(), expected), Times.Once);
@@ -191,7 +191,7 @@ public class ScreenshotToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.TakeScreenshot(output: "file");
+        var result = sut.TakeScreenshot(output: CaptureOutputMode.File);
 
         // Assert
         result.IsError.Should().BeFalse();
@@ -225,7 +225,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 90 };
 
         // Act
-        sut.CaptureRegion(0, 0, 400, 300, format: "jpeg", quality: 90);
+        sut.CaptureRegion(0, 0, 400, 300, format: CaptureFormat.Jpeg, quality: 90);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureRegion(0, 0, 400, 300, expected), Times.Once);
@@ -283,7 +283,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 50 };
 
         // Act
-        sut.CaptureWindow(handle: 99999, includeFrame: false, format: "jpeg", quality: 50);
+        sut.CaptureWindow(handle: 99999, includeFrame: false, format: CaptureFormat.Jpeg, quality: 50);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindow(new nint(99999), false, expected), Times.Once);
@@ -462,16 +462,15 @@ public class ScreenshotToolsTests
     }
 
     [Theory]
-    [InlineData("webp", null, "InvalidFormat")]
-    [InlineData("auto", 0, "InvalidImageSize")]
-    [InlineData("auto", -4, "InvalidImageSize")]
-    public async Task CaptureWithElements_WithInvalidOptions_DoesNotWalkTheTree(string format, int? maxWidth, string expectedCode)
+    [InlineData(0, "InvalidImageSize")]
+    [InlineData(-4, "InvalidImageSize")]
+    public async Task CaptureWithElements_WithInvalidOptions_DoesNotWalkTheTree(int? maxWidth, string expectedCode)
     {
-        // Arrange
+        // Arrange - an unknown format is refused before the tool runs (ToolArgumentContractTests)
         var sut = CreateSut();
 
         // Act
-        var result = await sut.CaptureWithElements(12345, format: format, maxWidth: maxWidth);
+        var result = await sut.CaptureWithElements(12345, maxWidth: maxWidth);
 
         // Assert
         result.IsError.Should().BeTrue();
@@ -586,7 +585,7 @@ public class ScreenshotToolsTests
         var expected = Defaults with { Format = "jpeg", Quality = 70 };
 
         // Act
-        await sut.CaptureWithElements(handle: 12345, format: "jpeg", quality: 70, highlightInteractable: false);
+        await sut.CaptureWithElements(handle: 12345, format: CaptureFormat.Jpeg, quality: 70, highlightInteractable: false);
 
         // Assert
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(

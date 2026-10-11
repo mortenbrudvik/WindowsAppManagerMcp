@@ -26,7 +26,7 @@ public class WindowServiceZOrderTests
         _native.Setup(n => n.GetWindowRect(Window)).Returns((100, 100, 900, 700));
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
             .Callback<nint, int, int, int, int, uint>((_, _, _, _, _, flags) => _setWindowPosFlags.Add(flags))
-            .Returns(true);
+            .Returns(Win32CallResult.Ok);
         _monitors.Setup(m => m.CalculateSnapBounds(It.IsAny<int>(), It.IsAny<SnapPosition>()))
             .Returns(new MonitorRect(0, 0, 960, 1040));
     }
@@ -42,15 +42,15 @@ public class WindowServiceZOrderTests
         "move_window_to_monitor:restore",
     };
 
-    private bool Run(string operation, bool bringToFront) => operation switch
+    private bool Run(string operation, bool bringToFront) => (operation switch
     {
         "move_window" => CreateSut().MoveWindow(Window, 10, 20, bringToFront),
         "set_window_bounds" => CreateSut().SetWindowBounds(Window, 10, 20, 800, 600, bringToFront),
         "snap_window" => CreateSut().SnapWindow(Window, SnapPosition.LeftHalf, monitorIndex: 0, bringToFront),
-        "move_window_to_monitor" => CreateSut().MoveWindowToMonitor(Window, 0, "center", bringToFront),
-        "move_window_to_monitor:restore" => CreateSut().MoveWindowToMonitor(Window, 0, "restore", bringToFront),
+        "move_window_to_monitor" => CreateSut().MoveWindowToMonitor(Window, 0, MonitorPositioning.Center, bringToFront),
+        "move_window_to_monitor:restore" => CreateSut().MoveWindowToMonitor(Window, 0, MonitorPositioning.Restore, bringToFront),
         _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null)
-    };
+    }).Success;
 
     [Theory]
     [MemberData(nameof(Operations))]
@@ -89,7 +89,7 @@ public class WindowServiceZOrderTests
     {
         // Arrange
         _native.Setup(n => n.SetWindowPos(Window, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()))
-            .Returns(false);
+            .Returns(Win32CallResult.Failure(0));
 
         // Act
         var result = Run(operation, bringToFront: true);
@@ -109,7 +109,7 @@ public class WindowServiceZOrderTests
         var result = CreateSut().SetWindowBounds(Window, 10, 20, 800, 600, bringToFront: true);
 
         // Assert
-        result.Should().BeTrue();
+        result.Success.Should().BeTrue();
         _native.Verify(n => n.ShowWindow(Window, SwRestore), Times.Once);
         _native.Verify(n => n.BringWindowToTop(It.IsAny<nint>()), Times.Never);
     }
