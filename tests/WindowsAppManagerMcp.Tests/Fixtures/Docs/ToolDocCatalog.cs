@@ -82,6 +82,7 @@ public static class ToolDocCatalog
             new("find_ui_elements", "Find elements by name, automationId, controlType or className; refs, click points", "window (or handle)", "name", "nameMatch", "automationId", "controlType", "withinRef", "detail"),
             new("get_focused_element", "Element with keyboard focus, its window and process", "timeoutMs"),
             new("get_element_at_point", "Element at a screen point, its ancestors and window", "x", "y", "ancestors"),
+            new("wait_for_element", "Wait until an element exists, is gone, enabled, visible, focused, or has a name, value or toggle state", "window", "ref", "name", "automationId", "controlType", "condition", "expected", "timeoutMs"),
         ]),
         new("Browser Reading",
         [

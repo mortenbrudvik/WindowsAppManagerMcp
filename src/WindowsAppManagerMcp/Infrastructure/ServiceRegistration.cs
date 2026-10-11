@@ -87,6 +87,8 @@ public static class ServiceRegistration
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here
         services.AddSingleton<IElementRegistry, ElementRegistry>();
         services.AddSingleton<IElementSearchService, ElementSearchService>();
+        // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above
+        services.AddSingleton<IElementWaitService, ElementWaitService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -177,6 +179,7 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
+        services.AddSingleton<ElementWaitTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -246,6 +249,7 @@ public static class ServiceRegistration
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
+            .WithServerTools<ElementWaitTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

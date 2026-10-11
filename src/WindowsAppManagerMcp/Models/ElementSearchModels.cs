@@ -157,4 +157,11 @@ public record ElementQuery(
     int MaxResults = 20,
     ElementDetail Detail = ElementDetail.Minimal,
     TimeSpan? Timeout = null
-);
+)
+{
+    /// <summary>
+    /// Whether a window with web content is warmed up before the search (roadmap M3.3; default true). wait_for_element
+    /// (roadmap M3.8) warms up once, on its first check, and turns it off for the checks after it.
+    /// </summary>
+    public bool WarmUp { get; init; } = true;
+}

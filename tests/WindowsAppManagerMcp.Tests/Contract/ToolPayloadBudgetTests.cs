@@ -78,6 +78,7 @@ public class ToolPayloadBudgetTests
         ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
+        ["wait_for_element"] = 140, // 92: the Save button that became enabled, with its ref (roadmap M3.8)
 
         // Browser Reading
         ["get_browser_url"] = 100, // 56

@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 56 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 57 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ A comprehensive guide to all 56 MCP tools for managing Windows applications, win
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
 | [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
-| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | 4 |
+| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [wait_for_element](#wait_for_element) | 5 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
 | [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) | 7 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
@@ -213,7 +213,7 @@ A tool that can take long stops when the client cancels the request (`notificati
 |------|---------------------------|------------------------|
 | [get_ui_elements](#get_ui_elements), [capture_with_elements](#capture_with_elements) | The UI Automation walk, before its `timeoutMs`; nothing is captured | Every 100 elements read |
 | [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | The wait for UI Automation | - |
-| [wait_for_window](#wait_for_window) | The wait, at once | About once a second: the milliseconds waited of `timeoutMs`, and what the last read saw |
+| [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The wait, at once | About once a second: the milliseconds waited of `timeoutMs`, and what the last read saw |
 | [launch_application](#launch_application), [launch_browser_with_debug](#launch_browser_with_debug) | Before the start, the launch; after it, the wait for the window (the program keeps running) | - |
 | [launch_applications_batch](#launch_applications_batch) | The applications not started yet, and the wait for the windows | As each application is done (refused, started, or its window wait ended): `i of n` and its outcome |
 | [apply_layout](#apply_layout) | The placements not arranged yet, and a launch's wait for its window | After each placement: `i of n` and its outcome |
@@ -245,7 +245,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `windows` | on | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
-| `elements` | on | UI Automation: element trees, searches that return element refs, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
+| `elements` | on | UI Automation: element trees, searches that return element refs, waits for elements, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [wait_for_element](#wait_for_element) |
 | `input` | on | Guarded mouse and keyboard input to a named window. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) |
 | `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
@@ -259,7 +259,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 **Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 22 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
+Read-only mode serves these 23 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -706,7 +706,7 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 
 **Timing.** The server reads the windows every 100 ms for the first 2 seconds, then every 250 ms, until the condition has held for `stableMs` (default 300, which skips splash screens and a dialog that closes and opens again) or `timeoutMs` (default 10000, at most 60000) has passed. `timeoutMs: 0` checks once (`stableMs` is cut to `timeoutMs`). A client that sends a progress token gets a progress notification about once a second (`progress` is the milliseconds waited, `total` is `timeoutMs`), and a cancelled call stops waiting at once (see [Cancellation and progress](#cancellation-and-progress)).
 
-**input_idle is best effort.** It waits until the window is not hung and its process reports input idle. Windows answers WaitForInputIdle only once per process, the first time it waits for input after it started; later calls return at once, busy or not, so `input_idle` means something right after a launch and little later. A console program has no message loop, so only the hung check applies (`idleCheck: "respondingOnly"`; `"inputIdle"` when Windows reported idle). The check runs on the process that owns the window (a Store app's own process, not `ApplicationFrameHost`), never on a launcher that handed off, so a launcher's own state never counts. To wait for a control inside the window, read it with [get_ui_elements](#get_ui_elements).
+**input_idle is best effort.** It waits until the window is not hung and its process reports input idle. Windows answers WaitForInputIdle only once per process, the first time it waits for input after it started; later calls return at once, busy or not, so `input_idle` means something right after a launch and little later. A console program has no message loop, so only the hung check applies (`idleCheck: "respondingOnly"`; `"inputIdle"` when Windows reported idle). The check runs on the process that owns the window (a Store app's own process, not `ApplicationFrameHost`), never on a launcher that handed off, so a launcher's own state never counts. To wait for a control inside the window, use [wait_for_element](#wait_for_element).
 
 **Outcomes.** A wait that is not satisfied is a failure (`success: false`, so the call goes out with `isError: true`, as every failure does, see [Tool errors](#tool-errors)): the agent must not go on as if the window were there. The result still says what was seen.
 
@@ -2171,9 +2171,9 @@ Each element carries its [ref](#ui-automation), the same one get_ui_elements and
 
 ## UI Automation
 
-Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
+Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class, the element that has keyboard focus, the element at a screen point, and a wait for an element's state. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
-**Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search (the element actions and waits of roadmap M3 take it; today [find_ui_elements](#find_ui_elements)' `withinRef` does). The rules:
+**Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search ([wait_for_element](#wait_for_element) and [find_ui_elements](#find_ui_elements)' `withinRef` take it; so will the element actions of roadmap M3). The rules:
 - The same element keeps its ref in every read of the server session, whichever tool read it: a ref is tied to the element's UI Automation runtime id and its window, and checked against its control type, automation id and class. A list, tree or grid item without an automation id is also checked against its name, because a scrolling list reuses an item's element for another row: the row it shows now gets a new ref.
 - A ref never names a different element that the server can tell apart. When its element is gone, the server looks for the same runtime id in the window. A ref from find_ui_elements whose criteria fit only that element in the whole window (no `withinRef`, and no look-alike, visible or not) is also followed to the element re-created with the same automation id (or the same name when it has none), type and class, when exactly one fits. A ref from a tree walk, the focused element or the element at a point, or one whose criteria fit look-alikes (every row's Delete button), is never moved to a look-alike. Otherwise a call that takes the ref fails with `ElementStale` (gone, its window closed, or the ref expired) or `AmbiguousElement` (several elements now fit), and you find the element again with [find_ui_elements](#find_ui_elements).
 - Refs are per server session and opaque: after a restart the server numbers windows from a new random start (refs carry a seven-digit window number), so an old ref is `ElementStale` ("not issued by this server session") unless the new session happens to number the same window, which is about 1 in 80,000 for a session that has numbered 100 windows. Do not keep refs across a restart. The server keeps the 10,000 most recently used refs, twice the most one read returns. An element without a runtime id (rare) has no `ref`.
@@ -2598,6 +2598,115 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 | `AutomationUnavailable` | UI Automation not available |
 | `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
+
+---
+
+### wait_for_element
+
+Wait on the server until a UI element condition holds (roadmap M3.8), instead of sleeping or calling [find_ui_elements](#find_ui_elements) again and again: after a launch, a click that opens a dialog, a page that loads, or a field that a button waits for. Read-only: it never changes an element, it runs outside the input gate (input and window calls go ahead while it waits), and it keeps working while input is paused.
+
+<!-- tools:begin params:wait_for_element -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| window | object | No | - | The window to search, a selector with find_windows' filters (as wait_for_window), waited for first. Not with ref or withinRef, which name their window |
+| ref | string | No | - | The element to wait on: a ref from an earlier read, such as 'w4120035e17'. Not with window or the criteria |
+| name | string | No | - | The element's name, ignoring case; compared as nameMatch says (as find_ui_elements) |
+| nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | How name is compared: 'exact' (default), 'contains' or 'regex' (as find_ui_elements) |
+| automationId | string | No | - | The element's AutomationId, ignoring case |
+| controlType | string | No | - | Control type, or several separated by commas (any of them matches), e.g. 'Button' or 'Edit,ComboBox' |
+| className | string | No | - | The element's class name, ignoring case |
+| withinRef | string | No | - | Search only below this element: a ref from an earlier read. Its window is searched, so window is left out |
+| condition | string (one of: `"exists"`, `"gone"`, `"enabled"`, `"visible"`, `"focused"`, `"name_equals"`, `"value_equals"`, `"toggle_state"`) | No | "exists" | What to wait for: 'exists' (default), 'gone', 'enabled', 'visible', 'focused', 'name_equals', 'value_equals' or 'toggle_state' |
+| expected | string | No | - | name_equals and value_equals: the exact text (case-sensitive). toggle_state: 'on', 'off' or 'indeterminate'. Not for the other conditions |
+| timeoutMs | integer | No | 10000 | How long to wait, 0-60000 ms (default: 10000), the wait for the window included; 0 checks once |
+<!-- tools:end params:wait_for_element -->
+
+**Which element.** Name it one of two ways:
+- `ref`: an element from an earlier read (see [Element refs](#ui-automation)). Its window is the ref's, so `window` is left out. Each check resolves the ref as every tool that takes one does: a ref whose element is gone ends the wait with `ElementStale` (or `AmbiguousElement`), except for `gone`, which it satisfies.
+- The criteria of [find_ui_elements](#find_ui_elements) (`name` with `nameMatch`, `automationId`, `controlType`, `className`, at least one of them), searched in `window` or below `withinRef`'s element. `window` is a [window selector](#window-selectors) that is waited for first, as [wait_for_window](#wait_for_window) `exists` waits for it, within the same `timeoutMs`, so a wait right after a launch covers a window that is still opening; it must end up naming one window (`AmbiguousWindow` with `candidates` otherwise). Each check runs find_ui_elements' search with `visibleOnly` and `enabledOnly` off, since the condition decides what counts, and tests the first 10 matches: the condition holds when any of them satisfies it, and that element is returned.
+
+| `condition` | Satisfied when |
+|-------------|----------------|
+| `exists` (default) | An element matches (an offscreen or disabled one included); for a ref, the ref resolves |
+| `gone` | No element matches, by a search that covered the whole window; for a ref, its element is gone (`ElementStale`). A window that closed satisfies it, with a `warning`. It does not wait for the window: when no window matches the selector at the start, it is satisfied at once with a `warning` |
+| `enabled` | The element is enabled |
+| `visible` | The element is not reported offscreen and has a size on screen |
+| `focused` | The element has keyboard focus |
+| `name_equals` | The element's name is exactly `expected`, case-sensitive |
+| `value_equals` | The element's Value pattern holds exactly `expected`, case-sensitive, compared in full (not only the first 200 characters the result shows). A password field's value is never read, not even to compare it: when only password fields match, the wait ends at once with `InvalidArguments` |
+| `toggle_state` | The element's Toggle pattern is `expected`: `on`, `off` or `indeterminate` |
+
+`expected` is required for `name_equals`, `value_equals` and `toggle_state`, and refused for the other conditions.
+
+**Timing.** The first check runs at once; then the server checks again after 100 ms, backing off by half each time to every 500 ms, until the condition holds or `timeoutMs` (default 10000, at most 60000, the wait for the window included) has passed. `timeoutMs: 0` checks once. Each check gets the time left, at least 1 s, so the last one is never cut short and a wait can end up to a second after `timeoutMs`. A window with a web page is warmed up once, on the first check (see [Web content](#ui-automation)). A check that cannot tell, because the window did not respond, UI Automation did not answer in time, or the search did not cover the whole window, does not end the wait; it becomes `lastObservedState`. A client that sends a progress token gets a progress notification about once a second, and a cancelled call stops waiting at once (see [Cancellation and progress](#cancellation-and-progress)). The server polls; it does not register UI Automation event handlers.
+
+**Outcomes.** As with wait_for_window, a wait that is not satisfied is a failure (`success: false`, `isError: true`) whose result still says what was seen.
+
+| Outcome | errorCode | Result |
+|---------|-----------|--------|
+| Satisfied | - | `success` and `satisfied` `true`, `timedOut` `false`, `elapsedMs`, `polls`, `windowHandle`, `element` (as find_ui_elements returns it, with its `ref`; the state fields when the condition needs them; none for `gone`), `matchCount` for criteria, `accessibilityWarmup` when the first check warmed up a page, `warning` (see `gone`) |
+| Timed out | `WaitTimedOut` | `timedOut` `true`, `lastObservedState` (for example `Button 'OK' (w4120035e9) is disabled`, or `no element matches name 'OK'`), `element` as last seen, `matchCount`; `error` says what did not happen. Also when the window never appeared (no `windowHandle`, `polls` 0) |
+| The window closed | `WindowNotFound` | The window closed (or can no longer be read) during the wait, for any condition but `gone`. Ends at once, `timedOut` `false` |
+| A stale ref | `ElementStale`, `AmbiguousElement` | `ref` (or `withinRef`, with an `error` that starts with `withinRef:`) no longer names an element, for any condition but `gone`. Ends at once: find the element again, never act on a look-alike |
+| Several windows | `AmbiguousWindow` | `window` names several windows: `candidates`. Ends at once |
+| A window selector that ends wait_for_window | its code (`InvalidHandle`, `InvalidArguments`) | A `window.handle` that is no window, or a selector that cannot be used |
+| An argument that cannot be used | `InvalidArguments` (tool error), `InvalidControlType` | Not exactly one of `ref` and the criteria, criteria without `window` or `withinRef` (or with both), `window` with `ref`, something that is no ref, an invalid regex, `expected` missing or not allowed, a toggle state other than on, off or indeterminate, or `timeoutMs` outside 0-60000; nothing was waited for. During the wait: `value_equals` when only password fields match, or a regex that runs longer than 100 ms on a name |
+
+**Example:**
+> "Wait until the OK button is enabled."
+
+```json
+{
+  "name": "wait_for_element",
+  "arguments": { "window": { "processName": "setup" }, "name": "OK", "controlType": "Button", "condition": "enabled" }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "satisfied": true,
+  "timedOut": false,
+  "elapsedMs": 1480,
+  "polls": 6,
+  "windowHandle": 1706944,
+  "element": {
+    "ref": "w4120035e9",
+    "name": "OK",
+    "controlType": "Button",
+    "automationId": "1",
+    "className": "Button",
+    "bounds": { "x": 640, "y": 412, "width": 88, "height": 26 },
+    "clickPoint": { "x": 684, "y": 425 },
+    "isEnabled": true,
+    "isOffscreen": false,
+    "patterns": ["Invoke"]
+  },
+  "matchCount": 1
+}
+```
+
+A timeout (`isError: true`):
+
+```json
+{
+  "success": false,
+  "satisfied": false,
+  "timedOut": true,
+  "elapsedMs": 10000,
+  "polls": 24,
+  "windowHandle": 1706944,
+  "element": { "ref": "w4120035e9", "name": "OK", "controlType": "Button", "isEnabled": false },
+  "matchCount": 1,
+  "lastObservedState": "Button 'OK' (w4120035e9) is disabled",
+  "error": "No element matching name 'OK', controlType Button became enabled within 10000 ms (24 checks): Button 'OK' (w4120035e9) is disabled. Nothing was changed; wait again (a longer timeoutMs) or check the state with a read tool.",
+  "errorCode": "WaitTimedOut"
+}
+```
+
+(`element` shortened.) Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
 ---
 
@@ -5090,6 +5199,12 @@ Since 1.14.0 (roadmap M3):
   and its result has no `requested`. With them, `x` and `y` in the result are the converted screen point and
   `requested` echoes the point as given; two new input error codes, `StaleCapture` and `CaptureNotFound`, refuse a
   point whose capture changed or is gone. The audit log keeps a mouse call's `space`.
+- **wait_for_element (roadmap M3.8, after 1.14.0).** A new read-only tool in the `elements` toolset (read-only mode
+  serves it) waits on the server until an element, named by `ref` or by find_ui_elements' criteria in a `window` that
+  is waited for first, exists, is gone, is enabled, visible or focused, or has an expected name, value or toggle state.
+  A wait that is not satisfied is a failure (`isError: true`) with wait_for_window's `WaitTimedOut`, or ends early with
+  `WindowNotFound`, `ElementStale` or `AmbiguousElement`. The server instructions' waiting line now names both wait
+  tools (same number of lines). find_ui_elements is unchanged.
 
 ## Error Codes
 
@@ -5223,7 +5338,7 @@ table, it gives more detail.
 | `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null. A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
-| `InvalidControlType` | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements) | A `controlTypes` (find_ui_elements: `controlType`) name is not a known control type; `error` lists the valid names |
+| `InvalidControlType` | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements), [wait_for_element](#wait_for_element) (tool error, before it waits) | A `controlTypes` (find_ui_elements, wait_for_element: `controlType`) name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools, [get_clipboard](#get_clipboard) (tool error) | `format` is not auto, png, jpeg or jpg (get_clipboard: text, html or files); `error` lists them |
 | `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`), [wait_for_window](#wait_for_window) | The window handle is zero or invalid, or the window no longer exists. wait_for_window: the window its `window.handle` names (or title_changed's window) closed, so the condition can never hold; the wait ended at once |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
@@ -5299,8 +5414,8 @@ table, it gives more detail.
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |
 | `UrlBarNotFound` | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url) | UI Automation could not find or read the address bar |
-| `WaitTimedOut` | [wait_for_window](#wait_for_window) | The condition did not hold within `timeoutMs`. The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
+| `WaitTimedOut` | [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The condition did not hold within `timeoutMs`. The result still carries `satisfied: false`, `timedOut: true`, `elapsedMs` and the window as last seen (still open, not in front, not on screen, not idle, or with its old title), or for wait_for_element `lastObservedState` and the element as last seen (or no `windowHandle` when its window never appeared), and `error` says what was seen. Nothing was changed: wait again with a longer `timeoutMs`, or check the state with a read tool |
 | `WheelFollowsFocus` | [scroll](#scroll) | Windows sends the wheel to the focused window ("Scroll inactive windows when I hover over them" is off, or the setting cannot be read), and the window at the point is not in front, so the wheel would scroll another window; nothing was sent. Call [focus_window](#focus_window) first |
 | `WindowHidden` | [focus_window](#focus_window), [apply_layout](#apply_layout) (named in an `ArrangeFailed` error, see [apply_layout](#apply_layout)), the [Input Simulation](#input-simulation) tools (`windowHandle`, as `TargetNotForeground`), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window is hidden (no WS_VISIBLE, for example an app's window hidden in the notification area), so it was not activated: keys would go to a window the user cannot see. The captures refuse it too: a hidden window draws nothing |
 | `WindowMinimized` | [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The window, or the window it is inside, is minimized: Windows does not draw it, and its elements are offscreen. Nothing was captured. Pass `restoreIfMinimized: true`, or restore it first with [set_window_state](#set_window_state) |
-| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements); every tool that takes a `window` selector (tool error; per item in the window batches); the `placement` of [launch_application](#launch_application) and launch_applications_batch | apply_layout: no open window that is not given to another placement matched a placement. A launch placement: the launch succeeded but found no window, so nothing was placed (do not launch again; find it with find_windows). get_ui_elements, find_ui_elements and capture_with_elements: the window no longer exists. A `window` selector: no window matches it, or its `index` is past the matches; nothing was done (see [Window selectors](#window-selectors)) |
+| `WindowNotFound` | [apply_layout](#apply_layout), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements); every tool that takes a `window` selector (tool error; per item in the window batches); the `placement` of [launch_application](#launch_application) and launch_applications_batch | apply_layout: no open window that is not given to another placement matched a placement. A launch placement: the launch succeeded but found no window, so nothing was placed (do not launch again; find it with find_windows). get_ui_elements, find_ui_elements and capture_with_elements: the window no longer exists. [wait_for_element](#wait_for_element): its window closed during the wait (any condition but `gone`, which that satisfies). A `window` selector: no window matches it, or its `index` is past the matches; nothing was done (see [Window selectors](#window-selectors)) |
