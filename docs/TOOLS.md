@@ -3111,7 +3111,7 @@ Read the text of one element: a document (Notepad, Word, a browser page, a readi
 
 A password field (`isPassword`) is never read, through any source: the call succeeds with `source: "Redacted"`, `isPassword: true` and no `text`. When the password flag cannot be read, nothing is read (`ElementAccessFailed`).
 
-**Paging:** `truncated: true` means more text follows; call again with `offset` set to `nextOffset`. Offsets count characters the way the source does: UTF-16 characters for `Value` and `Name` (a page never ends inside a surrogate pair), and the provider's own characters for `Text`, which may count a line break `\r\n` as one. So always continue from `nextOffset` rather than adding the text's length. `maxLength` counts characters; the JSON escapes some characters (line breaks, quotes, `<`, `>`, `&` and non-ASCII characters), so a page of such text costs more tokens than its length suggests.
+**Paging:** `truncated: true` means more text follows; call again with `offset` set to `nextOffset`. Offsets count characters the way the source does: UTF-16 characters for `Value` and `Name` (a page never ends inside a surrogate pair), and the provider's own characters for `Text`, which may count a line break `\r\n` as one. So always continue from `nextOffset` rather than adding the text's length. `maxLength` counts characters, and a page also takes at most 60,000 bytes of JSON (UTF-8 with its escapes: a line break, quote or backslash takes two bytes, a Cyrillic letter two, a CJK character three, an emoji twelve), so a page of non-ASCII text holds fewer characters (30,000 Cyrillic, 20,000 CJK) and costs about as many tokens as one of English. The server caps the page itself: where the provider's characters are longer than one UTF-16 character, the page spans fewer of them, so its text never passes `maxLength` and `nextOffset` skips nothing. Only when one of the provider's characters alone is longer than the page (a line break counted as one, with `maxLength: 1`) is it cut, and `textSkipped: true` says the rest of it was skipped.
 
 **Example:**
 > "Read the open e-mail in Outlook"
@@ -3148,6 +3148,7 @@ A password field (`isPassword`) is never read, through any source: the call succ
 - `text`, `source`, `offset`, `totalLength`, `truncated` and `nextOffset` as above; `offset` is where the page starts (the end of the text when `offset` was past it, with an empty `text`).
 - `ref` and `controlType`: the element read. With criteria, `ref` names it for the next page.
 - `candidates`: with `AmbiguousElement` from the criteria, the elements they found, each with its ref.
+- `textSkipped`: present (`true`) when the page ends inside one of the provider's characters that was longer than the page; the rest of that character is not returned.
 - `accessibilityWarmup`: present when the window shows a web page and this call waited for it (see [Web content](#ui-automation)).
 - The text comes from the application and is untrusted (see [Untrusted content](#untrusted-content)).
 
@@ -3168,7 +3169,7 @@ A password field (`isPassword`) is never read, through any source: the call succ
 
 ### read_table
 
-Read a table, grid or list a page of rows at a time: a data grid, Explorer's details view, a message list, Task Manager's processes, an HTML table in a browser. Find the table first ([find_ui_elements](#find_ui_elements) with `controlType: "DataGrid,Table,List"`, or its ref from [get_ui_elements](#get_ui_elements)). It only reads.
+Read a table, grid or list a page of rows at a time: a data grid, Explorer's details view, a message list, Task Manager's processes, an HTML table in a browser. Find the table first ([find_ui_elements](#find_ui_elements) with `controlType: "DataGrid,Table,List"`, or its ref from [get_ui_elements](#get_ui_elements)). It only reads: it never scrolls the table, realizes a row or moves what the user sees, so it runs while input is paused and in read-only mode.
 
 <!-- tools:begin params:read_table -->
 **Parameters:**
@@ -3182,13 +3183,15 @@ Read a table, grid or list a page of rows at a time: a data grid, Explorer's det
 <!-- tools:end params:read_table -->
 
 **How the table is read** (`source`):
-- `Grid`: the element has the Grid pattern. Each cell of the page is asked for by row and column (GridPattern.GetItem), so the rows before `startRow` cost nothing. The headers come from the Table pattern's column headers, else from a `Header` among the grid's first children. `totalRows` and `totalColumns` are the grid's own counts.
-- `Rows`: no Grid pattern, but rows: the element's `DataItem`, `ListItem` and `TreeItem` children (read together in one call when there are at most 1000 children), each row's children being its cells, but for nested `TreeItem`s (an expanded tree item's child items are rows of their own, left out, not columns; a treegrid row's `DataItem` cells stay). A row without cells is one cell, its own text (a simple list gives one column of item names, a tree one of its top-level items). A `Header` child, or a first row whose cells are all `HeaderItem`s (HTML tables), gives the headers. `totalRows` is the number of row children (absent when a very large list was not read to its end), `totalColumns` the most cells or headers seen. Rows inside groups are not walked.
+- `Grid`: the element has the Grid pattern, which gives `totalRows` and `totalColumns`. The headers come from the Table pattern's column headers, else from a `Header` among the grid's first children. Headers that are cells of the grid (an HTML table's `th`, in a Chromium browser) say which columns and rows they cover: each column gets the headers above it, top first (`Q1 / Revenue` under a `Q1` that spans two columns), and the rows they fill are header rows, not data rows (they are not counted in `startRow` or `totalRows`). The cells come one of two ways:
+  - Win32 list views, WinForms grids and Chromium tables (Chrome, Edge, Electron): each cell of the page is asked for by row and column (GridPattern.GetItem), which these only look up, so the rows before `startRow` cost nothing and every row is read, on screen or not.
+  - Every other grid (WPF, WinUI and UWP, and any other framework): GetItem would scroll the grid to the cell (WPF's DataGrid also creates the row), so it is not used. The rows are the grid's row children, which a virtualized grid has only for the rows around what it shows, each placed by its first cell's row (GridItem). A row header is not a column. The page ends before its first row that is not realized, with `truncationReason: NotRealized`, `nextStartRow` and a `warning`: bring the rows into view with [element_action](#element_action) (`scroll` on the grid's ref, or `realize` on a row found with find_ui_elements `searchVirtualized: true`), then read again from `nextStartRow`. Each realized row before `startRow` costs a few reads.
+- `Rows`: no Grid pattern, but rows: the element's `DataItem`, `ListItem` and `TreeItem` children (read together in one call when there are at most 1000 children), each row's children being its cells, but for nested `TreeItem`s (an expanded tree item's child items are rows of their own, left out, not columns; a treegrid row's `DataItem` cells stay). A row without cells is one cell, its own text (a simple list gives one column of item names, a tree one of its top-level items). A `Header` child, or a first row whose cells are all `HeaderItem`s, gives the headers. `totalRows` is the number of row children (absent when a very large list was not read to its end), `totalColumns` the most cells or headers seen. Rows inside groups are not walked.
 - An element with neither (and that is not an empty `DataGrid`, `List`, `Table` or `Tree`) fails with `PatternNotSupported`: read its text with [read_element_text](#read_element_text), or find the table inside it.
 
-A cell's text is its value when it has one (the Value pattern; never a password field's: such a cell is `null`), else its name, else the names of its children (up to 8). The value comes first because many cells are named for their place, not their text: a WinForms grid names a cell `Amount Row 1, Not sorted.`, a WPF grid `Item: ..., Column Display Index: 0`, and Explorer names each cell of a row for its column. A cell that disappears while it is read is `null`; the other cells and rows are still read. A cell is `null` where the table has no element (a row not realized yet in a virtualized grid). Headers and cells longer than 500 characters are cut (`cellsTruncated: true`).
+A cell's text is its value when it has one (the Value pattern; never a password field's: such a cell is `null`), else its name, else the names of its children (up to 8). The value comes first because many cells are named for their place, not their text: a WinForms grid names a cell `Amount Row 1, Not sorted.`, a WPF grid `Item: ..., Column Display Index: 0`, and Explorer names each cell of a row for its column. A cell that disappears while it is read is `null`; the other cells and rows are still read. A cell is `null` where the table has no element. Headers and cells longer than 500 characters are cut (`cellsTruncated: true`).
 
-**Limits and paging:** `maxRows` (1-200) and `maxColumns` (1-50, the first columns) bound the page, and a page holds at most 40,000 characters of headers and cells. `truncated` is `true` when the page is not the rest of the table, and `truncationReason` says why: `MaxRows` (more rows follow), `Size` (the character limit ended the page), `Timeout` (the rows read before `timeoutMs` passed; whole rows only) or `MaxColumns` (the table has more columns than `maxColumns`). When rows were left out, call again with `startRow` set to `nextStartRow`.
+**Limits and paging:** `maxRows` (1-200) and `maxColumns` (1-50, the first columns) bound the page, and its headers and cells take at most 40,000 bytes of JSON (UTF-8, quotes and escapes included: about 40,000 characters of English, 20,000 of Cyrillic, 13,000 of CJK). Headers that would take more than half of that are cut, and so are the cells of a page's first row when that row alone is over what is left, so every page returns a row (`cellsTruncated: true`). `truncated` is `true` when the page is not the rest of the table, and `truncationReason` says why: `MaxRows` (more rows follow), `Size` (the byte limit ended the page), `Timeout` (the rows read before `timeoutMs` passed; whole rows only), `NotRealized` (the next row is not realized; see `Grid` above), `Disappeared` (the table disappeared while the page was read: the rows read before it did, and a `warning`; its ref is stale, so find it again) or `MaxColumns` (the table has more columns than `maxColumns`). When rows were left out, call again with `startRow` set to `nextStartRow`.
 
 **Example:**
 > "Read the first 50 processes in Task Manager"
@@ -3226,6 +3229,7 @@ A cell's text is its value when it has one (the Value pattern; never a password 
 }
 ```
 
+- `warning`: with `NotRealized` or `Disappeared`, why the page ended and what to do.
 - Cell texts come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 - `accessibilityWarmup`: present when the window shows a web page and this call waited for it (see [Web content](#ui-automation)).
 
@@ -5967,6 +5971,25 @@ Since 1.14.0 (roadmap M3):
   when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the
   arguments. element_action's `name` criterion is recorded as `nameLength`, as file_dialog's path is; the `name` of
   apply_layout, save_layout and delete_layout is still kept.
+- **Readable tool results, and text and table reads that only read (M3 review).** Every tool result's JSON is now written
+  with the relaxed encoder, as the error results, get_desktop_state and the audit log already were: non-ASCII text,
+  apostrophes, `<`, `>`, `&`, `+` and `` ` `` appear as they are instead of six-byte `\uXXXX` escapes (quotes,
+  backslashes, control characters, U+2028 and U+2029 and characters outside the Basic Multilingual Plane are still
+  escaped). A JSON parser reads the same values; a client that matched the raw text sees the characters themselves.
+  [read_element_text](#read_element_text): a page also takes at most 60,000 bytes of JSON, so it holds fewer characters
+  of non-ASCII text; the server caps a document page itself (it trusted the provider's length), and the new `textSkipped`
+  says when one of the provider's characters had to be cut. Its criteria search answers as element_action's does: one
+  that did not finish is `OperationTimedOut` also with no match so far (it was `ElementNotFound`) or with skipped parts
+  (it was `ElementAccessFailed`), and both tools answer several matches with `AmbiguousElement` even from a search that did
+  not finish (element_action said `OperationTimedOut`). [read_table](#read_table) never scrolls: it reads WPF, WinUI and
+  other grids whose GetItem scrolls through their realized rows and ends the page at the first row that is not realized
+  (the new `truncationReason` `NotRealized`, with a `warning`), where it used to scroll the grid to each cell; Win32,
+  WinForms and Chromium grids are read as before. A cell's value now comes before its name (a WinForms cell read
+  `Amount Row 1, Not sorted.`); an HTML table's header row is no longer data row 0 nor counted in `totalRows`, and headers
+  over two rows are paired with their columns (`Q1 / Revenue`); an expanded tree item's child items are no longer its
+  cells; a cell that disappears is `null`, and a table that disappears after rows were read returns them (the new
+  `truncationReason` `Disappeared`). Its 40,000 limit counts bytes of JSON, not characters. New result fields
+  `textSkipped` and `warning`; no new error code.
 
 ## Error Codes
 
