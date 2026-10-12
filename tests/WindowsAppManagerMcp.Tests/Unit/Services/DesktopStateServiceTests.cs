@@ -706,6 +706,21 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task TheScreenshot_OfAWindowWhoseProcessCannotBeNamed_IsRefused_WhileThePolicyDeniesAnything()
+    {
+        // As capture_window: the window service reports a process it cannot name as "Unknown"
+        _windows.Setup(w => w.GetWindowInfo(Notepad)).Returns(Window(Notepad, "Vault", WindowInfo.UnknownProcessName));
+        var include = new HashSet<DesktopStateSection> { DesktopStateSection.Screenshot };
+
+        var (state, image) = await CreateSut().GetStateAsync(Request(window: Notepad, include: include), CancellationToken.None);
+
+        image.Should().BeNull();
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "screenshot", ErrorCode = nameof(ScreenshotErrorCode.TargetDeniedByPolicy) });
+        _screenshots.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task AFailedCapture_IsReportedWithItsCode()
     {
         _screenshots.Setup(s => s.CaptureWindow(Notepad, true, It.IsAny<CaptureOptions>()))

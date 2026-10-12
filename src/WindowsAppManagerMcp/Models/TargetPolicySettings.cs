@@ -149,4 +149,11 @@ public sealed record TargetPolicyVerdict(bool Allowed, string? ProcessName, stri
 
     /// <summary>The target is refused.</summary>
     public static TargetPolicyVerdict Deny(string? processName, string reason) => new(false, processName, reason);
+
+    /// <summary>
+    /// The target is refused because its process name cannot be read, so it cannot be checked against a policy that
+    /// denies anything (see <see cref="Services.Interfaces.TargetPolicyExtensions.EvaluateFailClosed(Services.Interfaces.ITargetPolicy, WindowInfo)"/>).
+    /// </summary>
+    public static TargetPolicyVerdict Unreadable { get; } =
+        Deny(null, "its process name cannot be read, so the window cannot be checked against the policy");
 }

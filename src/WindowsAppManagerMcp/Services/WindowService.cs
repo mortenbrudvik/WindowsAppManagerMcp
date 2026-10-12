@@ -1595,7 +1595,7 @@ public class WindowService : IWindowService
         {
             if (!_processNames.TryGetValue(processId, out var name))
             {
-                name = nativeWrapper.GetProcessName(processId) ?? "Unknown";
+                name = nativeWrapper.GetProcessName(processId) ?? WindowInfo.UnknownProcessName;
                 _processNames[processId] = name;
             }
 

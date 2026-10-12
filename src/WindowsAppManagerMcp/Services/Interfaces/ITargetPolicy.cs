@@ -34,4 +34,45 @@ public static class TargetPolicyExtensions
         ArgumentNullException.ThrowIfNull(window);
         return policy.Evaluate([window.ProcessName, window.HostProcessName]);
     }
+
+    /// <summary>
+    /// Whether the policy can refuse anything: it has a deny list or an allow list. Only then does a target whose process
+    /// cannot be named need checking. A policy whose settings are unknown counts as one that can.
+    /// </summary>
+    public static bool DeniesAnything(this ITargetPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        return policy.Settings is not { DeniedProcesses.Count: 0, AllowedProcesses: null };
+    }
+
+    /// <summary>
+    /// Decides for a window as <see cref="Evaluate(ITargetPolicy, WindowInfo)"/> does, but fails closed as the UI Automation
+    /// reads do (<see cref="UiaTargets.ReadVerdict"/>): while the policy denies anything, a window whose process, or for a
+    /// UWP window whose frame host, cannot be named (<see cref="WindowInfo.UnknownProcessName"/>) is refused
+    /// (<see cref="TargetPolicyVerdict.Unreadable"/>). The input guard and the captures decide with it.
+    /// </summary>
+    public static TargetPolicyVerdict EvaluateFailClosed(this ITargetPolicy policy, WindowInfo window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        return policy.EvaluateFailClosed(window.HostProcessName == null
+            ? [window.ProcessName]
+            : [window.ProcessName, window.HostProcessName]);
+    }
+
+    /// <summary>
+    /// Decides for a target that goes by <paramref name="processNames"/>, failing closed: while the policy denies anything,
+    /// a target with no name, or with a name that is blank or <see cref="WindowInfo.UnknownProcessName"/>, is refused.
+    /// </summary>
+    public static TargetPolicyVerdict EvaluateFailClosed(this ITargetPolicy policy, IReadOnlyCollection<string?> processNames)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(processNames);
+        var verdict = policy.Evaluate(processNames);
+        return verdict.Allowed && policy.DeniesAnything() && (processNames.Count == 0 || processNames.Any(IsUnnamed))
+            ? TargetPolicyVerdict.Unreadable
+            : verdict;
+    }
+
+    private static bool IsUnnamed(string? processName) =>
+        string.IsNullOrWhiteSpace(processName) || string.Equals(processName, WindowInfo.UnknownProcessName, StringComparison.Ordinal);
 }

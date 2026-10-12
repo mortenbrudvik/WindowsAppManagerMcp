@@ -349,7 +349,8 @@ public sealed class DesktopStateService : IDesktopStateService
                 "policy. Nothing was captured; call get_desktop_state again, or capture_window.");
         }
 
-        return _policy.Evaluate(window) is { Allowed: false } verdict
+        // A process that cannot be named cannot be checked either (as capture_window)
+        return _policy.EvaluateFailClosed(window) is { Allowed: false } verdict
             ? new DesktopStateError("screenshot", nameof(ScreenshotErrorCode.TargetDeniedByPolicy),
                 $"The window is refused by the user's target policy: {verdict.Reason}. Nothing was captured; no argument changes that.")
             : null;

@@ -418,8 +418,8 @@ public class ScreenshotToolsTests
     [Fact]
     public async Task CaptureWithElements_ForAnUntitledWindow_StillCaptures()
     {
-        // Arrange - popups and menus have no title, so GetWindowInfo reports nothing for them
-        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
+        // Arrange - popups and menus have no title
+        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(TestDataFactory.CreateWindowInfo(4242, title: ""));
         var sut = CreateSut();
 
         // Act

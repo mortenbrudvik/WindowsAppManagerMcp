@@ -17,6 +17,12 @@ public record WindowInfo(
 )
 {
     /// <summary>
+    /// What <see cref="ProcessName"/> (and <see cref="HostProcessName"/>) say when the process's name cannot be read (it
+    /// has exited, or this server may not query it). Such a window cannot be checked against the target policy.
+    /// </summary>
+    public const string UnknownProcessName = "Unknown";
+
+    /// <summary>
     /// The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS): <see cref="Bounds"/> without the invisible resize borders that
     /// GetWindowRect includes (about 7 px left, right and bottom at 100%), so a maximized window does not overhang its
     /// monitor. Null when DWM cannot report it; the geometry tools then report Bounds.

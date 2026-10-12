@@ -377,12 +377,12 @@ public class TargetPolicyEnforcementTests
     private readonly Mock<IUIElementService> _elements = TestDataFactory.CreateMockUIElementService();
     private readonly Mock<IWindowService> _windows = TestDataFactory.CreateMockWindowService();
 
-    private ScreenshotTools CreateScreenshotTools(nint handle, string processName)
+    private ScreenshotTools CreateScreenshotTools(nint handle, string processName, TargetPolicy? policy = null)
     {
         _windows.Setup(w => w.IsValidWindow(handle)).Returns(true);
         _windows.Setup(w => w.GetWindowInfo(handle))
             .Returns(TestDataFactory.CreateWindowInfo((int)handle, processName + " window", processName, 3001));
-        return new ScreenshotTools(_screenshots.Object, _elements.Object, _windows.Object, Policy());
+        return new ScreenshotTools(_screenshots.Object, _elements.Object, _windows.Object, policy ?? Policy());
     }
 
     private static JsonElement Payload(CallToolResult result) =>
@@ -440,6 +440,52 @@ public class TargetPolicyEnforcementTests
         _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
         _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
             It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_AndCaptureWithElements_OfAWindowWhoseProcessCannotBeNamed_AreRefused_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the window service reports a process whose name it cannot read as "Unknown"
+        var sut = CreateScreenshotTools(0x500, WindowInfo.UnknownProcessName);
+
+        // Act
+        var capture = await sut.CaptureWindow(0x500);
+        var annotated = await sut.CaptureWithElements(0x500);
+
+        // Assert - as the UI Automation reads: a window that cannot be checked is not captured
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(capture).GetProperty("error").GetString().Should().Contain("cannot be read");
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+        _elements.Verify(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_OfAWindowWhoseProcessCannotBeNamed_IsCaptured_WhenThePolicyDeniesNothing()
+    {
+        var sut = CreateScreenshotTools(0x500, WindowInfo.UnknownProcessName, Policy(deny: "none"));
+
+        await sut.CaptureWindow(0x500);
+
+        _screenshots.Verify(s => s.CaptureWindow(new nint(0x500), true, It.IsAny<CaptureOptions>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CaptureWithElements_OfAValidWindowTheWindowServiceCannotRead_IsRefused()
+    {
+        // Arrange - a window that exists, but whose window information (process included) cannot be read
+        var sut = CreateScreenshotTools(0x510, "notepad");
+        _windows.Setup(w => w.GetWindowInfo(0x510)).Returns((WindowInfo?)null);
+
+        // Act
+        var annotated = await sut.CaptureWithElements(0x510);
+        var capture = await sut.CaptureWindow(0x510);
+
+        // Assert
+        Payload(annotated).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Payload(capture).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
     }
 
     [Fact]

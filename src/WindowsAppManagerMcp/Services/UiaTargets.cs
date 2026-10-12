@@ -30,8 +30,7 @@ public static class UiaTargets
     public static TargetPolicyVerdict ReadVerdict(
         INativeWindowWrapper? windows, ITargetPolicy? policy, nint windowHandle, Func<uint, string?>? processName = null)
     {
-        if (windows == null || policy == null || windowHandle == nint.Zero ||
-            policy.Settings is { DeniedProcesses.Count: 0, AllowedProcesses: null })
+        if (windows == null || policy == null || windowHandle == nint.Zero || !policy.DeniesAnything())
         {
             return TargetPolicyVerdict.Allow;
         }
@@ -64,16 +63,13 @@ public static class UiaTargets
             }
 
             // A process that cannot be named cannot be checked; a window that closed meanwhile is left to the read
-            return windows.IsWindow(windowHandle) ? Unreadable : TargetPolicyVerdict.Allow;
+            return windows.IsWindow(windowHandle) ? TargetPolicyVerdict.Unreadable : TargetPolicyVerdict.Allow;
         }
         catch (Exception)
         {
-            return Unreadable;
+            return TargetPolicyVerdict.Unreadable;
         }
     }
-
-    private static readonly TargetPolicyVerdict Unreadable = TargetPolicyVerdict.Deny(null,
-        "its process name cannot be read, so the window cannot be checked against the policy");
 
     /// <summary>
     /// The TargetDeniedByPolicy message of a UI Automation read that <see cref="ReadVerdict"/> refuses, or null when the

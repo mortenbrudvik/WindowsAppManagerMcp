@@ -575,10 +575,11 @@ public sealed class InputTargetGuard : IInputTargetGuard
             }
         }
 
-        // Policy: set by the user in the server's environment
+        // Policy: set by the user in the server's environment. A window whose process cannot be named cannot be checked, so it
+        // is refused while the policy denies anything, as the UI Automation reads refuse it
         var verdict = window.Info is { } info
-            ? _policy.Evaluate(info)
-            : _policy.Evaluate([window.Summary.ProcessName]);
+            ? _policy.EvaluateFailClosed(info)
+            : _policy.EvaluateFailClosed([window.Summary.ProcessName]);
         if (!verdict.Allowed)
         {
             return InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy,
@@ -769,7 +770,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
         var processId = _windows.GetWindowThreadProcessId(hWnd);
         var processName = processId == 0 ? null : _windows.GetProcessName(processId);
         return new WindowRead(null, new WindowSummary(hWnd, _windows.GetWindowText(hWnd) ?? string.Empty,
-            processName ?? "Unknown", (int)processId));
+            processName ?? WindowInfo.UnknownProcessName, (int)processId));
     }
 
     private static string Name(WindowSummary? window) => window switch

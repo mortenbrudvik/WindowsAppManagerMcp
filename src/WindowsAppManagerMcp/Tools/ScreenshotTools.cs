@@ -368,12 +368,16 @@ public class ScreenshotTools
                 "Window not found or handle is invalid");
         }
 
-        // The title is informational: untitled windows (popups, menus) are still captured.
+        // The title is informational: untitled windows (popups, menus) are still captured, with the walk's title
         var windowInfo = _windowService.GetWindowInfo(windowHandle);
-        var windowTitle = windowInfo?.Title;
+        var windowTitle = string.IsNullOrEmpty(windowInfo?.Title) ? null : windowInfo.Title;
+        if (windowInfo == null && !_windowService.IsValidWindow(windowHandle))
+        {
+            return AnnotatedFailure(reported, null, ScreenshotErrorCode.InvalidHandle.ToString(), "Window not found or handle is invalid");
+        }
 
-        // Neither the pixels nor the element texts of a window the user's policy denies
-        if (windowInfo != null && _targetPolicy.Evaluate(windowInfo) is { Allowed: false } verdict)
+        // Neither the pixels nor the element texts of a window the user's policy denies, or that it cannot check
+        if (CaptureVerdict(windowInfo) is { Allowed: false } verdict)
         {
             return AnnotatedFailure(reported, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
         }
@@ -665,13 +669,29 @@ public class ScreenshotTools
         second == null ? first : [.. first, .. second];
 
     /// <summary>
-    /// Why the target policy refuses capturing the window, or null. A window that cannot be read is left to
-    /// the capture, which reports InvalidHandle.
+    /// Why the target policy refuses capturing the window, or null. A handle that is no window is left to the capture,
+    /// which reports InvalidHandle.
     /// </summary>
-    private string? PolicyRefusal(nint handle) =>
-        _windowService.GetWindowInfo(handle) is { } window && _targetPolicy.Evaluate(window) is { Allowed: false } verdict
-            ? PolicyMessage(verdict)
-            : null;
+    private string? PolicyRefusal(nint handle)
+    {
+        var window = _windowService.GetWindowInfo(handle);
+        if (window == null && !_windowService.IsValidWindow(handle))
+        {
+            return null;
+        }
+
+        return CaptureVerdict(window) is { Allowed: false } verdict ? PolicyMessage(verdict) : null;
+    }
+
+    /// <summary>
+    /// The target policy's verdict on capturing a window. It fails closed as the UI Automation reads do
+    /// (<see cref="UiaTargets.ReadVerdict"/>): a window whose process cannot be named, or that the window service cannot read
+    /// at all (<paramref name="window"/> null), is refused while the policy denies anything.
+    /// </summary>
+    private TargetPolicyVerdict CaptureVerdict(WindowInfo? window) =>
+        window != null ? _targetPolicy.EvaluateFailClosed(window)
+        : _targetPolicy.DeniesAnything() ? TargetPolicyVerdict.Unreadable
+        : TargetPolicyVerdict.Allow;
 
     private static string PolicyMessage(TargetPolicyVerdict verdict) =>
         $"The window is refused by the server's target policy: {verdict.Reason}. Nothing was captured. The policy is set by " +

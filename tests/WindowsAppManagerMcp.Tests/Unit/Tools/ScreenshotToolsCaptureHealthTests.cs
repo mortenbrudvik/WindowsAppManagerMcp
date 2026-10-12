@@ -117,8 +117,8 @@ public class ScreenshotToolsCaptureHealthTests
     [Fact]
     public async Task CaptureWithElements_OfAnUntitledWindow_TakesTheTitleFromTheWalk()
     {
-        // Arrange - GetWindowInfo reports nothing for an untitled popup
-        _windows.Setup(w => w.GetWindowInfo(Window)).Returns((WindowInfo?)null);
+        // Arrange - an untitled popup
+        _windows.Setup(w => w.GetWindowInfo(Window)).Returns(TestDataFactory.CreateWindowInfo((int)Window, title: ""));
         WalkReturns(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]) with { WindowTitle = "Context" });
 
         // Act
