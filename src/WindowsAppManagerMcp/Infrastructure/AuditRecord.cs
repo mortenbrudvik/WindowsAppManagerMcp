@@ -42,7 +42,7 @@ public static class AuditRecord
     {
         "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position", "format", "space",
         // element_action (roadmap M3.6): the element's ref and fixed values; its value is recorded as valueLength
-        "ref", "action", "mode", "direction", "amount", "fallback"
+        "ref", "action", "mode", "direction", "amount", "fallback", "observe"
     };
 
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>

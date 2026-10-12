@@ -166,6 +166,7 @@ public class WrapperCatalogTests
     [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.SendInput), WrapperCallKind.Input)]
     [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.SetCursorPos), WrapperCallKind.Input)]
     [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.IsKeyDown), WrapperCallKind.Read)]
+    [InlineData(typeof(INativeInputWrapper), nameof(INativeInputWrapper.IsKeyToggled), WrapperCallKind.Read)]
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.RegisterHotKey), WrapperCallKind.GlobalHotkey)]
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.WaitForMessage), WrapperCallKind.GlobalHotkey)]
     [InlineData(typeof(INativeHotkeyWrapper), nameof(INativeHotkeyWrapper.OpenDesktopPause), WrapperCallKind.GlobalHotkey)]

@@ -103,11 +103,22 @@ public static class ToolJson
     /// <summary>
     /// Lists the allowed values of a <see cref="ToolEnumAttribute"/> enum (also as Nullable), or of a string marked
     /// with <see cref="ToolValuesAttribute"/>, as <c>"type": "string", "enum": [...]</c>, with null added for a nullable
-    /// one. The description and default the schema already has are kept.
+    /// one. The description and default the schema already has are kept. An array of such an enum (get_desktop_state's
+    /// include) gets the values on its items: the custom converter leaves the exporter nothing to describe them with.
     /// </summary>
     private static JsonNode ListToolEnumValues(AIJsonSchemaCreateContext context, JsonNode schema)
     {
         var type = context.TypeInfo.Type;
+        if (type.IsArray && type.GetElementType() is { } element && ToolEnumInfo.IsToolEnum(element) && schema is JsonObject array)
+        {
+            array["items"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray([.. ToolEnumInfo.Get(element).SchemaValues.Select(value => (JsonNode?)JsonValue.Create(value))])
+            };
+            return array;
+        }
+
         var underlying = Nullable.GetUnderlyingType(type) ?? type;
         var enumType = ToolEnumInfo.IsToolEnum(underlying)
             ? underlying

@@ -136,6 +136,8 @@ public static class WrapperCatalog
                 [nameof(INativeInputWrapper.GetCursorPos)] = WrapperMember.Read,
                 // GetAsyncKeyState: whether a key or button is down (held modifiers, stuck-input recovery)
                 [nameof(INativeInputWrapper.IsKeyDown)] = WrapperMember.Read,
+                // GetKeyState's toggle bit: whether Caps Lock is on (get_desktop_state)
+                [nameof(INativeInputWrapper.IsKeyToggled)] = WrapperMember.Read,
                 [nameof(INativeInputWrapper.SetCursorPos)] = WrapperMember.Input,
                 [nameof(INativeInputWrapper.SendInput)] = WrapperMember.Input
             },

@@ -93,7 +93,9 @@ public static class InputGateToolFilter
         // Wait up to a minute; holding the gate meanwhile would stall every window and input call (roadmap M3.7, M3.8)
         "wait_for_window", "wait_for_element",
         // Read an element's text and a table's cells (roadmap M3.9)
-        "read_element_text", "read_table"
+        "read_element_text", "read_table",
+        // One observation of the desktop: windows, focus, popups, elements and an optional capture (roadmap M3.12)
+        "get_desktop_state"
     };
 
     /// <summary>

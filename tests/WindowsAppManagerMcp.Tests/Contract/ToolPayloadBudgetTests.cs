@@ -74,6 +74,7 @@ public class ToolPayloadBudgetTests
         ["capture_with_elements"] = 9_500, // 6,544: the 120 elements, each with its ref, imageBounds and screenBounds
 
         // UI Automation
+        ["get_desktop_state"] = 3_200, // 2,129: 15 window rows, the focus, 2 popups and 80 element lines with refs (roadmap M3.12)
         ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
         ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
         ["read_element_text"] = 1_200, // 802: the first page of a 3,000-character e-mail in the reading pane (roadmap M3.9)

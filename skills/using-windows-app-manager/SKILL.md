@@ -17,13 +17,14 @@ description: |
   - Launch applications or open programs
   - List or kill processes, or close an application with all its windows
   - Save, apply, restore, or manage window layouts
+  - See what is on the desktop in one call: the windows, what is in front, the focused control, open menus and a window's controls
   - Check which server build runs, its DPI awareness, or why a tool is missing
 ---
 
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 61 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 62 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -41,9 +42,11 @@ These tools act on the user's real desktop. Every task follows one loop: **locat
 
 ## The Loop
 
-### Start: check the server
+### Start: get oriented
 
-Call `get_server_info` once at the start of a task, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows. The steps below name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
+Call `get_desktop_state` first, at the start of a task and whenever you need to look again. One call returns the window in front, the windows front first (`windows`: `handle`, `title`, `process`, `state`, `monitor`; your own terminal or editor is `isAgentHost: true`), the focused element (`focus`, with its `ref`), the cursor, the modifier keys that are down, Caps Lock, whether the user paused input (`input.paused`), and for the window you name with `window` or `handle` (default: the window in front) its open popups and its interactive elements as text lines with refs (`w4120035e17 Button 'Save' @812,44 80x24`) that `element_action` and the other element tools take. The window in front is not read when it is your own terminal (`errors` has `TargetIsAgentHost`) or an app the user denies: name the app you mean, for example `window: {"processName": "notepad"}`. `include: ["screenshot"]` adds a capture of that window with a `captureId` (off by default; images cost far more tokens than the text). One `timeoutMs` (5 s) covers the call: a part that did not answer is listed in `errors` with its code and the rest is returned, so read that part again with its own tool. `elements.truncated: true` means there are more elements than `maxElements` (80): find the one you need with `find_ui_elements`.
+
+Call `get_server_info` once at the start of a task too, and again whenever tools behave unexpectedly; it is always served, whatever the user turned off. Read its `warnings` first: they name everything that will make tools fail or coordinates wrong (a DPI awareness that scales coordinates, a locked session or UAC prompt, input paused by the user, a pause hotkey that is not registered, toolset settings that were ignored). It also says which tools are served (see [Toolsets](#toolsets)), the integrity level (Windows drops input to windows of a higher one), the monitors with their DPI, and your host windows. The steps below name tools the user may have turned off: skip a step whose tool is not in your tool list, and tell the user when the task needs it.
 
 ### 1. Locate
 
@@ -66,7 +69,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 3. Act
 
-- **Elements first:** `element_action` acts on a control through UI Automation, by `ref` (from `find_ui_elements`) or by `window` plus `name`/`automationId`/`controlType` (exactly one match, else `AmbiguousElement`). `invoke` a button, `toggle` a check box (`value: "on"` reaches that state), `set_value` a text box, `select` an item (`click` on a list or tree item selects it too; `invoke` opens it), `expand` a combo box, `scroll_into_view` or `scroll` a list, `set_range_value` a slider, `focus` a field. It needs no coordinates and works on a background or covered window without moving the mouse, so prefer it to a click. Read `before`, `after` and `outcomeVerified`: `false` means the effect does not show (a web or React input that ignores `set_value`: repeat with `mode: "type"`, which focuses the field, selects all and types through the guarded input). `openedPopup` is a window of the app the action opened; `status: "InvokedPendingModal"` means the action waits for that dialog: answer it, then read again. A password field's value is never read or returned. `fallback: "mouse"` (invoke, click, select) clicks instead when the element has no pattern; `double_click` and `right_click` are always guarded clicks. Close and resize top-level windows with `close_window` and `set_window_state`, not `window_close`.
+- **Elements first:** `element_action` acts on a control through UI Automation, by `ref` (from `find_ui_elements`) or by `window` plus `name`/`automationId`/`controlType` (exactly one match, else `AmbiguousElement`). `invoke` a button, `toggle` a check box (`value: "on"` reaches that state), `set_value` a text box, `select` an item (`click` on a list or tree item selects it too; `invoke` opens it), `expand` a combo box, `scroll_into_view` or `scroll` a list, `set_range_value` a slider, `focus` a field. It needs no coordinates and works on a background or covered window without moving the mouse, so prefer it to a click. Read `before`, `after` and `outcomeVerified`: `false` means the effect does not show (a web or React input that ignores `set_value`: repeat with `mode: "type"`, which focuses the field, selects all and types through the guarded input). `openedPopup` is a window of the app the action opened; `status: "InvokedPendingModal"` means the action waits for that dialog: answer it, then read again. A password field's value is never read or returned. `fallback: "mouse"` (invoke, click, select) clicks instead when the element has no pattern; `double_click` and `right_click` are always guarded clicks. Close and resize top-level windows with `close_window` and `set_window_state`, not `window_close`. Pass `observe: "state"` to get `get_desktop_state`'s observation of the window after the action in the same call (`observed`, with the refs of what appeared, such as an opened menu's items); `"screenshot"` adds a capture.
 - **Input:** always with `windowHandle`, or `window` (a selector, resolved to one window and then guarded exactly like `windowHandle`). Click at a match's `clickPoint` from `find_ui_elements`, at element centres from `get_ui_elements` (`x = bounds.x + bounds.width / 2`, `y = bounds.y + bounds.height / 2`) or from `screenBounds`, not at points guessed from an image. To use a point you see in a capture, pass it with the capture's `captureId` (`{"x": 392, "y": 196, "captureId": "c7-3fa91c"}`): the server converts it, targets the captured window and refuses a stale capture (see [Coordinates](#coordinates)).
 - **Windows:** the window tools take `window` (a selector) or the exact `handle`, never both (`snap_window`, `set_window_bounds`, `set_window_state`, `move_window_to_monitor`, ...); their result's `handle` is the window they acted on. Close with `close_window`.
 - **Keys:** `type_text` for text, `send_keys` for keys and chords. A chord that hands the keyboard to another window (Alt+Tab `%{TAB}`, the Windows key, Alt+Space) must be the last key of a call (`KeysAfterFocusChange`); better, pass the other window's handle instead of switching.
@@ -87,7 +90,7 @@ The condition must hold for `stableMs` (300 by default, which skips splash scree
 ### 5. Verify
 
 - Read the result: `success`, `errorCode`, `receivingWindow`, `foregroundAfter`, `charactersTyped`, `bounds` and `state` (a window tool reports the window afterwards: `bounds` is its visible frame), `windowHandle`.
-- Then check the new state with a read tool or a capture before the next step: the dialog opened, the text is in the field (`read_element_text` reads it back), the window is where it should be. A `close_window` success means the window closed (`status: "closed"`) or hid itself (`"hidden"`); `promptShown` means the app asks to save, and `get_owned_windows` lists a window's dialogs and which one blocks it.
+- Then check the new state with `get_desktop_state` (or `observe: "state"` on `element_action`), a read tool or a capture before the next step: the dialog opened, the text is in the field (`read_element_text` reads it back), the window is where it should be. A `close_window` success means the window closed (`status: "closed"`) or hid itself (`"hidden"`); `promptShown` means the app asks to save, and `get_owned_windows` lists a window's dialogs and which one blocks it.
 
 ## When Something Fails
 
@@ -210,7 +213,7 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (61)
+## Available Tools (62)
 
 ### Window Discovery (6 tools)
 
@@ -267,13 +270,14 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` (with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`.
 
-### UI Automation (9 tools)
+### UI Automation (10 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
+| `get_desktop_state` | One call to get oriented: window in front, windows, focus, popups, the window's elements with refs; optional capture | window (or handle), include, maxElements, scope |
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, timeoutMs |
 | `find_ui_elements` | Find elements by name, automationId, controlType or className; refs, click points | window (or handle), name, nameMatch, automationId, controlType, withinRef, scope, detail |
-| `element_action` | Act on an element through UI Automation patterns; state before and after | action, ref (or window + criteria), value, mode, direction, fallback |
+| `element_action` | Act on an element through UI Automation patterns; state before and after | action, ref (or window + criteria), value, mode, direction, fallback, observe |
 | `get_focused_element` | Element with keyboard focus, its window and process | timeoutMs |
 | `get_element_at_point` | Element at a screen point, its ancestors and window | x, y, ancestors |
 | `get_active_popups` | Open menus, dropdowns, flyouts and dialogs of an app, with refs | window (or handle), timeoutMs |
@@ -448,8 +452,8 @@ Common keys: `^c` copy, `^v` paste, `^a` select all, `{ENTER}`, `{TAB}`, `{ESC}`
 3. **Verify:** check `monitorIndex` and `bounds`; monitors left of or above the primary one have negative coordinates
 
 ### See What Is in a Window
-1. **Locate:** `find_windows` for the window
-2. **Act:** `capture_window` with its `handle` (the image comes back as image content), or `capture_with_elements` for element overlays (green for buttons, blue for inputs) with `screenBounds`
+1. **Locate:** `get_desktop_state` with the window (`window: {"processName": ...}`): its controls as text lines with refs, its open popups, and with `include: ["screenshot"]` a capture
+2. **Act:** for more pixels, `capture_window` with its `handle` (the image comes back as image content), or `capture_with_elements` for element overlays (green for buttons, blue for inputs) with `screenBounds`
 3. For anything you will click, take coordinates from `get_ui_elements` or `screenBounds`, or pass an image point with the capture's `captureId`
 
 ### Reach Items Below the Visible Part

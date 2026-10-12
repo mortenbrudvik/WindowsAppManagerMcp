@@ -35,6 +35,8 @@ public class NativeInputWrapper : INativeInputWrapper
 
     public bool IsKeyDown(ushort virtualKey) => (NativeMethods.Input.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
+    public bool? IsKeyToggled(ushort virtualKey) => (NativeMethods.Input.GetKeyState(virtualKey) & 0x0001) != 0;
+
     private static INPUT ToNativeInput(InputEvent inputEvent) => inputEvent.Kind switch
     {
         InputEventKind.Mouse => INPUT.MouseInput(inputEvent.Dx, inputEvent.Dy, inputEvent.Flags, inputEvent.MouseData),

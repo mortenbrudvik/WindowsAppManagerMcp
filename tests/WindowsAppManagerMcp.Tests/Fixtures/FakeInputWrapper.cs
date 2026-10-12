@@ -132,6 +132,17 @@ public sealed class FakeInputWrapper : INativeInputWrapper
         }
     }
 
+    /// <summary>The toggle keys that are on (Caps Lock is 0x14); nothing sent through the fake toggles them.</summary>
+    public HashSet<ushort> Toggled { get; } = new();
+
+    public bool? IsKeyToggled(ushort virtualKey)
+    {
+        lock (_lock)
+        {
+            return Toggled.Contains(virtualKey);
+        }
+    }
+
     /// <summary>Updates the key state as Windows does: a generic modifier counts as its left key too.</summary>
     private void Apply(InputEvent e)
     {

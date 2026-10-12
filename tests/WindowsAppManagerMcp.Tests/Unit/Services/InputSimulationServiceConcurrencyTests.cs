@@ -194,6 +194,8 @@ public class InputSimulationServiceConcurrencyTests
 
         public bool IsKeyDown(ushort virtualKey) => false;
 
+        public bool? IsKeyToggled(ushort virtualKey) => false;
+
         private static string Describe(IReadOnlyList<InputEvent> events)
         {
             if (events.All(e => e.Kind == InputEventKind.Unicode))

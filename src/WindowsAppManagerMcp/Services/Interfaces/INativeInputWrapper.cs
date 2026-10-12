@@ -30,4 +30,10 @@ public interface INativeInputWrapper
     /// the same. False when the state cannot be read, for example while a UAC prompt has the input.
     /// </summary>
     bool IsKeyDown(ushort virtualKey);
+
+    /// <summary>
+    /// Whether a toggle key (Caps Lock, Num Lock, Scroll Lock) is on: the low bit of GetKeyState, as Windows reports it to
+    /// the calling thread. Null when it cannot be read. Only reads (get_desktop_state reports Caps Lock with it).
+    /// </summary>
+    bool? IsKeyToggled(ushort virtualKey);
 }

@@ -1,0 +1,523 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using WindowsAppManagerMcp.Infrastructure;
+using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Native;
+using WindowsAppManagerMcp.Services.Interfaces;
+using WindowsAppManagerMcp.Tools;
+
+namespace WindowsAppManagerMcp.Services;
+
+/// <summary>
+/// get_desktop_state's observation (roadmap M3.12; see <see cref="IDesktopStateService"/>). The cheap parts (the window in
+/// front, the cursor, the keys and the pause) are read first on the calling thread; the windows, the focused element, the
+/// popups, the elements walk and the capture then run side by side, and the call waits for them until one deadline.
+/// </summary>
+/// <remarks>
+/// The UI Automation parts get a little less than the deadline (<see cref="PartBudget"/>), so a walk that is asked to stop
+/// can still hand back what it read before the call returns; whatever has not answered at the deadline itself is reported
+/// as OperationTimedOut and left to finish on its own (its refs are registered as usual). Nothing here takes the input gate:
+/// every part only reads.
+/// </remarks>
+public sealed class DesktopStateService : IDesktopStateService
+{
+    /// <summary>How deep the elements walk reads: the deepest get_ui_elements allows. maxElements and the deadline bound it.</summary>
+    public const int MaxDepth = 10;
+
+    /// <summary>The tool whose absence (a toolset, an exclusion or read-only mode the user chose) turns the capture off.</summary>
+    private const string CaptureTool = "capture_window";
+
+    /// <summary>What the popups' element walks may use of maxElements together, so the window keeps the rest.</summary>
+    private const int PopupShareDivisor = 2;
+
+    private readonly IWindowService _windows;
+    private readonly IInputSession _session;
+    private readonly INativeInputWrapper _input;
+    private readonly IElementInspectionService _inspection;
+    private readonly IUIElementService _elements;
+    private readonly IPopupService _popups;
+    private readonly IScreenshotService _screenshots;
+    private readonly ITargetPolicy _policy;
+    private readonly bool _captureServed;
+
+    /// <param name="windows">The window in front, the window list and the named window.</param>
+    /// <param name="session">The pause and the modifier keys that are down (get_control_status' reads).</param>
+    /// <param name="input">The cursor and Caps Lock.</param>
+    /// <param name="inspection">get_focused_element's read.</param>
+    /// <param name="elements">get_ui_elements' walk (refs, hung-window precheck, warm-up).</param>
+    /// <param name="popups">The target's popups and find_ui_elements' default scope.</param>
+    /// <param name="screenshots">capture_window's capture (captureId).</param>
+    /// <param name="policy">The user's target policy: never a capture of a denied window, never an unasked read of one.</param>
+    /// <param name="toolsets">The tools the server serves; the capture follows capture_window. Null: every tool.</param>
+    public DesktopStateService(
+        IWindowService windows,
+        IInputSession session,
+        INativeInputWrapper input,
+        IElementInspectionService inspection,
+        IUIElementService elements,
+        IPopupService popups,
+        IScreenshotService screenshots,
+        ITargetPolicy policy,
+        ToolsetSelection? toolsets = null)
+    {
+        _windows = windows ?? throw new ArgumentNullException(nameof(windows));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        _input = input ?? throw new ArgumentNullException(nameof(input));
+        _inspection = inspection ?? throw new ArgumentNullException(nameof(inspection));
+        _elements = elements ?? throw new ArgumentNullException(nameof(elements));
+        _popups = popups ?? throw new ArgumentNullException(nameof(popups));
+        _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
+        _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _captureServed = toolsets?.Serves(CaptureTool, readOnlyHint: false) ?? true;
+    }
+
+    /// <summary>
+    /// The time the UI Automation parts get: the deadline less a fifth of it (at most 1 s), which a walk that was asked to
+    /// stop uses to hand back what it read.
+    /// </summary>
+    public static TimeSpan PartBudget(TimeSpan timeout) =>
+        timeout - TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(1).Ticks, timeout.Ticks / 5));
+
+    public string? ScreenshotUnavailable() => _captureServed
+        ? null
+        : "A screenshot needs capture_window, which this server does not serve: the user turned captures off (the capture " +
+          "toolset, WAM_EXCLUDE_TOOLS or read-only mode). Leave the screenshot out; the rest of the observation does not need it.";
+
+    public async Task<DesktopStateSnapshot> GetStateAsync(DesktopStateRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Scope == ElementSearchScope.Desktop)
+        {
+            throw new ArgumentException("get_desktop_state reads one window and its popups; scope desktop is find_ui_elements'.", nameof(request));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var watch = Stopwatch.StartNew();
+        var include = request.Include;
+
+        // The cheap parts: Win32 reads that no window's thread answers
+        var foreground = Read(_windows.GetForegroundWindow);
+        var target = ChooseTarget(request.Window, foreground);
+        if (target.Invalid)
+        {
+            return new DesktopStateSnapshot(Failed(request.Window!.Value, watch), null);
+        }
+
+        var cursor = Read(_input.GetCursorPos) is { } point ? new ScreenPoint(point.X, point.Y) : null;
+        var input = ReadInputState();
+
+        var needsTarget = include.Contains(DesktopStateSection.Elements) || include.Contains(DesktopStateSection.Popups) ||
+                          include.Contains(DesktopStateSection.Screenshot);
+        var errors = new List<DesktopStateError>();
+        if (needsTarget && target.Refusal is { } refusal)
+        {
+            errors.Add(refusal);
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(request.Timeout);
+        var partBudget = PartBudget(request.Timeout);
+        using var partStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        partStop.CancelAfter(partBudget);
+
+        var handle = target.Handle;
+        var hasTarget = handle != nint.Zero;
+        var windowsTask = include.Contains(DesktopStateSection.Windows)
+            ? Task.Run(() => _windows.GetAllWindows(includeMinimized: true), CancellationToken.None)
+            : null;
+        var focusTask = include.Contains(DesktopStateSection.Focus)
+            ? Start(() => _inspection.GetFocusedElementAsync(partBudget, deadline.Token))
+            : null;
+        var popupsTask = include.Contains(DesktopStateSection.Popups) && hasTarget
+            ? Start(() => _popups.GetActivePopupsAsync(handle, partBudget, deadline.Token))
+            : null;
+        var elementsTask = include.Contains(DesktopStateSection.Elements) && hasTarget
+            ? Start(() => WalkAsync(handle, target.Title, request, partBudget, partStop.Token))
+            : null;
+        Task<ScreenCapture<ScreenshotResult>>? captureTask = null;
+        if (include.Contains(DesktopStateSection.Screenshot) && hasTarget)
+        {
+            if (CaptureRefusal(handle) is { } captureRefusal)
+            {
+                errors.Add(captureRefusal);
+            }
+            else
+            {
+                var options = new CaptureOptions { MaxDimension = request.ScreenshotMaxLongEdge, Output = "image" };
+                captureTask = Task.Run(() => _screenshots.CaptureWindow(handle, includeFrame: true, options), CancellationToken.None);
+            }
+        }
+
+        // One deadline for everything: what has not answered by then is reported, not waited for
+        Task?[] parts = [windowsTask, focusTask, popupsTask, elementsTask, captureTask];
+        try
+        {
+            var remaining = request.Timeout - watch.Elapsed;
+            await Task.WhenAll(parts.OfType<Task>()).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A part that failed or did not finish is reported below, each on its own
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var timeoutMs = (int)request.Timeout.TotalMilliseconds;
+
+        var windows = Collect(windowsTask, "windows", timeoutMs, errors);
+        var rows = windows?.Take(Math.Max(1, request.MaxWindows)).Select(Row).ToList();
+
+        var focus = Collect(focusTask, "focus", timeoutMs, errors) is { } focused
+            ? FocusOf(focused, errors)
+            : null;
+
+        var popups = Collect(popupsTask, "popups", timeoutMs, errors) is { } popupResult
+            ? PopupsOf(popupResult, errors)
+            : null;
+
+        var walk = Collect(elementsTask, "elements", timeoutMs, errors);
+        if (walk?.Error is { } walkError)
+        {
+            errors.Add(walkError);
+        }
+
+        EncodedImage? image = null;
+        ScreenshotResult? screenshot = null;
+        if (Collect(captureTask, "screenshot", timeoutMs, errors) is { } capture)
+        {
+            if (capture.Metadata.Success)
+            {
+                screenshot = capture.Metadata;
+                image = capture.Image;
+            }
+            else
+            {
+                errors.Add(new DesktopStateError("screenshot", capture.Metadata.ErrorCode ?? nameof(ScreenshotErrorCode.CaptureFailed),
+                    capture.Metadata.Error ?? "The window could not be captured."));
+            }
+        }
+
+        var state = new DesktopState(
+            Success: true,
+            WindowHandle: handle,
+            WindowTitle: target.Title,
+            Foreground: foreground is null ? null : new DesktopWindow(foreground.Handle, foreground.Title, foreground.ProcessName,
+                foreground.ProcessId, foreground.IsAgentHost ? true : null),
+            Focus: focus,
+            Cursor: cursor,
+            Input: input,
+            Windows: rows,
+            WindowCount: windows?.Count,
+            Popups: popups,
+            Elements: walk?.Elements,
+            Screenshot: screenshot,
+            Errors: errors.Count == 0 ? null : Ordered(errors),
+            ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1));
+        return new DesktopStateSnapshot(state, image);
+    }
+
+    /// <summary>The window to read: the one named, else the window in front unless it is the agent's host or a denied app.</summary>
+    private Target ChooseTarget(nint? named, WindowInfo? foreground)
+    {
+        if (named is { } window)
+        {
+            return _windows.IsValidWindow(window)
+                ? new Target(window, Read(() => _windows.GetWindowInfo(window))?.Title, null)
+                : new Target(window, null, null, Invalid: true);
+        }
+
+        if (foreground is null)
+        {
+            return new Target(nint.Zero, null, TargetError(nameof(WindowErrorCode.NoForegroundWindow),
+                "No window is in the foreground right now (windows may be switching, or a UAC prompt or the lock screen is shown), " +
+                "so no window's elements, popups or capture were read. Call again shortly, or name the window (handle or window)."));
+        }
+
+        if (foreground.IsAgentHost)
+        {
+            return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetIsAgentHost),
+                $"The window in front is your own host window ('{foreground.Title}', {foreground.ProcessName}), so its elements, " +
+                "popups and capture were not read. Name the window you mean (handle or window, for example from the windows " +
+                "listed here)."));
+        }
+
+        if (_policy.Evaluate(foreground) is { Allowed: false } verdict)
+        {
+            return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetDeniedByPolicy),
+                $"The window in front ('{foreground.Title}', {foreground.ProcessName}) is refused by the user's target policy: " +
+                $"{verdict.Reason}. Its elements, popups and capture were not read; no argument changes that."));
+        }
+
+        return new Target(foreground.Handle, foreground.Title, null);
+    }
+
+    private static DesktopStateError TargetError(string code, string message) => new("target", code, message);
+
+    /// <summary>Why the capture is not made: captures are turned off, or the policy denies the window (as capture_window).</summary>
+    private DesktopStateError? CaptureRefusal(nint handle)
+    {
+        if (ScreenshotUnavailable() is { } unavailable)
+        {
+            return new DesktopStateError("screenshot", ToolErrorReporting.InvalidArgumentsErrorCode, unavailable);
+        }
+
+        return Read(() => _windows.GetWindowInfo(handle)) is { } window && _policy.Evaluate(window) is { Allowed: false } verdict
+            ? new DesktopStateError("screenshot", nameof(ScreenshotErrorCode.TargetDeniedByPolicy),
+                $"The window is refused by the user's target policy: {verdict.Reason}. Nothing was captured; no argument changes that.")
+            : null;
+    }
+
+    /// <summary>The pause, the modifiers that are down and Caps Lock: what get_control_status reads, and the toggle bit.</summary>
+    private DesktopInputState ReadInputState()
+    {
+        var pause = _session.PauseState;
+        var modifiers = Read(_session.ReadModifiersDown)?.Select(k => k.Name).ToList();
+        return new DesktopInputState(
+            pause.Paused,
+            pause.Paused ? pause.PausedBy : null,
+            modifiers is { Count: > 0 } ? modifiers : null,
+            Read(() => _input.IsKeyToggled(NativeEnums.VK_CAPITAL)));
+    }
+
+    /// <summary>
+    /// The target's elements: with scope windowAndPopups, first each open popup (no tooltip), front first, within half of
+    /// maxElements, each under a header line; then the window with what is left.
+    /// </summary>
+    private async Task<ElementsWalk> WalkAsync(
+        nint window, string? title, DesktopStateRequest request, TimeSpan budget, CancellationToken stop)
+    {
+        var scope = request.Scope ?? (_popups.IsInForeground(window) ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window);
+        var popups = scope == ElementSearchScope.WindowAndPopups
+            ? (_popups.GetPopupList(window)?.Popups ?? []).Where(p => p.Kind != PopupKind.Tooltip).ToList()
+            : [];
+
+        var warmupBudget = AccessibilityWarmup.BudgetFor(budget);
+        var text = new StringBuilder();
+        var count = 0;
+        var truncated = false;
+        UIElementTruncationReason? reason = null;
+        var popupBudget = popups.Count > 0 ? Math.Max(1, request.MaxElements / PopupShareDivisor) : 0;
+
+        foreach (var popup in popups)
+        {
+            if (popupBudget <= 0 || stop.IsCancellationRequested)
+            {
+                truncated = true;
+                reason ??= stop.IsCancellationRequested ? UIElementTruncationReason.Timeout : UIElementTruncationReason.MaxElements;
+                break;
+            }
+
+            UIElementResult read;
+            try
+            {
+                read = await _elements.GetUIElementsAsync(popup.Handle, MaxDepth, Filter(request, popupBudget, warmupBudget), null, stop)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A popup whose provider fails is skipped like one that closed: the window is still read
+                truncated = true;
+                reason ??= UIElementTruncationReason.ElementsSkipped;
+                continue;
+            }
+
+            if (!read.Success || read.Elements is not { Count: > 0 } elements)
+            {
+                // A popup that closed meanwhile, or does not answer: the window and the other popups are still read
+                truncated |= !read.Success;
+                reason ??= read.Success ? null : UIElementTruncationReason.ElementsSkipped;
+                continue;
+            }
+
+            Append(text, $"# popup {(long)popup.Handle} {popup.Kind}{(string.IsNullOrEmpty(popup.Title) ? "" : $" {Quote(popup.Title)}")}");
+            Append(text, UIElementTextFormat.ToText(elements));
+            count += read.TotalElementCount;
+            popupBudget -= read.TotalElementCount;
+            if (read.Truncated)
+            {
+                truncated = true;
+                reason ??= read.TruncationReason;
+            }
+        }
+
+        var remaining = request.MaxElements - count;
+        if (remaining <= 0)
+        {
+            return new ElementsWalk(Elements(text, count, true, UIElementTruncationReason.MaxElements, scope, null), null);
+        }
+
+        var result = await _elements.GetUIElementsAsync(window, MaxDepth, Filter(request, remaining, warmupBudget), null, stop)
+            .ConfigureAwait(false);
+        if (!result.Success)
+        {
+            var error = new DesktopStateError("elements", result.ErrorCode.ToString(),
+                result.Error ?? "The window's elements could not be read.");
+            return new ElementsWalk(count > 0 ? Elements(text, count, true, reason ?? UIElementTruncationReason.ElementsSkipped, scope, null) : null,
+                error);
+        }
+
+        if (result.Elements is { Count: > 0 } windowElements)
+        {
+            if (text.Length > 0)
+            {
+                Append(text, $"# window {(long)window}{(string.IsNullOrEmpty(title) ? "" : $" {Quote(title)}")}");
+            }
+
+            Append(text, UIElementTextFormat.ToText(windowElements));
+            count += result.TotalElementCount;
+        }
+
+        if (result.Truncated)
+        {
+            truncated = true;
+            reason = result.TruncationReason ?? reason;
+        }
+
+        return new ElementsWalk(Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup), null);
+    }
+
+    private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget) => new(
+        InteractableOnly: request.InteractableOnly,
+        VisibleOnly: true,
+        MaxElements: maxElements,
+        AccessibilityWarmupBudget: warmupBudget);
+
+    private static DesktopElements Elements(
+        StringBuilder text, int count, bool truncated, UIElementTruncationReason? reason, ElementSearchScope scope,
+        AccessibilityWarmupInfo? warmup) =>
+        new(text.Length == 0 ? null : text.ToString(), count, truncated, reason, scope, warmup);
+
+    private static void Append(StringBuilder text, string lines)
+    {
+        if (text.Length > 0)
+        {
+            text.Append('\n');
+        }
+
+        text.Append(lines);
+    }
+
+    /// <summary>A title in single quotes, as the element lines quote names (a quote or backslash escaped, at most 100 characters).</summary>
+    private static string Quote(string value)
+    {
+        var cut = value.Length > UIElementTextFormat.MaxNameLength ? value[..UIElementTextFormat.MaxNameLength] + "…" : value;
+        return "'" + cut.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("'", "\\'", StringComparison.Ordinal)
+            .Replace('\n', ' ').Replace('\r', ' ') + "'";
+    }
+
+    private static DesktopFocus? FocusOf(FocusedElementResult focused, List<DesktopStateError> errors)
+    {
+        if (!focused.Success || focused.Element is not { } element)
+        {
+            errors.Add(new DesktopStateError("focus", focused.ErrorCode.ToString(), focused.Error ?? "No element has keyboard focus."));
+            return null;
+        }
+
+        // The value is left out: get_focused_element reads it when it is needed (never for a password field)
+        return new DesktopFocus(element.Ref, element.ControlType, element.Name, NullIfEmpty(element.AutomationId), element.Bounds,
+            focused.WindowHandle, focused.ProcessName, element.IsPassword ? true : null);
+    }
+
+    private static IReadOnlyList<ActivePopup>? PopupsOf(ActivePopupsResult result, List<DesktopStateError> errors)
+    {
+        if (result.Success)
+        {
+            return result.Popups ?? [];
+        }
+
+        errors.Add(new DesktopStateError("popups", result.ErrorCode.ToString(), result.Error ?? "The popups could not be read."));
+        return null;
+    }
+
+    private static DesktopWindowRow Row(WindowInfo window) => new(
+        window.Handle, window.Title, window.ProcessName, window.State.ToString().ToLowerInvariant(), window.MonitorIndex,
+        window.IsAgentHost ? true : null);
+
+    /// <summary>
+    /// The part's result, or null after adding why there is none: it did not finish by the deadline (OperationTimedOut) or it
+    /// failed (OperationException).
+    /// </summary>
+    private static T? Collect<T>(Task<T>? part, string section, int timeoutMs, List<DesktopStateError> errors)
+        where T : class
+    {
+        if (part is null)
+        {
+            return null;
+        }
+
+        if (part.IsCompletedSuccessfully)
+        {
+            return part.Result;
+        }
+
+        if (!part.IsCompleted || part.IsCanceled || part.Exception?.InnerException is OperationCanceledException or TimeoutException)
+        {
+            errors.Add(new DesktopStateError(section, nameof(UIElementErrorCode.OperationTimedOut),
+                $"Not read within the call's deadline ({timeoutMs.ToString(CultureInfo.InvariantCulture)} ms, timeoutMs): an " +
+                "application may be slow or not responding. The rest of the observation is complete; read this part again, " +
+                "with a longer timeoutMs or its own tool."));
+            return null;
+        }
+
+        errors.Add(new DesktopStateError(section, nameof(UIElementErrorCode.OperationException),
+            $"Could not be read: {part.Exception?.InnerException?.Message ?? "unknown error"}"));
+        return null;
+    }
+
+    private static readonly string[] SectionOrder = ["target", "windows", "focus", "popups", "elements", "screenshot"];
+
+    private static IReadOnlyList<DesktopStateError> Ordered(List<DesktopStateError> errors) =>
+        errors.OrderBy(e => Array.IndexOf(SectionOrder, e.Section)).ToList();
+
+    private static DesktopState Failed(nint window, Stopwatch watch) => new(
+        Success: false,
+        WindowHandle: window,
+        WindowTitle: null,
+        Foreground: null,
+        Focus: null,
+        Cursor: null,
+        Input: new DesktopInputState(false),
+        Windows: null,
+        WindowCount: null,
+        Popups: null,
+        Elements: null,
+        Screenshot: null,
+        Errors: null,
+        ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1),
+        Error: $"{(long)window} is no window (it closed, or the handle is wrong). Nothing was read. Call get_desktop_state without " +
+               "handle or window for the window in front, or find the window again with find_windows.",
+        ErrorCode: nameof(UIElementErrorCode.InvalidHandle));
+
+    /// <summary>Starts an async read so that one that throws before its first await is reported like one that fails later.</summary>
+    private static Task<T> Start<T>(Func<Task<T>> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException<T>(ex);
+        }
+    }
+
+    /// <summary>A cheap read that must not fail the observation: null when it throws.</summary>
+    private static T? Read<T>(Func<T?> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return default;
+        }
+    }
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    private sealed record Target(nint Handle, string? Title, DesktopStateError? Refusal, bool Invalid = false);
+
+    private sealed record ElementsWalk(DesktopElements? Elements, DesktopStateError? Error);
+}

@@ -191,6 +191,29 @@ public static class TypicalDesktop
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
 
+    /// <summary>The first <paramref name="max"/> elements in reading order, as a walk stopped at maxElements keeps them (get_desktop_state asks for 80).</summary>
+    public static IReadOnlyList<UIElementInfo> Take(IReadOnlyList<UIElementInfo> elements, int max)
+    {
+        var left = max;
+        return Cut(elements);
+
+        IReadOnlyList<UIElementInfo> Cut(IReadOnlyList<UIElementInfo> level)
+        {
+            var kept = new List<UIElementInfo>();
+            foreach (var element in level)
+            {
+                if (left-- <= 0)
+                {
+                    break;
+                }
+
+                kept.Add(element.Children == null ? element : element with { Children = Cut(element.Children) });
+            }
+
+            return kept;
+        }
+    }
+
     public static UIElementDetails FocusedEdit { get; } = new(
         Name: "Search",
         ControlType: "Edit",

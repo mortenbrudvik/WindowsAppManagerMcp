@@ -1,3 +1,4 @@
+| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs | 2,129 | 3,200 |
 # Testing Guide
 
 > **WindowsAppManagerMcp** | .NET 8.0 | xUnit | Moq

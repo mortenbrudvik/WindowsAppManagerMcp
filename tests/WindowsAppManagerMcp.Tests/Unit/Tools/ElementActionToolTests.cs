@@ -46,7 +46,7 @@ public class ElementActionToolTests
     public async Task ARef_IsActedOn_Normalized()
     {
         // Act
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, @ref: "W1E7");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, @ref: "W1E7").Payload<ElementActionResult>();
 
         // Assert
         result.Success.Should().BeTrue();
@@ -60,7 +60,7 @@ public class ElementActionToolTests
     {
         // Act
         var result = await CreateSut().ElementAction(ElementActionKind.Toggle, handle: Handle, name: "wrap", nameMatch: ElementNameMatch.Contains,
-            automationId: "WrapBox", controlType: "CheckBox, Button", className: "Btn", value: "on", timeoutMs: 2000);
+            automationId: "WrapBox", controlType: "CheckBox, Button", className: "Btn", value: "on", timeoutMs: 2000).Payload<ElementActionResult>();
 
         // Assert
         result.Success.Should().BeTrue();
@@ -79,7 +79,7 @@ public class ElementActionToolTests
     {
         _found = Found(3, Element("w1e7"), Element("w1e8"));
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete").Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("AmbiguousElement");
         result.Error.Should().Contain("3 elements").And.Contain("w1e7").And.Contain("w1e8");
@@ -91,7 +91,7 @@ public class ElementActionToolTests
     {
         _found = Found(0);
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, automationId: "Missing");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, automationId: "Missing").Payload<ElementActionResult>();
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be("ElementNotFound");
@@ -102,7 +102,7 @@ public class ElementActionToolTests
     {
         _found = Found(1, Element("w1e7")) with { Truncated = true, TruncationReason = ElementSearchTruncation.Timeout };
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save").Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("OperationTimedOut");
         _actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -114,7 +114,7 @@ public class ElementActionToolTests
         _found = new FindElementsResult(false, Handle, null, 0, false, null, 1, Error: "The window is not responding.",
             ErrorCode: UIElementErrorCode.NotResponding);
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save").Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("NotResponding");
     }
@@ -202,11 +202,119 @@ public class ElementActionToolTests
             Scope = ElementSearchScope.WindowAndPopups, TruncationReason = ElementSearchTruncation.WindowLimit
         };
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete");
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete").Payload<ElementActionResult>();
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
         result.Error.Should().Contain("every window of its scope").And.Contain("WindowLimit");
         _actions.VerifyNoOtherCalls();
     }
+
+    #region observe (roadmap M3.12)
+
+    private readonly Mock<IDesktopStateService> _desktopState = new();
+    private readonly Mock<IWindowService> _windows = new();
+
+    private ElementActionTools CreateObservingSut()
+    {
+        _windows.Setup(w => w.IsValidWindow(Handle)).Returns(true);
+        _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DesktopStateRequest request, CancellationToken _) => new DesktopStateSnapshot(
+                new DesktopState(true, request.Window ?? 0x77, "after", null, null, null, new DesktopInputState(false), null, null, null,
+                    null, null, null, 9),
+                request.Include.Contains(DesktopStateSection.Screenshot) ? new EncodedImage([1, 2, 3], "image/png") : null));
+        return new ElementActionTools(_actions.Object, _search.Object, _registry.Object, _windows.Object, _desktopState.Object);
+    }
+
+    [Fact]
+    public async Task WithoutObserve_TheResultIsTheActionsAlone()
+    {
+        var result = await CreateObservingSut().ElementAction(ElementActionKind.Invoke, @ref: "w1e7");
+
+        result.Content.Should().ContainSingle();
+        result.Payload<ElementActionResult>().Observed.Should().BeNull();
+        _desktopState.Verify(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ObserveState_AddsTheObservationOfTheElementsWindow_AfterTheAction()
+    {
+        // Arrange - the observation is read only once the action returned
+        var order = new List<string>();
+        _actions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("act"))
+            .ReturnsAsync((ElementActionRequest request, CancellationToken _) =>
+                new ElementActionResult(true, "invoke", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.Invoke));
+        var sut = CreateObservingSut();
+        _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window}"))
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, null, null, new DesktopInputState(false),
+                null, null, null, null, null, null, 9), null));
+
+        // Act
+        var result = await sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.State);
+
+        // Assert
+        order.Should().Equal("act", $"observe {Handle}");
+        var payload = result.Payload<ElementActionResult>();
+        payload.Success.Should().BeTrue();
+        payload.Observed!.WindowHandle.Should().Be(Handle);
+        result.Content.Should().ContainSingle("no capture was asked for");
+    }
+
+    [Fact]
+    public async Task ObserveState_ReadsTheWindowInFront_OnceTheElementsWindowClosed()
+    {
+        var sut = CreateObservingSut();
+        _windows.Setup(w => w.IsValidWindow(Handle)).Returns(false);
+        DesktopStateRequest? observed = null;
+        _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DesktopStateRequest request, CancellationToken _) => observed = request)
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0x77, null, null, null, null, new DesktopInputState(false),
+                null, null, null, null, null, null, 9), null));
+
+        await sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.State);
+
+        observed!.Window.Should().BeNull("the dialog the action closed is gone; the window in front is what the agent sees next");
+        observed.Include.Should().BeEquivalentTo(DesktopStateRequest.DefaultInclude);
+    }
+
+    [Fact]
+    public async Task ObserveScreenshot_PutsTheCaptureFirst()
+    {
+        var result = await CreateObservingSut().ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.Screenshot);
+
+        result.Content.Should().HaveCount(2);
+        result.Content[0].Should().BeOfType<ModelContextProtocol.Protocol.ImageContentBlock>();
+        result.Payload<ElementActionResult>().Observed.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task AFailedAction_IsStillObserved_AndStaysAnError()
+    {
+        _found = Found(0);
+
+        var result = await CreateObservingSut().ElementAction(ElementActionKind.Invoke, handle: Handle, automationId: "Missing",
+            observe: ObserveMode.State);
+
+        result.IsError.Should().BeTrue();
+        var payload = result.Payload<ElementActionResult>();
+        payload.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
+        payload.Observed.Should().NotBeNull("what is there helps after ElementNotFound");
+    }
+
+    [Fact]
+    public async Task ObserveScreenshot_IsRefusedBeforeAnythingIsDone_WhenCapturesAreOff()
+    {
+        var sut = CreateObservingSut();
+        _desktopState.Setup(s => s.ScreenshotUnavailable()).Returns("A screenshot needs capture_window.");
+
+        var error = await RefusedAsync(() => sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.Screenshot));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("capture_window").And.EndWith("Nothing was done.");
+        _actions.VerifyNoOtherCalls();
+    }
+
+    #endregion
 }

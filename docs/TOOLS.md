@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 61 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 62 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ A comprehensive guide to all 61 MCP tools for managing Windows applications, win
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
 | [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
-| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) | 9 |
+| [UI Automation](#ui-automation) | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [element_action](#element_action), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) | 10 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
 | [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) | 7 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
@@ -104,7 +104,7 @@ to do anything for it, and cannot turn it off.
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
     (`argumentsCount`). Only the strings that name a process, a layout preset or a fixed value (`processName`,
     `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`, and
-    element_action's `ref`, `action`, `mode`, `direction`, `amount` and `fallback`) are kept; element_action's `value` is
+    element_action's `ref`, `action`, `mode`, `direction`, `amount`, `fallback` and `observe`) are kept; element_action's `value` is
     recorded as `valueLength`, and its result's `method` and `status` are kept (whether it used a pattern or moved the
     pointer or typed, and whether it left a dialog pending); a mouse tool's `captureId` is recorded as its length, and its `x` and `y` and the result's converted `x` and `y`
     as numbers.
@@ -248,7 +248,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `windows` | on | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
-| `elements` | on | UI Automation: element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
+| `elements` | on | UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, an element's text and a table's cells. | [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element) |
 | `input` | on | Guarded mouse and keyboard input to a named window, and actions on UI elements through UI Automation patterns. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys), [element_action](#element_action) |
 | `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
@@ -262,7 +262,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 **Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 26 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
+Read-only mode serves these 27 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_desktop_state](#get_desktop_state), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -2174,7 +2174,7 @@ Each element carries its [ref](#ui-automation), the same one get_ui_elements and
 
 ## UI Automation
 
-Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class (also in the window's open menus, dropdowns and dialogs), the element that has keyboard focus, the element at a screen point, an app's open popups, an element's text and a table's cells, and a wait for an element's state. They only read; none of them clicks, types or changes focus. [element_action](#element_action) acts on an element they found, through its UI Automation patterns. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
+Tools for reading UI elements through Windows UI Automation: one observation of the desktop with the elements of a window ([get_desktop_state](#get_desktop_state), the first call to make), the element tree of a window, a search for elements by name, automation id, control type and class (also in the window's open menus, dropdowns and dialogs), the element that has keyboard focus, the element at a screen point, an app's open popups, an element's text and a table's cells, and a wait for an element's state. They only read; none of them clicks, types or changes focus. [element_action](#element_action) acts on an element they found, through its UI Automation patterns. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
 **Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search ([element_action](#element_action), [wait_for_element](#wait_for_element), [read_element_text](#read_element_text), [read_table](#read_table) and [find_ui_elements](#find_ui_elements)' `withinRef` take it). The rules:
 - The same element keeps its ref in every read of the server session, whichever tool read it: a ref is tied to the element's UI Automation runtime id and its window, and checked against its control type, automation id and class. A list, tree or grid item without an automation id is also checked against its name, because a scrolling list reuses an item's element for another row: the row it shows now gets a new ref.
@@ -2196,6 +2196,89 @@ Tools for reading UI elements through Windows UI Automation: the element tree of
 A window that got its page is remembered (until it closes), so later reads do not wait and carry no `accessibilityWarmup`; a window that stayed empty is waited for again, at most three times, and after that only checked. Only the window being read is asked: nothing global is changed, and no other application is touched. A window without a page (any native app, or a menu of the browser frame) is read as before.
 
 **UI frameworks.** Elements say which UI framework provides them (`frameworkId`: `Win32`, `WPF`, `XAML`, `WinForm`, `DirectUI`, `Chrome` for web content, ...). get_focused_element, get_element_at_point and its `ancestors` name it on every element (find_ui_elements with `detail: "full"`); get_ui_elements names the window's at the top (`frameworkId`) and an element's only where it differs from the element it is inside, so a web page in a native frame shows where it starts (`Document 'Inbox' fw=Chrome` in the text format) without repeating it on every element.
+
+### get_desktop_state
+
+One compact observation of the desktop, and the recommended first call: what the agent needs to get oriented, with refs it can act on, in one call instead of get_foreground_window, find_windows, get_focused_element, get_active_popups and get_ui_elements one after another. Call it again after acting (or pass `observe` to [element_action](#element_action)). It only reads: it sends no input, activates no window and runs without the input gate, so it also works while the user has paused input.
+
+<!-- tools:begin params:get_desktop_state -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | integer | No | - | Window handle (as integer) to read the elements, popups and capture of. Pass handle or window, or neither for the window in front. |
+| window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
+| include | string (one of: `"windows"`, `"focus"`, `"elements"`, `"popups"`, `"screenshot"`)[] | No | - | What to read besides the window in front, the cursor, the keys and the pause (always read): 'windows', 'focus', 'elements', 'popups' (default: all four) and 'screenshot' (off by default; needs capture_window to be served). |
+| maxElements | integer | No | 80 | The most element lines, the popups' and the window's together (default: 80, min: 1, max: 500). The walk reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more (read them with get_ui_elements or find_ui_elements). |
+| interactableOnly | boolean | No | true | Only elements that are enabled and keyboard-focusable or have an action pattern (default: true). Pass false to also list labels, texts and containers. |
+| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' line). Default: windowAndPopups when the window or one of its popups is in front, else window, as find_ui_elements. |
+| maxWindows | integer | No | 20 | The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are. |
+| screenshotMaxLongEdge | integer | No | 1280 | The screenshot's long edge in pixels (default: 1280, min: 256, max: 1568). |
+| timeoutMs | integer | No | 5000 | The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000). |
+<!-- tools:end params:get_desktop_state -->
+
+**What it reads.** Always, because they cost nothing: the window in front (`foreground`), the mouse pointer (`cursor`), and `input`: whether the user paused the server's input with the pause hotkey (`paused`, `pausedBy`: input tools then return `PausedByUser`), the modifier keys Windows reports down (`modifiersDown`, as [get_control_status](#get_control_status) reads them: input tools return `ModifiersHeld` while one is) and whether Caps Lock is on (`capsLock`). Then, as `include` says (default: the first four):
+
+| Section | Field | What it is |
+|---------|-------|------------|
+| `windows` | `windows`, `windowCount` | The user-facing windows front first, as [get_all_windows](#get_all_windows) lists them (no cloaked, tool, untitled or shell windows), at most `maxWindows`, each a compact row: `handle`, `title`, `process`, `state` (`normal`, `minimized`, `maximized`), `monitor` (its index) and `isAgentHost: true` for your own terminal or editor. `windowCount` is how many there are |
+| `focus` | `focus` | The element with keyboard focus: `ref`, `controlType`, `name`, `automationId`, `bounds`, `windowHandle`, `processName`, `isPassword: true` for a password field. Its value is never returned here ([get_focused_element](#get_focused_element) reads it, never for a password field) |
+| `popups` | `popups` | The target window's open menus, dropdowns, flyouts and dialogs, front first, as [get_active_popups](#get_active_popups) returns them (`ref`, `handle`, `kind`, `title`, `isBlocking`, ...) |
+| `elements` | `elements` | The target window's elements as [get_ui_elements](#get_ui_elements)' text format, one line per element with its ref first (`text`), with `count`, `truncated`, `truncationReason`, `scope` and `accessibilityWarmup` (see below) |
+| `screenshot` | `screenshot` and an image | A capture of the target window as [capture_window](#capture_window) makes it (the visible frame, JPEG or PNG, `screenshotMaxLongEdge` on the long edge), as image content before the JSON; `screenshot` has its metadata: `captureId` (for the mouse tools' image space), `imageToScreen`, `width`, `height`, `warnings`. Off by default |
+
+**The target window.** The elements, popups and screenshot are of the window named by `handle` or `window`, or else the window in front. The window in front is not read when it is your own host window (your terminal, editor or chat app: it holds the conversation, not the app you mean; error `TargetIsAgentHost`) or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`), or when no window is in front (`NoForegroundWindow`); the rest is still returned, and the `windows` rows give you a handle to name. A named window is read as get_ui_elements reads it. The screenshot follows capture_window: never of a window the policy denies (`TargetDeniedByPolicy`, named or not), and refused before anything is read (`InvalidArguments`) when capture_window is not served (the `capture` toolset turned off, the tool excluded, or read-only mode). A minimized window is not captured (`WindowMinimized` in `errors`), and its elements are offscreen.
+
+**Elements.** The walk is get_ui_elements' (the hung-window check, `NotResponding`; the web-content warm-up; every element gets its ref), with `interactableOnly` (default true: enabled elements that are keyboard-focusable or have an action pattern), on-screen elements only, up to 10 levels deep and at most `maxElements` lines (default 80), breadth first. `scope` is find_ui_elements' [scope](#find_ui_elements) and has the same default: while the window (or one of its popups) is in front, its open popups (not tooltips) are walked first, front first, within half of `maxElements`, and then the window with what is left; each window's lines then follow a header line that starts with `#`:
+
+```
+# popup 2493112 Menu
+w4120036e2 MenuItem 'Undo' @616,248 260x28
+w4120036e3 MenuItem 'Delete' @616,276 260x28
+# window 1706796 'notes.txt - Notepad'
+w4120035e17 Button 'Save' @812,44 80x24
+w4120035e18 Edit 'Search' @320,96 480x28
+```
+
+A popup element's ref belongs to the popup's own window (it is stale once the popup closes). `scope: "window"` walks the window alone; `"desktop"` is refused (`InvalidArguments`: use [find_ui_elements](#find_ui_elements)). `truncated: true` with `truncationReason` `MaxElements` means there are more: find the control with find_ui_elements or read the window with get_ui_elements.
+
+**One deadline.** The parts run side by side, and `timeoutMs` (default 5000) covers the whole call. A part that has not answered by then, or that fails, is left out and listed in `errors` as `{section, errorCode, error}` with the code its own tool would return (`OperationTimedOut`, `NotResponding`, `TargetIsAgentHost`, `WindowMinimized`, ...); `section` is `windows`, `focus`, `popups`, `elements`, `screenshot`, or `target` when the window in front was not read. The walk is asked to stop a little before the deadline, so it returns what it read so far (`truncationReason: Timeout`). `success` is false only when the window named by `handle` is no window (`InvalidHandle`); a selector that names no single window fails as in every tool (`WindowNotFound`, `AmbiguousWindow`).
+
+The JSON of this tool (and of element_action's `observed`) writes quotes, apostrophes and non-ASCII text as they are rather than as `\u0027`-style escapes, which keeps the element lines short; it is ordinary JSON.
+
+**Example:**
+> "What is on the screen?"
+
+```json
+{ "name": "get_desktop_state", "arguments": {} }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "windowHandle": 1706796,
+  "windowTitle": "notes.txt - Notepad",
+  "foreground": { "handle": 1706796, "title": "notes.txt - Notepad", "processName": "Notepad", "processId": 10244 },
+  "focus": { "ref": "w4120035e18", "controlType": "Document", "name": "Text editor", "bounds": { "x": 8, "y": 120, "width": 1264, "height": 700 }, "windowHandle": 1706796, "processName": "Notepad" },
+  "cursor": { "x": 640, "y": 480 },
+  "input": { "paused": false, "capsLock": false },
+  "windows": [
+    { "handle": 1706796, "title": "notes.txt - Notepad", "process": "Notepad", "state": "normal", "monitor": 0 },
+    { "handle": 3147228, "title": "pwsh in WindowsAppManagerMcp", "process": "WindowsTerminal", "state": "maximized", "monitor": 0, "isAgentHost": true }
+  ],
+  "windowCount": 2,
+  "popups": [],
+  "elements": {
+    "text": "w4120035e2 MenuItem 'File' @12,40 40x24\nw4120035e3 MenuItem 'Edit' @52,40 40x24\nw4120035e17 Button 'Settings' @1236,40 32x24\nw4120035e18 Document 'Text editor' @8,120 1264x700",
+    "count": 4,
+    "truncated": false,
+    "scope": "window"
+  },
+  "elapsedMilliseconds": 312.4
+}
+```
+
+---
 
 ### get_ui_elements
 
@@ -2487,6 +2570,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 | fallback | string (one of: `"none"`, `"mouse"`) | No | "none" | When no pattern does invoke, click or select: 'none' (default: PatternNotSupported, nothing is done) or 'mouse' (bring the window to the front and send a guarded click at the element's click point, with every input check; it moves the pointer and takes the foreground). |
 | allowHostTarget | boolean | No | false | Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
 | timeoutMs | integer | No | 5000 | How long the action may block, for example on a dialog it opened, and the bound of each read, in milliseconds (default: 5000, min: 1000, max: 30000). |
+| observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default observation of the element's window, or of the window in front once that closed, as observed) or 'screenshot' (as state, plus a capture of that window as image content with a captureId; needs capture_window to be served). |
 <!-- tools:end params:element_action -->
 
 **Naming the element.** Pass `ref` from an earlier read ([find_ui_elements](#find_ui_elements), [get_ui_elements](#get_ui_elements), ...). Or pass `handle` or `window` with element criteria (`name`, `nameMatch`, `automationId`, `controlType`, `className`) and optionally `scope`, which find_ui_elements' search resolves, offscreen and disabled elements included. `scope` is find_ui_elements' [scope](#find_ui_elements): left out, the window's open menus, dropdowns and dialogs are searched too while the window (or one of them) is in front, so `invoke` on a menu item works by criteria once the menu is open; `window` searches the window alone, `desktop` every visible window too (the named one first). The criteria must match exactly one element of the windows searched: several are `AmbiguousElement` (with the first refs; a button of the window and an item of its open menu with the same name are two), none is `ElementNotFound`, and a search that did not cover the whole window in time, or left popups or windows of its scope out (`WindowLimit`), is `OperationTimedOut` (nothing was done in each case). An element of a popup is acted on as an element of the popup's own window, which the target checks below are made for. A stale ref is `ElementStale` or `AmbiguousElement` (see [Element refs](#ui-automation)): find the element again, never act on a look-alike. An element inside a recycled list row whose own identity does not change (a row's check box) can still resolve after the row changed, so check `before` (or read the row) before a destructive action.
@@ -2524,6 +2608,8 @@ An action whose state is already reached (`toggle` to its state, `expand` an exp
 **Actions that wait for a dialog.** A Win32 Invoke, Toggle, Expand or a close returns only when a modal dialog it opened closes. Every pattern call runs on a thread of its own, apart from the UI Automation reads, so the dialog can still be read; when the call has not returned after `timeoutMs`, the result has `status: "InvokedPendingModal"` and the new window of the application as `openedPopup`: read and answer it (find_ui_elements with its handle), then read the element again. When no new window appeared, the call fails with `ActionTimedOut`: the action may still take effect, so read the element's state before you repeat it. While two actions on an application (six over all) are still blocked, a new one on it is refused (`ActionsPending`).
 
 **Focus and the foreground.** Pattern actions do not move keyboard focus or the foreground: under the default UIA3 engine the server turns UI Automation's AutoSetFocus off, so an Invoke on a background window leaves the user's window in front. `focus`, the mouse paths and the keyboard paths bring the window to the front on purpose. With `WAM_UIA_ENGINE=uia2` (the managed client has no such switch) a provider may still move focus.
+
+**Observe after acting** (roadmap M3.12). `observe: "state"` adds `observed`: [get_desktop_state](#get_desktop_state)'s default observation (windows, focus, popups, elements with refs) of the element's window, read after the action, or of the window in front once the action closed that window. `observe: "screenshot"` adds a capture of that window too, as image content before the JSON (`observed.screenshot` has its `captureId`); it is refused before anything is done (`InvalidArguments`) when capture_window is not served. The observation is read after the action released the input gate and is made also when the action failed (what is there helps after `ElementNotFound`); a part it could not read is listed in `observed.errors`, never failing the action. Default `none`: the result is the action's alone. Other action tools may gain `observe` later.
 
 **Example:**
 > "Turn on word wrap in the editor"
@@ -2565,6 +2651,7 @@ An action whose state is already reached (`toggle` to its state, `expand` an exp
 - `openedPopup`: a new top-level window of the element's application that appeared during the action (a dialog, a menu, a dropdown list): `handle`, `title`, `className`, `processId`, `processName`; the topmost when several did.
 - `scroll`: for `scroll`: `horizontalPercent` and `verticalPercent` (absent for an axis that cannot scroll), `atEnd` in the direction asked, and `containerRef` when the scrolled container is an ancestor.
 - `receivingWindow`: for a mouse or keyboard path, the window the input went to.
+- `observed`: with `observe`, the observation after the action (see above); serialized last.
 - `warnings`: what was done differently or could not be checked (the MSAA default action used, a value read back different, a new window, ...).
 
 **Error Codes:** besides those above, `ActionFailed` (the application refused the action; `before` shows the state), `InvalidArguments` (a missing or unfit `value`, `mode` or `direction`, both `ref` and criteria, a top-level window for a `window_*` action), and the input path's codes for the mouse and keyboard paths.
@@ -5590,6 +5677,14 @@ Since 1.14.0 (roadmap M3):
   its scope out (`WindowLimit`) no longer counts as proof of exactly one match: read_element_text and element_action
   refuse it with `OperationTimedOut`, as they refuse a search that timed out. element_action's error codes are
   UI element codes, so `PatternNotSupported` is one code for read_table and element_action.
+- **get_desktop_state and element_action's observe (roadmap M3.12, after 1.14.0).** A new read-only tool in the
+  `elements` toolset, [get_desktop_state](#get_desktop_state), returns in one call the window in front, the cursor, the
+  modifiers down, Caps Lock, the pause, the windows as compact rows, the focused element, the target window's popups and
+  its elements as text lines with refs, and optionally a capture; the server instructions and the skill now make it the
+  first call. [element_action](#element_action) takes `observe` (`none`, the default, `state`, `screenshot`) and then
+  returns the observation after the action as `observed` (and the capture as image content first). element_action's
+  result is now built by the tool (a `CallToolResult`, as the captures): without `observe` its JSON is unchanged. The
+  audit log keeps element_action's `observe` value. The server instructions were tightened to make room (same rules).
 
 ## Error Codes
 
