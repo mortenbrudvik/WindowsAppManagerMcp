@@ -443,6 +443,40 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public async Task GetUIElements_InteractableOnlyAndActionableOnly_KeepOnlyTheElementsThatPassBoth()
+    {
+        // Arrange - capture_with_elements(interactableOnly: true) also turns actionableOnly on by default
+        Window(
+            new FakeUiaNode("Pane", "Focusable pane") { IsKeyboardFocusable = true },
+            new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Button", "Off") { IsEnabled = false, ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Edit", "Field") { IsKeyboardFocusable = true, ActionPatterns = ["Value"] });
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(InteractableOnly: true, ActionableOnly: true));
+
+        // Assert - the focusable pane has no action pattern and the disabled button is not interactable
+        Shape(result.Elements).Should().Be("Go,Field");
+    }
+
+    [Fact]
+    public async Task GetUIElements_InteractableOnlyAndActionableOnly_ReadOneAtATime_KeepOnlyTheElementsThatPassBoth()
+    {
+        // Arrange - the cached fetch fails, so each element's focus and patterns are read on their own
+        Window(
+            new FakeUiaNode("Pane", "Focusable pane") { IsKeyboardFocusable = true },
+            new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Button", "Off") { IsEnabled = false, ActionPatterns = ["Invoke"] })
+            .CachedChildrenException = new System.Runtime.InteropServices.COMException("cache request failed");
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(InteractableOnly: true, ActionableOnly: true));
+
+        // Assert
+        Shape(result.Elements).Should().Be("Go");
+    }
+
+    [Fact]
     public async Task GetUIElements_ActionableOnly_ReadOneAtATime_ReadsThePatternsOfTheCandidatesOnly()
     {
         // Arrange - the cached fetch fails, so the children are read one at a time

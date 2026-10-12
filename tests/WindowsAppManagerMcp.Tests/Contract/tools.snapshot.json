@@ -472,7 +472,7 @@
             "default": 5000
           },
           "maxElements": {
-            "description": "Stop once this many elements are marked (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.",
+            "description": "Stop the walk once this many elements are found (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. An element without bounds or outside the image gets no mark, so there can be fewer marks. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.",
             "type": "integer",
             "default": 80
           },

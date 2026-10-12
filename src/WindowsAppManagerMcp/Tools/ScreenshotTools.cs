@@ -325,8 +325,8 @@ public class ScreenshotTools
         bool highlightInteractable = true,
         [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000")]
         int timeoutMs = 5000,
-        [Description("Stop once this many elements are marked (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. " +
-                     "The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.")]
+        [Description("Stop the walk once this many elements are found (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. " +
+                     "An element without bounds or outside the image gets no mark, so there can be fewer marks. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.")]
         int maxElements = DefaultMaxMarks,
         [Description("Draw each mark's ref as a filled tag at its box. Default: true. false draws the boxes only.")]
         bool labels = true,
@@ -496,8 +496,9 @@ public class ScreenshotTools
     private sealed record ElementArea(BoundsDto? Bounds, string? Ref, CallToolResult? Failure);
 
     /// <summary>
-    /// Resolves the ref (its live element, found again if it was re-created; ElementStale, AmbiguousElement, NotResponding or
-    /// OperationTimedOut otherwise) and returns its bounds with the padding. An offscreen element, or one without bounds,
+    /// Resolves the ref (its live element, found again if it was re-created; otherwise the resolution's code: ElementStale,
+    /// AmbiguousElement, WindowNotFound when UI Automation cannot read the window, NotResponding, OperationTimedOut or
+    /// OperationException) and returns its bounds with the padding. An offscreen element, or one without bounds,
     /// is ElementOffscreen.
     /// </summary>
     private async Task<ElementArea> ElementAreaAsync(RefCrop element, CancellationToken cancellationToken)

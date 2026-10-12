@@ -48,7 +48,7 @@ public interface IElementRegistry
 {
     /// <summary>
     /// A new read generation: each read that registers elements takes one, and its entries remember it, so a later caller
-    /// can tell which read last saw an element (M3.11 ties a capture's marks to it). Also drops the entries of windows that
+    /// can tell which read last saw an element (kept for a future tie between reads, such as a capture and its marks). Also drops the entries of windows that
     /// are gone.
     /// </summary>
     long NextGeneration();
