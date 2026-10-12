@@ -594,7 +594,7 @@ public class Uia3TreeTests
     [Fact]
     public void FindAll_OfTheNewerControlTypes_ComparesTheirIds()
     {
-        // The managed client cannot express these at all (UiaTree throws NotSupportedException)
+        // The managed client cannot express these at all (UiaTree throws UiaConditionNotSupportedException)
         var sut = CreateSut();
         var window = new Mock<IUIAutomationElement>();
         var node = NodeOf(sut, window);

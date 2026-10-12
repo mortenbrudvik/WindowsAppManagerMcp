@@ -415,7 +415,7 @@ public sealed class ElementRegistry : IElementRegistry
         {
             return new ElementSearch(_tree, condition, filter, ResolutionKeep).Run(window, cancellationToken);
         }
-        catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
+        catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
         {
             var (serverCondition, serverFilter) = criteria.Compile(controlTypesOnServer: true);
             return new ElementSearch(_tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep)

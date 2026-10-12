@@ -370,7 +370,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                     {
                         outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
                     }
-                    catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
+                    catch (UiaConditionNotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
                     {
                         // The managed client cannot search for AppBar or SemanticZoom: test the control types here, in this
                         // window and the next ones

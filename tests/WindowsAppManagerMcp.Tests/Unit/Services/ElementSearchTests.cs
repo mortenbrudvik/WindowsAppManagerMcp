@@ -225,9 +225,27 @@ public class ElementSearchTests
     {
         // The managed client cannot search for AppBar: the caller tests the control type itself instead
         var window = new FakeUiaNode("Window", "App").With(WideList("A", 60));
-        _tree.OnFindAll = (_, _) => throw new NotSupportedException("uia2");
+        _tree.OnFindAll = (_, _) => throw new UiaConditionNotSupportedException("uia2");
 
-        FluentActions.Invoking(() => Search(window, IsButton)).Should().Throw<NotSupportedException>();
+        FluentActions.Invoking(() => Search(window, IsButton)).Should().Throw<UiaConditionNotSupportedException>();
+    }
+
+    [Fact]
+    public void Run_APartWhoseProviderDoesNotSupportTheSearch_IsSkipped_AndTheOthersAreSearched()
+    {
+        // Arrange - the second part's provider answers UIA_E_NOTSUPPORTED, which the UIA3 engine turns into a
+        // NotSupportedException: that provider's failure, not the engine's
+        var second = WideList("Second", 60);
+        second.FindAllException = new NotSupportedException("The element's provider does not support this (HRESULT 0x80040204).");
+        var window = new FakeUiaNode("Window", "App").With(WideList("First", 60), second, WideList("Third", 60));
+
+        // Act
+        var outcome = Search(window, IsButton, keep: 200);
+
+        // Assert
+        outcome.MatchCount.Should().Be(120);
+        outcome.Matches.Select(m => m.Properties.Name).Should().Contain("First 1").And.Contain("Third 60");
+        outcome.SkippedParts.Should().Be(1);
     }
 
     [Fact]

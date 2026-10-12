@@ -1,4 +1,5 @@
 using WindowsAppManagerMcp.Models;
+using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -510,7 +511,7 @@ public sealed class UiaTree : IUiaTree
         var id = UiaControlTypes.GetId((string)value) ??
                  throw new ArgumentException($"'{value}' is not a control type name.", nameof(value));
         return ControlType.LookupById(id) ??
-               throw new NotSupportedException(
+               throw new UiaConditionNotSupportedException(
                    $"The managed UI Automation client (WAM_UIA_ENGINE=uia2) cannot search for {value} elements; the UIA3 engine can.");
     }
 
@@ -556,9 +557,12 @@ public sealed class UiaTree : IUiaTree
 
     /// <summary>
     /// Runs a read and reports a vanished element as <see cref="UiaElementUnavailableException"/>,
-    /// the seam's exception, so services do not depend on System.Windows.Automation.
+    /// the seam's exception, so services do not depend on System.Windows.Automation. The managed client passes most
+    /// UI Automation HRESULTs on as a <see cref="COMException"/> (UIA_E_NOTSUPPORTED, RPC_E_DISCONNECTED, ...): those are
+    /// translated as the UIA3 engine translates them (<see cref="UiaComErrors.Translate"/>), so both engines raise the
+    /// same seam exceptions.
     /// </summary>
-    private static T Translate<T>(Func<T> read)
+    public static T Translate<T>(Func<T> read)
     {
         try
         {
@@ -567,6 +571,10 @@ public sealed class UiaTree : IUiaTree
         catch (ElementNotAvailableException ex)
         {
             throw new UiaElementUnavailableException(ex.Message, ex);
+        }
+        catch (COMException ex) when (UiaComErrors.Translate(ex) is { } translated)
+        {
+            throw translated;
         }
     }
 

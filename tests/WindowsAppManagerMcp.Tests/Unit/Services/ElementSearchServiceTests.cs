@@ -142,7 +142,7 @@ public class ElementSearchServiceTests
         {
             if (Compares(condition, UiaProperty.ControlType))
             {
-                throw new NotSupportedException("The managed client cannot search for AppBar elements.");
+                throw new UiaConditionNotSupportedException("The managed client cannot search for AppBar elements.");
             }
         };
 
@@ -151,6 +151,24 @@ public class ElementSearchServiceTests
 
         // Assert
         result.Elements!.Select(e => e.Name).Should().Equal("Item 30");
+    }
+
+    [Fact]
+    public async Task Find_WhenOnePartsProviderDoesNotSupportTheSearch_ReturnsTheOtherParts_WithPartsSkipped()
+    {
+        // Arrange - one list's provider answers UIA_E_NOTSUPPORTED (a NotSupportedException under the UIA3 engine)
+        var broken = new FakeUiaNode("List", "Broken").With(Enumerable.Range(1, 60).Select(i => new FakeUiaNode("Button", $"Broken {i}")).ToArray());
+        broken.FindAllException = new NotSupportedException("The element's provider does not support this (HRESULT 0x80040204).");
+        var good = new FakeUiaNode("List", "Good").With(Enumerable.Range(1, 60).Select(i => new FakeUiaNode("Button", $"Good {i}")).ToArray());
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "App").With(broken, good));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Button"]));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.MatchCount.Should().Be(60);
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
     }
 
     [Fact]

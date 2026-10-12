@@ -12,8 +12,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para>Some actions block until the application returns from them: a Win32 Invoke that opens a modal dialog returns
 /// only when the dialog closes. The UIA3 engine's transaction timeout bounds them; callers still run them on a thread
 /// they can abandon.</para>
-/// <para>Errors are those of <see cref="IUiaTree"/>; an element that is not enabled, or a call the provider does not
-/// support, throws <see cref="InvalidOperationException"/>.</para>
+/// <para>Errors are those of <see cref="IUiaTree"/>; under both engines, a call the provider does not support
+/// (UIA_E_NOTSUPPORTED) throws <see cref="NotSupportedException"/>, and an element that is not enabled, or a call the
+/// provider refuses (UIA_E_INVALIDOPERATION), throws <see cref="InvalidOperationException"/>.</para>
 /// </remarks>
 public interface IUiaPattern
 {
