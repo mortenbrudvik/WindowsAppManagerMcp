@@ -153,6 +153,9 @@ public sealed partial class ElementReadService : IElementReadService
 
         var elementRef = request.Ref;
         AccessibilityWarmupInfo? searchWarmup = null;
+
+        // The criteria's withinRef moved to a re-created element: the element found below it is read, and the result says so
+        string? withinMoved = null;
         if (elementRef == null)
         {
             var query = request.Query ?? throw new ArgumentException("Give a ref or a query.", nameof(request));
@@ -160,6 +163,7 @@ public sealed partial class ElementReadService : IElementReadService
                 .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             searchWarmup = found.AccessibilityWarmup;
+            withinMoved = found.RefMoved == true ? found.Warning : null;
             if (Unique(found, query, out var error, out var code) is not { } match)
             {
                 return TextFailure((long)query.WindowHandle, null, error!, code, stopwatch, searchWarmup) with
@@ -186,11 +190,14 @@ public sealed partial class ElementReadService : IElementReadService
         var warmup = new WarmupSlot(searchWarmup);
         try
         {
-            return await _worker.RunAsync(
+            var result = await _worker.RunAsync(
                 UiaTargets.TargetProcessId(_windows, handle),
                 token => ReadText(lookup.Ref, handle, offset, maxLength, AccessibilityWarmup.BudgetFor(request.Timeout), warmup, stopwatch, token),
                 deadline.Token,
                 TimeSpan.Zero).ConfigureAwait(false);
+            return withinMoved != null && result is { Success: true, RefMoved: null }
+                ? result with { RefMoved = true, Warning = withinMoved }
+                : result;
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
@@ -279,9 +286,13 @@ public sealed partial class ElementReadService : IElementReadService
 
             var node = resolved.Node;
             var controlType = resolved.Element.Properties.ControlType;
+
+            // A ref moved to a re-created element is read, and the result says so
+            ElementTextResult Read(ElementTextResult result) =>
+                resolved.Moved ? result with { RefMoved = true, Warning = ElementRefs.MovedWarning(resolved.Ref) } : result;
             ElementTextResult Page(string text, ElementTextSource source, int start, int? total, int? next) =>
-                new(true, resolved.Ref, (long)handle, controlType, text, source, start, total, next != null, next,
-                    Elapsed(stopwatch), AccessibilityWarmup: warmup.Value);
+                Read(new(true, resolved.Ref, (long)handle, controlType, text, source, start, total, next != null, next,
+                    Elapsed(stopwatch), AccessibilityWarmup: warmup.Value));
 
             UiaNodeIdentity identity;
             try
@@ -297,8 +308,8 @@ public sealed partial class ElementReadService : IElementReadService
 
             if (identity.IsPassword)
             {
-                return new ElementTextResult(true, resolved.Ref, (long)handle, controlType, null, ElementTextSource.Redacted, 0, null,
-                    false, null, Elapsed(stopwatch), IsPassword: true, AccessibilityWarmup: warmup.Value);
+                return Read(new ElementTextResult(true, resolved.Ref, (long)handle, controlType, null, ElementTextSource.Redacted, 0,
+                    null, false, null, Elapsed(stopwatch), IsPassword: true, AccessibilityWarmup: warmup.Value));
             }
 
             // An empty document falls through to the value, and a pattern that fails to the next source; but an element with

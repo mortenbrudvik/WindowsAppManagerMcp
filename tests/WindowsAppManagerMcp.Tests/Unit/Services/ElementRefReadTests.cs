@@ -127,6 +127,30 @@ public class ElementRefReadTests
         elements.Single().Ref.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Walk_RecordsTheRowOfAControlInAListItem_SoItsRefIsStaleOnceTheRowShowsAnotherItem()
+    {
+        // Arrange - a recycling list: the row's check box keeps its runtime id when the row shows another file; the toolbar's
+        // button is in no row
+        var row = new FakeUiaNode("ListItem", "report.docx");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Files").With(
+            new FakeUiaNode("ToolBar", "Tools").With(new FakeUiaNode("Button", "Delete")),
+            new FakeUiaNode("List", "Items").With(row.With(new FakeUiaNode("CheckBox", "Select") { AutomationId = "Pick" }))));
+        var elements = Flatten((await Walk().GetUIElementsAsync(Handle)).Elements!).ToList();
+        var pickRef = elements.Single(e => e.Name == "Select").Ref!;
+        var deleteRef = elements.Single(e => e.Name == "Delete").Ref!;
+
+        // Act
+        row.Name = "budget.xlsx";
+        var pick = _registry.Resolve(pickRef, CancellationToken.None);
+        var delete = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert
+        pick.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        pick.Error.Should().Contain("another item");
+        delete.Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
     #endregion
 
     #region Single elements

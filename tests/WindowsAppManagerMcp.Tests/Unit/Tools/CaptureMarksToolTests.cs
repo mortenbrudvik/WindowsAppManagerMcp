@@ -41,13 +41,14 @@ public class CaptureMarksToolTests
     private ScreenshotTools CreateSut() =>
         new(_screenshots.Object, _elements.Object, _windows.Object, new TargetPolicy(_policy), elementRegistry: _registry.Object);
 
-    private void Resolves(UiaRect bounds, bool offscreen = false, string resolvedRef = Ref)
+    private void Resolves(UiaRect bounds, bool offscreen = false, string resolvedRef = Ref, bool moved = false)
     {
         var element = new UiaElement(new FakeUiaNode("Button", "Save"),
             new UiaNodeProperties("Save", "Button", "btnSave", bounds, IsEnabled: true, IsOffscreen: offscreen),
             ClassName: null, IsKeyboardFocusable: true, UiaPatterns.Invoke, RuntimeId: [42, 7], ControlTypeId: null);
         _registry.Setup(r => r.ResolveAsync(Ref, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ElementResolution(new ResolvedElement(resolvedRef, RefWindow, element.Node, element, ElementResolutionPath.Live)));
+            .ReturnsAsync(new ElementResolution(new ResolvedElement(resolvedRef, RefWindow, element.Node, element,
+                moved ? ElementResolutionPath.Selector : ElementResolutionPath.Live, moved)));
     }
 
     private readonly List<UIElementFilter?> _walks = [];
@@ -231,6 +232,29 @@ public class CaptureMarksToolTests
         var result = await CreateSut().CaptureWindow(@ref: Ref);
 
         Metadata(result).GetProperty("ref").GetString().Should().Be("w1000001e9");
+    }
+
+    [Fact]
+    public async Task CaptureWindowRef_MovedToAReCreatedElement_CropsIt_AndSaysSo()
+    {
+        // The element the ref was given for is gone; the ref now names a re-created element that fits its description
+        Resolves(new UiaRect(150, 120, 40, 20), moved: true);
+
+        var result = await CreateSut().CaptureWindow(@ref: Ref);
+
+        result.IsError.Should().BeFalse();
+        var metadata = Metadata(result);
+        metadata.GetProperty("refMoved").GetBoolean().Should().BeTrue();
+        metadata.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).Should()
+            .Contain(w => w!.StartsWith("RefMoved: ", StringComparison.Ordinal) && w.Contains("re-created"));
+    }
+
+    [Fact]
+    public async Task CaptureWindowRef_OfALiveElement_HasNoMoveToReport()
+    {
+        var result = await CreateSut().CaptureWindow(@ref: Ref);
+
+        Metadata(result).TryGetProperty("refMoved", out _).Should().BeFalse();
     }
 
     [Fact]

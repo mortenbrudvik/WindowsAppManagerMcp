@@ -286,4 +286,26 @@ public class MenuPathServiceTests
 
         _queries[0].Should().Match<ElementQuery>(q => q.WithinRef == "w1e30" && q.Scope == ElementSearchScope.Window);
     }
+
+    [Fact]
+    public async Task AStartRefMovedToAReCreatedMenu_IsElementStale_AndNothingIsOpened()
+    {
+        // Arrange - the menu the ref was given for closed; the ref now names a look-alike menu, where File is found
+        _find = query => Found(query, Item("w1e31", "File")) with
+        {
+            RefMoved = true,
+            Warning = "withinRef: Ref 'w1e30' was moved: the element it was given for is gone."
+        };
+
+        // Act
+        var result = await CreateSut().RunAsync(new MenuPathRequest(Window, "w1e30", ["File", "Save As"], Scope: null,
+            Timeout: TimeSpan.FromSeconds(1)));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementStale));
+        result.RefMoved.Should().BeTrue();
+        result.Error.Should().Contain("was moved");
+        _acted.Should().BeEmpty();
+    }
 }

@@ -76,6 +76,7 @@ public sealed partial class ElementReadService
             }
 
             progress.Ref = resolved.Ref;
+            progress.RefMoved = resolved.Moved;
             var node = resolved.Node;
             var grid = (resolved.Element.Patterns & UiaPatterns.Grid) != 0 ? _tree.GetPattern<IUiaGridPattern>(node) : null;
             if (grid != null)
@@ -650,6 +651,7 @@ public sealed partial class ElementReadService
         private readonly object _gate = new();
         private readonly List<IReadOnlyList<string?>> _rows = [];
         private string? _ref;
+        private bool _refMoved;
         private ElementTableSource? _source;
         private IReadOnlyList<string?>? _headers;
         private int? _totalRows;
@@ -670,6 +672,13 @@ public sealed partial class ElementReadService
         {
             get { lock (_gate) return _ref; }
             set { lock (_gate) _ref = value; }
+        }
+
+        /// <summary>The ref was moved to a re-created element (<see cref="ResolvedElement.Moved"/>): the result says so.</summary>
+        public bool RefMoved
+        {
+            get { lock (_gate) return _refMoved; }
+            set { lock (_gate) _refMoved = value; }
         }
 
         public ElementTableSource? Source
@@ -778,6 +787,8 @@ public sealed partial class ElementReadService
                 ElementTableTruncation? reason = _stop ??
                                                  (_rowsRemain ? ElementTableTruncation.MaxRows :
                                                      _totalColumns > MaxColumns ? ElementTableTruncation.MaxColumns : null);
+                var moved = _refMoved ? ElementRefs.MovedWarning(_ref!) : null;
+                var warning = moved == null ? _warning : _warning == null ? moved : moved + " " + _warning;
                 return new ElementTableResult(
                     Success: true,
                     Ref: _ref,
@@ -794,7 +805,8 @@ public sealed partial class ElementReadService
                     NextStartRow: rowsRemain ? StartRow + _rows.Count : null,
                     CellsTruncated: _cellsTruncated ? true : null,
                     AccessibilityWarmup: Warmup.Value,
-                    Warning: _warning);
+                    RefMoved: _refMoved ? true : null,
+                    Warning: warning);
             }
         }
 

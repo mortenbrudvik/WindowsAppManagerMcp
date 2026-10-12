@@ -249,6 +249,9 @@ public sealed record OpenedWindow(long Handle, string Title, string? ClassName, 
 /// <param name="ReceivingWindow">The window the mouse or keyboard input went to, for a Mouse or Keyboard method.</param>
 /// <param name="Steps">menu_path: the items opened, in order, with their refs and the submenu windows they opened (also on a
 /// failure: the items done before it).</param>
+/// <param name="RefMoved">True when the ref was moved to a re-created element that alone fits its description (the element
+/// it was given for is gone): the action is refused with ElementStale until a read returns that element again. Left out
+/// otherwise.</param>
 /// <param name="Observed">With observe 'state' or 'screenshot' (roadmap M3.12): get_desktop_state's observation of the
 /// element's window after the action; serialized last.</param>
 public sealed record ElementActionResult(
@@ -265,6 +268,7 @@ public sealed record ElementActionResult(
     OpenedWindow? OpenedPopup = null,
     WindowSummary? ReceivingWindow = null,
     IReadOnlyList<string>? Warnings = null,
+    bool? RefMoved = null,
     string? Error = null,
     string? ErrorCode = null,
     double ElapsedMilliseconds = 0,

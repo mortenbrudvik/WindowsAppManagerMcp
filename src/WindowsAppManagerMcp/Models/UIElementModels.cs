@@ -18,8 +18,9 @@ namespace WindowsAppManagerMcp.Models;
 /// returned element it is inside, or, for an element listed directly under the window, from the result's
 /// <see cref="UIElementResult.FrameworkId"/> (roadmap M3.3). Null means the same framework as there.</param>
 /// <param name="Ref">The element's ref (roadmap M3.4), for example "w4120035e17": later calls name the element by it. The same
-/// element keeps its ref in every read of this server session, and a ref never names another element. Null when the
-/// element has no runtime id, or the walk ran without the element registry. Serialized first.</param>
+/// element keeps its ref in every read of this server session, and a ref never silently names another element (see
+/// <see cref="Services.Interfaces.IElementRegistry"/>). Null when the element has no runtime id, or the walk ran without the
+/// element registry. Serialized first.</param>
 public record UIElementInfo(
     string? Name,
     string ControlType,

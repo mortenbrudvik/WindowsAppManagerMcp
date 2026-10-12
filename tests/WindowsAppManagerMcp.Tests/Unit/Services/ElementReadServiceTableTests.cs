@@ -821,5 +821,27 @@ public class ElementReadServiceTableTests
         _worker.Calls.Should().Be(0);
     }
 
+    [Fact]
+    public async Task ReadTable_OfARefMovedToAReCreatedGrid_ReadsIt_AndSaysSo()
+    {
+        // Arrange - the grid's search proved it the only one; the view was rebuilt with a new (WinForms) grid
+        var old = new FakeUiaNode("DataGrid", "Processes") { AutomationId = "Procs" };
+        _window.With(old);
+        var gridRef = _registry.Register(Handle, _tree.ReadElement(old),
+            new ElementOrigin(_registry.NextGeneration(), new ElementCriteria(AutomationId: "Procs"), Unique: true))!;
+        old.Vanish();
+        _window.With(new FakeUiaNode("DataGrid", "Processes") { AutomationId = "Procs", OtherPatterns = UiaPatterns.Grid, FrameworkId = "WinForm" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(Cells(2, 1))));
+
+        // Act
+        var result = await Read(gridRef);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Rows.Should().HaveCount(2);
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().Contain("re-created");
+    }
+
     #endregion
 }

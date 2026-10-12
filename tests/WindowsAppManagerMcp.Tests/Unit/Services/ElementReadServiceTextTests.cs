@@ -561,6 +561,36 @@ public class ElementReadServiceTextTests
         result.ErrorCode.Should().Be(UIElementErrorCode.NotResponding);
     }
 
+    [Fact]
+    public async Task ReadText_OfARefMovedToAReCreatedElement_ReadsIt_AndSaysSo()
+    {
+        // Arrange - the status label's search proved it the only one; the label was re-rendered with new text
+        var status = new FakeUiaNode("Text", "Saved") { AutomationId = "Status" };
+        _window.With(status);
+        var statusRef = _registry.Register(Handle, _tree.ReadElement(status),
+            new ElementOrigin(_registry.NextGeneration(), new ElementCriteria(AutomationId: "Status"), Unique: true))!;
+        status.Vanish();
+        _window.With(new FakeUiaNode("Text", "Saving...") { AutomationId = "Status" });
+
+        // Act
+        var result = await Read(statusRef);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Text.Should().Be("Saving...");
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().Contain($"Ref '{statusRef}' was moved");
+    }
+
+    [Fact]
+    public async Task ReadText_OfALiveRef_HasNoMoveToReport()
+    {
+        var result = await Read(Add(new FakeUiaNode("Text", "Saved")));
+
+        result.RefMoved.Should().BeNull();
+        result.Warning.Should().BeNull();
+    }
+
     #endregion
 
     #region Target policy

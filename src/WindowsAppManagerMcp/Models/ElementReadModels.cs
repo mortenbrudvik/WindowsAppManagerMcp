@@ -104,6 +104,9 @@ public sealed record ElementTableRequest(
 /// <param name="TextSkipped">True when the page ends inside one of the provider's characters that was longer than the page
 /// could hold (a line break counted as one character, with maxLength 1): the rest of that character is not returned, and
 /// nextOffset is after it. Left out otherwise.</param>
+/// <param name="RefMoved">True when the ref (or the criteria's withinRef) was moved to a re-created element that alone fits
+/// its description (the element it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
+/// <param name="Warning">Why the text needs a check although it was read: the ref moved.</param>
 public sealed record ElementTextResult(
     bool Success,
     string? Ref,
@@ -121,7 +124,9 @@ public sealed record ElementTextResult(
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     IReadOnlyList<FoundElement>? Candidates = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
-    bool? TextSkipped = null
+    bool? TextSkipped = null,
+    bool? RefMoved = null,
+    string? Warning = null
 );
 
 /// <summary>Result of read_table (roadmap M3.9).</summary>
@@ -137,8 +142,11 @@ public sealed record ElementTextResult(
 /// <param name="Truncated">True when the result does not hold every row from <paramref name="StartRow"/> on, or every column.</param>
 /// <param name="NextStartRow">The startRow of the next page, when rows were left out.</param>
 /// <param name="CellsTruncated">True when a header or cell was cut to the cell length limit; left out otherwise.</param>
-/// <param name="Warning">Why the page ended early and what to do (NotRealized: scroll the grid with element_action and read
-/// on; Disappeared: find the table again); left out otherwise.</param>
+/// <param name="RefMoved">True when the ref was moved to a re-created element that alone fits its description (the element
+/// it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
+/// <param name="Warning">Why the table needs a check although it was read (the ref moved), and why the page ended early and
+/// what to do (NotRealized: scroll the grid with element_action and read on; Disappeared: find the table again); left out
+/// otherwise.</param>
 public sealed record ElementTableResult(
     bool Success,
     string? Ref,
@@ -157,5 +165,6 @@ public sealed record ElementTableResult(
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    bool? RefMoved = null,
     string? Warning = null
 );

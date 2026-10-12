@@ -93,7 +93,10 @@ public sealed record ElementWaitRequest
 /// accessibility tree (roadmap M3.3).</param>
 /// <param name="Candidates">AmbiguousWindow: the windows the selector matched.</param>
 /// <param name="Warning">Something to check although the wait was satisfied: a gone wait whose element or window was
-/// already gone when it started, or a window that closed.</param>
+/// already gone when it started, a window that closed, or a ref that was moved.</param>
+/// <param name="RefMoved">True when the ref (or the criteria's withinRef) was moved to a re-created element that alone fits
+/// its description: the element it was given for is gone. gone is satisfied then; the other conditions are checked on the
+/// re-created element. Left out otherwise.</param>
 public sealed record WaitForElementResult(
     bool Success,
     bool Satisfied,
@@ -108,4 +111,5 @@ public sealed record WaitForElementResult(
     IReadOnlyList<WindowCandidateDto>? Candidates = null,
     string? Warning = null,
     string? Error = null,
-    string? ErrorCode = null);
+    string? ErrorCode = null,
+    bool? RefMoved = null);

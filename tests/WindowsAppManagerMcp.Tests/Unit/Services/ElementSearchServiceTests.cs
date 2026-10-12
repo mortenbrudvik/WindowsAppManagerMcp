@@ -331,6 +331,220 @@ public class ElementSearchServiceTests
         resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 
+    /// <summary>
+    /// Window "Invoices" > DataGrid "Rows" > DataItem "Invoice 1041" (no automation id) > Button "Delete": a grid that
+    /// recycles its rows. Returns the row, its button and the button's ref from a search below the row.
+    /// </summary>
+    private async Task<(FakeUiaNode Grid, FakeUiaNode Row, FakeUiaNode Delete, string DeleteRef)> BuildRecyclingGrid()
+    {
+        var delete = new FakeUiaNode("Button", "Delete") { AutomationId = "DeleteButton" };
+        var row = new FakeUiaNode("DataItem", "Invoice 1041").With(delete);
+        var grid = new FakeUiaNode("DataGrid", "Rows").With(row);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(grid));
+        var rowRef = _registry.Register(Handle, _tree.ReadElement(row), new ElementOrigin(1));
+        var deleteRef = (await Find(Query(name: "Delete", withinRef: rowRef))).Elements!.Single().Ref!;
+        return (grid, row, delete, deleteRef);
+    }
+
+    [Fact]
+    public async Task Find_ARecycledRowsButton_IsStale_OnceItsRowShowsAnotherItem()
+    {
+        // Arrange - the grid scrolled and reused the row for another invoice: the row and its button keep their runtime ids,
+        // their types, automation ids and classes; only the row's name tells
+        var (_, row, _, deleteRef) = await BuildRecyclingGrid();
+        row.Name = "Invoice 1077";
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - never Invoice 1077's Delete button
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("another item").And.Contain("Invoice 1077");
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonMovedToAnotherRowElement_IsStale()
+    {
+        // Arrange - the button's container now belongs to another row element (another runtime id), as WPF's item peers do
+        var (grid, _, delete, deleteRef) = await BuildRecyclingGrid();
+        var other = new FakeUiaNode("DataItem", "Invoice 1041");
+        grid.With(other);
+        other.With(delete);
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - the same name, but not the same row
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonInTheSameRow_ResolvesLive_ReadingOnlyTheButtonAndItsRow()
+    {
+        // Arrange
+        var (_, _, _, deleteRef) = await BuildRecyclingGrid();
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - one read of the element, one of its row (and one parent call)
+        resolution.Element!.Via.Should().Be(ElementResolutionPath.Live);
+        _tree.Reads.Skip(readsBefore).Should().Equal("Element:Delete", "Element:Invoice 1041");
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonFoundAgainInAnotherItem_GetsANewRef_AndTheOldOneIsDropped()
+    {
+        // Arrange
+        var (_, row, _, deleteRef) = await BuildRecyclingGrid();
+        row.Name = "Invoice 1077";
+
+        // Act
+        var again = (await Find(Query(name: "Delete"))).Elements!.Single().Ref;
+
+        // Assert - the ref of Invoice 1041's button never names Invoice 1077's
+        again.Should().NotBe(deleteRef);
+        _registry.Lookup(deleteRef).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        _registry.Resolve(again!, CancellationToken.None).Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
+    [Fact]
+    public async Task Find_ReadsEachAncestorOnce_ForTheRowsOfAllItsMatches()
+    {
+        // Arrange - three buttons in one toolbar, in a pane: no row above them
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(new FakeUiaNode("Pane", "Body").With(
+            new FakeUiaNode("ToolBar", "Tools").With(
+                new FakeUiaNode("Button", "Cut"), new FakeUiaNode("Button", "Copy"), new FakeUiaNode("Button", "Paste")))));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Button"]));
+
+        // Assert - the toolbar, the pane and the window once each, up to the window (where no row can be above)
+        result.MatchCount.Should().Be(3);
+        _tree.Reads.Where(r => r.StartsWith("Element:", StringComparison.Ordinal)).Should().Equal(
+            "Element:Tools", "Element:Body", "Element:Editor");
+    }
+
+    [Fact]
+    public async Task Find_LooksForAMatchsRowAtMostEightLevelsUp()
+    {
+        // Arrange - a button ten levels below a list item
+        FakeUiaNode inner = new FakeUiaNode("Button", "Deep");
+        for (var i = 0; i < 9; i++)
+        {
+            inner = new FakeUiaNode("Group", $"G{i}").With(inner);
+        }
+
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(new FakeUiaNode("List", "L").With(
+            new FakeUiaNode("ListItem", "Item").With(inner))));
+
+        // Act
+        await Find(Query(name: "Deep"));
+
+        // Assert
+        _tree.Reads.Count(r => r.StartsWith("Element:", StringComparison.Ordinal)).Should().Be(ElementRows.MaxLevels);
+    }
+
+    [Fact]
+    public async Task Find_AListItemNamedByItsText_IsNotProvenUnique_WhenTheListHasAnUnrealizedTwin()
+    {
+        // Arrange - 50 files, 10 realized; items 0 and 40 are both report.docx (Explorer search results far apart)
+        var list = new FakeVirtualList(50, realized: 10, i => i is 0 or 40 ? "report.docx" : $"file{i}");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Search results").With(list.List));
+        var found = await Find(Query(name: "report.docx", controlTypes: ["ListItem"]));
+        var reportRef = found.Elements!.Single().Ref!;
+
+        // Act - the realized report.docx is gone (deleted), and the other is realized as the list scrolls
+        list.Items[0].Vanish();
+        list.VirtualizedOf(40).Realize();
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert - the list was asked, so the ref is never moved to the other file
+        found.MatchCount.Should().Be(1);
+        list.Probes.Should().Equal("Name=report.docx after start", "Name=report.docx after report.docx");
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_AListItemNamedByItsText_IsProvenUnique_WhenTheListHasNoOtherItemOfThatName()
+    {
+        // Arrange - the only report.docx, realized; the list is re-created with it (a refresh)
+        var list = new FakeVirtualList(50, realized: 10, i => i == 3 ? "report.docx" : $"file{i}");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Search results").With(list.List));
+        var reportRef = (await Find(Query(name: "report.docx", controlTypes: ["ListItem"]))).Elements!.Single().Ref!;
+        list.Items[3].Vanish();
+        list.List.With(new FakeUiaNode("ListItem", "report.docx"));
+
+        // Act
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert - followed to the re-created item, and reported as moved
+        resolution.Success.Should().BeTrue(resolution.Error);
+        resolution.Element!.Via.Should().Be(ElementResolutionPath.Selector);
+        resolution.Element.Moved.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Find_AVirtualizedItemWhoseListCannotBeAsked_IsNotProvenUnique()
+    {
+        // Arrange - an item that supports VirtualizedItem in a list without ItemContainer: its unrealized rows are not known
+        var item = new FakeUiaNode("ListItem", "report.docx") { OtherPatterns = UiaPatterns.VirtualizedItem };
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Files").With(new FakeUiaNode("List", "Items").With(item)));
+        var reportRef = (await Find(Query(name: "report.docx", controlTypes: ["ListItem"]))).Elements!.Single().Ref!;
+        item.Vanish();
+        ((FakeUiaNode)_tree.FromHandle(Handle)!).Children[0].With(new FakeUiaNode("ListItem", "report.docx"));
+
+        // Act
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_AControlInOneRowOnly_IsNeverMovedToTheSameControlInAnotherRow()
+    {
+        // Arrange - only the selected row shows a Details button, so it is unique among the realized rows
+        var details = new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" };
+        var invoice1041 = new FakeUiaNode("ListItem", "Invoice 1041").With(details);
+        var invoice1077 = new FakeUiaNode("ListItem", "Invoice 1077");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(new FakeUiaNode("List", "Rows").With(invoice1041, invoice1077)));
+        var detailsRef = (await Find(Query(automationId: "DetailsBtn"))).Elements!.Single().Ref!;
+
+        // Act - the selection moved to Invoice 1077, whose row now shows its own Details button
+        details.Vanish();
+        invoice1077.With(new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" });
+        var resolution = _registry.Resolve(detailsRef, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("not in its row");
+    }
+
+    [Fact]
+    public async Task Find_AControlOfARowThatIsReCreated_FollowsItIntoTheSameRow()
+    {
+        // Arrange - the row is re-rendered: a new row element with the same name, and a new Details button
+        var details = new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" };
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(details);
+        var list = new FakeUiaNode("List", "Rows").With(row);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(list));
+        var detailsRef = (await Find(Query(automationId: "DetailsBtn"))).Elements!.Single().Ref!;
+        row.Vanish();
+        details.Vanish();
+        list.With(new FakeUiaNode("ListItem", "Invoice 1041").With(new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" }));
+
+        // Act
+        var resolution = _registry.Resolve(detailsRef, CancellationToken.None);
+        var again = _registry.Resolve(detailsRef, CancellationToken.None);
+
+        // Assert - and the re-created row is the ref's row from now on
+        resolution.Success.Should().BeTrue(resolution.Error);
+        resolution.Element!.Moved.Should().BeTrue();
+        again.Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
     [Fact]
     public async Task Find_WithinARefFoundAgainUnderItsOwnRef_ReportsTheRefItHasNow()
     {
@@ -349,6 +563,41 @@ public class ElementSearchServiceTests
         result.Success.Should().BeTrue();
         result.WithinRef.Should().Be(newRef).And.NotBe(oldRef);
         _registry.Lookup(oldRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        result.RefMoved.Should().BeTrue("the group the ref was given for is gone");
+    }
+
+    [Fact]
+    public async Task Find_WithinARefMovedToAReCreatedElement_SearchesIt_AndSaysSo()
+    {
+        // Arrange - the Options group was re-created: the ref follows the new group, which alone fits its description
+        var (window, _, options) = BuildEditor();
+        var optionsRef = (await Find(Query(name: "Options", controlTypes: ["Group"]))).Elements!.Single().Ref!;
+        options.Vanish();
+        window.Children[1].With(new FakeUiaNode("Group", "Options").With(new FakeUiaNode("Edit", "Search")));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+        var unmoved = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+
+        // Assert - reported on every search below it, until a read returns the group again
+        result.Success.Should().BeTrue();
+        result.WithinRef.Should().Be(optionsRef);
+        result.Elements!.Select(e => e.Name).Should().Equal("Search");
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().StartWith("withinRef: ").And.Contain($"Ref '{optionsRef}' was moved");
+        unmoved.RefMoved.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Find_WithinALiveRef_HasNoMoveToReport()
+    {
+        var (_, _, options) = BuildEditor();
+        var optionsRef = _registry.Register(Handle, _tree.ReadElement(options), new ElementOrigin(1));
+
+        var result = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+
+        result.RefMoved.Should().BeNull();
+        result.Warning.Should().BeNull();
     }
 
     #endregion
@@ -384,14 +633,15 @@ public class ElementSearchServiceTests
     }
 
     [Fact]
-    public async Task Find_DetailMinimal_MakesNoReadButTheClickPoint()
+    public async Task Find_DetailMinimal_MakesNoReadButTheClickPoint_AndTheRowLookup()
     {
         BuildEditor();
 
         await Find(Query(name: "Save"));
 
+        // The ancestors up to the window, read for the list row the button could be in (it is in none)
         _tree.Reads.Where(r => !r.StartsWith("Read:", StringComparison.Ordinal))
-            .Should().Equal("Clickable:Save");
+            .Should().Equal("Element:Standard", "Element:Editor", "Clickable:Save");
     }
 
     #endregion
@@ -422,30 +672,33 @@ public class ElementSearchServiceTests
     [Fact]
     public async Task Find_WhenTheTimeoutPassesBeforeAnyMatch_FailsWithOperationTimedOut()
     {
-        // Arrange - the deadline passes during the first part's search
+        // Arrange - the deadline passes during the first part's search: its provider call returns only once the search's
+        // deadline (the token the worker runs it with) is cancelled, however slow the machine is
         var lists = Enumerable.Range(1, 3).Select(i => new FakeUiaNode("List", $"L{i}").With(
             Enumerable.Range(1, 60).Select(j => new FakeUiaNode("Text", $"T{j}")).ToArray())).ToArray();
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(lists));
         var sut = CreateSut();
-        using var cancel = new CancellationTokenSource();
-        lists[0].OnFindAll = _ => Thread.Sleep(1200);
+        var deadlinePassed = false;
+        lists[0].OnFindAll = _ => deadlinePassed = _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
         var result = await sut.FindAsync(Query(controlTypes: ["Button"]) with { Timeout = TimeSpan.FromMilliseconds(1000) });
 
-        // Assert
+        // Assert - the search stopped after that part
+        deadlinePassed.Should().BeTrue();
         result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
         result.Error.Should().Contain("before any element");
+        _tree.Finds.Should().Equal("L1:Descendants");
     }
 
     [Fact]
     public async Task Find_WhenTheTimeoutPassesAfterSomeMatches_ReturnsThemTruncated()
     {
-        // Arrange
+        // Arrange - the deadline passes during the second part's search (its provider call returns once it has)
         var lists = Enumerable.Range(1, 3).Select(i => new FakeUiaNode("List", $"L{i}").With(
             Enumerable.Range(1, 60).Select(j => new FakeUiaNode("Button", $"B{i}.{j}")).ToArray())).ToArray();
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(lists));
-        lists[1].OnFindAll = _ => Thread.Sleep(1200);
+        lists[1].OnFindAll = _ => _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
         var result = await CreateSut().FindAsync(Query(controlTypes: ["Button"]) with { Timeout = TimeSpan.FromMilliseconds(1000) });

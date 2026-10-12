@@ -292,6 +292,27 @@ public class ElementRegistryTests
     }
 
     [Fact]
+    public void AWindowWhoseProcessOrClassCannotBeRead_IsNotTakenForClosed()
+    {
+        // Arrange - the window is still there (IsWindow), but a read of its process or class fails: that tells nothing
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+
+        // Act
+        _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(0u);
+        var noProcess = sut.Lookup(save!);
+        _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(100u);
+        _windows.Setup(w => w.GetClassName(Handle)).Returns(string.Empty);
+        var noClass = sut.Lookup(save!);
+        sut.NextGeneration();
+
+        // Assert - the ref is kept
+        noProcess.Success.Should().BeTrue(noProcess.Error);
+        noClass.Success.Should().BeTrue(noClass.Error);
+        sut.Count.Should().Be(1);
+    }
+
+    [Fact]
     public void NextGeneration_CountsUp_AndDropsTheRefsOfClosedWindows()
     {
         // Arrange
@@ -350,8 +371,44 @@ public class ElementRegistryTests
 
         // Assert
         resolution.Element!.Should().Match<ResolvedElement>(r =>
-            r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+            r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector && r.Moved);
         sut.Resolve(saveRef!, None).Element!.Via.Should().Be(ElementResolutionPath.Live, "the ref now holds the new element");
+    }
+
+    [Fact]
+    public void Resolve_ARefMovedToAReCreatedElement_StaysMoved_UntilAReadRegistersTheElementAgain()
+    {
+        // Arrange - the ref was moved to the re-created button
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        var toolbar = new FakeUiaNode("Pane", "Toolbar").With(save);
+        Window(Handle, toolbar);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+        save.Vanish();
+        var recreated = Button("Save", "SaveButton");
+        toolbar.With(recreated);
+        sut.Resolve(saveRef!, None).Element!.Moved.Should().BeTrue();
+
+        // Act
+        var later = sut.Resolve(saveRef!, None);
+        var read = Register(sut, recreated);
+        var afterRead = sut.Resolve(saveRef!, None);
+
+        // Assert - live now, but still the element the ref was moved to, until a read returned it
+        later.Element!.Should().Match<ResolvedElement>(r => r.Via == ElementResolutionPath.Live && r.Moved);
+        read.Should().Be(saveRef);
+        afterRead.Element!.Moved.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_ALiveElement_IsNotMoved()
+    {
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        Window(Handle, save);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+
+        sut.Resolve(saveRef!, None).Element!.Moved.Should().BeFalse();
     }
 
     [Fact]
@@ -414,6 +471,49 @@ public class ElementRegistryTests
 
         // Assert - not moved to the twin
         resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void Resolve_WhenUiAutomationCannotReadAWindowThatIsStillOpen_IsWindowNotFound_AndKeepsTheRef()
+    {
+        // Arrange - the window is open (IsWindow), but UI Automation gives no element for it (no node, or a read that fails)
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        _ = new FakeUiaNode("Pane", "Toolbar").With(save);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+        save.ReadException = FakeUiaTree.Vanished();
+
+        // Act
+        var noNode = sut.Resolve(saveRef!, None);
+        Window(Handle);
+        _tree.FromHandleException = FakeUiaTree.Vanished("window");
+        var failed = sut.Resolve(saveRef!, None);
+
+        // Assert - not stale: a caller can try again (a gone wait is not satisfied by it)
+        noNode.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        noNode.Error.Should().Contain("could not read").And.Contain("kept");
+        failed.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        sut.Lookup(saveRef!).Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_WhenTheWindowClosesDuringTheResolution_IsStale()
+    {
+        // Arrange - the element's read fails because its window just closed
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        _ = new FakeUiaNode("Pane", "Toolbar").With(save);
+        var saveRef = Register(sut, save);
+        save.ReadException = FakeUiaTree.Vanished();
+        save.OnRead = () => _processes.Remove(Handle);
+
+        // Act
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("its window closed");
+        sut.Count.Should().Be(0);
     }
 
     [Fact]
@@ -554,8 +654,9 @@ public class ElementRegistryTests
         // Act
         var resolution = sut.Resolve(oldRef!, None);
 
-        // Assert - one element never has two refs
+        // Assert - one element never has two refs; the old one was moved to it
         resolution.Element!.Ref.Should().Be(newRef);
+        resolution.Element.Moved.Should().BeTrue();
         sut.Lookup(oldRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 
@@ -637,6 +738,52 @@ public class ElementRegistryTests
 
         // Assert
         resolution.Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
+    [Fact]
+    public void Resolve_AnElementFoundByItsRuntimeIdInARowThatShowsAnotherItem_IsStale()
+    {
+        // Arrange - the row's Delete button was read in Invoice 1041; its proxy no longer answers, and a new proxy of the same
+        // element is in the row, which now shows Invoice 1077
+        var sut = CreateSut();
+        var id = FakeUiaNode.NewRuntimeId();
+        var stored = Button("Delete", "DeleteButton", id);
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(stored);
+        Window(Handle, new FakeUiaNode("List", "Invoices").With(row));
+        var deleteRef = sut.Register(Handle, _tree.ReadElement(stored),
+            new ElementOrigin(1, Row: new ElementRow(row.RuntimeId!, "Invoice 1041", null, 1)));
+        stored.Vanish();
+        row.With(Button("Delete", "DeleteButton", id));
+        row.Name = "Invoice 1077";
+
+        // Act
+        var resolution = sut.Resolve(deleteRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("its row now shows another item");
+    }
+
+    [Fact]
+    public void Register_TheSameElementSeenInAnotherRow_GetsANewRef_AndTheOldRefIsDropped()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var delete = Button("Delete", "DeleteButton");
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(delete);
+        Window(Handle, new FakeUiaNode("List", "Invoices").With(row));
+        var first = sut.Register(Handle, _tree.ReadElement(delete),
+            new ElementOrigin(1, Row: new ElementRow(row.RuntimeId!, "Invoice 1041", null, 1)));
+
+        // Act - the same row element, now showing another invoice; then a read that does not know the row
+        var second = sut.Register(Handle, _tree.ReadElement(delete),
+            new ElementOrigin(2, Row: new ElementRow(row.RuntimeId!, "Invoice 1077", null, 1)));
+        var third = sut.Register(Handle, _tree.ReadElement(delete), new ElementOrigin(3));
+
+        // Assert
+        second.Should().NotBe(first);
+        sut.Lookup(first!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        third.Should().Be(second, "a read that does not know the row says nothing against it");
     }
 
     [Fact]

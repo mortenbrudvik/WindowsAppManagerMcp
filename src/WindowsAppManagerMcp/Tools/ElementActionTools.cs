@@ -70,8 +70,9 @@ public partial class ElementActionTools
                      "add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, " +
                      "window_close, window_minimize, window_maximize, menu_path.")]
         ElementActionKind action,
-        [Description("The element: a ref from an earlier read, such as 'w4120035e17'. Or leave it out and pass handle or window " +
-                     "with element criteria (menu_path: or with none, to start from the window).")]
+        [Description("The element: a ref from an earlier read, such as 'w4120035e17'. A ref moved to a re-created element " +
+                     "(refMoved) is refused with ElementStale until a read returns that element again. Or leave it out and pass " +
+                     "handle or window with element criteria (menu_path: or with none, to start from the window).")]
         string? @ref = null,
         [Description("Window handle (as integer) whose element the criteria name. Pass handle or window, with criteria, instead of ref.")]
         long? handle = null,

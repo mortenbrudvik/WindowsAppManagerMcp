@@ -201,6 +201,9 @@ public sealed class ElementWaitService : IElementWaitService
         private FoundElement? _lastElement;
         private string _lastState = "nothing was checked yet";
 
+        // Set once the ref (or withinRef) was moved to a re-created element: the result says so
+        private string? _movedWarning;
+
         public async Task<WaitForElementResult> RunAsync(IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
         {
             if (await FindWindowAsync(progress, cancellationToken).ConfigureAwait(false) is { } early)
@@ -233,7 +236,7 @@ public sealed class ElementWaitService : IElementWaitService
                 _lastElement = check.Element;
                 if (check.Satisfied)
                 {
-                    return Result(true) with { Element = check.Element, Warning = check.Warning };
+                    return Result(true) with { Element = check.Element, Warning = check.Warning ?? _movedWarning };
                 }
 
                 var now = elapsed();
@@ -412,6 +415,11 @@ public sealed class ElementWaitService : IElementWaitService
                 return SearchFailed(found);
             }
 
+            if (found.RefMoved == true)
+            {
+                _movedWarning ??= found.Warning;
+            }
+
             _matchCount = found.MatchCount;
             var complete = found.TruncationReason is null or ElementSearchTruncation.MaxResults;
             var elements = found.Elements ?? [];
@@ -588,6 +596,17 @@ public sealed class ElementWaitService : IElementWaitService
             // The element was found again under a ref of its own: follow that one (the asked-for one was dropped)
             _ref = resolved.Ref;
             var element = read.Element!;
+            if (resolved.Moved)
+            {
+                // The element the ref was given for is gone; the ref names a re-created element that only fits its description
+                _movedWarning ??= ElementRefs.MovedWarning(resolved.Ref);
+                if (_condition == ElementWaitCondition.Gone)
+                {
+                    return Check.Met(null, "the element is gone",
+                        $"The element is gone; {Name(element)} took its place and fits its description. {_movedWarning}");
+                }
+            }
+
             if (_condition == ElementWaitCondition.Gone)
             {
                 return Check.NotYet($"{Name(element)} is still there", element);
@@ -750,7 +769,9 @@ public sealed class ElementWaitService : IElementWaitService
             WindowHandle: _window == nint.Zero ? null : (long)_window,
             MatchCount: _matchCount,
             LastObservedState: satisfied ? null : _lastState,
-            AccessibilityWarmup: _warmup);
+            AccessibilityWarmup: _warmup,
+            Warning: _movedWarning,
+            RefMoved: _movedWarning != null ? true : null);
 
         private WaitForElementResult Ended(string errorCode, string error) => Result(false) with
         {

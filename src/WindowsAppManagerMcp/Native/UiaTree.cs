@@ -29,7 +29,7 @@ public sealed class UiaTree : IUiaTree
         AutomationElement.NameProperty, AutomationElement.ControlTypeProperty, AutomationElement.LocalizedControlTypeProperty,
         AutomationElement.AutomationIdProperty, AutomationElement.ClassNameProperty, AutomationElement.BoundingRectangleProperty,
         AutomationElement.IsEnabledProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsKeyboardFocusableProperty,
-        AutomationElement.RuntimeIdProperty, AutomationElement.FrameworkIdProperty
+        AutomationElement.RuntimeIdProperty, AutomationElement.FrameworkIdProperty, AutomationElement.NativeWindowHandleProperty
     ];
 
     private static readonly (AutomationProperty Property, UiaPatterns Pattern)[] PatternAvailability =
@@ -449,7 +449,8 @@ public sealed class UiaTree : IUiaTree
             Patterns: patterns,
             RuntimeId: element.GetCachedPropertyValue(AutomationElement.RuntimeIdProperty) as int[],
             // The managed client knows no id it has no ControlType for
-            ControlTypeId: controlType?.Id);
+            ControlTypeId: controlType?.Id,
+            NativeWindowHandle: cached.NativeWindowHandle);
     }
 
     private static TreeScope ToTreeScope(UiaScope scope) => scope switch

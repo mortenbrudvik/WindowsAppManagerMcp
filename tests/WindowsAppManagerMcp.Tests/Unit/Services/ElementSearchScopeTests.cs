@@ -11,6 +11,9 @@ public class ElementSearchScopeTests
     private static readonly nint Menu = 0x7200;
     private static readonly nint Dialog = 0x7300;
 
+    /// <summary>GetWindow's GW_OWNER.</summary>
+    private const uint GwOwner = 4;
+
     private readonly FakeUiaTree _tree = new();
     private readonly InlineUiaWorker _worker = new();
     private readonly Mock<INativeWindowWrapper> _windows = new();
@@ -253,13 +256,14 @@ public class ElementSearchScopeTests
     [Fact]
     public async Task Find_KeepsOneDeadlineForAllTheWindows()
     {
-        // Arrange - the menu's 60 items are one provider call, which takes longer than the whole timeout
+        // Arrange - the menu's 60 items are one provider call, which returns only once the whole timeout has passed (the
+        // deadline is the token the worker runs the search with)
         _tree.WithWindow(Menu, new FakeUiaNode("Menu", "Context").With(Enumerable.Range(0, 60)
             .Select(i => new FakeUiaNode("MenuItem", i == 7 ? "Delete" : $"Item {i}")).ToArray()));
-        _tree.OnFindAll = (_, _) => Thread.Sleep(250);
+        _tree.OnFindAll = (_, _) => _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
-        var result = await CreateSut().FindAsync(new ElementQuery(Main, Name: "Delete", Timeout: TimeSpan.FromMilliseconds(100),
+        var result = await CreateSut().FindAsync(new ElementQuery(Main, Name: "Delete", Timeout: TimeSpan.FromMilliseconds(1000),
             Scope: ElementSearchScope.WindowAndPopups));
 
         // Assert - what the menu gave is returned; the window was not searched after the deadline
@@ -428,6 +432,119 @@ public class ElementSearchScopeTests
         resolved.Success.Should().BeTrue(resolved.Error);
         resolved.Element!.Via.Should().Be(ElementResolutionPath.Selector);
         resolved.Element.WindowHandle.Should().Be(Main);
+    }
+
+    #endregion
+
+    #region Owned windows in their owner's tree
+
+    /// <summary>
+    /// An owned dialog as UI Automation's HWND proxy shows it: the dialog's window element (with its own window handle) is
+    /// the root of the dialog's window, and also the first child of the window that owns it, ahead of that window's own
+    /// children. The dialog is in the popup list as an owned window.
+    /// </summary>
+    private FakeUiaNode OwnedDialog(nint handle, string title, params FakeUiaNode[] children)
+    {
+        var dialog = new FakeUiaNode("Window", title) { NativeWindowHandle = handle }.With(children);
+        _tree.WithWindow(handle, dialog);
+        ((FakeUiaNode)_tree.FromHandle(Main)!).Insert(0, dialog);
+        _windows.Setup(w => w.GetWindow(handle, GwOwner)).Returns(Main);
+        return dialog;
+    }
+
+    [Fact]
+    public async Task Find_AnOwnedDialogListedUnderItsOwner_IsSearchedOnlyAsItsOwnWindow()
+    {
+        // Arrange - Explorer's Delete File dialog in front, owned by the window named
+        _popups.Setup(p => p.IsInForeground(Main)).Returns(true);
+        OwnedDialog(Dialog, "Delete File", new FakeUiaNode("Button", "Yes") { AutomationId = "6" });
+
+        // Act
+        var withPopups = await Find(name: "Yes");
+        var windowOnly = await Find(name: "Yes", scope: ElementSearchScope.Window);
+
+        // Assert - once, under the dialog's own window; the window alone does not hold it
+        withPopups.Scope.Should().Be(ElementSearchScope.WindowAndPopups);
+        withPopups.MatchCount.Should().Be(1);
+        withPopups.Elements!.Should().ContainSingle().Which.WindowHandle.Should().Be((long)Dialog);
+        _registry.Lookup(withPopups.Elements![0].Ref!).WindowHandle.Should().Be(Dialog);
+        windowOnly.MatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Find_ProvesUniquenessInTheWindowsOwnTree_AndAResolutionNeverMovesARefIntoAnOwnedDialog()
+    {
+        // Arrange - the window's OK button, and a twin in a dialog the window owns; the window's button is found and then
+        // re-created only in the dialog
+        var ok = new FakeUiaNode("Button", "OK") { AutomationId = "OKBtn" };
+        _tree.WithWindow(Main, new FakeUiaNode("Window", "Editor").With(ok));
+        OwnedDialog(Dialog, "Options", new FakeUiaNode("Button", "OK") { AutomationId = "OKBtn" });
+        var found = await Find(name: "OK", scope: ElementSearchScope.Window);
+        found.MatchCount.Should().Be(1);
+        var okRef = found.Elements!.Single().Ref!;
+        ok.Vanish();
+
+        // Act
+        var resolved = _registry.Resolve(okRef, CancellationToken.None);
+
+        // Assert - unique in the window's own tree (so it has a selector), but the dialog's button is the dialog's
+        resolved.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_NoRefOfAnOwnedDialogsButton_OutlivesTheDialog()
+    {
+        // Arrange - the Yes button found while the dialog is open; the dialog closes, and the window opens another one with
+        // a Yes button of the same automation id
+        _popups.Setup(p => p.IsInForeground(Main)).Returns(true);
+        var yes = new FakeUiaNode("Button", "Yes") { AutomationId = "6" };
+        var first = OwnedDialog(Dialog, "Delete File", yes);
+        var refs = (await Find(name: "Yes")).Elements!.Select(e => e.Ref!).ToList();
+        yes.Vanish();
+        first.Vanish();
+        _windows.Setup(w => w.IsWindow(Dialog)).Returns(false);
+        OwnedDialog(0x7400, "Confirm", new FakeUiaNode("Button", "Yes") { AutomationId = "6" });
+
+        // Act
+        var resolved = refs.Select(r => _registry.Resolve(r, CancellationToken.None)).ToList();
+
+        // Assert - each ref belonged to the closed dialog: none moves to the new dialog's button
+        resolved.Should().OnlyContain(r => r.ErrorCode == UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_AWindowTooWideToSplit_StillLeavesItsOwnedDialogOut()
+    {
+        // Arrange - a form with 60 controls directly on it (searched whole) and an owned dialog listed first
+        _popups.Setup(p => p.IsInForeground(Main)).Returns(true);
+        _tree.WithWindow(Main, new FakeUiaNode("Window", "Form").With(
+            Enumerable.Range(0, 60).Select(i => new FakeUiaNode("Edit", $"Field {i}")).ToArray()));
+        OwnedDialog(Dialog, "Find", new FakeUiaNode("Button", "Find Next"), new FakeUiaNode("Edit", "Find what"));
+
+        // Act
+        var withPopups = await Find(controlTypes: ["Edit"]);
+        var windowOnly = await Find(name: "Find what", scope: ElementSearchScope.Window);
+
+        // Assert - the dialog's edit box once, under the dialog; the form's 60 under the form
+        withPopups.MatchCount.Should().Be(61);
+        withPopups.Elements!.Count(e => e.WindowHandle == (long)Dialog).Should().Be(1);
+        windowOnly.MatchCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Find_WhenAnOwnedWindowIsStillSearchedWithItsOwner_KeepsOnlyThePopupsCopy()
+    {
+        // Arrange - the window's tree cannot be split (the level fails to read), so its search covers the owned dialog too
+        _popups.Setup(p => p.IsInForeground(Main)).Returns(true);
+        OwnedDialog(Dialog, "Delete File", new FakeUiaNode("Button", "Yes") { AutomationId = "6" });
+        ((FakeUiaNode)_tree.FromHandle(Main)!).CachedChildrenException = new InvalidOperationException("provider failed");
+
+        // Act
+        var result = await Find(name: "Yes");
+
+        // Assert
+        result.MatchCount.Should().Be(1);
+        result.Elements!.Should().ContainSingle().Which.WindowHandle.Should().Be((long)Dialog);
     }
 
     #endregion

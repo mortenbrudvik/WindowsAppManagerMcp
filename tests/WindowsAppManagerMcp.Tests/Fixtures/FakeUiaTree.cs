@@ -295,7 +295,8 @@ public sealed class FakeUiaTree : IUiaTree
             node.IsKeyboardFocusable,
             node.Patterns,
             node.RuntimeId,
-            UiaControlTypes.GetId(node.ControlType));
+            UiaControlTypes.GetId(node.ControlType),
+            node.NativeWindowHandle);
 
     private static IEnumerable<FakeUiaNode> Descendants(FakeUiaNode node) =>
         node.Children.SelectMany(child => Descendants(child).Prepend(child));

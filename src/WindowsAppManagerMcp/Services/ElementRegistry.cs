@@ -18,6 +18,15 @@ public static partial class ElementRefs
     /// <summary>The ref in lower case, or null when it is not well formed.</summary>
     public static string? Normalize(string? value) => IsWellFormed(value) ? value!.ToLowerInvariant() : null;
 
+    /// <summary>
+    /// The warning of a result whose ref was moved to a re-created element (<see cref="ResolvedElement.Moved"/>), for the
+    /// tools that read through a ref.
+    /// </summary>
+    public static string MovedWarning(string elementRef) =>
+        $"Ref '{elementRef}' was moved: the element it was given for is gone, and the ref now names a re-created element " +
+        "that alone fits its description (its control type, automation id or name, and class). Check that it is the element " +
+        "you mean; element_action does not act on it until a read such as find_ui_elements returns it again.";
+
     /// <summary>The ref of element <paramref name="element"/> of window <paramref name="window"/>.</summary>
     public static string Format(int window, int element) =>
         string.Create(CultureInfo.InvariantCulture, $"w{window}e{element}");
@@ -162,7 +171,7 @@ public sealed class ElementRegistry : IElementRegistry
             var record = WindowRecordFor(windowHandle, identity.Value);
             if (record.Entries.TryGetValue(key, out var existing))
             {
-                if (SameIdentity(existing.Fingerprint, fingerprint))
+                if (SameIdentity(existing.Fingerprint, fingerprint) && !ElementRows.AreDifferent(existing.Row, origin.Row))
                 {
                     existing.Node = element.Node;
                     existing.Fingerprint = Merge(existing.Fingerprint, fingerprint);
@@ -172,13 +181,17 @@ public sealed class ElementRegistry : IElementRegistry
                         false => null,
                         _ => existing.Selector
                     };
+                    existing.Row = origin.Row ?? existing.Row;
+
+                    // A read returned the element the ref was moved to: the caller has seen it now
+                    existing.Moved = false;
                     existing.Generation = Math.Max(existing.Generation, origin.Generation);
                     Touch(existing);
                     return existing.Ref;
                 }
 
-                // Another element has the runtime id of one that is gone (or a recycled list item shows another row): the
-                // old ref must not name it
+                // Another element has the runtime id of one that is gone, a recycled list item shows another row, or a
+                // control of a recycled row is in another item now: the old ref must not name it
                 Remove(existing);
             }
 
@@ -186,6 +199,7 @@ public sealed class ElementRegistry : IElementRegistry
                 ElementRefs.Format(record.Seq, ++record.LastElement), record, key, runtimeId.ToArray(), element.Node, fingerprint)
             {
                 Selector = origin.Unique == true ? origin.Selector : null,
+                Row = origin.Row,
                 Generation = origin.Generation
             };
             record.Entries[key] = entry;
@@ -313,23 +327,26 @@ public sealed class ElementRegistry : IElementRegistry
         IUiaNode node;
         ElementFingerprint fingerprint;
         ElementCriteria? selector;
+        ElementRow? row;
         lock (_gate)
         {
             node = entry.Node;
             fingerprint = entry.Fingerprint;
             selector = entry.Selector;
+            row = entry.Row;
         }
 
         // 1. The stored element, if it is still there: a live read asks the provider (a runtime id alone is answered from
         //    memory). Accepted only with the stored runtime id and identity: a proxy that now answers for another element,
-        //    a recycled list item that shows another row, or a read without a runtime id proves nothing
+        //    a recycled list item that shows another row, or a read without a runtime id proves nothing. An element of a
+        //    list row is accepted only while that row shows the same item
         try
         {
             var live = _tree.ReadElement(node);
             if (live.RuntimeId is { Count: > 0 } liveId && liveId.SequenceEqual(entry.RuntimeId) &&
                 SameIdentity(fingerprint, Fingerprint(live, null)))
             {
-                return Resolved(entry, node, live, ElementResolutionPath.Live);
+                return RowChanged(entry, node, row, fingerprint, cancellationToken) ?? Resolved(entry, node, live, ElementResolutionPath.Live);
             }
         }
         catch (UiaElementUnavailableException)
@@ -337,16 +354,39 @@ public sealed class ElementRegistry : IElementRegistry
             // Gone: look for it again
         }
 
-        var window = _tree.FromHandle(entry.Window.Handle);
+        IUiaNode? window;
+        try
+        {
+            window = _tree.FromHandle(entry.Window.Handle);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            window = null;
+        }
+
         if (window == null)
         {
-            return ElementResolution.Failed(UIElementErrorCode.ElementStale,
-                $"Element ref '{entry.Ref}' is stale: its window can no longer be read. Find the element again with find_ui_elements.");
+            // Stale only when the window is gone; a window UI Automation cannot read now says nothing about the element
+            if (!IsSameWindow(entry.Window))
+            {
+                lock (_gate)
+                {
+                    DropWindow(entry.Window);
+                }
+
+                return ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                    $"Element ref '{entry.Ref}' is stale: its window closed. Find the element again with find_ui_elements.");
+            }
+
+            return ElementResolution.Failed(UIElementErrorCode.WindowNotFound,
+                $"Element ref '{entry.Ref}': UI Automation could not read its window {(long)entry.Window.Handle}, which is still " +
+                "open, so it is not known whether its element is there; the ref was kept. Try again in a moment.");
         }
 
         // 2. The same runtime id in the window (an engine can hand out a new proxy for the same element), if it is still
         //    the same control
         var byId = Search(
+            entry.Window.Handle,
             window,
             new ElementCriteria(),
             UiaCondition.PropertyEquals(UiaProperty.RuntimeId, entry.RuntimeId),
@@ -354,7 +394,8 @@ public sealed class ElementRegistry : IElementRegistry
             cancellationToken);
         if (byId.MatchCount == 1)
         {
-            return Resolved(entry, byId.Matches[0].Node, byId.Matches[0], ElementResolutionPath.RuntimeId);
+            return RowChanged(entry, byId.Matches[0].Node, row, fingerprint, cancellationToken) ??
+                   Resolved(entry, byId.Matches[0].Node, byId.Matches[0], ElementResolutionPath.RuntimeId);
         }
 
         // 3. Re-created: the stored selector, each result checked against the fingerprint. Only a selector the issuing read
@@ -377,11 +418,14 @@ public sealed class ElementRegistry : IElementRegistry
         }
 
         var (condition, filter) = selector.Compile();
-        var found = Search(window, selector, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e), cancellationToken);
+        var found = Search(
+            entry.Window.Handle, window, selector, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e),
+            cancellationToken);
         switch (found.MatchCount)
         {
             case 1 when found.Complete:
-                return Rebind(entry, found.Matches[0]);
+                return MovedToAnotherRow(entry, found.Matches[0].Node, row, fingerprint, cancellationToken, out var rowNow) ??
+                       Rebind(entry, found.Matches[0], rowNow);
             case > 1:
                 return ElementResolution.Failed(UIElementErrorCode.AmbiguousElement,
                     $"Element ref '{entry.Ref}' is ambiguous: its element ({Describe(fingerprint)}) is gone, and " +
@@ -407,20 +451,90 @@ public sealed class ElementRegistry : IElementRegistry
     }
 
     /// <summary>
-    /// A search of the window during a resolution. A control type the engine cannot search for (the managed client and
-    /// AppBar or SemanticZoom) is tested on the server instead.
+    /// ElementStale when the element found is in a list row that now shows another item (or is gone), or null when it has
+    /// no row or the row is the same (see <see cref="ElementRows"/>): a control of a recycled row keeps its runtime id and
+    /// identity. The ref is kept, so it resolves again once the row shows its item again.
     /// </summary>
-    private ElementSearchOutcome Search(
-        IUiaNode window, ElementCriteria criteria, UiaCondition condition, Func<UiaElement, bool> filter, CancellationToken cancellationToken)
+    private ElementResolution? RowChanged(
+        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken)
     {
+        if (row == null)
+        {
+            return null;
+        }
+
+        string? change;
         try
         {
-            return new ElementSearch(_tree, condition, filter, ResolutionKeep).Run(window, cancellationToken);
+            change = ElementRows.Changed(_tree, node, row, reCreated: false, cancellationToken, out _);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            change = $"its row ({ElementRows.Describe(row)}) is gone";
+        }
+
+        return change == null
+            ? null
+            : ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is in a list row, and {change} (a list " +
+                "reuses a row's elements for another item when it scrolls or its data changes). Find the element again with " +
+                "find_ui_elements.");
+    }
+
+    /// <summary>
+    /// ElementStale when the one element that fits a re-created element's description is not in the element's row (the item
+    /// that many levels up has another name or automation id), or null when the element has no row or it is the same row,
+    /// re-created too. A control that exists in one row only (the selected row's details) proves unique among the realized
+    /// rows, and a list re-creates it in whichever row is selected next: the ref must not move there.
+    /// </summary>
+    /// <param name="rowNow">The row as read now (re-created, with its own runtime id), for the ref moved into it.</param>
+    private ElementResolution? MovedToAnotherRow(
+        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken,
+        out ElementRow? rowNow)
+    {
+        rowNow = null;
+        if (row == null)
+        {
+            return null;
+        }
+
+        string? change;
+        try
+        {
+            change = ElementRows.Changed(_tree, node, row, reCreated: true, cancellationToken, out rowNow);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            change = $"its row ({ElementRows.Describe(row)}) is gone";
+        }
+
+        return change == null
+            ? null
+            : ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is gone, and the one element that fits " +
+                $"its description is not in its row: {change}. The ref is not moved to it. Find the element again with " +
+                "find_ui_elements.");
+    }
+
+    /// <summary>
+    /// A search of the window during a resolution: its own tree, without the windows it owns (its dialogs are windows of
+    /// their own, whose elements have refs of their own: see <see cref="OwnedWindows"/>). A control type the engine cannot
+    /// search for (the managed client and AppBar or SemanticZoom) is tested on the server instead.
+    /// </summary>
+    private ElementSearchOutcome Search(
+        nint handle, IUiaNode window, ElementCriteria criteria, UiaCondition condition, Func<UiaElement, bool> filter,
+        CancellationToken cancellationToken)
+    {
+        var leaveOut = OwnedWindows.Below(_windows, handle);
+        try
+        {
+            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut).Run(window, cancellationToken);
         }
         catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
         {
             var (serverCondition, serverFilter) = criteria.Compile(controlTypesOnServer: true);
-            return new ElementSearch(_tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep)
+            return new ElementSearch(
+                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut)
                 .Run(window, cancellationToken);
         }
     }
@@ -437,15 +551,17 @@ public sealed class ElementRegistry : IElementRegistry
             entry.Node = node;
             entry.Fingerprint = Merge(entry.Fingerprint, Fingerprint(element, null));
             Touch(entry);
-            return new ElementResolution(new ResolvedElement(entry.Ref, entry.Window.Handle, node, element, via));
+            return new ElementResolution(new ResolvedElement(entry.Ref, entry.Window.Handle, node, element, via, entry.Moved));
         }
     }
 
     /// <summary>
     /// Moves a ref to its re-created element. When that element already has a ref of its own, the old ref is dropped and
-    /// the element's own ref is returned, so one element never has two refs.
+    /// the element's own ref is returned, so one element never has two refs. Either way the resolution is
+    /// <see cref="ResolvedElement.Moved"/>; a moved ref stays so in later resolutions until a read registers its element
+    /// again (the caller has then seen it). <paramref name="row"/> is the element's row as read now, when it has one.
     /// </summary>
-    private ElementResolution Rebind(Entry entry, UiaElement element)
+    private ElementResolution Rebind(Entry entry, UiaElement element, ElementRow? row)
     {
         lock (_gate)
         {
@@ -461,7 +577,7 @@ public sealed class ElementRegistry : IElementRegistry
                 owner.Node = element.Node;
                 Touch(owner);
                 return new ElementResolution(new ResolvedElement(
-                    owner.Ref, owner.Window.Handle, element.Node, element, ElementResolutionPath.Selector));
+                    owner.Ref, owner.Window.Handle, element.Node, element, ElementResolutionPath.Selector, Moved: true));
             }
 
             entry.Window.Entries.Remove(entry.Key);
@@ -470,9 +586,11 @@ public sealed class ElementRegistry : IElementRegistry
             entry.Window.Entries[key] = entry;
             entry.Node = element.Node;
             entry.Fingerprint = Merge(entry.Fingerprint, Fingerprint(element, null));
+            entry.Row = row ?? entry.Row;
+            entry.Moved = true;
             Touch(entry);
             return new ElementResolution(new ResolvedElement(
-                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.Selector));
+                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.Selector, Moved: true));
         }
     }
 
@@ -547,9 +665,29 @@ public sealed class ElementRegistry : IElementRegistry
     /// <summary>
     /// True when the record's window still exists with the same process and class: its handle was not reused by another
     /// window. A reuse by a window of the same process and class is not told apart; it is rare, since a handle value comes
-    /// back only after its slot's 16-bit reuse counter wraps.
+    /// back only after its slot's 16-bit reuse counter wraps. A read of the process or class that fails (0, or no class)
+    /// tells nothing: only IsWindow, or a process or class read that differs, makes the window gone.
     /// </summary>
-    private bool IsSameWindow(WindowRecord record) => WindowIdentityOf(record.Handle) == record.Identity;
+    private bool IsSameWindow(WindowRecord record)
+    {
+        try
+        {
+            if (!_windows.IsWindow(record.Handle))
+            {
+                return false;
+            }
+
+            var processId = _windows.GetWindowThreadProcessId(record.Handle);
+            var className = _windows.GetClassName(record.Handle);
+            return (processId == 0 || processId == record.Identity.ProcessId) &&
+                   (string.IsNullOrEmpty(className) || className == record.Identity.ClassName);
+        }
+        catch (Exception)
+        {
+            // Not known to be gone
+            return true;
+        }
+    }
 
     /// <summary>Drops a window and its refs. Under the lock.</summary>
     private void DropWindow(WindowRecord record)
@@ -696,6 +834,13 @@ public sealed class ElementRegistry : IElementRegistry
         public IUiaNode Node { get; set; } = node;
         public ElementFingerprint Fingerprint { get; set; } = fingerprint;
         public ElementCriteria? Selector { get; set; }
+
+        /// <summary>The list row the element was last read in, or null when it is in none or the read did not know.</summary>
+        public ElementRow? Row { get; set; }
+
+        /// <summary>The ref was moved to a re-created element that no read has returned since.</summary>
+        public bool Moved { get; set; }
+
         public long Generation { get; set; }
         public DateTimeOffset LastUsed { get; set; }
         public LinkedListNode<Entry>? LruNode { get; set; }

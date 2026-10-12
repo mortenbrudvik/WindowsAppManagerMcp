@@ -20,8 +20,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para><b>Identity.</b> The same control type and automation id, and the same class when both reads have one. The name
 /// is not compared ("Play" becomes "Pause"), except for a ListItem, TreeItem or DataItem without an automation id, whose
 /// name says which item it is: a virtualizing list reuses an item's element and runtime id for another row
-/// (<see cref="Services.ElementRegistry.NameIsIdentity"/>). An element inside such a recycled item whose own identity
-/// does not change (a check box of the row) cannot be told apart this way; M3.6 should read what it acts on.</para>
+/// (<see cref="Services.ElementRegistry.NameIsIdentity"/>). An element inside such a recycled item keeps its own identity
+/// (a check box of the row), so it is also checked against its row (<see cref="ElementOrigin.Row"/>, see
+/// <see cref="Services.ElementRows"/>): a read that sees it in another item gives it a new ref.</para>
 /// <para><b>Lifetime.</b> An entry holds the element, its runtime id, its window, a selector (see below), its fingerprint
 /// (name, control type, automation id, class, index path), the generation of the read that last saw it and when it was
 /// last used. The registry keeps the <see cref="Services.ElementRegistry.DefaultCapacity"/> most recently used entries
@@ -33,13 +34,17 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para><b>Resolution</b> (<see cref="Resolve"/>), in order: (1) a live read of the stored element (one call that asks the
 /// provider; a runtime id alone is answered from memory and cannot tell that the element is gone), accepted when it reads
 /// the stored runtime id and identity. (2) A search of the window for the runtime id, accepted when the element found has
-/// the stored identity. (3) Only with a stored selector: the selector run again and each result checked against the
+/// the stored identity. In both, an element with a recorded row is accepted only while the item that many levels up is
+/// that row (its runtime id, and its name when it has no automation id): one call per level and one read, else
+/// ElementStale ("its row now shows another item"). (3) Only with a stored selector: the selector run again and each result checked against the
 /// fingerprint (with the name too when there is no automation id): one result is the element, re-created, and the ref
-/// moves to it; several are <see cref="UIElementErrorCode.AmbiguousElement"/>, none
-/// <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
+/// moves to it (an element with a recorded row only when that result is in the same row: the item that many levels up has
+/// the row's name and automation id; otherwise ElementStale) (<see cref="ResolvedElement.Moved"/>, until a read returns the element again); several are
+/// <see cref="UIElementErrorCode.AmbiguousElement"/>, none <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
 /// sibling (another row's Delete button). A ref never silently resolves to a different element it can tell apart. Both
-/// searches are <see cref="Services.ElementSearch"/>es, bounded by the caller's deadline; a search that did not finish
-/// is OperationTimedOut, never a verdict that moves the ref.</para>
+/// searches are <see cref="Services.ElementSearch"/>es of the window's own tree (not the windows it owns, see
+/// <see cref="Services.OwnedWindows"/>), bounded by the caller's deadline; a search that did not finish is
+/// OperationTimedOut, never a verdict that moves the ref.</para>
 /// <para><b>Threads.</b> Every member is thread safe. <see cref="Register"/> and <see cref="Lookup"/> make no UI Automation
 /// call. <see cref="Resolve"/> does: call it inside a read on an <see cref="IUiaWorker"/> thread (after the window's
 /// hung check), or use <see cref="ResolveAsync"/>, which does both.</para>
@@ -94,11 +99,25 @@ public interface IElementRegistry
 /// <param name="Unique">Whether the read proved that <paramref name="Selector"/> fits no other element of the window with
 /// this element's fingerprint: true (the selector is kept, and a resolution may move the ref to the element re-created),
 /// false (another element fits it: a kept selector is dropped) or null (not known: nothing changes).</param>
+/// <param name="Row">The list, tree or grid item the element is inside, when the read knows it (a tree walk, and
+/// find_ui_elements, which reads it: <see cref="Services.ElementRows"/>), or null.</param>
 public sealed record ElementOrigin(
     long Generation,
     Services.ElementCriteria? Selector = null,
     IReadOnlyList<int>? IndexPath = null,
-    bool? Unique = null);
+    bool? Unique = null,
+    ElementRow? Row = null);
+
+/// <summary>
+/// The list, tree or grid item an element is inside: its nearest ListItem, TreeItem or DataItem ancestor as a read saw it
+/// (see <see cref="Services.ElementRows"/>).
+/// </summary>
+/// <param name="RuntimeId">The item's runtime id.</param>
+/// <param name="Name">The item's name, or null.</param>
+/// <param name="AutomationId">The item's automation id, or null.</param>
+/// <param name="Levels">How many levels above the element the item is (1: its parent; 0 for the item itself, in a tree
+/// walk).</param>
+public sealed record ElementRow(IReadOnlyList<int> RuntimeId, string? Name, string? AutomationId, int Levels);
 
 /// <summary>Who an element is, as it was last read: what a resolution checks an element found again against.</summary>
 /// <param name="ClassName">The class name, or null when the read did not get it (an element a walk read on its own); then
@@ -130,7 +149,13 @@ public enum ElementResolutionPath
 /// <param name="WindowHandle">The window the element belongs to.</param>
 /// <param name="Node">The element, for further reads and pattern calls through the same tree.</param>
 /// <param name="Element">Its properties, read during the resolution.</param>
-public sealed record ResolvedElement(string Ref, nint WindowHandle, IUiaNode Node, UiaElement Element, ElementResolutionPath Via);
+/// <param name="Via">How it was found: this resolution's path.</param>
+/// <param name="Moved">The ref names a re-created element it was moved to (<see cref="ElementResolutionPath.Selector"/>, in
+/// this resolution or an earlier one) that no read has returned since: the element the ref was given for is gone, and this
+/// one only fits its description. The tools that take a ref report it (refMoved), and element_action does not act on it
+/// until a read (find_ui_elements) returns the element again.</param>
+public sealed record ResolvedElement(
+    string Ref, nint WindowHandle, IUiaNode Node, UiaElement Element, ElementResolutionPath Via, bool Moved = false);
 
 /// <summary>The outcome of <see cref="IElementRegistry.Resolve"/>.</summary>
 /// <param name="Element">The live element, or null when the ref could not be resolved.</param>
