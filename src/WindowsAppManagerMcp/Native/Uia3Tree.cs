@@ -816,13 +816,7 @@ public sealed class Uia3Tree : IUiaTree
 
     private sealed class LegacyIAccessiblePattern(IUIAutomationLegacyIAccessiblePattern pattern) : IUiaLegacyIAccessiblePattern
     {
-        public UiaLegacyAccessibleState State => UiaComErrors.Run(() => new UiaLegacyAccessibleState(
-            pattern.CurrentName,
-            pattern.CurrentValue,
-            pattern.CurrentDescription,
-            pattern.CurrentDefaultAction,
-            pattern.CurrentRole,
-            pattern.CurrentState));
+        public string? DefaultAction => UiaComErrors.Run(() => pattern.CurrentDefaultAction);
 
         public void DoDefaultAction() => UiaComErrors.Run(pattern.DoDefaultAction);
     }

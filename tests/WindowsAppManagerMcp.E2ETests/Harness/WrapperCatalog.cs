@@ -381,7 +381,7 @@ public static class WrapperCatalog
             },
             [typeof(IUiaLegacyIAccessiblePattern)] = new Dictionary<string, WrapperMember>
             {
-                ["get_" + nameof(IUiaLegacyIAccessiblePattern.State)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaLegacyIAccessiblePattern.DefaultAction)] = WrapperMember.Read,
                 [nameof(IUiaLegacyIAccessiblePattern.DoDefaultAction)] = WrapperMember.UiaAction
             },
             [typeof(IProcessHandle)] = new Dictionary<string, WrapperMember>

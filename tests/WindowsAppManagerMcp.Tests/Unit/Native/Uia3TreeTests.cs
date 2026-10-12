@@ -560,7 +560,6 @@ public class Uia3TreeTests
         var node = NodeOf(sut, control);
         var legacy = new Mock<IUIAutomationLegacyIAccessiblePattern>();
         legacy.SetupGet(p => p.CurrentDefaultAction).Returns("Press");
-        legacy.SetupGet(p => p.CurrentRole).Returns(43u);
         control.Setup(e => e.GetCurrentPattern(UiaIds.LegacyIAccessiblePattern)).Returns(legacy.Object);
 
         // Act
@@ -568,9 +567,27 @@ public class Uia3TreeTests
         pattern.DoDefaultAction();
 
         // Assert
-        pattern.State.DefaultAction.Should().Be("Press");
-        pattern.State.Role.Should().Be(43u);
+        pattern.DefaultAction.Should().Be("Press");
         legacy.Verify(p => p.DoDefaultAction(), Times.Once);
+    }
+
+    [Fact]
+    public void LegacyIAccessible_ReadsOnlyTheDefaultAction_NeverTheValue()
+    {
+        // Arrange - MSAA's value of a password field can be the password
+        var sut = CreateSut();
+        var control = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, control);
+        var legacy = new Mock<IUIAutomationLegacyIAccessiblePattern>(MockBehavior.Strict);
+        legacy.SetupGet(p => p.CurrentDefaultAction).Returns("Press");
+        control.Setup(e => e.GetCurrentPattern(UiaIds.LegacyIAccessiblePattern)).Returns(legacy.Object);
+
+        // Act
+        var defaultAction = sut.GetPattern<IUiaLegacyIAccessiblePattern>(node)!.DefaultAction;
+
+        // Assert - a strict mock: a read of CurrentValue (or any other member) would throw
+        defaultAction.Should().Be("Press");
+        legacy.VerifyGet(p => p.CurrentDefaultAction, Times.Once);
     }
 
     [Fact]

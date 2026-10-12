@@ -176,7 +176,7 @@ public sealed class FakeLegacyPattern(string? defaultAction) : IUiaLegacyIAccess
 {
     public int DefaultActions { get; private set; }
 
-    public UiaLegacyAccessibleState State => new(null, null, null, defaultAction, 0, 0);
+    public string? DefaultAction => defaultAction;
 
     public void DoDefaultAction() => DefaultActions++;
 }

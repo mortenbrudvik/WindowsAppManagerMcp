@@ -854,11 +854,15 @@ public sealed partial class ElementActionService
     private TPattern? Pattern<TPattern>(PreparedElement element, UiaPatterns flag) where TPattern : class, IUiaPattern =>
         (element.Element.Patterns & flag) != 0 ? _tree.GetPattern<TPattern>(element.Node) : null;
 
-    /// <summary>The MSAA default action, when the element has one (UIA3 engine only).</summary>
+    /// <summary>
+    /// The MSAA default action, when the element has one (UIA3 engine only). Never for a password field: the MSAA bridge is
+    /// not touched at all there, so no read of it can reach the field's value.
+    /// </summary>
     private IUiaLegacyIAccessiblePattern? DefaultAction(PreparedElement element)
     {
-        if (Pattern<IUiaLegacyIAccessiblePattern>(element, UiaPatterns.LegacyIAccessible) is not { } legacy ||
-            TryRead(() => legacy.State) is not { DefaultAction: { Length: > 0 } name })
+        if (element.IsPassword ||
+            Pattern<IUiaLegacyIAccessiblePattern>(element, UiaPatterns.LegacyIAccessible) is not { } legacy ||
+            TryRead(() => legacy.DefaultAction) is not { Length: > 0 } name)
         {
             return null;
         }

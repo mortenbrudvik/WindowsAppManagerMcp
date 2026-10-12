@@ -2612,7 +2612,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 **Actions:**
 | Action | Pattern (method) | Notes |
 |--------|------------------|-------|
-| `invoke` | Invoke; else the MSAA default action (`LegacyIAccessible`, UIA3 engine) | A button, menu item or link |
+| `invoke` | Invoke; else the MSAA default action (`LegacyIAccessible`, UIA3 engine; never for a password field, whose MSAA properties include its value) | A button, menu item or link |
 | `click` | SelectionItem (select), Invoke, Toggle, ExpandCollapse (expand or collapse), MSAA default action | What a single click would do, through the first pattern the element has: an item that can be selected (a list, tree, grid or tab item, a radio button) is selected, not invoked, because an item's Invoke is often its double click (Explorer and ListView items open the file or start the program); use `invoke` to open it |
 | `double_click`, `right_click` | `Mouse` | Always a guarded mouse click at the element's click point, after its window is brought to the front (no pattern does these) |
 | `focus` | `Focus` | Brings the window to the front (verified, as [focus_window](#focus_window)), then gives the element keyboard focus |

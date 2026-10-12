@@ -393,6 +393,24 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Warnings.Should().Contain(w => w.Contains("'Press'"));
     }
 
+    [Theory]
+    [InlineData(ElementActionKind.Invoke)]
+    [InlineData(ElementActionKind.Click)]
+    public async Task APasswordFieldsMsaaPattern_IsNeverRead_SoItsValueIsNot(ElementActionKind action)
+    {
+        // Arrange - MSAA's state of an element includes its value (accValue), which for a password field can be the password
+        var legacy = new RecordingLegacyPattern();
+        var password = RefOf(new FakeUiaNode("Edit", "Password") { ProcessId = Pid, IsPassword = true, OtherPatterns = UiaPatterns.LegacyIAccessible }
+            .WithPattern<IUiaLegacyIAccessiblePattern>(legacy));
+
+        // Act
+        var result = await ActAsync(password, action);
+
+        // Assert
+        result.ErrorCode.Should().Be("PatternNotSupported");
+        legacy.Calls.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Click_OnACheckBox_TogglesIt_AndIsVerifiedByTheNewState()
     {
@@ -1381,5 +1399,22 @@ public sealed class ElementActionServiceTests : IDisposable
         public bool IsReadOnly => false;
 
         public void SetValue(string value) => Set = value;
+    }
+
+    /// <summary>An MSAA pattern that records every member used, which must not happen for a password field.</summary>
+    private sealed class RecordingLegacyPattern : IUiaLegacyIAccessiblePattern
+    {
+        public List<string> Calls { get; } = [];
+
+        public string? DefaultAction
+        {
+            get
+            {
+                Calls.Add(nameof(DefaultAction));
+                return "Press";
+            }
+        }
+
+        public void DoDefaultAction() => Calls.Add(nameof(DoDefaultAction));
     }
 }
