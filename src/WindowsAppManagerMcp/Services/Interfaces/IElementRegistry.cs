@@ -38,8 +38,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// that row (its runtime id, and its name when it has no automation id): one call per level and one read, else
 /// ElementStale ("its row now shows another item"). (3) Only with a stored selector: the selector run again and each result checked against the
 /// fingerprint (with the name too when there is no automation id): one result is the element, re-created, and the ref
-/// moves to it; several are <see cref="UIElementErrorCode.AmbiguousElement"/>, none
-/// <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
+/// moves to it (<see cref="ResolvedElement.Moved"/>, until a read returns the element again); several are
+/// <see cref="UIElementErrorCode.AmbiguousElement"/>, none <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
 /// sibling (another row's Delete button). A ref never silently resolves to a different element it can tell apart. Both
 /// searches are <see cref="Services.ElementSearch"/>es of the window's own tree (not the windows it owns, see
 /// <see cref="Services.OwnedWindows"/>), bounded by the caller's deadline; a search that did not finish is
@@ -148,7 +148,13 @@ public enum ElementResolutionPath
 /// <param name="WindowHandle">The window the element belongs to.</param>
 /// <param name="Node">The element, for further reads and pattern calls through the same tree.</param>
 /// <param name="Element">Its properties, read during the resolution.</param>
-public sealed record ResolvedElement(string Ref, nint WindowHandle, IUiaNode Node, UiaElement Element, ElementResolutionPath Via);
+/// <param name="Via">How it was found: this resolution's path.</param>
+/// <param name="Moved">The ref names a re-created element it was moved to (<see cref="ElementResolutionPath.Selector"/>, in
+/// this resolution or an earlier one) that no read has returned since: the element the ref was given for is gone, and this
+/// one only fits its description. The tools that take a ref report it (refMoved), and element_action does not act on it
+/// until a read (find_ui_elements) returns the element again.</param>
+public sealed record ResolvedElement(
+    string Ref, nint WindowHandle, IUiaNode Node, UiaElement Element, ElementResolutionPath Via, bool Moved = false);
 
 /// <summary>The outcome of <see cref="IElementRegistry.Resolve"/>.</summary>
 /// <param name="Element">The live element, or null when the ref could not be resolved.</param>

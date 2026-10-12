@@ -22,6 +22,8 @@ public interface ICaptureMetadata
 /// themselves, and refuse when the captured window moved since; null when the capture failed or was not registered.
 /// <see cref="Ref"/> is set for capture_window with a ref (roadmap M3.11): the element the image is cropped to, under the
 /// ref it resolved to (the one asked for, or the element's own ref when it was found again under another).
+/// <see cref="RefMoved"/> is true when that ref was moved to a re-created element that alone fits its description (the
+/// element it was given for is gone), with a RefMoved warning; null otherwise.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -43,7 +45,8 @@ public record ScreenshotResult(
     string? CoordinateSpace = null,
     IReadOnlyList<string>? Warnings = null,
     string? CaptureId = null,
-    string? Ref = null
+    string? Ref = null,
+    bool? RefMoved = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -274,6 +277,9 @@ public static class CaptureWarnings
 
     /// <summary>The window could not be minimized again after the capture.</summary>
     public const string ReminimizeFailed = "ReminimizeFailed";
+
+    /// <summary>capture_window's ref was moved to a re-created element: the crop shows that element.</summary>
+    public const string RefMoved = "RefMoved";
 
     /// <summary>"Code: text".</summary>
     public static string Format(string code, string text) => $"{code}: {text}";

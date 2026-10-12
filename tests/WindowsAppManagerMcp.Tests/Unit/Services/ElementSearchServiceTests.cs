@@ -464,6 +464,41 @@ public class ElementSearchServiceTests
         result.Success.Should().BeTrue();
         result.WithinRef.Should().Be(newRef).And.NotBe(oldRef);
         _registry.Lookup(oldRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        result.RefMoved.Should().BeTrue("the group the ref was given for is gone");
+    }
+
+    [Fact]
+    public async Task Find_WithinARefMovedToAReCreatedElement_SearchesIt_AndSaysSo()
+    {
+        // Arrange - the Options group was re-created: the ref follows the new group, which alone fits its description
+        var (window, _, options) = BuildEditor();
+        var optionsRef = (await Find(Query(name: "Options", controlTypes: ["Group"]))).Elements!.Single().Ref!;
+        options.Vanish();
+        window.Children[1].With(new FakeUiaNode("Group", "Options").With(new FakeUiaNode("Edit", "Search")));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+        var unmoved = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+
+        // Assert - reported on every search below it, until a read returns the group again
+        result.Success.Should().BeTrue();
+        result.WithinRef.Should().Be(optionsRef);
+        result.Elements!.Select(e => e.Name).Should().Equal("Search");
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().StartWith("withinRef: ").And.Contain($"Ref '{optionsRef}' was moved");
+        unmoved.RefMoved.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Find_WithinALiveRef_HasNoMoveToReport()
+    {
+        var (_, _, options) = BuildEditor();
+        var optionsRef = _registry.Register(Handle, _tree.ReadElement(options), new ElementOrigin(1));
+
+        var result = await Find(Query(controlTypes: ["Edit"], withinRef: optionsRef));
+
+        result.RefMoved.Should().BeNull();
+        result.Warning.Should().BeNull();
     }
 
     #endregion

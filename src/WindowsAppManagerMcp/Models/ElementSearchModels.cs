@@ -148,6 +148,9 @@ public record FoundElement(
 /// none was.</param>
 /// <param name="Virtualized">With searchVirtualized (roadmap M3.10): the lists searched through their ItemContainer pattern
 /// and how many items only they found. Left out otherwise.</param>
+/// <param name="RefMoved">True when withinRef was moved to a re-created element that alone fits its description (the
+/// element it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
+/// <param name="Warning">Why the result needs a check although it succeeded: withinRef moved.</param>
 public record FindElementsResult(
     bool Success,
     long WindowHandle,
@@ -164,7 +167,9 @@ public record FindElementsResult(
     ElementSearchScope? Scope = null,
     int? WindowsSearched = null,
     int? WindowsExcluded = null,
-    VirtualizedSearchInfo? Virtualized = null
+    VirtualizedSearchInfo? Virtualized = null,
+    bool? RefMoved = null,
+    string? Warning = null
 );
 
 /// <summary>

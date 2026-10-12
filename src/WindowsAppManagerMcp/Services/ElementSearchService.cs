@@ -294,6 +294,7 @@ public sealed partial class ElementSearchService : IElementSearchService
             var title = started.Title;
             var root = window;
             var withinRef = query.WithinRef;
+            var withinMoved = false;
             if (query.WithinRef != null)
             {
                 var within = _registry.Resolve(query.WithinRef, token);
@@ -315,6 +316,9 @@ public sealed partial class ElementSearchService : IElementSearchService
                 // The ref the element has now: when it was found again and already had a ref of its own, the asked-for one
                 // was dropped
                 withinRef = resolved.Ref;
+
+                // Searched below the element the ref was moved to, and said so: the element the ref was given for is gone
+                withinMoved = resolved.Moved;
             }
 
             var generation = _registry.NextGeneration();
@@ -433,6 +437,12 @@ public sealed partial class ElementSearchService : IElementSearchService
             {
                 result = WithVirtualized(result, virtualized, query, criteria, generation, token);
             }
+
+            if (withinMoved)
+            {
+                result = result with { RefMoved = true, Warning = "withinRef: " + ElementRefs.MovedWarning(withinRef!) };
+            }
+
             return scope == ElementSearchScope.Window
                 ? result with { Scope = scope }
                 : result with

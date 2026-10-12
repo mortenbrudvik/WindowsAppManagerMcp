@@ -18,6 +18,15 @@ public static partial class ElementRefs
     /// <summary>The ref in lower case, or null when it is not well formed.</summary>
     public static string? Normalize(string? value) => IsWellFormed(value) ? value!.ToLowerInvariant() : null;
 
+    /// <summary>
+    /// The warning of a result whose ref was moved to a re-created element (<see cref="ResolvedElement.Moved"/>), for the
+    /// tools that read through a ref.
+    /// </summary>
+    public static string MovedWarning(string elementRef) =>
+        $"Ref '{elementRef}' was moved: the element it was given for is gone, and the ref now names a re-created element " +
+        "that alone fits its description (its control type, automation id or name, and class). Check that it is the element " +
+        "you mean; element_action does not act on it until a read such as find_ui_elements returns it again.";
+
     /// <summary>The ref of element <paramref name="element"/> of window <paramref name="window"/>.</summary>
     public static string Format(int window, int element) =>
         string.Create(CultureInfo.InvariantCulture, $"w{window}e{element}");
@@ -173,6 +182,9 @@ public sealed class ElementRegistry : IElementRegistry
                         _ => existing.Selector
                     };
                     existing.Row = origin.Row ?? existing.Row;
+
+                    // A read returned the element the ref was moved to: the caller has seen it now
+                    existing.Moved = false;
                     existing.Generation = Math.Max(existing.Generation, origin.Generation);
                     Touch(existing);
                     return existing.Ref;
@@ -479,13 +491,15 @@ public sealed class ElementRegistry : IElementRegistry
             entry.Node = node;
             entry.Fingerprint = Merge(entry.Fingerprint, Fingerprint(element, null));
             Touch(entry);
-            return new ElementResolution(new ResolvedElement(entry.Ref, entry.Window.Handle, node, element, via));
+            return new ElementResolution(new ResolvedElement(entry.Ref, entry.Window.Handle, node, element, via, entry.Moved));
         }
     }
 
     /// <summary>
     /// Moves a ref to its re-created element. When that element already has a ref of its own, the old ref is dropped and
-    /// the element's own ref is returned, so one element never has two refs.
+    /// the element's own ref is returned, so one element never has two refs. Either way the resolution is
+    /// <see cref="ResolvedElement.Moved"/>; a moved ref stays so in later resolutions until a read registers its element
+    /// again (the caller has then seen it).
     /// </summary>
     private ElementResolution Rebind(Entry entry, UiaElement element)
     {
@@ -503,7 +517,7 @@ public sealed class ElementRegistry : IElementRegistry
                 owner.Node = element.Node;
                 Touch(owner);
                 return new ElementResolution(new ResolvedElement(
-                    owner.Ref, owner.Window.Handle, element.Node, element, ElementResolutionPath.Selector));
+                    owner.Ref, owner.Window.Handle, element.Node, element, ElementResolutionPath.Selector, Moved: true));
             }
 
             entry.Window.Entries.Remove(entry.Key);
@@ -512,9 +526,10 @@ public sealed class ElementRegistry : IElementRegistry
             entry.Window.Entries[key] = entry;
             entry.Node = element.Node;
             entry.Fingerprint = Merge(entry.Fingerprint, Fingerprint(element, null));
+            entry.Moved = true;
             Touch(entry);
             return new ElementResolution(new ResolvedElement(
-                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.Selector));
+                entry.Ref, entry.Window.Handle, element.Node, element, ElementResolutionPath.Selector, Moved: true));
         }
     }
 
@@ -733,6 +748,9 @@ public sealed class ElementRegistry : IElementRegistry
 
         /// <summary>The list row the element was last read in, or null when it is in none or the read did not know.</summary>
         public ElementRow? Row { get; set; }
+
+        /// <summary>The ref was moved to a re-created element that no read has returned since.</summary>
+        public bool Moved { get; set; }
 
         public long Generation { get; set; }
         public DateTimeOffset LastUsed { get; set; }

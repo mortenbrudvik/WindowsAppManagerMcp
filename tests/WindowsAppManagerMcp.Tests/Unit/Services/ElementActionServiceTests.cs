@@ -1699,6 +1699,68 @@ public sealed class ElementActionServiceTests : IDisposable
 
     #endregion
 
+    #region A ref moved to a re-created element
+
+    /// <summary>
+    /// Window > Document "Page 1" > Button "Confirm", found by a search that proved its criteria unique in the window; then
+    /// the page moves on: Page 1 is gone and Page 2 has its own Confirm button. Returns the ref and the new button's Invoke.
+    /// </summary>
+    private (string ConfirmRef, FakeInvokePattern NextInvoke, FakeUiaNode Next) NextPagesLookAlike()
+    {
+        var first = Button("Confirm");
+        var page1 = new FakeUiaNode("Document", "Page 1") { ProcessId = Pid };
+        _window.With(page1);
+        page1.With(first);
+        var confirmRef = _registry.Register(Handle, _tree.ReadElement(first),
+            new ElementOrigin(_registry.NextGeneration(), new ElementCriteria(Name: "Confirm", ControlTypes: ["Button"]), Unique: true))!;
+        first.Vanish();
+        page1.Vanish();
+        var nextInvoke = new FakeInvokePattern();
+        var next = Button("Confirm", nextInvoke);
+        _window.With(new FakeUiaNode("Document", "Page 2") { ProcessId = Pid }.With(next));
+        return (confirmRef, nextInvoke, next);
+    }
+
+    [Fact]
+    public async Task ARefMovedToAReCreatedLookAlike_IsRefused_AndNothingIsDone()
+    {
+        // Arrange - an invoke that timed out on page 1 is retried on the same ref after the page moved on
+        var (confirmRef, nextInvoke, _) = NextPagesLookAlike();
+
+        // Act
+        var result = await ActAsync(confirmRef, ElementActionKind.Invoke);
+        var again = await ActAsync(confirmRef, ElementActionKind.Invoke);
+
+        // Assert - refused, also on a retry, until a read returns the element again
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementStale));
+        result.RefMoved.Should().BeTrue();
+        result.Error.Should().Contain("re-created").And.Contain("find_ui_elements");
+        again.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementStale));
+        nextInvoke.Invokes.Should().Be(0);
+        _runner.Runs.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ARefMovedToAReCreatedElement_IsActedOn_OnceAReadReturnedItAgain()
+    {
+        // Arrange - the agent read the page again: the search returns the moved ref for the element it now names
+        var (confirmRef, nextInvoke, next) = NextPagesLookAlike();
+        (await ActAsync(confirmRef, ElementActionKind.Invoke)).RefMoved.Should().BeTrue();
+        var read = _registry.Register(Handle, _tree.ReadElement(next), new ElementOrigin(_registry.NextGeneration()));
+
+        // Act
+        var result = await ActAsync(read!, ElementActionKind.Invoke);
+
+        // Assert
+        read.Should().Be(confirmRef);
+        result.Success.Should().BeTrue(result.Error);
+        result.RefMoved.Should().BeNull();
+        nextInvoke.Invokes.Should().Be(1);
+    }
+
+    #endregion
+
     /// <summary>A password field's Value pattern: it counts the reads of its value, which must never happen.</summary>
     private sealed class UnreadableValuePattern : IUiaValuePattern
     {

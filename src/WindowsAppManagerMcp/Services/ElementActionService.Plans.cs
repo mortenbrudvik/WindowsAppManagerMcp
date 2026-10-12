@@ -44,7 +44,19 @@ public sealed partial class ElementActionService
             return Failed(call, resolution.ErrorCode.ToString(), resolution.Error ?? "The element ref could not be resolved.");
         }
 
+        var asked = call.Ref;
         call.Ref = resolved.Ref;
+        if (resolved.Moved)
+        {
+            // Only an element the agent has read is acted on: a look-alike that took the gone element's place may be another
+            // page's or dialog's button with the same label
+            return ReadOutcome<PreparedElement>.Failed(call.Fail(nameof(UIElementErrorCode.ElementStale),
+                $"Element ref '{asked}' is stale: the element it was given for is gone, and the ref was moved to a " +
+                $"re-created element ({resolved.Element.Properties.ControlType} '{resolved.Element.Properties.Name}', ref " +
+                $"'{resolved.Ref}') that alone fits its description. Nothing was done: an action is never carried out on an " +
+                "element only its description found. Read it again (find_ui_elements, which returns the same ref when it is " +
+                "that element), check that it is the one you mean, and act then.") with { RefMoved = true });
+        }
         try
         {
             var node = resolved.Node;

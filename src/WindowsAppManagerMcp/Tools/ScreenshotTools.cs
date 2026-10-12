@@ -275,6 +275,20 @@ public class ScreenshotTools
                 {
                     capture = capture with { Metadata = capture.Metadata with { Ref = area.Ref } };
                 }
+
+                // The crop shows the element the ref was moved to: say so
+                if (capture.Metadata.Success && area.Moved)
+                {
+                    capture = capture with
+                    {
+                        Metadata = capture.Metadata with
+                        {
+                            RefMoved = true,
+                            Warnings = Merge([CaptureWarnings.Format(CaptureWarnings.RefMoved, ElementRefs.MovedWarning(area.Ref!))],
+                                capture.Metadata.Warnings)
+                        }
+                    };
+                }
             }
         }
 
@@ -492,8 +506,11 @@ public class ScreenshotTools
         return named;
     }
 
-    /// <summary>The area capture_window crops to: the element's bounds, read now, plus padding; or why there is none.</summary>
-    private sealed record ElementArea(BoundsDto? Bounds, string? Ref, CallToolResult? Failure);
+    /// <summary>
+    /// The area capture_window crops to: the element's bounds, read now, plus padding; or why there is none.
+    /// <paramref name="Moved"/>: the ref was moved to a re-created element (<see cref="ResolvedElement.Moved"/>).
+    /// </summary>
+    private sealed record ElementArea(BoundsDto? Bounds, string? Ref, CallToolResult? Failure, bool Moved = false);
 
     /// <summary>
     /// Resolves the ref (its live element, found again if it was re-created; otherwise the resolution's code: ElementStale,
@@ -520,7 +537,8 @@ public class ScreenshotTools
 
         var pad = element.Padding;
         return new ElementArea(
-            new BoundsDto(bounds.X - pad, bounds.Y - pad, bounds.Width + 2 * pad, bounds.Height + 2 * pad), resolved.Ref, null);
+            new BoundsDto(bounds.X - pad, bounds.Y - pad, bounds.Width + 2 * pad, bounds.Height + 2 * pad), resolved.Ref, null,
+            resolved.Moved);
     }
 
     /// <summary>

@@ -550,6 +550,55 @@ public class ElementWaitServiceTests
     }
 
     [Fact]
+    public async Task Ref_Gone_IsSatisfied_WhenALookAlikeTookTheElementsPlace_NotStillThere()
+    {
+        // Arrange - a status label whose search proved it the only one is re-rendered: the label the ref was given for is
+        // gone, and a new one fits its description
+        var body = BuildWindow();
+        var loading = new FakeUiaNode("Text", "Loading") { AutomationId = "Status" };
+        body.With(loading);
+        var loadingRef = await RefOf("Status");
+        At(300, () =>
+        {
+            loading.Vanish();
+            body.With(new FakeUiaNode("Text", "Loading") { AutomationId = "Status" });
+        });
+
+        // Act
+        var result = await WaitAsync(condition: ElementWaitCondition.Gone, elementRef: loadingRef);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Element.Should().BeNull();
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().Contain("took its place").And.Contain("re-created");
+    }
+
+    [Fact]
+    public async Task Ref_Enabled_FollowsARefMovedToAReCreatedElement_AndSaysSo()
+    {
+        // Arrange
+        var body = BuildWindow();
+        var ok = Button("OK", enabled: false);
+        body.With(ok);
+        var okRef = await RefOf("OKBtn");
+        At(300, () =>
+        {
+            ok.Vanish();
+            body.With(Button("OK"));
+        });
+
+        // Act
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, elementRef: okRef);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Element!.Ref.Should().Be(okRef);
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().Contain("element_action does not act on it");
+    }
+
+    [Fact]
     public async Task Ref_ThatGoesStale_EndsAnyOtherCondition_WithElementStale_NotATimeout()
     {
         var ok = Button("OK", enabled: false);
@@ -643,6 +692,25 @@ public class ElementWaitServiceTests
         result.Element!.AutomationId.Should().Be("Inside", "the item outside the list does not count");
         _windowWait.Verify(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WithinRef_MovedToAReCreatedElement_IsFollowed_AndSaysSo()
+    {
+        // Arrange - the list was rebuilt: the ref now names the new list, which alone fits its description
+        var list = new FakeUiaNode("List", "Files") { AutomationId = "Files" };
+        var body = BuildWindow(list);
+        var listRef = await RefOf("Files");
+        list.Vanish();
+        body.With(new FakeUiaNode("List", "Files") { AutomationId = "Files" }.With(new FakeUiaNode("ListItem", "report.txt")));
+
+        // Act
+        var result = await WaitAsync(Criteria(name: "report.txt", withinRef: listRef));
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.RefMoved.Should().BeTrue();
+        result.Warning.Should().StartWith("withinRef:");
     }
 
     [Fact]

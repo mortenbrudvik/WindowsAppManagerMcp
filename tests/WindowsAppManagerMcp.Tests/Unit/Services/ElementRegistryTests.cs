@@ -324,8 +324,44 @@ public class ElementRegistryTests
 
         // Assert
         resolution.Element!.Should().Match<ResolvedElement>(r =>
-            r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector);
+            r.Ref == saveRef && ReferenceEquals(r.Node, recreated) && r.Via == ElementResolutionPath.Selector && r.Moved);
         sut.Resolve(saveRef!, None).Element!.Via.Should().Be(ElementResolutionPath.Live, "the ref now holds the new element");
+    }
+
+    [Fact]
+    public void Resolve_ARefMovedToAReCreatedElement_StaysMoved_UntilAReadRegistersTheElementAgain()
+    {
+        // Arrange - the ref was moved to the re-created button
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        var toolbar = new FakeUiaNode("Pane", "Toolbar").With(save);
+        Window(Handle, toolbar);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+        save.Vanish();
+        var recreated = Button("Save", "SaveButton");
+        toolbar.With(recreated);
+        sut.Resolve(saveRef!, None).Element!.Moved.Should().BeTrue();
+
+        // Act
+        var later = sut.Resolve(saveRef!, None);
+        var read = Register(sut, recreated);
+        var afterRead = sut.Resolve(saveRef!, None);
+
+        // Assert - live now, but still the element the ref was moved to, until a read returned it
+        later.Element!.Should().Match<ResolvedElement>(r => r.Via == ElementResolutionPath.Live && r.Moved);
+        read.Should().Be(saveRef);
+        afterRead.Element!.Moved.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_ALiveElement_IsNotMoved()
+    {
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        Window(Handle, save);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+
+        sut.Resolve(saveRef!, None).Element!.Moved.Should().BeFalse();
     }
 
     [Fact]
@@ -528,8 +564,9 @@ public class ElementRegistryTests
         // Act
         var resolution = sut.Resolve(oldRef!, None);
 
-        // Assert - one element never has two refs
+        // Assert - one element never has two refs; the old one was moved to it
         resolution.Element!.Ref.Should().Be(newRef);
+        resolution.Element.Moved.Should().BeTrue();
         sut.Lookup(oldRef!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 

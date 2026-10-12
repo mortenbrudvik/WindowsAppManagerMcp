@@ -238,6 +238,16 @@ public sealed class MenuPathService : IMenuPathService
                 continue;
             }
 
+            if (result.RefMoved == true)
+            {
+                // The menu the path starts in (or the item before) is gone, and its ref names a look-alike: nothing below it is
+                // opened, as element_action does not act on such a ref
+                return FoundItem.Failed(run.Fail(nameof(UIElementErrorCode.ElementStale),
+                    $"The menu to search for '{item}' (item {index + 1} of {request.Items.Count}) is gone: {result.Warning} " +
+                    "Nothing more was opened. Read the menu again (get_active_popups or find_ui_elements) and pass its new ref.")
+                    with { RefMoved = true });
+            }
+
             if (result.MatchCount > 1 && result.Elements is { } several)
             {
                 var refs = string.Join(", ", several.Select(e => $"{e.Ref} '{Cut(e.Name)}'"));
