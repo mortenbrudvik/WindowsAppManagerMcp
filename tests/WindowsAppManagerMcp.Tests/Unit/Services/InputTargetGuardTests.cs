@@ -1599,5 +1599,33 @@ public class InputTargetGuardTests
         CreateSut().CheckTarget(To(Notepad)).ErrorCode.Should().Be(InputErrorCode.SessionLocked);
     }
 
+    [Fact]
+    public void CheckElementWindow_OfAChildWindowOfTheTarget_IsAllowed()
+    {
+        var result = CreateSut().CheckElementWindow(To(Notepad), NotepadEdit);
+
+        result.Allowed.Should().BeTrue(result.Error);
+        result.Receiving.Should().Be(NotepadEdit);
+    }
+
+    [Theory]
+    [InlineData(0x300, InputErrorCode.TargetDeniedByPolicy)] // an element of KeePass's process, found through Notepad's ref
+    [InlineData(0x400, InputErrorCode.TargetElevated)]
+    [InlineData(0x100, InputErrorCode.TargetIsAgentHost)]
+    [InlineData(0x999, InputErrorCode.InvalidHandle)]
+    [InlineData(0, InputErrorCode.InvalidHandle)]
+    public void CheckElementWindow_ChecksTheElementsOwnWindow_NotTheTargets(long elementWindow, InputErrorCode expected)
+    {
+        CreateSut().CheckElementWindow(To(Notepad), (nint)elementWindow).ErrorCode.Should().Be(expected);
+    }
+
+    [Fact]
+    public void CheckElementWindow_AllowHostTarget_LiftsTheHostCheckOnlyForTheTargetsOwnWindow()
+    {
+        // The target is Notepad, so allowHostTarget does not reach the host's terminal
+        CreateSut().CheckElementWindow(To(Notepad, allowHostTarget: true), Terminal).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        CreateSut().CheckElementWindow(To(Terminal, allowHostTarget: true), Terminal).Allowed.Should().BeTrue();
+    }
+
     #endregion
 }

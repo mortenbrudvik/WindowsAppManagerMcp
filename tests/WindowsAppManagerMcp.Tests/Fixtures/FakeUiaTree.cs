@@ -377,7 +377,7 @@ public sealed class FakeUiaNode : IUiaNode
 
     public string? ClassName { get; init; }
     public string? FrameworkId { get; init; }
-    public int ProcessId { get; init; }
+    public int ProcessId { get; set; }
     public nint NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
     public string? Value { get; init; }

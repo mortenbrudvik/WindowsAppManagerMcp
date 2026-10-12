@@ -162,6 +162,10 @@ public class AuditLogContractTests
         line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
         line.GetProperty("target").GetProperty("process").GetString().Should().Be("notepad", "the tool notes the element's window before it acts");
         line.GetProperty("result").GetProperty("outcomeVerified").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("method").GetString().Should().BeEquivalentTo("value",
+            "an audit reader sees whether the call used a pattern or moved the pointer or typed");
+        line.GetProperty("result").GetProperty("status").GetString().Should().BeEquivalentTo("done");
+        line.GetRawText().Should().NotContain("window layout", "the values in before and after are never logged");
     }
 
     [Fact]

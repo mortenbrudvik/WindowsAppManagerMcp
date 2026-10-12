@@ -41,6 +41,8 @@ public sealed class ElementActionServiceTests : IDisposable
 
         _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>()))
             .Returns((InputTarget target) => InputGuardResult.Allow(target, Handle, Main, Handle));
+        _guard.Setup(g => g.CheckElementWindow(It.IsAny<InputTarget>(), It.IsAny<nint>()))
+            .Returns((InputTarget target, nint window) => InputGuardResult.Allow(target, window, Main, Handle));
         _probe.Setup(p => p.Snapshot(It.IsAny<IReadOnlyCollection<int>>()))
             .Returns((IReadOnlyCollection<int> ids) => new AppWindowSnapshot(ids.ToHashSet(), new HashSet<nint> { Handle }));
         _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([]);
@@ -49,17 +51,25 @@ public sealed class ElementActionServiceTests : IDisposable
 
     public void Dispose() => _session.Dispose();
 
-    private ElementActionService CreateSut() => new(
+    private ElementActionService CreateSut(ToolsetSelection? toolsets = null) => new(
         _tree, _worker, _registry, _guard.Object, _session, _runner, _probe.Object, _input.Object, _foreground.Object,
-        _windows.Object, _clipboard.Object)
+        _windows.Object, _clipboard.Object, toolsets)
     {
         SettleDelay = TimeSpan.Zero,
-        GateTimeout = TimeSpan.FromSeconds(10)
+        GateTimeout = TimeSpan.FromSeconds(10),
+        ToggleStateWait = TimeSpan.FromMilliseconds(30),
+        ToggleStatePoll = TimeSpan.FromMilliseconds(1)
     };
 
     /// <summary>Puts <paramref name="node"/> in the window and gives it a ref, as a read tool would.</summary>
     private string RefOf(FakeUiaNode node, FakeUiaNode? parent = null)
     {
+        // An element names its process, as UI Automation reports it: the application's unless the test says otherwise
+        if (node.ProcessId == 0)
+        {
+            node.ProcessId = Pid;
+        }
+
         (parent ?? _window).With(node);
         return _registry.Register(Handle, _tree.ReadElement(node), new ElementOrigin(_registry.NextGeneration()))!;
     }
@@ -158,6 +168,85 @@ public sealed class ElementActionServiceTests : IDisposable
         invoke.Invokes.Should().Be(0);
         _tree.Reads.Count.Should().Be(readsBefore);
         _guard.Verify(g => g.CheckTarget(It.IsAny<InputTarget>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task APauseWhileTheElementIsRead_StopsTheCall_BeforeItActs()
+    {
+        // Arrange - the user presses the pause hotkey while a slow provider answers the read
+        var invoke = new FakeInvokePattern();
+        var button = Button("Save", invoke);
+        var save = RefOf(button);
+        button.OnRead = () => _session.Pause(InputControlSources.Hotkey);
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.ErrorCode.Should().Be("PausedByUser");
+        invoke.Invokes.Should().Be(0);
+        _runner.Runs.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AnElementOfAnotherProcess_HasItsOwnWindowChecked_AndIsRefusedWhenThePolicyDeniesIt()
+    {
+        // Arrange - a child window of a password manager inside the ref's window
+        const nint vault = 0x5400;
+        const int vaultPid = 7070;
+        _windows.Setup(w => w.GetWindowThreadProcessId(vault)).Returns((uint)vaultPid);
+        var host = new FakeUiaNode("Pane", "Vault") { NativeWindowHandle = vault, ProcessId = vaultPid };
+        _window.With(host);
+        var invoke = new FakeInvokePattern();
+        var reveal = new FakeUiaNode("Button", "Reveal") { ActionPatterns = ["Invoke"], ProcessId = vaultPid }.WithPattern<IUiaInvokePattern>(invoke);
+        var revealRef = RefOf(reveal, host);
+        _guard.Setup(g => g.CheckElementWindow(It.IsAny<InputTarget>(), vault)).Returns((InputTarget target, nint _) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied by the policy.", target));
+
+        // Act
+        var result = await ActAsync(revealRef, ElementActionKind.Invoke);
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetDeniedByPolicy");
+        invoke.Invokes.Should().Be(0);
+        _guard.Verify(g => g.CheckElementWindow(InputTarget.Window(Handle, false), vault), Times.Once);
+    }
+
+    [Fact]
+    public async Task AnElementOfTheWindowsOwnProcess_NeedsNoSecondCheck()
+    {
+        await ActAsync(RefOf(Button("Save")), ElementActionKind.Invoke);
+
+        _guard.Verify(g => g.CheckElementWindow(It.IsAny<InputTarget>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnElementOfAnotherProcess_WithoutAWindowOfThatProcess_IsRefused()
+    {
+        // Arrange - the process cannot be checked, so nothing is done
+        var invoke = new FakeInvokePattern();
+        var stranger = RefOf(new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"], ProcessId = 9999 }.WithPattern<IUiaInvokePattern>(invoke));
+
+        // Act
+        var result = await ActAsync(stranger, ElementActionKind.Invoke);
+
+        // Assert
+        result.ErrorCode.Should().Be("ElementAccessFailed");
+        result.Error.Should().Contain("process 9999");
+        invoke.Invokes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AnElementOfAMinimizedWindow_IsOffscreen_WithAPointerToRestoreTheWindow()
+    {
+        _windows.Setup(w => w.IsIconic(Handle)).Returns(true);
+        var save = RefOf(new FakeUiaNode("Button", "Save") { ActionPatterns = ["Invoke"], IsOffscreen = true, ProcessId = Pid }
+            .WithPattern<IUiaInvokePattern>(new FakeInvokePattern()));
+
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        result.ErrorCode.Should().Be("ElementOffscreen");
+        result.Error.Should().Contain("minimized").And.Contain("set_window_state");
     }
 
     [Fact]
@@ -357,9 +446,9 @@ public sealed class ElementActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Toggle_ToAStateItNeverReaches_FailsAfterThreeToggles()
+    public async Task Toggle_WhoseStateDoesNotChange_IsNotToggledAgain_AndFails()
     {
-        // Arrange - an application that ignores the toggle
+        // Arrange - an application that ignores the toggle: toggling again could only click once too often
         var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off) { Stuck = true };
         var box = RefOf(CheckBox(toggle));
 
@@ -369,8 +458,61 @@ public sealed class ElementActionServiceTests : IDisposable
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be("ActionFailed");
-        toggle.Toggles.Should().Be(3);
+        toggle.Toggles.Should().Be(1);
         result.After!.ToggleState.Should().Be(UiaToggleState.Off);
+    }
+
+    [Fact]
+    public async Task Toggle_ToAState_WaitsForAStateThatUpdatesLate_BeforeItTogglesAgain()
+    {
+        // Arrange - Chromium and Electron toggle asynchronously: the old state is reported for a while
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off) { StaleReads = 5 };
+        var box = RefOf(CheckBox(toggle));
+
+        // Act
+        var result = await ActAsync(box, ElementActionKind.Toggle, "on");
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        toggle.Toggles.Should().Be(1, "a stale read must not lead to a second toggle that turns the box off again");
+        result.After!.ToggleState.Should().Be(UiaToggleState.On);
+        result.OutcomeVerified.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Toggle_OfAThreeStateBox_WaitsForEachChange_AndReachesTheState()
+    {
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off, threeState: true) { StaleReads = 3 };
+        var box = RefOf(CheckBox(toggle));
+
+        var result = await ActAsync(box, ElementActionKind.Toggle, "indeterminate");
+
+        result.Success.Should().BeTrue(result.Error);
+        toggle.Toggles.Should().Be(2);
+        result.After!.ToggleState.Should().Be(UiaToggleState.Indeterminate);
+    }
+
+    [Fact]
+    public async Task Click_OnAnItemThatCanBeSelectedAndInvoked_SelectsIt_AndDoesNotOpenIt()
+    {
+        // Arrange - an Explorer or ListView item: its Invoke is the double click that opens the file
+        var invoke = new FakeInvokePattern();
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off);
+        var item = new FakeUiaNode("ListItem", "report.docx") { ActionPatterns = ["Invoke", "Toggle", "SelectionItem"], ProcessId = Pid }
+            .WithPattern<IUiaInvokePattern>(invoke)
+            .WithPattern<IUiaTogglePattern>(toggle)
+            .WithPattern<IUiaSelectionItemPattern>(new FakeSelectionItemPattern(false));
+        var itemRef = RefOf(item);
+
+        // Act
+        var result = await ActAsync(itemRef, ElementActionKind.Click);
+
+        // Assert
+        result.Method.Should().Be(ElementActionMethod.SelectionItem);
+        result.After!.IsSelected.Should().BeTrue();
+        result.OutcomeVerified.Should().BeTrue();
+        invoke.Invokes.Should().Be(0, "a single click selects; it does not open the item");
+        toggle.Toggles.Should().Be(0, "a click on the row is not a click on its check box");
     }
 
     [Fact]
@@ -437,6 +579,33 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Before.Value.Should().BeNull();
         result.After!.Value.Should().BeNull();
         result.OutcomeVerified.Should().BeNull("a password field's value is never read, so it cannot be checked");
+        JsonSerializer.Serialize(result).Should().NotContain("hunter2");
+    }
+
+    [Theory]
+    [InlineData(ElementActionKind.SetValue)]
+    [InlineData(ElementActionKind.AppendText)]
+    [InlineData(ElementActionKind.Focus)]
+    public async Task AnElementWhoseIdentityCannotBeRead_IsNotActedOn_AndItsValueIsNeverRead(ElementActionKind action)
+    {
+        // Arrange - without the identity it is not known whether this is a password field
+        var value = new UnreadableValuePattern();
+        var password = new FakeUiaNode("Edit", "Password")
+        {
+            ActionPatterns = ["Value"], ProcessId = Pid, IsPassword = true, IsKeyboardFocusable = true,
+            IdentityException = new InvalidOperationException("RPC failed")
+        }.WithPattern<IUiaValuePattern>(value);
+        var passwordRef = RefOf(password);
+
+        // Act
+        var result = await ActAsync(passwordRef, action, action == ElementActionKind.Focus ? null : "x");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ElementAccessFailed");
+        result.Error.Should().Contain("password field");
+        value.Reads.Should().Be(0);
+        value.Set.Should().BeNull();
         JsonSerializer.Serialize(result).Should().NotContain("hunter2");
     }
 
@@ -621,6 +790,44 @@ public sealed class ElementActionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowClose_OfTheWindowsOwnElement_WithoutAHandleOfItsOwn_IsRefused()
+    {
+        // Arrange - the provider reports no native handle for the root element: it is still the top-level window
+        var pattern = new FakeWindowPattern();
+        var root = new FakeUiaNode("Window", "Main") { ProcessId = Pid, OtherPatterns = UiaPatterns.Window }.WithPattern<IUiaWindowPattern>(pattern);
+        _tree.WithWindow(Handle, root);
+        var rootRef = _registry.Register(Handle, _tree.ReadElement(root), new ElementOrigin(_registry.NextGeneration()))!;
+
+        // Act
+        var result = await ActAsync(rootRef, ElementActionKind.WindowClose);
+
+        // Assert
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("close_window");
+        pattern.Closes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WindowClose_OfAUwpAppsCoreWindow_IsRefused_PointingToItsFrameWindow()
+    {
+        // Arrange - a CoreWindow is a child of its ApplicationFrameWindow, but closing it ends the app
+        const nint coreWindow = 0x5300;
+        _windows.Setup(w => w.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        var pattern = new FakeWindowPattern();
+        var core = new FakeUiaNode("Window", "Calculator") { OtherPatterns = UiaPatterns.Window, NativeWindowHandle = coreWindow, ProcessId = Pid };
+        core.WithPattern<IUiaWindowPattern>(pattern);
+        var coreRef = RefOf(core);
+
+        // Act
+        var result = await ActAsync(coreRef, ElementActionKind.WindowClose);
+
+        // Assert
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain($"close_window (handle {(long)Handle})");
+        pattern.Closes.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Realize_OfAnItemThatIsNotVirtualized_DoesNothing_AndSaysSo()
     {
         var item = RefOf(new FakeUiaNode("ListItem", "Item 00001"));
@@ -793,6 +1000,124 @@ public sealed class ElementActionServiceTests : IDisposable
 
         // Assert
         result.ErrorCode.Should().Be("FocusNotOnElement");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("List", ElementValueMode.Type)]   // Ctrl+A, Delete: every file of a folder to the Recycle Bin
+    [InlineData("DataGrid", ElementValueMode.Type)]
+    [InlineData("Pane", ElementValueMode.Paste)]
+    [InlineData("Button", ElementValueMode.Type)] // a space would press it
+    public async Task SetValue_ModeTypeOrPaste_OnAnElementThatIsNotATextField_SendsNoKey(string controlType, ElementValueMode mode)
+    {
+        // Arrange
+        var container = RefOf(new FakeUiaNode(controlType, "Items View") { ProcessId = Pid, IsKeyboardFocusable = true });
+
+        // Act
+        var result = await ActAsync(container, ElementActionKind.SetValue, "", mode);
+
+        // Assert
+        result.ErrorCode.Should().Be("PatternNotSupported");
+        result.Error.Should().Contain("text field");
+        _input.VerifyNoOtherCalls();
+        _tree.Reads.Should().NotContain(r => r.StartsWith("SetFocus:"));
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_OnAGridCellWithAWritableValue_SendsNoKey()
+    {
+        // A grid's Ctrl+A selects every row, and Delete can delete them: only text controls take keys
+        var cell = RefOf(new FakeUiaNode("DataItem", "Amount") { ActionPatterns = ["Value"], ProcessId = Pid, IsKeyboardFocusable = true }
+            .WithPattern<IUiaValuePattern>(new FakeValuePattern("42")));
+
+        var result = await ActAsync(cell, ElementActionKind.SetValue, "", ElementValueMode.Type);
+
+        result.ErrorCode.Should().Be("PatternNotSupported");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_WhenFocusLandsOnAControlInsideTheElement_SendsNoKey()
+    {
+        // Arrange - an Edit whose SetFocus puts focus on a button inside it (a clear button): the keys would go there
+        var edit = Edit(new FakeValuePattern("old"));
+        var name = RefOf(edit);
+        var clear = new FakeUiaNode("Button", "Clear") { ProcessId = Pid, IsKeyboardFocusable = true };
+        edit.With(clear);
+        _tree.SetFocusMovesFocus = false;
+        _tree.Focused = clear;
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("FocusNotOnElement");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SetValue_ModeType_OnAnEditableComboBox_TypesIntoItsEdit()
+    {
+        // Arrange - an editable combo box takes its text in the Edit that is its child
+        var combo = new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["Value"], ProcessId = Pid, IsKeyboardFocusable = true }
+            .WithPattern<IUiaValuePattern>(new FakeValuePattern("Arial"));
+        var comboRef = RefOf(combo);
+        var text = new FakeUiaNode("Edit", "Font") { ProcessId = Pid, IsKeyboardFocusable = true };
+        combo.With(text);
+        _tree.SetFocusMovesFocus = false;
+        _tree.Focused = text;
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SendKeysResult(true, "^a"));
+        _input.Setup(i => i.TypeTextAsync("Calibri", 0, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TypeTextResult(true, "Calibri", 7));
+
+        // Act
+        var result = await ActAsync(comboRef, ElementActionKind.SetValue, "Calibri", ElementValueMode.Type);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.Keyboard);
+    }
+
+    [Fact]
+    public async Task SetValue_ModePaste_IsRefused_WhenTheUserTurnedClipboardWritesOff()
+    {
+        // Arrange - WAM_EXCLUDE_TOOLS=set_clipboard: the user's clipboard must not be replaced
+        var toolsets = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ExcludeToolsVariable ? "set_clipboard" : null, Toolsets.Server);
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+
+        // Act
+        var result = await CreateSut(toolsets).ActAsync(new ElementActionRequest(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Paste));
+
+        // Assert
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("set_clipboard").And.Contain("mode type");
+        _clipboard.Verify(c => c.SetText(It.IsAny<string>()), Times.Never);
+        _guard.Verify(g => g.CheckTarget(It.IsAny<InputTarget>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetValue_ModePaste_TakesNoMoreThanSetClipboard()
+    {
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+
+        var result = await ActAsync(name, ElementActionKind.SetValue, new string('x', ClipboardService.MaxTextLength + 1), ElementValueMode.Paste);
+
+        result.ErrorCode.Should().Be("InvalidArguments");
+        _clipboard.Verify(c => c.SetText(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetValue_ModePaste_IntoAPasswordField_IsRefused_SoThePasswordNeverReachesTheClipboard()
+    {
+        var password = RefOf(Edit(new UnreadableValuePattern(), password: true));
+
+        var result = await ActAsync(password, ElementActionKind.SetValue, "hunter2", ElementValueMode.Paste);
+
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("clipboard");
+        _clipboard.Verify(c => c.SetText(It.IsAny<string>()), Times.Never);
         _input.VerifyNoOtherCalls();
     }
 

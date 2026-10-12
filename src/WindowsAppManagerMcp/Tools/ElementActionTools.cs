@@ -72,11 +72,13 @@ public class ElementActionTools
         [Description("Element criteria: the element's class name.")]
         string? className = null,
         [Description("set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, " +
-                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. Never echoed back.")]
+                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. Logged as its length only; a password " +
+                     "field's value is never read or returned.")]
         string? value = null,
-        [Description("set_value and append_text: 'value' (default: the Value pattern, no keyboard input), 'type' (focus the " +
-                     "element, select all or go to the end, type the text, with every input check; for web and React inputs that " +
-                     "ignore the Value pattern) or 'paste' (as type, but pasted from the clipboard, which it replaces).")]
+        [Description("set_value and append_text: 'value' (default: the Value pattern, no keyboard input), 'type' (text fields " +
+                     "only: focus the field, select all or go to the end, type the text, with every input check; for web and React " +
+                     "inputs that ignore the Value pattern) or 'paste' (as type, but pasted from the clipboard, which it replaces; " +
+                     "not for password fields).")]
         ElementValueMode mode = ElementValueMode.Value,
         [Description("scroll: 'up', 'down', 'left' or 'right'. The element's Scroll pattern, or its nearest scrollable ancestor's, " +
                      "is used; the result's scroll has the percent and atEnd.")]

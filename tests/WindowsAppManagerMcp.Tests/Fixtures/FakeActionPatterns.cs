@@ -20,12 +20,36 @@ public sealed class FakeInvokePattern : IUiaInvokePattern
 /// <summary>A Toggle pattern that cycles Off, On (and Indeterminate when three-state) on every toggle.</summary>
 public sealed class FakeCyclingTogglePattern(UiaToggleState state, bool threeState = false) : IUiaTogglePattern
 {
-    public UiaToggleState ToggleState { get; set; } = state;
+    private UiaToggleState _state = state;
+    private UiaToggleState _reported;
+    private int _staleLeft;
+
+    /// <summary>The state; after a toggle, the old one for the next <see cref="StaleReads"/> reads.</summary>
+    public UiaToggleState ToggleState
+    {
+        get
+        {
+            if (_staleLeft > 0)
+            {
+                _staleLeft--;
+                return _reported;
+            }
+
+            return _state;
+        }
+        set => _state = value;
+    }
 
     public int Toggles { get; private set; }
 
     /// <summary>When set, toggling does nothing to the state (an application that refuses it silently).</summary>
     public bool Stuck { get; set; }
+
+    /// <summary>
+    /// How many reads after a toggle still report the state before it: a provider that toggles asynchronously (Chromium,
+    /// Electron, WebView2) and updates its state later.
+    /// </summary>
+    public int StaleReads { get; set; }
 
     public void Toggle()
     {
@@ -35,12 +59,18 @@ public sealed class FakeCyclingTogglePattern(UiaToggleState state, bool threeSta
             return;
         }
 
-        ToggleState = ToggleState switch
+        var before = _state;
+        _state = _state switch
         {
             UiaToggleState.Off => UiaToggleState.On,
             UiaToggleState.On => threeState ? UiaToggleState.Indeterminate : UiaToggleState.Off,
             _ => UiaToggleState.Off
         };
+        if (StaleReads > 0)
+        {
+            _reported = before;
+            _staleLeft = StaleReads;
+        }
     }
 }
 

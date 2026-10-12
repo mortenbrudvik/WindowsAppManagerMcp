@@ -86,6 +86,17 @@ public interface IInputTargetGuard
     /// </summary>
     /// <param name="target">The element's window; a target without a window is InvalidHandle.</param>
     InputGuardResult CheckTarget(InputTarget target);
+
+    /// <summary>
+    /// After <see cref="CheckTarget"/>, for an element of the target that belongs to another process than the target's window
+    /// (a child window of another program, an owned window of another process): the probes, policy and host checks of the
+    /// element's own window <paramref name="elementWindow"/> itself, not of its top-level window, so the deny list and the
+    /// elevation check see the process that is acted on. allowHostTarget lifts the host check only for the target's top-level
+    /// window and the windows it owns, as for input. Reads only.
+    /// </summary>
+    /// <param name="target">The call's target, as passed to <see cref="CheckTarget"/>.</param>
+    /// <param name="elementWindow">The nearest window handle at or above the element; zero or not a window is InvalidHandle.</param>
+    InputGuardResult CheckElementWindow(InputTarget target, nint elementWindow);
 }
 
 /// <summary>

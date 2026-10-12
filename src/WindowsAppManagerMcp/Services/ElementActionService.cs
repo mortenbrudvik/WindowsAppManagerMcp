@@ -16,8 +16,13 @@ namespace WindowsAppManagerMcp.Services;
 /// service after the gate is released. (3) After a short settle, the state is read again, up to
 /// <see cref="VerifyAttempts"/> times while it does not show the action's effect yet, and the application's new top-level
 /// windows are compared with those before the action (openedPopup).</para>
-/// <para>Values: a password field's value is never read (not before, not after, not to check it), and no value the action
-/// sets is echoed in the result; the audit log keeps only its length (AuditRecord).</para>
+/// <para>Values: a password field's value is never read (not before, not after, not to check it), and an element whose
+/// identity cannot be read is not acted on, so it cannot pass for a field that is not a password field. Other fields' values are
+/// read back into the result's state (at most 200 characters); the audit log keeps only the value's length (AuditRecord).</para>
+/// <para>Target checks: the ref's window is checked first (<see cref="IInputTargetGuard.CheckTarget"/>); an element of
+/// another process (a child or owned window of another program) has its own window checked too
+/// (<see cref="IInputTargetGuard.CheckElementWindow"/>), and a pause the user started while the element was read stops the
+/// call before it acts.</para>
 /// </remarks>
 public sealed partial class ElementActionService : IElementActionService
 {
@@ -38,6 +43,10 @@ public sealed partial class ElementActionService : IElementActionService
     private readonly IForegroundService _foreground;
     private readonly INativeWindowWrapper _windows;
     private readonly IClipboardService? _clipboard;
+    private readonly bool _clipboardWritesServed;
+
+    /// <summary>The tool whose absence (a toolset or exclusion the user chose) turns mode paste off.</summary>
+    private const string SetClipboardTool = "set_clipboard";
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the reads under a deadline.</param>
@@ -50,6 +59,8 @@ public sealed partial class ElementActionService : IElementActionService
     /// <param name="foreground">Verified activation before the mouse, keyboard and focus paths.</param>
     /// <param name="windows">The hung-window check, the processes and whether a window is top-level.</param>
     /// <param name="clipboard">set_value mode paste; without it that mode is refused.</param>
+    /// <param name="toolsets">The tools the user lets the server serve: mode paste writes the clipboard, so it is refused
+    /// when set_clipboard is not served. Null: every tool is served.</param>
     public ElementActionService(
         IUiaTree tree,
         IUiaWorker worker,
@@ -61,8 +72,10 @@ public sealed partial class ElementActionService : IElementActionService
         IInputSimulationService input,
         IForegroundService foreground,
         INativeWindowWrapper windows,
-        IClipboardService? clipboard = null)
+        IClipboardService? clipboard = null,
+        ToolsetSelection? toolsets = null)
     {
+        _clipboardWritesServed = toolsets?.Serves(SetClipboardTool, readOnlyHint: false) ?? true;
         _tree = tree ?? throw new ArgumentNullException(nameof(tree));
         _worker = worker ?? throw new ArgumentNullException(nameof(worker));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -81,6 +94,15 @@ public sealed partial class ElementActionService : IElementActionService
 
     /// <summary>How long to wait for the input gate; default <see cref="InputGateToolFilter.GateWaitTimeout"/>.</summary>
     public TimeSpan? GateTimeout { get; init; }
+
+    /// <summary>
+    /// How long a toggle toward a state waits for the state to change before it toggles again (at most a quarter of the call's
+    /// timeout); when it does not change, there is no next toggle.
+    /// </summary>
+    public TimeSpan ToggleStateWait { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>How often the toggle state is read while <see cref="ToggleStateWait"/> runs.</summary>
+    public TimeSpan ToggleStatePoll { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
     /// Why the request's arguments do not fit its action (a missing or invalid value, a direction for another action), or
@@ -140,6 +162,11 @@ public sealed partial class ElementActionService : IElementActionService
             return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode, argumentError + " Nothing was done.");
         }
 
+        if (PasteRefusal(request) is { } pasteError)
+        {
+            return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode, pasteError + " Nothing was done.");
+        }
+
         var lookup = _registry.Lookup(request.Ref);
         if (!lookup.Success)
         {
@@ -169,6 +196,28 @@ public sealed partial class ElementActionService : IElementActionService
         }
     }
 
+    /// <summary>
+    /// Why mode paste cannot be used (it replaces the user's clipboard, so it follows set_clipboard: served, and the same
+    /// length limit), or null.
+    /// </summary>
+    private string? PasteRefusal(ElementActionRequest request)
+    {
+        if (request.Mode != ElementValueMode.Paste)
+        {
+            return null;
+        }
+
+        if (_clipboard == null || !_clipboardWritesServed)
+        {
+            return "mode paste replaces the clipboard, and this server does not write the clipboard (set_clipboard is not " +
+                   "served: the user turned clipboard writes off). Use mode type.";
+        }
+
+        return request.Value is { Length: > ClipboardService.MaxTextLength } text
+            ? $"mode paste takes at most {ClipboardService.MaxTextLength} characters, as set_clipboard (got {text.Length})."
+            : null;
+    }
+
     /// <summary>Phases 1 to 3 (see the remarks); <paramref name="gate"/> is released as soon as nothing more needs it.</summary>
     private async Task<ElementActionResult> ActInsideGateAsync(ActionCall call, IDisposable gate, CancellationToken cancellationToken)
     {
@@ -190,6 +239,23 @@ public sealed partial class ElementActionService : IElementActionService
         var element = prepared.Element!;
         call.Ref = element.Ref;
         call.Before = element.Before;
+
+        // An element of another process: that process's own window passes the policy, elevation and host checks too
+        if (element.ElementWindow != nint.Zero && _guard.CheckElementWindow(target, element.ElementWindow) is { Allowed: false } foreign)
+        {
+            return call.Fail(foreign.ErrorCode.ToString(), foreign.Error!);
+        }
+
+        // The read can take up to the timeout: a pause the user started meanwhile stops the call before it acts
+        try
+        {
+            InputGateToolFilter.ThrowIfPaused(_session);
+        }
+        catch (ToolErrorException ex)
+        {
+            return call.Fail(ex.ErrorCode, ex.Message);
+        }
+
         var windowsBefore = _probe.Snapshot(ProcessesOf(call.Window, element));
         var plan = element.Plan;
 
@@ -485,7 +551,7 @@ public sealed partial class ElementActionService : IElementActionService
     private async Task<ElementActionResult?> FocusRefusalAsync(
         ActionCall call, PreparedElement element, int targetProcess, string done, CancellationToken cancellationToken)
     {
-        var focus = await ReadAsync(call, targetProcess, _ => HasFocus(element.Node), cancellationToken).ConfigureAwait(false);
+        var focus = await ReadAsync(call, targetProcess, _ => HasFocus(element), cancellationToken).ConfigureAwait(false);
         if (focus.Failure != null)
         {
             return focus.Failure;

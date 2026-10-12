@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -10,8 +11,8 @@ public sealed partial class ElementActionService
     /// <summary>How many ancestors scroll looks through for a scrollable container.</summary>
     private const int MaxScrollAncestors = 16;
 
-    /// <summary>How many ancestors of the focused element the focus check looks through for the target.</summary>
-    private const int MaxFocusAncestors = 12;
+    /// <summary>How many ancestors are looked through for the window an element of another process belongs to.</summary>
+    private const int MaxWindowAncestors = 32;
 
     /// <summary>The actions that act on an element the user can see and use: refused for a disabled or offscreen one.</summary>
     private static bool NeedsUsableElement(ElementActionKind action) => action is not (ElementActionKind.ScrollIntoView
@@ -42,12 +43,39 @@ public sealed partial class ElementActionService
         {
             var node = resolved.Node;
             var element = resolved.Element;
-            var identity = TryRead(() => _tree.ReadIdentity(node));
-            var isPassword = identity?.IsPassword == true;
+
+            // Fails closed: without the identity it is not known whether the element is a password field (whose value is
+            // never read), whether it is a top-level window (window_*), or which process it belongs to (the target checks)
+            UiaNodeIdentity identity;
+            try
+            {
+                identity = _tree.ReadIdentity(node);
+            }
+            catch (Exception ex) when (ex is not (UiaElementUnavailableException or TimeoutException or OperationCanceledException))
+            {
+                return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
+                    $"The element's identity could not be read ({ex.Message}), so it is not known whether it is a password field or " +
+                    "which window and process it belongs to. Nothing was done. Read it again with find_ui_elements.");
+            }
+
+            var elementWindow = nint.Zero;
+            if (!BelongsToWindowsProcess(call.Window, identity.ProcessId))
+            {
+                elementWindow = OwnWindowOf(node, identity);
+                if (elementWindow == nint.Zero)
+                {
+                    return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
+                        $"The element belongs to process {identity.ProcessId}, not to the process of window {(long)call.Window}, and " +
+                        "no window of that process could be found above it, so the target checks (policy, elevation, host) cannot " +
+                        "run on it. Nothing was done.");
+                }
+            }
+
+            var isPassword = identity.IsPassword;
             var (before, fullValue) = ReadState(node, element, isPassword);
             call.Before = before;
 
-            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue);
+            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue) { ElementWindow = elementWindow };
             var request = call.Request;
             var properties = element.Properties;
             if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
@@ -59,9 +87,12 @@ public sealed partial class ElementActionService
 
             if (NeedsUsableElement(request.Action) && properties.IsOffscreen)
             {
-                return Failed(call, nameof(ElementActionErrorCode.ElementOffscreen),
-                    $"{Name(element)} is offscreen (scrolled out of view, or in a collapsed or hidden part). Nothing was done. Use " +
-                    "action scroll_into_view first (realize for an item of a virtualized list), or open the part that holds it.");
+                // Every element of a minimized window is offscreen, and scrolling cannot help there
+                return Failed(call, nameof(ElementActionErrorCode.ElementOffscreen), _windows.IsIconic(call.Window)
+                    ? $"{Name(element)} is offscreen because its window {(long)call.Window} is minimized. Nothing was done. Restore " +
+                      "the window first (set_window_state with state normal), then try again."
+                    : $"{Name(element)} is offscreen (scrolled out of view, or in a collapsed or hidden part). Nothing was done. Use " +
+                      "action scroll_into_view first (realize for an item of a virtualized list), or open the part that holds it.");
             }
 
             return Choose(call, prepared) is { } refused ? ReadOutcome<PreparedElement>.Failed(refused) : ReadOutcome<PreparedElement>.Of(prepared);
@@ -104,9 +135,18 @@ public sealed partial class ElementActionService
                 return request.Fallback == ElementActionFallback.Mouse
                     ? element.Use(Plan.Click(MouseKind.Left))
                     : NotSupported(call, element, "invoke needs the Invoke pattern (or an MSAA default action under the UIA3 engine)",
-                        "Try action click, which also uses Toggle, SelectionItem and ExpandCollapse, or pass fallback mouse for a guarded click.");
+                        "Try action click, which also uses SelectionItem, Toggle and ExpandCollapse, or pass fallback mouse for a guarded click.");
 
             case ElementActionKind.Click:
+                // A single click on an item that can be selected (a list, tree, grid or tab item, a radio button) selects it.
+                // Such items often support Invoke too, but their Invoke is the default action of a double click: it opens the
+                // file or starts the program (Explorer, a ListView). And a list row with a check box toggles only when the box
+                // itself is clicked. So SelectionItem comes before Invoke and Toggle.
+                if (Pattern<IUiaSelectionItemPattern>(element, UiaPatterns.SelectionItem) is { } clickSelect)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.SelectionItem, clickSelect.Select));
+                }
+
                 if (Pattern<IUiaInvokePattern>(element, UiaPatterns.Invoke) is { } clickInvoke)
                 {
                     return element.Use(Plan.Pattern(ElementActionMethod.Invoke, clickInvoke.Invoke));
@@ -115,11 +155,6 @@ public sealed partial class ElementActionService
                 if (Pattern<IUiaTogglePattern>(element, UiaPatterns.Toggle) is { } clickToggle)
                 {
                     return element.Use(Plan.Pattern(ElementActionMethod.Toggle, clickToggle.Toggle));
-                }
-
-                if (Pattern<IUiaSelectionItemPattern>(element, UiaPatterns.SelectionItem) is { } clickSelect)
-                {
-                    return element.Use(Plan.Pattern(ElementActionMethod.SelectionItem, clickSelect.Select));
                 }
 
                 if (Pattern<IUiaExpandCollapsePattern>(element, UiaPatterns.ExpandCollapse) is { } clickExpand &&
@@ -136,7 +171,7 @@ public sealed partial class ElementActionService
 
                 return request.Fallback == ElementActionFallback.Mouse
                     ? element.Use(Plan.Click(MouseKind.Left))
-                    : NotSupported(call, element, "click needs one of the Invoke, Toggle, SelectionItem or ExpandCollapse patterns",
+                    : NotSupported(call, element, "click needs one of the SelectionItem, Invoke, Toggle or ExpandCollapse patterns",
                         "Pass fallback mouse for a guarded mouse click at the element's click point.");
 
             case ElementActionKind.DoubleClick:
@@ -169,17 +204,24 @@ public sealed partial class ElementActionService
                 }
 
                 var plan = new Plan(PlanKind.Pattern, ElementActionMethod.Toggle);
+                var wait = Min(ToggleStateWait, Timeout(request) / 4);
+                var poll = ToggleStatePoll;
                 plan.Act = () =>
                 {
-                    // Up to three toggles: a three-state check box can need two to reach a state
+                    // Up to three toggles: a three-state check box can need two to reach a state. Each next toggle waits until
+                    // the state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report
+                    // the old state for a while, and toggling again on a stale read would click once too often.
+                    var current = before.ToggleState;
                     for (var i = 0; i < 3; i++)
                     {
                         toggle.Toggle();
                         plan.Toggles++;
-                        if (goal == null || toggle.ToggleState == goal)
+                        if (goal == null || ToggleStateAfter(toggle, current, wait, poll) is not { } now || now == goal)
                         {
                             break;
                         }
+
+                        current = now;
                     }
                 };
                 return element.Use(plan);
@@ -296,6 +338,23 @@ public sealed partial class ElementActionService
 
         if (request.Mode != ElementValueMode.Value)
         {
+            // Keys go only to a text field: Ctrl+A and Delete in a list, grid or pane would select and delete its items (a
+            // folder's files, a grid's rows), and a space typed into a button presses it
+            if (!IsTextField(element.Element, value))
+            {
+                return NotSupported(call, element,
+                    $"mode {ToolEnum<ElementValueMode>.Name(request.Mode)} types only into a text field (an Edit, or a Document or " +
+                    "ComboBox with a writable Value pattern)",
+                    "Name the edit box itself (find_ui_elements with controlType Edit), not its container or row; or use mode value.");
+            }
+
+            if (request.Mode == ElementValueMode.Paste && element.IsPassword)
+            {
+                return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
+                    "mode paste would leave the password on the clipboard, where any program can read it. Nothing was done. Use " +
+                    "mode value or type for a password field.");
+            }
+
             return element.Use(new Plan(PlanKind.Keyboard, ElementActionMethod.Keyboard));
         }
 
@@ -394,8 +453,8 @@ public sealed partial class ElementActionService
 
         // A top-level window has tools of its own, with the close guards (shell and host windows, confirmation, verified close)
         // and verified state changes: those must not be bypassed through its Window pattern
-        var handle = element.Identity?.NativeWindowHandle ?? nint.Zero;
-        if (handle != nint.Zero && (handle == call.Window || _windows.GetAncestor(handle, WindowAncestor.Root) == handle))
+        var handle = TopLevelWindowOf(call, element);
+        if (handle != nint.Zero)
         {
             return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
                 $"The element is the top-level window {(long)handle}. " + (request.Action == ElementActionKind.WindowClose
@@ -420,6 +479,115 @@ public sealed partial class ElementActionService
             ? element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None))
             : element.Use(Plan.Pattern(ElementActionMethod.Window, () => window.SetVisualState(goal)));
     }
+
+    /// <summary>
+    /// The top-level window the element is (for a UWP app's CoreWindow, its frame window), or zero when it is a window drawn
+    /// inside an application. Fails closed: when that cannot be told, the element counts as the top-level window.
+    /// </summary>
+    private nint TopLevelWindowOf(ActionCall call, PreparedElement element)
+    {
+        var handle = element.Identity.NativeWindowHandle;
+        if (handle != nint.Zero)
+        {
+            var root = _windows.GetAncestor(handle, WindowAncestor.Root);
+            if (handle == call.Window || root == handle || root == nint.Zero)
+            {
+                return handle;
+            }
+
+            // A UWP app's CoreWindow is a child of its ApplicationFrameWindow, but closing it ends the app
+            return string.Equals(_windows.GetClassName(handle), WindowClassification.CoreWindowClass, StringComparison.Ordinal) ? root : nint.Zero;
+        }
+
+        // No window handle of its own: it is the top-level window when it is the element of the ref's window itself
+        try
+        {
+            return _tree.FromHandle(call.Window) is { } top && _tree.AreSameElement(top, element.Node) ? call.Window : nint.Zero;
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            return call.Window;
+        }
+    }
+
+    /// <summary>Whether <paramref name="processId"/> is the process of <paramref name="window"/> (for a UWP frame, also the app's).</summary>
+    private bool BelongsToWindowsProcess(nint window, int processId) =>
+        processId > 0 && (processId == (int)_windows.GetWindowThreadProcessId(window) || processId == UiaTargets.TargetProcessId(_windows, window));
+
+    /// <summary>
+    /// The nearest window handle at or above the element, when it belongs to the element's own process; zero when there is
+    /// none within <see cref="MaxWindowAncestors"/> levels.
+    /// </summary>
+    private nint OwnWindowOf(IUiaNode node, UiaNodeIdentity identity)
+    {
+        var current = node;
+        var handle = identity.NativeWindowHandle;
+        for (var level = 0; handle == nint.Zero && level < MaxWindowAncestors; level++)
+        {
+            if (_tree.GetParent(current) is not { } parent)
+            {
+                return nint.Zero;
+            }
+
+            current = parent;
+            handle = _tree.ReadIdentity(current).NativeWindowHandle;
+        }
+
+        return handle != nint.Zero && identity.ProcessId > 0 && (int)_windows.GetWindowThreadProcessId(handle) == identity.ProcessId
+            ? handle
+            : nint.Zero;
+    }
+
+    /// <summary>
+    /// Whether keys may be typed into the element: an Edit (unless its Value pattern is read-only, refused before), or a
+    /// Document or ComboBox with a writable Value pattern. Not a list, grid, pane or button.
+    /// </summary>
+    private static bool IsTextField(UiaElement element, IUiaValuePattern? value) => element.Properties.ControlType switch
+    {
+        "Edit" => true,
+        "Document" or "ComboBox" => value is { IsReadOnly: false },
+        _ => false
+    };
+
+    /// <summary>
+    /// The toggle state once it differs from <paramref name="previous"/>, read every <paramref name="poll"/> for up to
+    /// <paramref name="wait"/>; null when it did not change, or it (or the state before) cannot be read.
+    /// </summary>
+    private static UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
+    {
+        if (previous == null)
+        {
+            return null;
+        }
+
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            UiaToggleState now;
+            try
+            {
+                now = toggle.ToggleState;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
+
+            if (now != previous)
+            {
+                return now;
+            }
+
+            if (clock.Elapsed >= wait)
+            {
+                return null;
+            }
+
+            Thread.Sleep(poll);
+        }
+    }
+
+    private static TimeSpan Min(TimeSpan first, TimeSpan second) => first < second ? first : second;
 
     /// <summary>The element's state, read through its patterns, and its whole value (null for a password field).</summary>
     private (ElementState State, string? FullValue) ReadState(IUiaNode node, UiaElement element, bool isPassword)
@@ -605,23 +773,29 @@ public sealed partial class ElementActionService
         }
     }
 
-    /// <summary>On the worker: whether keyboard focus is on <paramref name="node"/> or on an element inside it.</summary>
-    private ReadOutcome<bool> HasFocus(IUiaNode node)
+    /// <summary>
+    /// On the worker: whether keyboard focus is on the element itself, or, for a ComboBox, on the Edit that is its direct
+    /// child (where an editable combo box takes its text). Focus anywhere else inside the element does not count: the keys
+    /// would reach that control, not the field.
+    /// </summary>
+    private ReadOutcome<bool> HasFocus(PreparedElement element)
     {
         try
         {
-            var focused = _tree.GetFocusedElement();
-            for (var level = 0; focused != null && level <= MaxFocusAncestors; level++)
+            var node = element.Node;
+            if (_tree.GetFocusedElement() is not { } focused)
             {
-                if (_tree.AreSameElement(focused, node))
-                {
-                    return ReadOutcome<bool>.Of(true);
-                }
-
-                focused = _tree.GetParent(focused);
+                return ReadOutcome<bool>.Of(false);
             }
 
-            return ReadOutcome<bool>.Of(false);
+            if (_tree.AreSameElement(focused, node))
+            {
+                return ReadOutcome<bool>.Of(true);
+            }
+
+            return ReadOutcome<bool>.Of(element.Element.Properties.ControlType == "ComboBox" &&
+                                        _tree.GetParent(focused) is { } parent && _tree.AreSameElement(parent, node) &&
+                                        _tree.ReadElement(focused).Properties.ControlType == "Edit");
         }
         catch (Exception ex) when (ex is UiaElementUnavailableException or InvalidOperationException)
         {
@@ -736,7 +910,7 @@ public sealed partial class ElementActionService
 
     /// <summary>The element as phase 1 found it, and how to act on it.</summary>
     private sealed class PreparedElement(
-        string elementRef, IUiaNode node, UiaElement element, UiaNodeIdentity? identity, bool isPassword, ElementState before,
+        string elementRef, IUiaNode node, UiaElement element, UiaNodeIdentity identity, bool isPassword, ElementState before,
         string? fullValue)
     {
         public string Ref { get; } = elementRef;
@@ -745,7 +919,13 @@ public sealed partial class ElementActionService
 
         public UiaElement Element { get; } = element;
 
-        public UiaNodeIdentity? Identity { get; } = identity;
+        public UiaNodeIdentity Identity { get; } = identity;
+
+        /// <summary>
+        /// The element's own window when it belongs to another process than the ref's window, whose checks run too
+        /// (<see cref="IInputTargetGuard.CheckElementWindow"/>); zero when it belongs to the window's process.
+        /// </summary>
+        public nint ElementWindow { get; init; }
 
         public bool IsPassword { get; } = isPassword;
 
@@ -754,7 +934,7 @@ public sealed partial class ElementActionService
         /// <summary>The whole value before the action (null for a password field, or without a Value pattern).</summary>
         public string? FullValue { get; } = fullValue;
 
-        public int ProcessId => Identity?.ProcessId ?? 0;
+        public int ProcessId => Identity.ProcessId;
 
         public Plan Plan { get; private set; } = new(PlanKind.Nothing, ElementActionMethod.None);
 

@@ -360,6 +360,19 @@ public sealed class InputTargetGuard : IInputTargetGuard
         return InputGuardResult.Allow(target, root, window.Summary, anchor: root);
     }
 
+    public InputGuardResult CheckElementWindow(InputTarget target, nint elementWindow)
+    {
+        if (elementWindow == nint.Zero || !_windows.IsWindow(elementWindow))
+        {
+            return InvalidHandle(target, elementWindow);
+        }
+
+        var targetRoot = target.WindowHandle is { } handle && handle != nint.Zero ? RootOf(handle) : nint.Zero;
+        var window = Read(elementWindow);
+        return WindowRefusal(elementWindow, window, target, "done", targetRoot)
+               ?? InputGuardResult.Allow(target, elementWindow, window.Summary, anchor: targetRoot);
+    }
+
     public WindowSummary? DescribeForeground()
     {
         var foreground = _windows.GetForegroundWindow();
