@@ -186,6 +186,33 @@ public class WindowConditionWaitTests
     }
 
     [Fact]
+    public async Task Exists_NewOnly_CountsAWindowThatWasHiddenAtTheStart_OnceItIsShown()
+    {
+        // Arrange - a tray app's main window is hidden (not open, by the listing's rules) and shown 200 ms into the wait
+        var slack = _desktop.Add("Slack", processName: "slack", visible: false);
+        At(200, () => _desktop.SetVisible(slack, true));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "slack" }, newOnly: true, timeoutMs: 2000);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(slack);
+        result.ElapsedMs.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task Exists_NewOnly_DoesNotCountACloakedWindowThatWasThere_WhenTheSelectorIncludesCloakedWindows()
+    {
+        // A window on another virtual desktop is open for a selector with includeCloaked
+        _desktop.Add("Slack", processName: "slack", cloaked: true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "slack", IncludeCloaked = true }, newOnly: true, timeoutMs: 500);
+
+        result.TimedOut.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Exists_SeveralMatches_IsSatisfied_WithTheCandidatesAndNoWindow()
     {
         // Arrange - two Chrome windows: something exists, but not one window to act on
@@ -200,6 +227,24 @@ public class WindowConditionWaitTests
         result.Window.Should().BeNull("a selector never silently picks the first of several windows");
         result.MatchCount.Should().Be(2);
         result.Candidates.Select(c => c.Handle).Should().Equal(inbox, docs);
+    }
+
+    [Fact]
+    public async Task Exists_AWindowThatHasNotHeldForStableMs_DoesNotCount_BesideOneThatHas()
+    {
+        // Arrange - window A is open from the start; window B opens 250 ms in, so at 300 ms only A has held for stableMs
+        var first = _desktop.Add("A", processName: "app");
+        At(250, () => _desktop.Add("B", processName: "app"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "app" });
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(first);
+        result.MatchCount.Should().Be(1);
+        result.Candidates.Should().BeEmpty();
+        result.ElapsedMs.Should().Be(300);
     }
 
     [Fact]
@@ -330,6 +375,27 @@ public class WindowConditionWaitTests
     }
 
     [Fact]
+    public async Task Gone_ByAHandleThatWasNoWindowAtTheStart_SaysItHadAlreadyClosed()
+    {
+        var result = await WaitAsync(new WindowSelector { Handle = 0x7777 }, WindowWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("Window 30583 had already closed when the wait started")
+            .And.NotContain("check the selector").And.NotContain("includeUntitled");
+    }
+
+    [Fact]
+    public async Task Gone_ByAHandleThatDidNotMatchItsFiltersAtTheStart_SaysSo()
+    {
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain($"Window {notepad} did not match").And.NotContain("includeUntitled");
+    }
+
+    [Fact]
     public async Task Gone_WhenNothingMatchedAtTheStart_IsSatisfied_ButSaysSo()
     {
         // A misspelled selector must not read as "the window closed"
@@ -400,6 +466,43 @@ public class WindowConditionWaitTests
         result.TimedOut.Should().BeTrue();
         result.Window!.Handle.Should().Be(notepad);
         result.Error.Should().Contain("minimized");
+    }
+
+    [Fact]
+    public async Task Visible_TimesOut_SayingAWindowThatCameOnScreenTooLateIsOnScreen_NotHidden()
+    {
+        // Arrange - restored 100 ms before the timeout: on screen, but not for stableMs
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetMinimized(notepad, true);
+        At(900, () => _desktop.SetMinimized(notepad, false));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Visible, timeoutMs: 1000);
+
+        // Assert
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Error.Should().NotContain("hidden").And.NotContain("minimized")
+            .And.Contain("'notes.txt - Notepad' is on screen, but for less than 300 ms");
+    }
+
+    [Fact]
+    public async Task Foreground_TimesOut_SayingAWindowThatCameToTheFrontTooLateDid()
+    {
+        // Arrange - brought to the front 100 ms before the timeout
+        var terminal = _desktop.Add("Terminal", "CASCADIA_HOSTING_WINDOW_CLASS", processName: "WindowsTerminal");
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetForeground(terminal);
+        At(900, () => _desktop.SetForeground(notepad));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Foreground, timeoutMs: 1000);
+
+        // Assert - not "none came to the front" while naming that very window as the one in front
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Error.Should().NotContain("came to the front within")
+            .And.Contain("'notes.txt - Notepad'").And.Contain("less than 300 ms before the timeout");
     }
 
     #endregion
@@ -485,6 +588,59 @@ public class WindowConditionWaitTests
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.WindowNotFound));
     }
 
+    [Fact]
+    public async Task TitleChanged_AHandleNamedWithItsOldTitle_AfterTheChangeAlreadyHappened_IsSatisfied()
+    {
+        // Arrange - the save finished before the wait: the window the agent names by its old title shows the file now
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged,
+            previousTitle: "Untitled - Notepad");
+
+        // Assert - the same window with a new title, not a reused handle
+        result.Satisfied.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.Window!.Title.Should().Be("report.txt - Notepad");
+        result.PreviousTitle.Should().Be("Untitled - Notepad");
+    }
+
+    [Fact]
+    public async Task TitleChanged_AHandleReusedByAnotherProcess_IsStillHandleMismatch()
+    {
+        // The process filter still guards against a reused handle; only the title filters describe the title that changes
+        var notepad = _desktop.Add("Untitled - Notepad", "Notepad", processName: "notepad");
+        _desktop.Reuse(notepad, "Inbox - Outlook", 999, "outlook");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, ProcessName = "notepad", TitleContains = "Untitled" },
+            WindowWaitCondition.TitleChanged);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+    }
+
+    [Fact]
+    public async Task TitleChanged_AHandleNamedWithItsOldTitle_WithoutPreviousTitle_SaysTheChangeMayHaveHappenedAlready()
+    {
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged,
+            timeoutMs: 1000);
+
+        result.TimedOut.Should().BeTrue();
+        result.Error.Should().Contain("titleContains 'Untitled'").And.Contain("previousTitle");
+    }
+
+    [Fact]
+    public async Task TitleChanged_AFilterSelectorNamingTheOldTitle_SaysTheTitleMayHaveChangedAlready()
+    {
+        _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad", TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.WindowNotFound));
+        result.Error.Should().Contain("may already have changed").And.Contain("handle");
+    }
+
     #endregion
 
     #region input_idle
@@ -551,6 +707,22 @@ public class WindowConditionWaitTests
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.AmbiguousWindow));
         result.Candidates.Should().HaveCount(2);
         _processes.Verify(p => p.WaitForInputIdle(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InputIdle_AWindowThatHasNotHeldForStableMs_DoesNotMakeItAmbiguous()
+    {
+        // Arrange - a second window of the app shows 250 ms in, too late to have held at 300 ms
+        var app = _desktop.Add("App", "MainWindow", processId: 4100, processName: "app");
+        At(250, () => _desktop.Add("Tip", "TipWindow", processId: 4100, processName: "app"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "app" }, WindowWaitCondition.InputIdle);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(app);
+        result.ElapsedMs.Should().Be(300);
     }
 
     #endregion

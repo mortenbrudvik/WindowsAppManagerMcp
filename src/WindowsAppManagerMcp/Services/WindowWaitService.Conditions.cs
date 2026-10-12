@@ -48,14 +48,30 @@ public sealed partial class WindowWaitService
             return Ended(InvalidArgumentsCode, initial.Error ?? "window cannot be used.", Elapsed());
 
         // title_changed follows one window, the one the selector names now
-        if (request.Condition == WindowWaitCondition.TitleChanged && !initial.Success)
+        if (request.Condition == WindowWaitCondition.TitleChanged)
         {
-            return Ended(initial.ErrorCode ?? nameof(WindowErrorCode.WindowNotFound), initial.Error ?? "No single window matched.",
-                Elapsed(), initial.Candidates, initial.MatchCount);
+            // A handle names its window whatever its title: the title filters describe the title that is to change, and may
+            // have changed already, so only the process and class filters guard against a reused handle
+            if (request.Window.Handle.HasValue && HasTitleFilter(request.Window))
+                initial = _windows.ResolveWindow(WithoutTitleFilters(request.Window));
+
+            if (!initial.Success)
+            {
+                var error = initial.Error ?? "No single window matched.";
+                if (initial.ErrorCode == nameof(WindowErrorCode.WindowNotFound) && HasTitleFilter(request.Window))
+                {
+                    error += " The title may already have changed: title_changed follows the window the selector names when the call " +
+                             "starts, so name it by handle or by its process, not by the title that changes, and pass the title you " +
+                             "read before acting as previousTitle.";
+                }
+
+                return Ended(initial.ErrorCode ?? nameof(WindowErrorCode.WindowNotFound), error, Elapsed(), initial.Candidates,
+                    initial.MatchCount);
+            }
         }
 
         var watch = new ConditionWatch(this, request, timeoutMs, initial,
-            request.NewOnly ? new HashSet<nint>(EnumerateTopLevelWindows()) : null);
+            request.NewOnly ? ShownWindows(request.Window.IncludeCloaked) : null);
         long lastProgress = 0;
 
         while (true)
@@ -81,6 +97,14 @@ public sealed partial class WindowWaitService
         }
     }
 
+    /// <summary>
+    /// newOnly's baseline: the top-level windows open when the wait starts, by the listing's rules: visible, and not cloaked
+    /// unless the selector takes cloaked windows. A window that was hidden then (a tray app's main window, a dialog an app
+    /// keeps hidden for reuse) and is shown during the wait is new.
+    /// </summary>
+    private HashSet<nint> ShownWindows(bool includeCloaked) =>
+        EnumerateTopLevelWindows().Where(h => _native.IsWindowVisible(h) && (includeCloaked || !_native.IsCloaked(h))).ToHashSet();
+
     /// <summary>The condition as wait_for_window names it.</summary>
     internal static string ConditionName(WindowWaitCondition condition) => condition switch
     {
@@ -92,6 +116,17 @@ public sealed partial class WindowWaitService
         WindowWaitCondition.InputIdle => "input_idle",
         _ => condition.ToString()
     };
+
+    private static bool HasTitleFilter(WindowSelector selector) =>
+        !string.IsNullOrEmpty(selector.TitleContains) || !string.IsNullOrEmpty(selector.TitleEquals) || !string.IsNullOrEmpty(selector.TitleRegex);
+
+    /// <summary>The selector without its title filters.</summary>
+    private static WindowSelector WithoutTitleFilters(WindowSelector selector) =>
+        selector with { TitleContains = null, TitleEquals = null, TitleRegex = null };
+
+    /// <summary>Only the selector's title filters, for messages.</summary>
+    private static WindowSelector TitleFilters(WindowSelector selector) =>
+        new() { TitleContains = selector.TitleContains, TitleEquals = selector.TitleEquals, TitleRegex = selector.TitleRegex };
 
     private static WindowConditionResult Ended(
         string errorCode, string error, long elapsedMs, IReadOnlyList<WindowInfo>? candidates = null, int matchCount = 0) => new()
@@ -119,9 +154,11 @@ public sealed partial class WindowWaitService
         private readonly Dictionary<nint, long> _since = new();
         private readonly WindowInfo? _tracked;
         private readonly string _previousTitle = string.Empty;
+        private readonly bool _titleFiltersMissedAtStart;
         private long? _goneSince;
         private (string Title, long Since)? _newTitle;
         private int? _matchesAtStart;
+        private bool _handleIsNoWindow;
         private IReadOnlyList<WindowInfo> _matches = [];
         private WindowInfo? _lastSeen;
         private string? _note;
@@ -141,6 +178,22 @@ public sealed partial class WindowWaitService
             {
                 _tracked = initial.Window;
                 _previousTitle = request.PreviousTitle ?? initial.Window!.Title;
+
+                // A handle named by a title it no longer had at the start: the change most likely came before the call
+                _titleFiltersMissedAtStart = request.PreviousTitle == null && HasTitleFilter(_selector) && TitleMissed(initial.Window!);
+            }
+        }
+
+        /// <summary>Whether the window's title does not match the selector's title filters (a pattern that runs too long: no).</summary>
+        private bool TitleMissed(WindowInfo window)
+        {
+            try
+            {
+                return WindowMatching.Mismatches(window, TitleFilters(_selector)).Count > 0;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return false;
             }
         }
 
@@ -178,19 +231,20 @@ public sealed partial class WindowWaitService
             foreach (var window in satisfying)
                 _since.TryAdd(window.Handle, now);
 
+            // Only the windows that have held for stableMs satisfy it: one that just appeared beside them does not count yet
             var stable = satisfying.Where(w => now - _since[w.Handle] >= _stableMs).ToList();
             if (stable.Count == 0)
                 return null;
 
             if (_request.Condition != WindowWaitCondition.InputIdle)
-                return Satisfied(satisfying);
+                return Satisfied(stable);
 
-            if (satisfying.Count > 1)
+            if (stable.Count > 1)
             {
                 return Ended(nameof(WindowErrorCode.AmbiguousWindow),
-                    $"{satisfying.Count} windows match {_selector.Describe()}, so input_idle cannot tell whose process to wait for; " +
+                    $"{stable.Count} windows match {_selector.Describe()}, so input_idle cannot tell whose process to wait for; " +
                     "candidates lists them, front to back. Wait again with the one you mean as window {handle, processId}, or narrow " +
-                    "the selector.", elapsed(), satisfying, satisfying.Count);
+                    "the selector.", elapsed(), stable, stable.Count);
             }
 
             return CheckInputIdle(stable[0], elapsed);
@@ -237,15 +291,19 @@ public sealed partial class WindowWaitService
             if (now - _goneSince < _stableMs)
                 return null;
 
-            return new WindowConditionResult
-            {
-                Satisfied = true,
-                Warning = _matchesAtStart == 0
-                    ? $"No window matched {_selector.Describe()} when the wait started, so nothing had to close. If you expected one " +
-                      "to be open, check the selector with find_windows (untitled windows need includeUntitled or className)."
-                    : null
-            };
+            return new WindowConditionResult { Satisfied = true, Warning = _matchesAtStart == 0 ? NothingAtStartWarning() : null };
         }
+
+        /// <summary>The warning of a gone wait that had nothing to close: what the selector named at the start.</summary>
+        private string NothingAtStartWarning() => _selector.Handle switch
+        {
+            { } handle when _handleIsNoWindow => $"Window {handle} had already closed when the wait started.",
+            // A handle is read whatever the listing's rules, so only its filters can have left it out
+            { } handle => $"Window {handle} did not match {_selector.Describe()} when the wait started (it changed, or its handle " +
+                          "now names another window), so nothing had to close. If you expected it to match, check it with get_window_info.",
+            _ => $"No window matched {_selector.Describe()} when the wait started, so nothing had to close. If you expected one to be " +
+                 "open, check the selector with find_windows (untitled windows need includeUntitled or className)."
+        };
 
         /// <summary>title_changed: the window's title differs from the previous title, and the new title has held for stableMs.</summary>
         private WindowConditionResult? PollTitle(long now)
@@ -290,7 +348,8 @@ public sealed partial class WindowWaitService
                     if (resolution.ErrorCode == InvalidArgumentsCode)
                         return Ended(InvalidArgumentsCode, resolution.Error ?? "window cannot be used.", 0);
 
-                    if (handleClosedEnds && _selector.Handle is { } handle && resolution.ErrorCode == nameof(WindowErrorCode.InvalidHandle))
+                    _handleIsNoWindow = _selector.Handle.HasValue && resolution.ErrorCode == nameof(WindowErrorCode.InvalidHandle);
+                    if (handleClosedEnds && _selector.Handle is { } handle && _handleIsNoWindow)
                     {
                         return Ended(nameof(WindowErrorCode.InvalidHandle),
                             $"window.handle {handle} is no window (it closed), so it cannot become {ConditionName(_request.Condition)}. " +
@@ -348,21 +407,32 @@ public sealed partial class WindowWaitService
 
                 case WindowWaitCondition.TitleChanged:
                     window = _lastSeen ?? _tracked;
-                    error = $"The title of window {_tracked!.Handle} is still '{_previousTitle}' after {_timeoutMs} ms.";
+                    error = $"The title of window {_tracked!.Handle} is still '{_previousTitle}' after {_timeoutMs} ms." +
+                            (_titleFiltersMissedAtStart
+                                ? $" It already did not match {TitleFilters(_selector).Describe()} when the wait started, so it may have " +
+                                  "changed before the call: pass the title you read before acting as previousTitle."
+                                : "");
                     break;
 
                 case WindowWaitCondition.Visible when _matches.Count > 0:
+                    // A window on screen at the end came there less than stableMs before it
                     (window, others) = OneOrSeveral(_matches);
-                    error = $"No window matching {what} came on screen {waited}: " +
-                            string.Join("; ", _matches.Take(WindowResolution.MaxCandidates).Select(w => $"'{w.Title}' is {OffScreenReason(w)}")) + ".";
+                    error = (_matches.Any(IsOnScreen)
+                                ? $"No window matching {what} stayed on screen for {_stableMs} ms {waited}: "
+                                : $"No window matching {what} came on screen {waited}: ") +
+                            string.Join("; ", _matches.Take(WindowResolution.MaxCandidates).Select(w =>
+                                $"'{w.Title}' is {(IsOnScreen(w) ? $"on screen, but for less than {_stableMs} ms" : OffScreenReason(w))}")) + ".";
                     break;
 
                 case WindowWaitCondition.Foreground when _matches.Count > 0:
                     (window, others) = OneOrSeveral(_matches);
                     var front = _service._windows.GetForegroundWindow();
-                    error = $"No window matching {what} came to the front {waited}; the window in front is " +
-                            $"{(front == null ? "none" : $"'{front.Title}' ({front.ProcessName}, PID {front.ProcessId})")}. " +
-                            "Bring it there with focus_window if that is what you want.";
+                    error = front != null && _matches.Any(w => w.Handle == front.Handle)
+                        ? $"No window matching {what} stayed in front for {_stableMs} ms {waited}: '{front.Title}' ({front.ProcessName}, " +
+                          $"PID {front.ProcessId}) came to the front less than {_stableMs} ms before the timeout."
+                        : $"No window matching {what} came to the front {waited}; the window in front is " +
+                          $"{(front == null ? "none" : $"'{front.Title}' ({front.ProcessName}, PID {front.ProcessId})")}. " +
+                          "Bring it there with focus_window if that is what you want.";
                     break;
 
                 case WindowWaitCondition.InputIdle when _lastSeen != null:

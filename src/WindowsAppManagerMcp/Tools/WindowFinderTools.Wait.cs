@@ -39,10 +39,11 @@ public partial class WindowFinderTools
         WindowSelector window,
         [Description("What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle'")]
         WindowWaitCondition condition = WindowWaitCondition.Exists,
-        [Description("Only count windows that open after this call starts (default: false). A window your last action already opened " +
-                     "is missed; prefer excludeHandles. Not with gone or title_changed")]
+        [Description("Only count windows that open, or are shown, after this call starts (default: false). A window your last action " +
+                     "already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle")]
         bool newOnly = false,
-        [Description("Handles of windows that never count: the matching windows you saw before you acted (at most 256). Not with title_changed")]
+        [Description("Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle " +
+                     "itself). Not with title_changed")]
         long[]? excludeHandles = null,
         [Description("title_changed only: the title you read before acting (default: the title when the wait starts, which misses a " +
                      "change that already happened)")]
@@ -104,6 +105,16 @@ public partial class WindowFinderTools
 
         if (excluded.Length > 0 && condition == WindowWaitCondition.TitleChanged)
             throw Invalid("excludeHandles does not apply to condition 'title_changed', which follows the one window the selector names now.");
+
+        // A handle names one window that exists already: either would leave nothing that can count, so the wait could only time out
+        if (window.Handle.HasValue && newOnly)
+        {
+            throw Invalid("newOnly does not apply to window.handle: a handle names a window that is already open, so it would " +
+                          "never count. Leave newOnly out (condition 'visible' waits for a hidden window to show).");
+        }
+
+        if (window.Handle is { } named && excluded.Contains(named))
+            throw Invalid($"excludeHandles holds window.handle {named}, so the one window the selector names would never count.");
 
         if (previousTitle != null && condition != WindowWaitCondition.TitleChanged)
             throw Invalid($"previousTitle applies only to condition 'title_changed', not '{WindowWaitService.ConditionName(condition)}'.");

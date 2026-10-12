@@ -42,7 +42,10 @@ public sealed record WindowConditionRequest
 
     public WindowWaitCondition Condition { get; init; } = WindowWaitCondition.Exists;
 
-    /// <summary>Only windows that were not open when the wait started count.</summary>
+    /// <summary>
+    /// Only windows that were not open (shown: visible, and not cloaked unless the selector takes cloaked windows) when the
+    /// wait started count; a window hidden then and shown during the wait counts.
+    /// </summary>
     public bool NewOnly { get; init; }
 
     /// <summary>Windows that never count (the ones the caller saw before it acted).</summary>

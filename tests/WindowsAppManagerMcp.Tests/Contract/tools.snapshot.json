@@ -6274,12 +6274,12 @@
             ]
           },
           "newOnly": {
-            "description": "Only count windows that open after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone or title_changed",
+            "description": "Only count windows that open, or are shown, after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle",
             "type": "boolean",
             "default": false
           },
           "excludeHandles": {
-            "description": "Handles of windows that never count: the matching windows you saw before you acted (at most 256). Not with title_changed",
+            "description": "Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle itself). Not with title_changed",
             "type": [
               "array",
               "null"

@@ -209,7 +209,7 @@ public sealed class ElementRegistry : IElementRegistry
         {
             return new ElementLookup(elementRef ?? string.Empty, 0, null, 0, UIElementErrorCode.ElementStale,
                 $"'{elementRef}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
-                "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements.");
+                "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements.", NotIssued: true);
         }
 
         Entry? entry;
@@ -217,7 +217,9 @@ public sealed class ElementRegistry : IElementRegistry
         {
             if (!_byRef.TryGetValue(normalized, out entry))
             {
-                return new ElementLookup(normalized, 0, null, 0, UIElementErrorCode.ElementStale, UnknownRefMessage(normalized));
+                var issued = WasIssued(normalized);
+                return new ElementLookup(normalized, 0, null, 0, UIElementErrorCode.ElementStale, UnknownRefMessage(normalized, issued),
+                    NotIssued: !issued);
             }
         }
 
@@ -474,25 +476,33 @@ public sealed class ElementRegistry : IElementRegistry
         }
     }
 
-    private string UnknownRefMessage(string elementRef)
+    /// <summary>
+    /// Whether this registry issued the ref, kept or not: its window number was issued, and when that window is still open,
+    /// its element number too.
+    /// </summary>
+    private bool WasIssued(string elementRef)
     {
-        var issued = false;
-        if (ElementRefs.TryParse(elementRef, out var window, out var element))
+        if (!ElementRefs.TryParse(elementRef, out var window, out var element))
         {
-            lock (_gate)
-            {
-                // A window still open also knows how far its element numbers went
-                issued = window >= _firstWindowSeq && window < _nextWindowSeq &&
-                         !_windowsByHandle.Values.Any(r => r.Seq == window && element > r.LastElement);
-            }
+            return false;
         }
 
-        return issued
+        lock (_gate)
+        {
+            // A window still open also knows how far its element numbers went
+            return window >= _firstWindowSeq && window < _nextWindowSeq &&
+                   !_windowsByHandle.Values.Any(r => r.Seq == window && element > r.LastElement);
+        }
+    }
+
+    private string UnknownRefMessage(string elementRef) => UnknownRefMessage(elementRef, WasIssued(elementRef));
+
+    private string UnknownRefMessage(string elementRef, bool issued) =>
+        issued
             ? $"Element ref '{elementRef}' is stale: its element is gone, its window closed, or the ref expired (the server " +
               $"keeps the {_capacity} most recently used refs). Find the element again with find_ui_elements."
             : $"Element ref '{elementRef}' was not issued by this server session (refs do not survive a server restart). " +
               "Find the element again with find_ui_elements.";
-    }
 
     /// <summary>
     /// The window's record, created when the window has none (or its handle now names a window of another process or

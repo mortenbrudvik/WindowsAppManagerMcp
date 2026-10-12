@@ -65,6 +65,14 @@ public class WaitForWindowToolTests
     }
 
     [Fact]
+    public async Task AHandleSelector_TakesExcludeHandlesWithoutItsOwnHandle()
+    {
+        await CreateTools().WaitForWindow(new WindowSelector { Handle = 5 }, excludeHandles: [7]);
+
+        _request!.ExcludeHandles.Should().Equal((nint)7);
+    }
+
+    [Fact]
     public async Task TheDefaults_AreExists_10Seconds_And300Ms()
     {
         await CreateTools().WaitForWindow(Notepad);
@@ -215,6 +223,8 @@ public class WaitForWindowToolTests
         { "newOnly", tools => tools.WaitForWindow(Notepad, WindowWaitCondition.Gone, newOnly: true) },
         { "newOnly", tools => tools.WaitForWindow(Notepad, WindowWaitCondition.TitleChanged, newOnly: true) },
         { "excludeHandles", tools => tools.WaitForWindow(Notepad, WindowWaitCondition.TitleChanged, excludeHandles: [0x10]) },
+        { "newOnly", tools => tools.WaitForWindow(new WindowSelector { Handle = 5 }, newOnly: true) },
+        { "excludeHandles", tools => tools.WaitForWindow(new WindowSelector { Handle = 5, ProcessName = "notepad" }, excludeHandles: [7, 5]) },
         { "previousTitle", tools => tools.WaitForWindow(Notepad, WindowWaitCondition.Exists, previousTitle: "Untitled - Notepad") },
     };
 

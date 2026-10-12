@@ -44,7 +44,7 @@ public interface IWindowWaitService
     /// first 2 seconds), at most <see cref="WindowConditionRequest.TimeoutMs"/> (clamped to 60 seconds). The selector is
     /// resolved on every poll with the rules of <see cref="IWindowService.ResolveWindow"/> (the listing's rules, so
     /// includeUntitled or className finds an untitled dialog), minus <see cref="WindowConditionRequest.ExcludeHandles"/>
-    /// and, with <see cref="WindowConditionRequest.NewOnly"/>, minus the windows open at the start; the selector's index
+    /// and, with <see cref="WindowConditionRequest.NewOnly"/>, minus the windows shown at the start; the selector's index
     /// then picks one of what is left. The condition must hold for <see cref="WindowConditionRequest.StableMs"/>.
     /// </summary>
     /// <remarks>
