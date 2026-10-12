@@ -207,7 +207,7 @@ public class WindowWaitServiceTests
         _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, "README.md - Notepad"));
 
         // Act
-        var result = await WaitAsync(new WindowWaitOptions { DocumentHints = ["README.md"] });
+        var result = await WaitAsync(new WindowWaitOptions { DocumentHints = [new DocumentHint("README.md")] });
 
         // Assert
         result.Outcome.Should().Be(WindowWaitOutcome.OpenedInTab);
@@ -220,10 +220,71 @@ public class WindowWaitServiceTests
         _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, "(1) notes.txt - Notepad"));
 
         // Act
-        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, DocumentHints = ["README.md"] });
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, DocumentHints = [new DocumentHint("README.md")] });
 
         // Assert
         result.Outcome.Should().Be(WindowWaitOutcome.TimedOut);
+    }
+
+    [Theory]
+    [InlineData("mapper.ts - Foo - Notepad", false)]
+    [InlineData("app - Foo - Notepad", true)]
+    public async Task AnExistingWindowWhoseTitleNowShowsAHint_CountsOnlyForTheWholeName(string title, bool counts)
+    {
+        // Arrange - 'mapper.ts' contains the folder name 'app' only as part of another word
+        _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, title));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, DocumentHints = [new DocumentHint("app")] });
+
+        // Assert
+        result.Outcome.Should().Be(counts ? WindowWaitOutcome.OpenedInTab : WindowWaitOutcome.TimedOut);
+    }
+
+    [Theory]
+    [InlineData(@"C:\other\todo.txt - Notepad", false)]
+    [InlineData(@"C:\notes\todo.txt - Notepad", true)]
+    public async Task AnExistingWindowWhoseTitleNowShowsTheNameAfterAPath_CountsOnlyForTheLaunchedPath(string title, bool counts)
+    {
+        // Arrange
+        _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, title));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions
+        {
+            TimeoutMs = 2000,
+            DocumentHints = [new DocumentHint("todo.txt", @"C:\notes\todo.txt")]
+        });
+
+        // Assert
+        result.Outcome.Should().Be(counts ? WindowWaitOutcome.OpenedInTab : WindowWaitOutcome.TimedOut);
+    }
+
+    [Fact]
+    public async Task AnExistingWindowWhoseTitleShowedTheHintBefore_IsNoSignOfTheLaunch()
+    {
+        // Arrange - the open document is edited: its title changes, but it showed the name before the launch
+        _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, "*notes.txt - Notepad"));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, DocumentHints = [new DocumentHint("notes.txt")] });
+
+        // Assert
+        result.Outcome.Should().Be(WindowWaitOutcome.TimedOut);
+    }
+
+    [Fact]
+    public async Task AnExistingWindowWhoseTitleNowContainsExpectWindowTitleContains_OpenedInATab()
+    {
+        // Arrange - a web address opened in a tab of a browser window in the background: only the caller's hint names it
+        _desktop.At(200, d => d.SetTitle(ExistingNotepadHandle, "Online Banking - Browser"));
+
+        // Act
+        var result = await WaitAsync(new WindowWaitOptions { TimeoutMs = 2000, TitleContains = "online banking" });
+
+        // Assert
+        result.Outcome.Should().Be(WindowWaitOutcome.OpenedInTab);
+        result.Window!.Handle.Should().Be((nint)ExistingNotepadHandle);
     }
 
     [Fact]

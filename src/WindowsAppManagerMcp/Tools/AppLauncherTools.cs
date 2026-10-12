@@ -31,8 +31,10 @@ public class AppLauncherTools
         "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
         "the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; " +
         "never a terminal for cmd or powershell, or a browser for a web address), and of expectWindow.processName when set; when " +
-        "the launch opens a file, folder or web address, its title must show that name (or expectWindow.titleContains). The " +
-        "front-most match is used, nothing is started, and launchStatus is alreadyOpen";
+        "the launch opens a file or folder, its title must show that name as a whole name, and a path shown with it must be the " +
+        "launched path (or contain expectWindow.titleContains). A web address needs expectWindow.titleContains: a page sets its " +
+        "own title. The front-most match is used (one showing the full path first), nothing is started, and launchStatus is " +
+        "alreadyOpen; warning says when only the name matched or the title is the page's, so check the window before acting";
 
     private const string ForceAccessibilityDescription =
         "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, " +

@@ -1,3 +1,4 @@
+using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
 namespace WindowsAppManagerMcp.Services;
@@ -130,7 +131,7 @@ public sealed partial class WindowWaitService : IWindowWaitService
             // An existing window that the app reused counts only while no new window is pending: a new window wins
             if (firstSeen.Count == 0)
             {
-                var signal = FindReuseSignal(baseline, presentSet, isOwner, options.DocumentHints);
+                var signal = FindReuseSignal(baseline, presentSet, isOwner, options);
                 if (signal == null || reuse == null || signal.Handle != reuse.Handle || signal.TitleChanged != reuse.TitleChanged)
                 {
                     reuse = signal == null ? null : signal with { Since = now };
@@ -183,11 +184,12 @@ public sealed partial class WindowWaitService : IWindowWaitService
 
     /// <summary>
     /// The existing window the launch most likely reused, or null: the foreground window when it came to the front since
-    /// the baseline, else a window whose title changed to show one of the document hints. Either must be a user-facing
-    /// window that <paramref name="isOwner"/> accepts.
+    /// the baseline, else a window whose title changed to show what the launch opens (<see cref="NowShows"/>). Either must
+    /// be a user-facing window that <paramref name="isOwner"/> accepts. Placement moves and may focus the window found, so a
+    /// title that only contains a hint inside a longer word, or shows the name after another path, does not count.
     /// </summary>
     private ReuseSignal? FindReuseSignal(
-        WindowBaseline baseline, HashSet<nint> present, Func<WindowCandidate, bool> isOwner, IReadOnlyList<string> documentHints)
+        WindowBaseline baseline, HashSet<nint> present, Func<WindowCandidate, bool> isOwner, WindowWaitOptions options)
     {
         var foreground = _native.GetForegroundWindow();
         if (foreground != nint.Zero && foreground != baseline.Foreground && baseline.Contains(foreground) &&
@@ -196,7 +198,7 @@ public sealed partial class WindowWaitService : IWindowWaitService
             return new ReuseSignal(foreground, TitleChanged(baseline, foreground), 0);
         }
 
-        if (documentHints.Count == 0)
+        if (options.DocumentHints.Count == 0 && string.IsNullOrEmpty(options.TitleContains))
             return null;
 
         foreach (var (handle, oldTitle) in baseline.Titles)
@@ -205,7 +207,7 @@ public sealed partial class WindowWaitService : IWindowWaitService
                 continue;
 
             var title = _native.GetWindowText(handle) ?? string.Empty;
-            if (title == oldTitle || !documentHints.Any(hint => title.Contains(hint, StringComparison.OrdinalIgnoreCase)))
+            if (title == oldTitle || !NowShows(title, oldTitle, options))
                 continue;
 
             if (IsLaunchWindow(handle, isOwner))
@@ -213,6 +215,22 @@ public sealed partial class WindowWaitService : IWindowWaitService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="title"/> shows what the launch opens and <paramref name="oldTitle"/> did not: a document
+    /// hint as <see cref="LaunchTitles.Shows"/> tells (a whole name, and after a path only after the launched one), or
+    /// the caller's titleContains. A window that already showed it before the start only changed on its own (an edit
+    /// mark, a counter).
+    /// </summary>
+    private static bool NowShows(string title, string oldTitle, WindowWaitOptions options)
+    {
+        static bool Shows(string text, DocumentHint hint) => LaunchTitles.Shows(text, hint) is TitleShows.NameOnly or TitleShows.FullPath;
+
+        return options.DocumentHints.Any(hint => Shows(title, hint) && !Shows(oldTitle, hint)) ||
+               (!string.IsNullOrEmpty(options.TitleContains) &&
+                title.Contains(options.TitleContains, StringComparison.OrdinalIgnoreCase) &&
+                !oldTitle.Contains(options.TitleContains, StringComparison.OrdinalIgnoreCase));
     }
 
     private bool TitleChanged(WindowBaseline baseline, nint handle) =>

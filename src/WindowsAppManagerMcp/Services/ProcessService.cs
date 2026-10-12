@@ -195,12 +195,17 @@ public class ProcessService : IProcessService
     /// a web address), and, when expectWindow names a process, that process (part of the name, also the frame host's). A
     /// launch whose app is not known (a document, a Store app, a web address) needs expectWindow.processName;</item>
     /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise it
-    /// shows every file, folder and host name the launch opens (<see cref="ReuseTitleNames"/>), each as a whole name
-    /// (<see cref="TitleShowsName"/>), so todo.txt is not shown by old-todo.txt or todo.txt.bak. Starting an app
-    /// (shell:AppsFolder\&lt;AUMID&gt;, a bare scheme such as ms-settings:) opens nothing; a launch that opens something
-    /// whose name a title would not show (an ms-settings: page, a mailto: address) is never reused.</item>
+    /// shows every file and folder the launch opens (<see cref="ReuseTitleNames"/>) as <see cref="LaunchTitles.Shows"/>
+    /// tells: as a whole name, so todo.txt is not shown by old-todo.txt or todo.txt.bak, and never after another path, so
+    /// C:\notes\todo.txt is not shown by "C:\other\todo.txt - Notepad++". Starting an app (shell:AppsFolder\&lt;AUMID&gt;, a
+    /// bare scheme such as ms-settings:) opens nothing; a launch that opens something whose name a title would not show (an
+    /// ms-settings: page, a mailto: address) is never reused, nor is a web address: a page sets its own title, so a host
+    /// name in it proves nothing.</item>
     /// </list>
-    /// Of several, the front-most in z-order (the one used last) is used, and the warning says how many matched.
+    /// A window whose title shows the launched full paths goes before one that shows only their names; of several, the
+    /// front-most in z-order (the one used last) is used, and the warning says how many matched. A window matched by the
+    /// names alone, or by expectWindow.titleContains for a web address (a title the page sets), is used with a warning that
+    /// says so and tells the agent to check it before acting.
     /// </summary>
     private (LaunchResult? Result, string? Note) FindOpenWindow(
         LaunchPlan plan, LaunchRequest request, IReadOnlySet<nint>? taken, IReadOnlySet<nint>? openBefore)
@@ -217,10 +222,18 @@ public class ProcessService : IProcessService
         }
 
         var titleContains = string.IsNullOrWhiteSpace(hint?.TitleContains) ? null : hint.TitleContains.Trim();
-        IReadOnlyList<string> titleNames = [];
+        var webAddress = WebAddressOf(target, request.Arguments);
+        IReadOnlyList<DocumentHint> titleNames = [];
         if (titleContains == null)
         {
-            if (ReuseTitleNames(target, request.Arguments) is not { } shownNames)
+            if (webAddress != null)
+            {
+                return (null, "reuseExisting: the launch opens a web address, and a web page sets its own title, so a browser window " +
+                              "is never reused because its title shows the host; it was started. Pass expectWindow.titleContains to " +
+                              "name the window to reuse.");
+            }
+
+            if (ReuseTitleNames(target, request.Arguments, plan.StartInfo!.WorkingDirectory) is not { } shownNames)
             {
                 return (null, "reuseExisting: the launch opens something whose name a window title would not show, so no open window " +
                               "was reused and it was started. Pass expectWindow.titleContains to name the window to reuse.");
@@ -238,38 +251,63 @@ public class ProcessService : IProcessService
                         w.HostProcessName?.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) == true)
             .Where(w => _windowService.EvaluateTargetPolicy(w.Handle) is not { Allowed: false })
             .ToList();
-        var matches = appWindows
-            .Where(w => titleContains != null
-                ? w.Title.Contains(titleContains, StringComparison.OrdinalIgnoreCase)
-                : titleNames.All(name => TitleShowsName(w.Title, name)))
-            .ToList();
+
+        // Each window that shows what the launch opens, with the names its title shows without their paths
+        var matches = new List<(WindowInfo Window, List<DocumentHint> NameOnly)>();
+        foreach (var w in appWindows)
+        {
+            if (titleContains != null)
+            {
+                if (w.Title.Contains(titleContains, StringComparison.OrdinalIgnoreCase))
+                    matches.Add((w, []));
+                continue;
+            }
+
+            var shows = titleNames.Select(name => (Name: name, Shows: LaunchTitles.Shows(w.Title, name))).ToList();
+            if (shows.All(s => s.Shows is TitleShows.FullPath or TitleShows.NameOnly))
+                matches.Add((w, shows.Where(s => s.Shows == TitleShows.NameOnly).Select(s => s.Name).ToList()));
+        }
+
         if (matches.Count == 0)
         {
-            var wanted = titleContains != null ? $"'{titleContains}'" : string.Join(" and ", titleNames.Select(n => $"'{n}'"));
+            var wanted = titleContains != null ? $"'{titleContains}'" : string.Join(" and ", titleNames.Select(n => $"'{n.Name}'"));
             return (null, appWindows.Count == 0 ? null :
                 $"reuseExisting: {appWindows.Count} open window(s) of the app were found, but no title shows {wanted}, so none was " +
                 "reused and it was started.");
         }
 
-        var window = matches[0];
+        // A window that shows the launched paths is that file or folder; one that shows only the names may be another
+        var best = matches.Any(m => m.NameOnly.Count == 0) ? matches.Where(m => m.NameOnly.Count == 0).ToList() : matches;
+        var (window, nameOnly) = best[0];
+        var check = nameOnly.Count > 0
+            ? $"reuseExisting: only the name was matched: the title '{window.Title}' shows " +
+              $"{string.Join(" and ", nameOnly.Select(n => $"'{n.Name}'"))} but not the path, so the window may show another file " +
+              $"or folder of the same name. Check that it shows {string.Join(" and ", nameOnly.Select(n => n.FullPath ?? n.Name))} " +
+              "before acting on it."
+            : webAddress != null
+                ? $"reuseExisting: the window '{window.Title}' was matched by expectWindow.titleContains against a title the page " +
+                  $"controls: check that it shows {webAddress} before acting on it."
+                : null;
         return (new LaunchResult(
             Success: true,
             WindowHandle: window.Handle,
-            Warning: CombineWarnings(plan.Warning, matches.Count == 1 ? null :
-                $"reuseExisting: {matches.Count} open windows matched; the front-most one was used. Nothing was started."),
+            Warning: CombineWarnings(CombineWarnings(plan.Warning, check), best.Count == 1 ? null :
+                $"reuseExisting: {best.Count} open windows matched; the front-most one was used. Nothing was started."),
             Status: LaunchStatus.AlreadyOpen,
             Window: window), null);
     }
 
     /// <summary>
-    /// The names an open window's title must show for reuseExisting to count it as showing what the launch opens: the
-    /// file, folder and host names (as <see cref="DocumentHints"/> takes them) of the arguments that are not options and of
-    /// a document or web address launched directly. Empty when the launch opens nothing: no such argument, and a target
-    /// that only starts an app (shell:AppsFolder\&lt;AUMID&gt;, or a scheme alone such as ms-settings:). Null when it opens
-    /// something no title can be expected to show: a URI other than a web address (ms-settings:display, mailto:...), or
-    /// arguments none of which names a file, folder or host.
+    /// The files and folders an open window's title must show for reuseExisting to count it as showing what the launch
+    /// opens: those (as <see cref="DocumentHints"/> takes them) of the arguments that are not options and of a document
+    /// launched directly, with their full paths (a relative path taken in <paramref name="workingDirectory"/>). Empty when
+    /// the launch opens nothing: no such argument, and a target that only starts an app (shell:AppsFolder\&lt;AUMID&gt;, or
+    /// a scheme alone such as ms-settings:). Null when it opens something no title can be trusted to show: a URI
+    /// (ms-settings:display, mailto:...), a web address (a page sets its own title), or arguments none of which names a
+    /// file or folder.
     /// </summary>
-    public static IReadOnlyList<string>? ReuseTitleNames(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    public static IReadOnlyList<DocumentHint>? ReuseTitleNames(
+        ResolvedLaunchTarget target, IEnumerable<string>? arguments, string? workingDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -285,9 +323,19 @@ public class ProcessService : IProcessService
         if (values.Count == 0)
             return [];
 
-        var hints = NameHints(values);
+        if (values.Any(IsWebAddress))
+            return null;
+
+        var hints = FileHints(values, workingDirectory);
         return hints.Count == 0 ? null : hints;
     }
+
+    /// <summary>The first web address (http or https) the launch opens, as an argument or launched directly; null when none.</summary>
+    private static string? WebAddressOf(ResolvedLaunchTarget target, IEnumerable<string>? arguments) =>
+        (arguments ?? []).Append(target.Kind == LaunchTargetKind.Other ? target.FileName : string.Empty).FirstOrDefault(IsWebAddress);
+
+    private static bool IsWebAddress(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>A target that starts an app and opens nothing in it: shell:AppsFolder\&lt;AUMID&gt;, or a scheme alone (ms-settings:).</summary>
     private static bool StartsAppOnly(string fileName) =>
@@ -305,46 +353,6 @@ public class ProcessService : IProcessService
 
     private static bool IsWebScheme(string scheme) =>
         scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) || scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Whether a window title shows <paramref name="name"/> as a whole name, not as part of a longer one: on each side of
-    /// an occurrence (case-insensitive) is the end of the title; or a character that cannot continue a name (anything but
-    /// a letter, digit, '.', '-', '_' or whitespace: a path separator, '*', a bullet, '(', ':', ...); or whitespace that is not
-    /// followed, on that side, by a letter or digit. So "todo.txt - Notepad", "*todo.txt - Notepad"
-    /// and "C:\notes\todo.txt - Notepad++" show todo.txt; "old-todo.txt", "todo.txt.bak" and "old todo.txt" do not, nor
-    /// do "MyApp2", "MyApp.Tests" or "MyApp Tests" show MyApp.
-    /// </summary>
-    public static bool TitleShowsName(string title, string name)
-    {
-        ArgumentNullException.ThrowIfNull(title);
-        if (string.IsNullOrEmpty(name))
-            return false;
-
-        for (var at = title.IndexOf(name, StringComparison.OrdinalIgnoreCase); at >= 0;
-             at = at + 1 < title.Length ? title.IndexOf(name, at + 1, StringComparison.OrdinalIgnoreCase) : -1)
-        {
-            if (EndsName(title, at - 1, -1) && EndsName(title, at + name.Length, +1))
-                return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>Whether the title's character at <paramref name="index"/> (beside a name, on the side <paramref name="step"/> points to) ends that name.</summary>
-    private static bool EndsName(string title, int index, int step)
-    {
-        if (index < 0 || index >= title.Length)
-            return true;
-
-        var c = title[index];
-        if (char.IsWhiteSpace(c))
-        {
-            var beyond = index + step;
-            return beyond < 0 || beyond >= title.Length || !char.IsLetterOrDigit(title[beyond]);
-        }
-
-        return !(char.IsLetterOrDigit(c) || c is '.' or '-' or '_');
-    }
 
     private static string StripExe(string name) =>
         name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
@@ -454,7 +462,8 @@ public class ProcessService : IProcessService
         var options = new WindowWaitOptions
         {
             TimeoutMs = waitTimeoutMs,
-            DocumentHints = DocumentHints(target, request.Arguments),
+            DocumentHints = DocumentHints(target, request.Arguments, launch.Plan.StartInfo!.WorkingDirectory),
+            TitleContains = string.IsNullOrWhiteSpace(request.ExpectWindow?.TitleContains) ? null : request.ExpectWindow.TitleContains.Trim(),
             TryClaim = tryClaim
         };
 
@@ -585,49 +594,71 @@ public class ProcessService : IProcessService
     };
 
     /// <summary>
-    /// The texts that show a launched document or URL in an existing window's title: the file or folder names among the
-    /// arguments (and a document launched directly), and the host names of web addresses. Options (-x, --x) are skipped.
+    /// The files and folders that show a launched document in an existing window's title: those among the arguments (and
+    /// a document launched directly), with their full paths (a relative path taken in <paramref name="workingDirectory"/>,
+    /// where the app takes it). Options (-x, --x) are skipped, and so are web addresses: a web page sets its own title, so
+    /// a host name in it is no sign of the launch.
     /// </summary>
-    public static IReadOnlyList<string> DocumentHints(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    public static IReadOnlyList<DocumentHint> DocumentHints(
+        ResolvedLaunchTarget target, IEnumerable<string>? arguments, string? workingDirectory = null)
     {
         var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
         if (target.Kind == LaunchTargetKind.Other)
             values.Add(target.FileName);
 
-        return NameHints(values);
+        return FileHints(values, workingDirectory);
     }
 
     /// <summary>
-    /// The file or folder name of each path among <paramref name="values"/> and the host name of each web address, each
-    /// of 3 characters or more and listed once.
+    /// The file or folder of each path among <paramref name="values"/> that is not a web address: its name, of 3
+    /// characters or more and listed once, and its full path when it can be told.
     /// </summary>
-    private static List<string> NameHints(IEnumerable<string> values)
+    private static List<DocumentHint> FileHints(IEnumerable<string> values, string? workingDirectory)
     {
-        var hints = new List<string>();
+        var hints = new List<DocumentHint>();
         foreach (var value in values)
         {
-            string? hint = null;
-            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            if (IsWebAddress(value) || (value.IndexOfAny(['\\', '/']) < 0 && !Path.HasExtension(value)))
+                continue;
+
+            string name;
+            try
             {
-                hint = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+                name = Path.GetFileName(value.TrimEnd('\\', '/'));
             }
-            else if (value.IndexOfAny(['\\', '/']) >= 0 || Path.HasExtension(value))
+            catch (ArgumentException)
             {
-                try
-                {
-                    hint = Path.GetFileName(value.TrimEnd('\\', '/'));
-                }
-                catch (ArgumentException)
-                {
-                    hint = null;
-                }
+                continue;
             }
 
-            if (hint is { Length: >= 3 } && !hints.Contains(hint, StringComparer.OrdinalIgnoreCase))
-                hints.Add(hint);
+            if (name.Length >= 3 && !hints.Any(h => h.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                hints.Add(new DocumentHint(name, FullPathOf(value, workingDirectory)));
         }
 
         return hints;
+    }
+
+    /// <summary>
+    /// The full path of a file or folder argument, without a trailing separator: a file: URI's local path, a fully
+    /// qualified path, or a relative one in <paramref name="workingDirectory"/>; null when it cannot be told. Only the text
+    /// is read; the file system is not.
+    /// </summary>
+    private static string? FullPathOf(string value, string? workingDirectory)
+    {
+        try
+        {
+            var path = value.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile
+                ? uri.LocalPath
+                : value;
+            var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path)
+                : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? Path.GetFullPath(path, workingDirectory)
+                : null;
+            return full == null ? null : Path.TrimEndingDirectorySeparator(full);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

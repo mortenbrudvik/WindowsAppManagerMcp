@@ -232,8 +232,162 @@ public class ProcessServiceReuseTests
     [InlineData("hub.com - Edge", "github.com", false)]
     [InlineData("", "todo.txt", false)]
     [InlineData("todo.txt", "", false)]
-    public void TitleShowsName_MatchesWholeNamesOnly(string title, string name, bool expected) =>
-        ProcessService.TitleShowsName(title, name).Should().Be(expected);
+    public void ShowsName_MatchesWholeNamesOnly(string title, string name, bool expected) =>
+        LaunchTitles.ShowsName(title, name).Should().Be(expected);
+
+    [Theory]
+    [InlineData(@"C:\notes\todo.txt - Notepad++", TitleShows.FullPath)]
+    [InlineData(@"*C:\notes\todo.txt - Notepad++", TitleShows.FullPath)]
+    [InlineData(@"c:/NOTES/todo.txt - Notepad++", TitleShows.FullPath)]
+    [InlineData(@"Edited: C:\notes\todo.txt", TitleShows.FullPath)]
+    [InlineData(@"todo.txt - C:\notes\todo.txt", TitleShows.FullPath)]
+    [InlineData("todo.txt - Notepad", TitleShows.NameOnly)]
+    [InlineData(@"C:\other\todo.txt - Notepad++", TitleShows.OtherPath)]
+    [InlineData(@"D:\notes\todo.txt - Notepad++", TitleShows.OtherPath)]
+    [InlineData(@"X:\C:\notes\todo.txt", TitleShows.OtherPath)]
+    [InlineData(@"notes\todo.txt - Notepad++", TitleShows.OtherPath)]
+    [InlineData(@"todo.txt | C:\other\todo.txt - Notepad++", TitleShows.OtherPath)]
+    [InlineData("old-todo.txt - Notepad", TitleShows.Nothing)]
+    public void Shows_TellsTheLaunchedPathFromAnotherPathAndFromTheNameAlone(string title, TitleShows expected) =>
+        LaunchTitles.Shows(title, new DocumentHint("todo.txt", @"C:\notes\todo.txt")).Should().Be(expected);
+
+    [Fact]
+    public void Shows_ANameAfterAPath_WhenTheFullPathIsNotKnown_IsAnotherPath() =>
+        LaunchTitles.Shows(@"C:\notes\todo.txt - Notepad++", new DocumentHint("todo.txt")).Should().Be(TitleShows.OtherPath);
+
+    [Theory]
+    [InlineData(@"C:\other\todo.txt - Notepad++")]
+    [InlineData(@"D:\notes\todo.txt - Notepad++")]
+    [InlineData(@"C:\notes\old\todo.txt - Notepad++")]
+    [InlineData(@"other\todo.txt - Notepad++")]
+    public async Task AWindowShowingTheNameAfterAnotherPath_IsNotReused(string title)
+    {
+        // Arrange - the title shows another file of the same name
+        Open(0x10, "notepad++", title);
+
+        // Act
+        var result = await LaunchAsync("notepad++.exe", [@"C:\notes\todo.txt"]);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.Started, $"'{title}' shows another file than C:\\notes\\todo.txt");
+        VerifyStarted();
+    }
+
+    [Theory]
+    [InlineData(@"C:\notes\todo.txt - Notepad++")]
+    [InlineData(@"*c:\NOTES\todo.txt - Notepad++")]
+    public async Task AWindowShowingTheFullPath_IsReused_WithoutAWarning(string title)
+    {
+        // Arrange
+        var window = Open(0x10, "notepad++", title);
+
+        // Act
+        var result = await LaunchAsync("notepad++.exe", [@"C:\notes\todo.txt"]);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.AlreadyOpen);
+        result.Window.Should().Be(window);
+        result.Warning.Should().BeNull("the title shows the launched file itself");
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task ARelativeArgument_IsComparedAsAPathInTheWorkingDirectory()
+    {
+        // Arrange - the app takes todo.txt in its working directory, C:\notes
+        Open(0x10, "notepad++", @"C:\other\todo.txt - Notepad++");
+        var window = Open(0x11, "notepad++", @"C:\notes\todo.txt - Notepad++");
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync(
+            new LaunchRequest("notepad++.exe", ["todo.txt"], @"C:\notes", ReuseExisting: true), false, 5000);
+
+        // Assert
+        result.Window.Should().Be(window);
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AWindowShowingOnlyTheName_IsReused_AndTheWarningNamesTheTitleAndSaysToCheck()
+    {
+        // Arrange - another project's README.md: the title shows the name only
+        var window = Open(0x10, "Code", "README.md - ProjectB - Visual Studio Code");
+
+        // Act
+        var result = await LaunchAsync("code.cmd", [@"C:\Projects\A\README.md"]);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.AlreadyOpen);
+        result.Window.Should().Be(window);
+        result.Warning.Should().Contain("'README.md - ProjectB - Visual Studio Code'")
+            .And.Contain("only the name")
+            .And.Contain("same name")
+            .And.Contain(@"C:\Projects\A\README.md")
+            .And.Contain("before acting");
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task AWindowShowingTheFullPath_IsPreferredOverAFrontWindowShowingOnlyTheName()
+    {
+        // Arrange
+        Open(0x10, "notepad++", "todo.txt - Notepad++");
+        var exact = Open(0x11, "notepad++", @"C:\notes\todo.txt - Notepad++");
+
+        // Act
+        var result = await LaunchAsync("notepad++.exe", [@"C:\notes\todo.txt"]);
+
+        // Assert
+        result.Window.Should().Be(exact);
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AWebAddress_NeverReusesABrowserWindowBecauseItsTitleShowsTheHost()
+    {
+        // Arrange - a search page for the host: the page sets that title
+        Open(0x10, "msedge", "bank.example.com - Search - Microsoft Edge");
+
+        // Act
+        var result = await LaunchAsync("msedge.exe", ["https://bank.example.com"]);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.Started);
+        result.Warning.Should().Contain("web address").And.Contain("expectWindow.titleContains");
+        VerifyStarted();
+    }
+
+    [Fact]
+    public async Task AWebAddressLaunchedDirectly_NeverReusesABrowserWindowBecauseItsTitleShowsTheHost()
+    {
+        // Arrange
+        _resolver.Setup(r => r.Resolve("https://bank.example.com", It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget("https://bank.example.com", LaunchTargetKind.Other));
+        Open(0x10, "msedge", "bank.example.com - Microsoft Edge");
+
+        // Act
+        var result = await LaunchAsync("https://bank.example.com", expectWindow: new LaunchWindowHint(ProcessName: "msedge"));
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.Started);
+        result.Warning.Should().Contain("expectWindow.titleContains");
+    }
+
+    [Fact]
+    public async Task AWebAddress_ReusesTheWindowExpectWindowTitleContainsNames_AndWarnsThatThePageSetsTheTitle()
+    {
+        // Arrange
+        var window = Open(0x10, "msedge", "Online Banking - Microsoft Edge");
+
+        // Act
+        var result = await LaunchAsync("msedge.exe", ["https://bank.example.com"], new LaunchWindowHint(TitleContains: "Online Banking"));
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.AlreadyOpen);
+        result.Window.Should().Be(window);
+        result.Warning.Should().Contain("'Online Banking - Microsoft Edge'").And.Contain("a title the page controls").And.Contain("https://bank.example.com").And.Contain("before acting");
+        VerifyNothingStarted();
+    }
 
     [Fact]
     public async Task AStoreApp_IsReusedByProcessName_WithoutATitle()
@@ -283,7 +437,7 @@ public class ProcessServiceReuseTests
     [InlineData("ms-settings:display", -1)]
     [InlineData("mailto:someone@example.com", -1)]
     [InlineData(@"C:\docs\report.docx", 1)]
-    [InlineData("https://www.github.com/x", 1)]
+    [InlineData("https://www.github.com/x", -1)]
     public void ReuseTitleNames_ForATargetLaunchedDirectly(string fileName, int expected)
     {
         var names = ProcessService.ReuseTitleNames(new ResolvedLaunchTarget(fileName, LaunchTargetKind.Other), null);
