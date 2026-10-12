@@ -76,6 +76,8 @@ public class ToolPayloadBudgetTests
         // UI Automation
         ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
         ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
+        ["read_element_text"] = 1_200, // 802: the first page of a 3,000-character e-mail in the reading pane (roadmap M3.9)
+        ["read_table"] = 1_000, // 643: the first 50 of Task Manager's processes, 5 columns with headers (roadmap M3.9)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
         ["get_active_popups"] = 300, // a context menu and a Save As dialog with refs (roadmap M3.5)

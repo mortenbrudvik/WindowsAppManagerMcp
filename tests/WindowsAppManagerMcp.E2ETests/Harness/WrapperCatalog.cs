@@ -349,7 +349,9 @@ public static class WrapperCatalog
             [typeof(IUiaTextPattern)] = new Dictionary<string, WrapperMember>
             {
                 [nameof(IUiaTextPattern.GetText)] = WrapperMember.Read,
-                [nameof(IUiaTextPattern.GetSelectedText)] = WrapperMember.Read
+                [nameof(IUiaTextPattern.GetSelectedText)] = WrapperMember.Read,
+                // Moves the endpoints of a range of its own (not the selection) and reads its text
+                [nameof(IUiaTextPattern.GetTextPage)] = WrapperMember.Read
             },
             [typeof(IUiaGridPattern)] = new Dictionary<string, WrapperMember>
             {

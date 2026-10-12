@@ -54,6 +54,7 @@ public sealed class ContractServices : IDisposable
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
     public Mock<IElementSearchService> ElementSearch { get; } = new();
+    public Mock<IElementReadService> ElementReads { get; } = new();
 
     /// <summary>The popups of a window (roadmap M3.5): a context menu and a Save As dialog of Notepad.</summary>
     public Mock<IPopupService> Popups { get; } = new();
@@ -120,6 +121,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Inspection.Object);
         services.AddSingleton(ElementSearch.Object);
         services.AddSingleton(Popups.Object);
+        services.AddSingleton(ElementReads.Object);
         services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
@@ -342,6 +344,10 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
                 true, window == 0 ? TypicalDesktop.NotepadHandle : (long)window, notepad.Title, IsForeground: true,
                 TypicalDesktop.NotepadPopups, 4.25));
+        ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.MessageText);
+        ElementReads.Setup(r => r.ReadTableAsync(It.IsAny<ElementTableRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.ProcessTable);
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -491,6 +497,14 @@ public sealed class ContractServices : IDisposable
         Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
                 false, (long)window, null, false, null, 0.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
+        const string stale = "Element ref 'w4120035e57' is stale: its window closed. Find the element again with find_ui_elements.";
+        ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementTextRequest request, CancellationToken _) => new ElementTextResult(
+                false, request.Ref, 0, null, null, null, 0, null, false, null, 0.5, Error: stale, ErrorCode: UIElementErrorCode.ElementStale));
+        ElementReads.Setup(r => r.ReadTableAsync(It.IsAny<ElementTableRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementTableRequest request, CancellationToken _) => new ElementTableResult(
+                false, request.Ref, 0, null, null, null, request.StartRow, null, null, false, 0.5, Error: stale,
+                ErrorCode: UIElementErrorCode.ElementStale));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

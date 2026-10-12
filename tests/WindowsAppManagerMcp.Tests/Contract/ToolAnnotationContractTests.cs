@@ -107,7 +107,8 @@ public class ToolAnnotationContractTests
             "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",
             "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
             "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info",
-            "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "find_ui_elements", "get_active_popups"
+            "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "find_ui_elements", "get_active_popups",
+            "read_element_text", "read_table"
         ]);
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only

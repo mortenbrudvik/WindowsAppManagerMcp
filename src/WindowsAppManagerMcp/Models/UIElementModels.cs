@@ -157,7 +157,13 @@ public enum UIElementErrorCode
     /// An element ref's element is gone and several elements now fit its description, so the ref is not moved to any of
     /// them: a ref never silently names a different element (roadmap M3.4). Find the element again with a narrower query.
     /// </summary>
-    AmbiguousElement = 12
+    AmbiguousElement = 12,
+
+    /// <summary>
+    /// The element supports none of the UI Automation patterns (or the structure) the call needs, for example read_table on
+    /// an element that is neither a grid nor a list of rows (roadmap M3.9). Nothing was read.
+    /// </summary>
+    PatternNotSupported = 13
 }
 
 /// <summary>

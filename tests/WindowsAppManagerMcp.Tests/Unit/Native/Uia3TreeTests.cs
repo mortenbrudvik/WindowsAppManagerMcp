@@ -651,6 +651,56 @@ public class Uia3TreeTests
     }
 
     [Fact]
+    public void GetTextPage_MovesTheEndpointsOfItsOwnRange_AndReadsOnlyThePage()
+    {
+        // Arrange - a strict range: anything but these calls (Select, a selection, the whole text) fails the test
+        var sut = CreateSut();
+        var document = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, document);
+        var range = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
+        var probe = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, 6)).Returns(6);
+        range.Setup(r => r.MoveEndpointByRange(
+            TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start));
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 3)).Returns(3);
+        range.Setup(r => r.GetText(-1)).Returns("wor");
+        range.Setup(r => r.Clone()).Returns(probe.Object);
+        probe.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1)).Returns(1);
+        var text = new Mock<IUIAutomationTextPattern>();
+        text.SetupGet(p => p.DocumentRange).Returns(range.Object);
+        document.Setup(e => e.GetCurrentPattern(UiaIds.TextPattern)).Returns(text.Object);
+
+        // Act
+        var page = sut.GetPattern<IUiaTextPattern>(node)!.GetTextPage(6, 3);
+
+        // Assert
+        page.Should().Be(new UiaTextPage("wor", 6, 3, HasMore: true));
+    }
+
+    [Fact]
+    public void GetTextPage_AtTheEnd_NeedsNoProbe_AndKnowsTheLength()
+    {
+        // Arrange - a page shorter than asked for: the document ends in it
+        var sut = CreateSut();
+        var document = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, document);
+        var range = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
+        range.Setup(r => r.MoveEndpointByRange(
+            TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start));
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 100)).Returns(11);
+        range.Setup(r => r.GetText(-1)).Returns("hello world");
+        var text = new Mock<IUIAutomationTextPattern>();
+        text.SetupGet(p => p.DocumentRange).Returns(range.Object);
+        document.Setup(e => e.GetCurrentPattern(UiaIds.TextPattern)).Returns(text.Object);
+
+        // Act
+        var page = sut.GetPattern<IUiaTextPattern>(node)!.GetTextPage(0, 100);
+
+        // Assert
+        page.Should().Be(new UiaTextPage("hello world", 0, 11, HasMore: false));
+    }
+
+    [Fact]
     public void GetPattern_WhenThePatternObjectIsNotOfTheRequestedPattern_IsNull()
     {
         // Arrange - a provider that answers the pattern id with an object of another pattern

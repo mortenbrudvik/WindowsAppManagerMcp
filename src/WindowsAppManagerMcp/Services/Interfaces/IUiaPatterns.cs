@@ -112,7 +112,26 @@ public interface IUiaTextPattern : IUiaPattern
 
     /// <summary>The selected text, ranges joined by newlines, at most <paramref name="maxLength"/> characters.</summary>
     string GetSelectedText(int maxLength);
+
+    /// <summary>
+    /// A page of the document's text (roadmap M3.9): a range over the document whose start is moved
+    /// <paramref name="offset"/> characters forward, collapsed to its start, and whose end is then moved
+    /// <paramref name="maxLength"/> characters forward (MoveEndpointByUnit with TextUnit.Character, so the provider's own
+    /// character unit counts, never the whole document read). Only reads: the range is the client's, not the selection.
+    /// </summary>
+    /// <param name="offset">Where the page starts, in the provider's characters (0: the start of the document).</param>
+    /// <param name="maxLength">The most characters the page spans (at least 1).</param>
+    UiaTextPage GetTextPage(int offset, int maxLength);
 }
+
+/// <summary>A page of a document's text (<see cref="IUiaTextPattern.GetTextPage"/>).</summary>
+/// <param name="Text">The page's text. The provider may return more UTF-16 characters than <paramref name="Length"/> when it
+/// counts a line break or another sequence as one character.</param>
+/// <param name="Start">Where the page starts, in the provider's characters: the offset asked for, or less when the document
+/// is shorter (then the page is empty and <paramref name="Start"/> is the document's length).</param>
+/// <param name="Length">How many of the provider's characters the page spans.</param>
+/// <param name="HasMore">True when text follows the page.</param>
+public sealed record UiaTextPage(string Text, int Start, int Length, bool HasMore);
 
 /// <summary>GridPattern: a grid of cells.</summary>
 public interface IUiaGridPattern : IUiaPattern

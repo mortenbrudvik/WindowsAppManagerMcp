@@ -140,6 +140,38 @@ public static class TypicalDesktop
             new BoundsDto(420, 180, 960, 640), "Window", IsBlocking: true),
     ];
 
+    /// <summary>Characters of the reading pane's text that read_element_text returns for a typical e-mail (roadmap M3.9).</summary>
+    public const int MessageLength = 3_000;
+
+    /// <summary>What read_element_text returns for a reading pane: the first page of a 3,000-character e-mail.</summary>
+    public static ElementTextResult MessageText { get; } = new(
+        true, "w4120035e57", NotepadHandle, "Document", Article[..MessageLength], ElementTextSource.Text, 0, MessageLength, false, null, 18.25);
+
+    /// <summary>Rows of the process table read_table returns (Task Manager's first page, roadmap M3.9).</summary>
+    public const int TableRows = 50;
+
+    /// <summary>What read_table returns for Task Manager's processes: 50 rows of 5 columns, with headers.</summary>
+    public static ElementTableResult ProcessTable { get; } = new(
+        Success: true,
+        Ref: "w4120035e61",
+        WindowHandle: NotepadHandle,
+        Source: ElementTableSource.Grid,
+        Headers: ["Name", "Status", "CPU", "Memory", "Disk"],
+        Rows: Enumerable.Range(0, TableRows)
+            .Select(i => (IReadOnlyList<string?>)
+            [
+                ProcessNames[i % ProcessNames.Length], i % 7 == 0 ? "Suspended" : "", $"{i % 9}.{i % 10}%", $"{48.5 + i * 11.25:0.0} MB",
+                $"{i % 4}.1 MB/s"
+            ])
+            .ToList(),
+        StartRow: 0,
+        TotalRows: 212,
+        TotalColumns: 5,
+        Truncated: true,
+        ElapsedMilliseconds: 412.5,
+        TruncationReason: ElementTableTruncation.MaxRows,
+        NextStartRow: TableRows);
+
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
 

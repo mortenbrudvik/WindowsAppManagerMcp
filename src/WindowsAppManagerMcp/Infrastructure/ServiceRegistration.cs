@@ -93,6 +93,8 @@ public static class ServiceRegistration
             sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<INativeProcessWrapper>(),
             sp.GetRequiredService<IHostGuard>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetRequiredService<IUiaTree>(),
             sp.GetRequiredService<IUiaWorker>(), sp.GetRequiredService<IElementRegistry>()));
+        // read_element_text and read_table (roadmap M3.9): text and tables through the patterns, by ref or find's criteria
+        services.AddSingleton<IElementReadService, ElementReadService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -184,6 +186,7 @@ public static class ServiceRegistration
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
+        services.AddSingleton<ElementReadTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -254,6 +257,7 @@ public static class ServiceRegistration
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()
+            .WithServerTools<ElementReadTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

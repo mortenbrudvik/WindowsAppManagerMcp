@@ -726,6 +726,26 @@ public sealed class Uia3Tree : IUiaTree
             var text = string.Join("\n", texts);
             return maxLength >= 0 && text.Length > maxLength ? text[..maxLength] : text;
         });
+
+        public UiaTextPage GetTextPage(int offset, int maxLength) => UiaComErrors.Run(() =>
+        {
+            // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
+            var range = pattern.DocumentRange;
+            var start = offset > 0
+                ? range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, offset)
+                : 0;
+            range.MoveEndpointByRange(
+                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start);
+            var length = range.MoveEndpointByUnit(
+                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, Math.Max(1, maxLength));
+            var text = length > 0 ? range.GetText(-1) ?? string.Empty : string.Empty;
+
+            // A full page: one more character after it tells whether text follows
+            var hasMore = length >= maxLength &&
+                          range.Clone().MoveEndpointByUnit(
+                              TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1) > 0;
+            return new UiaTextPage(text, start, length, hasMore);
+        });
     }
 
     private sealed class GridPattern(IUIAutomationGridPattern pattern) : IUiaGridPattern
