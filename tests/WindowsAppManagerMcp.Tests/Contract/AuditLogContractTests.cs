@@ -367,15 +367,20 @@ public class AuditLogContractTests
     }
 
     [Fact]
-    public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted()
+    public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted_AndTheRefusalIsRecorded()
     {
         var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click")) { ["password=hunter2"] = 1 };
 
-        var (_, lines) = await CallAsync("click", arguments);
+        var (result, lines) = await CallAsync("click", arguments);
 
+        // An acting tool refuses it (M3 review), without repeating a name that is no parameter name; the line records the
+        // refusal, with the name left out
+        result.Content.OfType<TextContentBlock>().Single().Text.Should().NotContain("hunter2");
         var line = lines.Single();
         line.GetRawText().Should().NotContain("hunter2").And.NotContain("password");
         line.GetProperty("args").GetProperty("unknownArgumentsCount").GetInt32().Should().Be(1);
+        line.GetProperty("outcome").GetString().Should().Be(AuditOutcome.Error);
+        line.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
     }
 
     [Fact]

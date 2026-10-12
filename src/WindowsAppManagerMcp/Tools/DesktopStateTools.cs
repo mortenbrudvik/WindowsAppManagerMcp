@@ -77,7 +77,7 @@ public class DesktopStateTools
                      "dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' " +
                      "line). Default: windowAndPopups when the window or one of its popups is in front, else window, as " +
                      "find_ui_elements.")]
-        ElementSearchScope? scope = null,
+        DesktopStateScope? scope = null,
         [Description("The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are.")]
         int maxWindows = DefaultMaxWindows,
         [Description("The screenshot's long edge in pixels (default: 1280, min: 256, max: 1568).")]
@@ -87,24 +87,25 @@ public class DesktopStateTools
         CancellationToken cancellationToken = default)
     {
         var sections = include is { Length: > 0 } ? include.ToHashSet() : DesktopStateRequest.DefaultInclude;
-        if (scope == ElementSearchScope.Desktop)
-        {
-            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                "get_desktop_state reads one window and its popups: scope is 'window' or 'windowAndPopups'. To search every " +
-                "window, use find_ui_elements with scope 'desktop'. Nothing was read.");
-        }
-
         if (sections.Contains(DesktopStateSection.Screenshot) && _state.ScreenshotUnavailable() is { } unavailable)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, unavailable + " Nothing was read.");
         }
 
         var target = WindowTargeting.Optional(_windowService, handle, window);
-        var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, scope, maxWindows,
+        var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, ScopeOf(scope), maxWindows,
             screenshotMaxLongEdge, timeoutMs), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return ToolImages.Create(snapshot.State, snapshot.Image, isError: !snapshot.State.Success, StateJsonOptions);
     }
+
+    /// <summary>The element search scope of get_desktop_state's scope, or null for the default.</summary>
+    private static ElementSearchScope? ScopeOf(DesktopStateScope? scope) => scope switch
+    {
+        DesktopStateScope.Window => ElementSearchScope.Window,
+        DesktopStateScope.WindowAndPopups => ElementSearchScope.WindowAndPopups,
+        _ => null
+    };
 
     private static JsonSerializerOptions CreateStateJsonOptions()
     {

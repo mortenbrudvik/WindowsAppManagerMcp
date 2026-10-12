@@ -264,6 +264,9 @@ public static class ServiceRegistration
             // it is outside it: its call log includes the wait for the gate and the calls the gate filter
             // refuses while input is paused
             .AddToolErrorReporting()
+            // An acting tool refuses an argument it does not declare (M3 review). Inside the two filters above, so the refusal
+            // is audited and reported as a tool error; outside the gate filter, so it never waits for the gate
+            .AddUndeclaredArgumentRefusal()
             // Tools that can change which window is in front run inside the input gate, so they cannot
             // change it between an input call's guard check and its input
             .AddInputGateSerialization()

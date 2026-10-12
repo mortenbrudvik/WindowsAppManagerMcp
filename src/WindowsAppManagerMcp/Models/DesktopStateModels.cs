@@ -32,6 +32,23 @@ public enum DesktopStateSection
 }
 
 /// <summary>
+/// get_desktop_state's scope (roadmap M3.12): the window alone, or with its popups. A subset of
+/// <see cref="ElementSearchScope"/>: the observation reads one window, so its schema does not offer find_ui_elements' desktop.
+/// </summary>
+[ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode,
+    "get_desktop_state scope (it reads one window and its popups; find_ui_elements' scope 'desktop' searches every window)")]
+public enum DesktopStateScope
+{
+    /// <summary>Only the window.</summary>
+    [JsonStringEnumMemberName("window")]
+    Window,
+
+    /// <summary>The window and its open menus, dropdowns, flyouts and dialogs.</summary>
+    [JsonStringEnumMemberName("windowAndPopups")]
+    WindowAndPopups
+}
+
+/// <summary>
 /// What an action tool returns about the desktop after it acted (roadmap M3.12): nothing, get_desktop_state's observation, or
 /// that observation with a capture of the window. element_action has it; other action tools may gain it later.
 /// </summary>

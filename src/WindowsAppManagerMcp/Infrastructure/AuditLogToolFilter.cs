@@ -135,7 +135,7 @@ public static class AuditLogToolFilter
     }
 
     /// <summary>The input schema the server declares for <paramref name="tool"/>, or null when the filter cannot see it.</summary>
-    private static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
+    internal static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
         request.Server?.ServerOptions?.ToolCollection is { } tools && tools.TryGetPrimitive(tool, out var served)
             ? served.ProtocolTool.InputSchema
             : null;

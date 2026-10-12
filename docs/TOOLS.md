@@ -82,6 +82,18 @@ automatically, what to run in parallel and what to ask the user about:
 
 The captures are not read-only, because they can write image files (`output: "file"` or `"both"`); they are destructive only through `overwrite: true`, but the hint is per tool, so it says what the tool can do. launch_browser_with_debug is destructive: its unauthenticated debug port lets any program on the computer control that browser, and the agent chooses the profile folder and the URL. It refuses a `url` that starts with `-` or `/` (the browser would read it as a command-line switch) and a `userDataDir` inside a `User Data` folder, where Chrome, Edge and Brave keep the user's real profiles (`InvalidArguments`); a real profile kept elsewhere, or reached through a link, cannot be told apart. apply_layout is not destructive: the only programs it starts are the launch commands the user wrote into the preset file (save_layout never writes one). apply_layout is not idempotent, and neither are the launch tools: with `launchMissing: true` a second call starts another instance when the window the first call launched is not matched yet (still opening, or titled differently than the preset). set_window_state is not idempotent: `restore` twice can turn a maximized window back to normal.
 
+### Undeclared arguments
+
+The tools that act on the desktop refuse an argument they do not declare: [element_action](#element_action),
+[respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), the [input tools](#input-simulation) (click,
+right_click, double_click, mouse_move, scroll, type_text, send_keys), [close_window](#close_window),
+close_windows_batch, [close_application](#close_application) and [kill_process](#kill_process). Such a call fails with
+`InvalidArguments` before anything is searched, waited for or done, and the error names the argument and the declared
+name it is closest to (`controlTypes`: did you mean `controlType`?). A misspelled or borrowed name would otherwise be
+dropped, and a criterion left out widens the search, so element_action could act on another element than the one meant.
+element_action takes no `withinRef`: find the element with [find_ui_elements](#find_ui_elements) `withinRef` and pass its
+`ref`. The other tools ignore an argument they do not declare. A refused call is in the [audit log](#audit-log).
+
 ### Audit log
 
 The server writes one line to an append-only audit log for every call of a tool that sends input, closes windows,
@@ -2242,7 +2254,7 @@ One compact observation of the desktop, and the recommended first call: what the
 | include | string (one of: `"windows"`, `"focus"`, `"elements"`, `"popups"`, `"screenshot"`)[] | No | - | What to read besides the window in front, the cursor, the keys and the pause (always read): 'windows', 'focus', 'elements', 'popups' (default: all four) and 'screenshot' (off by default; needs capture_window to be served). |
 | maxElements | integer | No | 80 | The most element lines, the popups' and the window's together (default: 80, min: 1, max: 500). The walk reads breadth first, so the levels nearest the window are kept; elements.truncated says when there are more (read them with get_ui_elements or find_ui_elements). |
 | interactableOnly | boolean | No | true | Only elements that are enabled and keyboard-focusable or have an action pattern (default: true). Pass false to also list labels, texts and containers. |
-| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' line). Default: windowAndPopups when the window or one of its popups is in front, else window, as find_ui_elements. |
+| scope | string (one of: `"window"`, `"windowAndPopups"`) | No | - | Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' line). Default: windowAndPopups when the window or one of its popups is in front, else window, as find_ui_elements. |
 | maxWindows | integer | No | 20 | The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are. |
 | screenshotMaxLongEdge | integer | No | 1280 | The screenshot's long edge in pixels (default: 1280, min: 256, max: 1568). |
 | timeoutMs | integer | No | 5000 | The one deadline of the whole call in milliseconds (default: 5000, min: 1000, max: 30000). |
@@ -2603,7 +2615,7 @@ Act on one UI element through its UI Automation patterns: invoke a button, toggl
 | automationId | string | No | - | Element criteria: the element's AutomationId. |
 | controlType | string | No | - | Element criteria: control type, or several separated by commas, e.g. 'Button' or 'Edit,ComboBox'. |
 | className | string | No | - | Element criteria: the element's class name. |
-| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'. |
+| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref. |
 | value | string | No | - | set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, 'on', 'off' or 'indeterminate' (up to two toggles); leave it out to toggle once. Never echoed back. |
 | mode | string (one of: `"value"`, `"type"`, `"paste"`) | No | "value" | set_value and append_text: 'value' (default: the Value pattern, no keyboard input), 'type' (focus the element, select all or go to the end, type the text, with every input check; for web and React inputs that ignore the Value pattern) or 'paste' (as type, but pasted from the clipboard, which it replaces). |
 | direction | string (one of: `"up"`, `"down"`, `"left"`, `"right"`) | No | - | scroll: 'up', 'down', 'left' or 'right'. The element's Scroll pattern, or its nearest scrollable ancestor's, is used; the result's scroll has the percent and atEnd. |
@@ -3098,7 +3110,7 @@ Read the text of one element: a document (Notepad, Word, a browser page, a readi
 | automationId | string | No | - | With `window`: the element's AutomationId, ignoring case |
 | controlType | string | No | - | With `window`: one control type, or several separated by commas, such as `Document` or `Edit,Document` |
 | className | string | No | - | With `window`: the element's class name, ignoring case |
-| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'. |
+| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | - | With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref. |
 | offset | integer | No | 0 | Where the page starts, in characters: the `nextOffset` of the previous page |
 | maxLength | integer | No | 20000 | The most characters to return (1-50000) |
 | timeoutMs | integer | No | 5000 | Timeout in ms for the search and the read together (1000-30000) |
@@ -5967,6 +5979,13 @@ Since 1.14.0 (roadmap M3):
   get_desktop_state's screenshot, while the policy denies anything; they used to act on it or capture it. [get_desktop_state](#get_desktop_state) no longer reads a denied window that is named (a `target` error),
   and checks the window in front before it reads the focus, so the focus of the agent's own host or of a denied app in
   front is no longer read at all. The window lists ([find_windows](#find_windows), get_desktop_state's rows) are unchanged.
+- **Undeclared arguments are refused by the acting tools (M3 review).** element_action, respond_to_dialog, file_dialog,
+  the input tools (click, right_click, double_click, mouse_move, scroll, type_text, send_keys), close_window,
+  close_windows_batch, close_application and kill_process now fail with `InvalidArguments` when a call passes an argument
+  they do not declare, naming it and the closest declared name, where they used to ignore it and run. Nothing is done,
+  and the refusal is audited. The read tools still ignore such an argument. The scope description of element_action and
+  read_element_text no longer mentions `withinRef`, which neither takes, and get_desktop_state's `scope` lists only
+  `window` and `windowAndPopups` (`desktop` is still refused with `InvalidArguments`).
 - **Audit log lines of the dialogs and element names (M3 review).** The [audit log](#audit-log) line of
   respond_to_dialog and file_dialog names the dialog they answered as its `target` (handle, title and process), also
   when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the

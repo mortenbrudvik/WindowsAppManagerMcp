@@ -57,14 +57,19 @@ public class UIElementTools
 
     /// <summary>
     /// The scope of the tools that name one element by find_ui_elements' criteria in a window they require (read_element_text,
-    /// wait_for_element, element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope.
+    /// element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope. These tools take no withinRef.
     /// </summary>
-    internal const string CriteriaScopeDescription =
+    internal const string CriteriaScopeDescription = CriteriaScope + ".";
+
+    /// <summary><see cref="CriteriaScopeDescription"/> for wait_for_element, which also takes withinRef.</summary>
+    internal const string WithinRefCriteriaScopeDescription = CriteriaScope + "; with withinRef, only 'window'.";
+
+    private const string CriteriaScope =
         "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), " +
         "'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' " +
         "(every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are " +
         "left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the " +
-        "window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'.";
+        "window or one of its popups is in front, else window. Not with ref";
 
     /// <summary>
     /// The InvalidArguments message for a scope that cannot apply: with a ref (it names its element), or a scope other than

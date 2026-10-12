@@ -1389,7 +1389,7 @@
             "default": null
           },
           "scope": {
-            "description": "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'.",
+            "description": "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref.",
             "default": null,
             "type": [
               "string",
@@ -2601,7 +2601,6 @@
             "enum": [
               "window",
               "windowAndPopups",
-              "desktop",
               null
             ]
           },
@@ -4183,7 +4182,7 @@
             "default": null
           },
           "scope": {
-            "description": "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'.",
+            "description": "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' (every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the window or one of its popups is in front, else window. Not with ref.",
             "default": null,
             "type": [
               "string",
