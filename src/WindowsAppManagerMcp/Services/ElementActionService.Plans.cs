@@ -19,8 +19,12 @@ public sealed partial class ElementActionService
         or ElementActionKind.Scroll or ElementActionKind.Realize or ElementActionKind.WindowClose
         or ElementActionKind.WindowMinimize or ElementActionKind.WindowMaximize);
 
-    /// <summary>Phase 1, on the worker: the hung check, the ref resolved, the state read, the checks, the plan.</summary>
-    private ReadOutcome<PreparedElement> Prepare(ActionCall call, CancellationToken token)
+    /// <summary>
+    /// Phase 1, on the worker: the hung check, the ref resolved, the identity read, the target checks of the element's own
+    /// window when it belongs to another process, then the state read, the checks and the plan. A refused element's state
+    /// (its name and value) is never read, so the refusal cannot carry it.
+    /// </summary>
+    private ReadOutcome<PreparedElement> Prepare(ActionCall call, InputTarget target, CancellationToken token)
     {
         if (UiaTargets.NotRespondingReason(_windows, call.Window, "its element was not acted on") is { } notResponding)
         {
@@ -58,10 +62,9 @@ public sealed partial class ElementActionService
                     "which window and process it belongs to. Nothing was done. Read it again with find_ui_elements.");
             }
 
-            var elementWindow = nint.Zero;
             if (!BelongsToWindowsProcess(call.Window, identity.ProcessId))
             {
-                elementWindow = OwnWindowOf(node, identity);
+                var elementWindow = OwnWindowOf(node, identity);
                 if (elementWindow == nint.Zero)
                 {
                     return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
@@ -69,13 +72,19 @@ public sealed partial class ElementActionService
                         "no window of that process could be found above it, so the target checks (policy, elevation, host) cannot " +
                         "run on it. Nothing was done.");
                 }
+
+                // That process's own window passes the policy, elevation and host checks too (Win32 reads only)
+                if (_guard.CheckElementWindow(target, elementWindow) is { Allowed: false } foreign)
+                {
+                    return Failed(call, foreign.ErrorCode.ToString(), foreign.Error!);
+                }
             }
 
             var isPassword = identity.IsPassword;
             var (before, fullValue) = ReadState(node, element, isPassword);
             call.Before = before;
 
-            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue) { ElementWindow = elementWindow };
+            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue);
             var request = call.Request;
             var properties = element.Properties;
             if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
@@ -972,12 +981,6 @@ public sealed partial class ElementActionService
         public UiaElement Element { get; } = element;
 
         public UiaNodeIdentity Identity { get; } = identity;
-
-        /// <summary>
-        /// The element's own window when it belongs to another process than the ref's window, whose checks run too
-        /// (<see cref="IInputTargetGuard.CheckElementWindow"/>); zero when it belongs to the window's process.
-        /// </summary>
-        public nint ElementWindow { get; init; }
 
         public bool IsPassword { get; } = isPassword;
 

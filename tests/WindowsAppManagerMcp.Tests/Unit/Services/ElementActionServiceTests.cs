@@ -201,7 +201,10 @@ public sealed class ElementActionServiceTests : IDisposable
         var host = new FakeUiaNode("Pane", "Vault") { NativeWindowHandle = vault, ProcessId = vaultPid };
         _window.With(host);
         var invoke = new FakeInvokePattern();
-        var reveal = new FakeUiaNode("Button", "Reveal") { ActionPatterns = ["Invoke"], ProcessId = vaultPid }.WithPattern<IUiaInvokePattern>(invoke);
+        var value = new FakeValuePattern("secret-otp");
+        var reveal = new FakeUiaNode("Button", "Reveal 492-731") { ActionPatterns = ["Invoke", "Value"], ProcessId = vaultPid }
+            .WithPattern<IUiaInvokePattern>(invoke)
+            .WithPattern<IUiaValuePattern>(value);
         var revealRef = RefOf(reveal, host);
         _guard.Setup(g => g.CheckElementWindow(It.IsAny<InputTarget>(), vault)).Returns((InputTarget target, nint _) =>
             InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied by the policy.", target));
@@ -209,10 +212,13 @@ public sealed class ElementActionServiceTests : IDisposable
         // Act
         var result = await ActAsync(revealRef, ElementActionKind.Invoke);
 
-        // Assert
+        // Assert - refused before its state is read: neither its name nor its value comes back
         result.ErrorCode.Should().Be("TargetDeniedByPolicy");
         invoke.Invokes.Should().Be(0);
         _guard.Verify(g => g.CheckElementWindow(InputTarget.Window(Handle, false), vault), Times.Once);
+        result.Before.Should().BeNull();
+        JsonSerializer.Serialize(result).Should().NotContain("secret-otp").And.NotContain("492-731");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Interaction:Reveal") || r.StartsWith("Pattern:IUiaValuePattern"));
     }
 
     [Fact]

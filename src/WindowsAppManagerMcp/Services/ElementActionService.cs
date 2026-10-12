@@ -239,7 +239,8 @@ public sealed partial class ElementActionService : IElementActionService
         }
 
         var targetProcess = UiaTargets.TargetProcessId(_windows, call.Window);
-        var prepared = await ReadAsync(call, targetProcess, token => Prepare(call, token), cancellationToken).ConfigureAwait(false);
+        // An element of another process has its own window checked in there too, before its state is read
+        var prepared = await ReadAsync(call, targetProcess, token => Prepare(call, target, token), cancellationToken).ConfigureAwait(false);
         if (prepared.Failure is { } refused)
         {
             return refused;
@@ -248,12 +249,6 @@ public sealed partial class ElementActionService : IElementActionService
         var element = prepared.Element!;
         call.Ref = element.Ref;
         call.Before = element.Before;
-
-        // An element of another process: that process's own window passes the policy, elevation and host checks too
-        if (element.ElementWindow != nint.Zero && _guard.CheckElementWindow(target, element.ElementWindow) is { Allowed: false } foreign)
-        {
-            return call.Fail(foreign.ErrorCode.ToString(), foreign.Error!);
-        }
 
         // The read can take up to the timeout: a pause the user started meanwhile stops the call before it acts
         try
