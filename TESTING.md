@@ -2267,6 +2267,11 @@ The largest typical results, measured in October 2026:
 
 Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
+`ToolList_StaysWithinItsBudget` bounds tools/list itself, which a client that loads every tool up front keeps in
+context for the whole session: 51,286 tokens (205,144 bytes, 64 tools, serialized as the SDK writes it) in October
+2026, against a budget of 52,000. That budget is a ratchet, not a margin: raise it only in a change that adds to the
+surface on purpose, by what the failure message measures, and lower it when descriptions are trimmed. There is no
+per-description cap.
 `Contract/ElementReadContractTests` also bounds the largest result read_element_text and read_table can return
 (a million-character document, a 1000 x 100 grid of long or empty cells, read end to end through the real read
 service over a fake tree) at 16,000 tokens.
