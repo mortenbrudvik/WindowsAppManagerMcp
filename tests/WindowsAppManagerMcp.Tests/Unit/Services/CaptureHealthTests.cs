@@ -595,7 +595,8 @@ public class CaptureHealthTests
         _windows.Object.IsIconic(Window).Should().BeTrue("it is minimized again afterwards");
         commands.Should().Equal(SW_SHOWNOACTIVATE, SW_SHOWMINNOACTIVE);
         commands.Should().NotContain([SW_RESTORE, SW_MINIMIZE]);
-        restore.Warnings.Should().ContainSingle().Which.Should().StartWith("WindowRestored:");
+        restore.Warnings.Should().ContainSingle().Which.Should().StartWith("WindowRestored:")
+            .And.Contain("captureId", "the window is minimized again, so a click with the captureId is refused until it is back");
         _calls.Verify(c => c.Run(Window, It.IsAny<Func<bool>>()), Times.Exactly(2));
     }
 

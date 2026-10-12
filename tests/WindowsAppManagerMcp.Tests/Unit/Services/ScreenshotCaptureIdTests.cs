@@ -47,6 +47,26 @@ public class ScreenshotCaptureIdTests
     }
 
     [Fact]
+    public void CaptureMonitor_RegistersTheMonitors_ByDeviceName()
+    {
+        // Arrange
+        var monitors = new List<MonitorInfo>
+        {
+            new(0, "DISPLAY2", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0),
+            new(1, "DISPLAY1", false, new MonitorRect(-1920, 0, 1920, 1080), new MonitorRect(-1920, 0, 1920, 1040), 1.0)
+        };
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(monitors);
+
+        // Act
+        var metadata = CreateSut().CaptureMonitor(0, Defaults).Metadata;
+
+        // Assert
+        _registry.Find(metadata.CaptureId!)!.Geometry.Monitors.Should().Equal(
+            new CapturedMonitor("DISPLAY1", new MonitorRect(-1920, 0, 1920, 1080)),
+            new CapturedMonitor("DISPLAY2", new MonitorRect(0, 0, 1920, 1080)));
+    }
+
+    [Fact]
     public void CaptureRegion_RegistersTheCapture()
     {
         var metadata = CreateSut().CaptureRegion(10, 20, 300, 200, Defaults).Metadata;

@@ -782,7 +782,7 @@ public class ScreenshotService : IScreenshotService
 
     /// <summary>
     /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with the virtual
-    /// screen as it is now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
+    /// screen and the monitors as they are now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
     /// capture whose window could not be read.
     /// </summary>
     private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
@@ -794,13 +794,15 @@ public class ScreenshotService : IScreenshotService
         }
 
         VirtualScreenBounds? virtualScreen = null;
+        IReadOnlyList<CapturedMonitor>? monitors = null;
         if (!windowCapture)
         {
             var screen = _captureWrapper.GetVirtualScreenBounds();
             virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
+            monitors = CapturedMonitors.Of(_monitorService.GetAllMonitors());
         }
 
-        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen)).CaptureId;
+        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen, monitors)).CaptureId;
     }
 
     /// <summary>The encoded output image and where it was written.</summary>
