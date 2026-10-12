@@ -40,6 +40,9 @@ public static class DialogButtons
         return Ids.TryGetValue(key, out var id) ? id : null;
     }
 
+    /// <summary>Whether <paramref name="name"/> is the standard name cancel (IDCANCEL), whatever its case and blanks.</summary>
+    public static bool IsCancel(string name) => StandardId(name) == Ids["cancel"];
+
     /// <summary>The standard button an AutomationId names ("6" and "CommandButton_6" are yes), or null.</summary>
     public static string? StandardOf(string? automationId)
     {
@@ -78,8 +81,9 @@ public static class DialogButtons
     /// The button <paramref name="asked"/> names: (1) a standard name ("yes") or a control id ("6") by the AutomationId that
     /// carries the id; (2) an AutomationId, exactly; (3) the visible text, ignoring case, the access-key marker (&amp;) and a
     /// trailing ellipsis. The first rule with a match decides; two matches under it are ambiguous. As a last resort "ok"
-    /// names the only button of a dialog that has one (a message box's lone button may carry the id of Cancel, so that
-    /// Esc closes it).
+    /// names the only button of a dialog that has one when that button carries the id of Cancel or Close (a message box's
+    /// lone button may carry IDCANCEL, so that Esc closes it); never a lone command such as "Restart now", which "ok", an
+    /// acknowledgement, does not name.
     /// </summary>
     public static DialogButtonMatch Match(IReadOnlyList<DialogButton> buttons, string asked)
     {
@@ -115,7 +119,7 @@ public static class DialogButtons
             return DialogButtonMatch.Of(byName, "name");
         }
 
-        if (id == 1 && buttons.Count == 1)
+        if (id == 1 && buttons is [{ Standard: "cancel" or "close" }])
         {
             return DialogButtonMatch.Of(buttons, "onlyButton");
         }

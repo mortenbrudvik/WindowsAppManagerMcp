@@ -28,6 +28,8 @@ public sealed class FileDialogServiceTests : IDisposable
     private IReadOnlyList<FoundElement> _combos = [Element("w2e4", "File name:", "FileNameControlHost", "ComboBox")];
     private Func<ElementActionRequest, ElementActionResult>? _press;
     private DialogContent? _promptContent;
+    private FileDialogAction _action;
+    private bool _applicationSaves = true;
 
     public FileDialogServiceTests()
     {
@@ -43,7 +45,7 @@ public sealed class FileDialogServiceTests : IDisposable
                 _open.Remove(Prompt);
                 if (request.Button == "yes")
                 {
-                    _open.Remove(Dialog);
+                    DialogCloses();
                 }
 
                 return new DialogResponseResult(true, (long)Prompt, DialogClosed: true);
@@ -85,14 +87,26 @@ public sealed class FileDialogServiceTests : IDisposable
             return _press(request);
         }
 
-        _open.Remove(Dialog);
+        DialogCloses();
         return new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.Done, ElementActionMethod.Invoke);
+    }
+
+    /// <summary>The file dialog closes; after a save the application writes the file at the path typed, unless a test says it does not.</summary>
+    private void DialogCloses()
+    {
+        _open.Remove(Dialog);
+        if (_applicationSaves && _action == FileDialogAction.Save &&
+            _acted.LastOrDefault(a => a.Action == ElementActionKind.SetValue)?.Value is { } typed)
+        {
+            File.WriteAllText(typed, "saved by the application");
+        }
     }
 
     private FileDialogService CreateSut(IWindowService? windowService = null) => new(
         _dialogs.Object, _search.Object, _actions.Object, _popups.Object, _windows.Object, _guard.Object, _session.Object, windowService)
     {
-        PollInterval = TimeSpan.FromMilliseconds(5)
+        PollInterval = TimeSpan.FromMilliseconds(5),
+        WriteWait = TimeSpan.FromMilliseconds(300)
     };
 
     private static FoundElement Element(string elementRef, string? name, string automationId, string controlType) =>
@@ -100,6 +114,9 @@ public sealed class FileDialogServiceTests : IDisposable
 
     private static DialogContent PromptContent(params DialogButton[] buttons) =>
         new((long)Prompt, "Speichern unter bestätigen", "#32770", ["report.txt ist bereits vorhanden. Möchten Sie sie ersetzen?"], buttons);
+
+    /// <summary>A Yes/No prompt with <paramref name="text"/>, as the dialog's Text elements read.</summary>
+    private static DialogContent YesNoPrompt(params string[] text) => new((long)Prompt, "Speichern unter bestätigen", "#32770", text, [Yes, No]);
 
     private static readonly DialogButton Yes = new("w3e1", "Ja", "CommandButton_6", "yes", true);
     private static readonly DialogButton No = new("w3e2", "Nein", "CommandButton_7", "no", true);
@@ -113,8 +130,11 @@ public sealed class FileDialogServiceTests : IDisposable
     }
 
     private Task<FileDialogResult> CompleteAsync(string path, FileDialogAction action = FileDialogAction.Save, bool overwrite = false,
-        TimeSpan? timeout = null) =>
-        CreateSut().CompleteAsync(new FileDialogRequest(0, path, action, overwrite, Timeout: timeout ?? TimeSpan.FromSeconds(5)));
+        TimeSpan? timeout = null)
+    {
+        _action = action;
+        return CreateSut().CompleteAsync(new FileDialogRequest(Dialog, path, action, overwrite, Timeout: timeout ?? TimeSpan.FromSeconds(5)));
+    }
 
     /// <summary>The press waits for the replace prompt it opened (a Win32 button's Invoke); the file may appear meanwhile.</summary>
     private void PressOpensThePrompt(bool fileAppears = false) => _press = request =>
@@ -213,18 +233,70 @@ public sealed class FileDialogServiceTests : IDisposable
         _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
             InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied.", target));
 
-        await CreateSut(windowService.Object).CompleteAsync(new FileDialogRequest(0, NewFile, FileDialogAction.Save, Timeout: TimeSpan.FromSeconds(5)));
+        await CreateSut(windowService.Object).CompleteAsync(new FileDialogRequest(Dialog, NewFile, FileDialogAction.Save, Timeout: TimeSpan.FromSeconds(5)));
 
         windowService.Verify(w => w.GetWindowInfo(Dialog), Times.Once);
     }
 
     [Fact]
-    public async Task ASaveThatClosesTheDialog_WithNoFileAtThePath_Warns()
+    public async Task ASaveThatClosesTheDialog_WithNoFileWrittenAtThePath_IsNoConfirmedSave()
     {
+        // The application added its default extension, or writes the file later
+        _applicationSaves = false;
+
         var result = await CompleteAsync(NewFile);
 
         result.Success.Should().BeTrue(result.Error);
-        result.Warnings.Should().ContainSingle(w => w.Contains("no file is at finalPath"));
+        result.Completed.Should().BeFalse("the dialog closed, but no save was seen");
+        result.Warnings.Should().ContainSingle(w => w.Contains("no file was written at finalPath") && w.Contains("no confirmed save"));
+    }
+
+    [Fact]
+    public async Task ASaveIntoAnOpenDialog_ThatClosesWithoutRewritingTheFile_IsNoConfirmedSave()
+    {
+        // An Open dialog (or an old-style Save As dialog: both have the ComboBox 1148) took the path; Open read the file
+        _combos = [Element("w2e4", "File name:", "1148", "ComboBox")];
+        var file = ExistingFile();
+        _applicationSaves = false;
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Completed.Should().BeFalse();
+        result.Warnings.Should().ContainSingle(w => w.Contains("not rewritten") && w.Contains("Open dialog"));
+    }
+
+    [Fact]
+    public async Task ASaveOfAnExistingFile_IsConfirmedWhenTheApplicationRewritesIt_AfterTheDialogClosed()
+    {
+        var file = ExistingFile();
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddHours(-1));
+        _press = request =>
+        {
+            _open.Remove(Dialog);
+            _ = Task.Delay(50).ContinueWith(_ => File.WriteAllText(file, "x"), TaskScheduler.Default);
+            return new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.Done, ElementActionMethod.Invoke);
+        };
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Completed.Should().BeTrue("the file's time changed after the press, although its length did not");
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AnOpen_InASaveAsDialog_IsRefusedBeforeAnythingIsTyped()
+    {
+        // FileNameControlHost is the Save As dialog's box: its default button would save over the file to open
+        var file = ExistingFile();
+
+        var result = await CompleteAsync(file, FileDialogAction.Open);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        result.Error.Should().Contain("Save As dialog").And.Contain("Nothing was typed");
+        _acted.Should().BeEmpty();
+        File.ReadAllText(file).Should().Be("x");
     }
 
     [Fact]
@@ -284,6 +356,45 @@ public sealed class FileDialogServiceTests : IDisposable
         _answers.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("You don't have permission to save in this location. Contact the administrator to obtain permission.",
+        "Would you like to save in the Documents folder instead?")]
+    [InlineData("myreport.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("report2.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    public async Task AYesNoPrompt_ThatDoesNotNameTheFile_IsNoReplacePrompt_EvenWithOverwrite(string first, string second)
+    {
+        // The file exists, but the question is another one (or about another file): Yes would answer it blind
+        var file = ExistingFile();
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(first, second);
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Prompt.Should().Be(_promptContent);
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("report.txt ist bereits vorhanden.")]
+    [InlineData("REPORT.TXT already exists.")]
+    [InlineData("report already exists.")] // Explorer hides the known extension
+    [InlineData("report.txtは既に存在します。")]
+    [InlineData("«report.txt» existe déjà.")]
+    [InlineData("{folder}\\report.txt already exists.\nDo you want to replace it?")] // the old-style dialog shows the full path
+    public async Task Save_WithOverwrite_AnswersAYesNoPromptThatNamesTheFile_InAnyLanguage(string text)
+    {
+        var file = ExistingFile();
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text.Replace("{folder}", _folder, StringComparison.Ordinal));
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.PromptHandled.Should().BeTrue(result.Error);
+        _answers.Should().ContainSingle().Which.Button.Should().Be("yes");
+    }
+
     [Fact]
     public async Task APromptTheGuardRefuses_IsNeitherReadNorAnswered()
     {
@@ -320,6 +431,8 @@ public sealed class FileDialogServiceTests : IDisposable
     [Fact]
     public async Task Open_NeverAnswersAYesNoPrompt()
     {
+        // The ComboBox 1148: an Open dialog, or an old-style Save As dialog, whose replace prompt names the file
+        _combos = [Element("w2e4", "File name:", "1148", "ComboBox")];
         File.WriteAllText(NewFile, "x");
         PressOpensThePrompt();
         _promptContent = PromptContent(Yes, No);
@@ -347,7 +460,7 @@ public sealed class FileDialogServiceTests : IDisposable
     {
         _press = request =>
         {
-            _open.Remove(Dialog);
+            DialogCloses();
             return new ElementActionResult(false, "invoke", request.Ref, (long)Dialog, Error: "Invoke had not returned.", ErrorCode: "ActionTimedOut");
         };
 
@@ -407,6 +520,31 @@ public sealed class FileDialogServiceTests : IDisposable
 
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         _dialogs.Verify(d => d.Locate(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(FileDialogAction.Save)]
+    [InlineData(FileDialogAction.Open)]
+    public async Task WithoutNamingTheDialog_IsInvalidArguments_AndNothingIsLocatedOrTyped(FileDialogAction action)
+    {
+        // The file dialog in front may be another application's, which would then save its document under the path
+        File.WriteAllText(NewFile, "x");
+
+        var result = await CreateSut().CompleteAsync(new FileDialogRequest(0, NewFile, action, Overwrite: true, Timeout: TimeSpan.FromSeconds(5)));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("handle").And.Contain("window").And.Contain("Nothing was done");
+        _dialogs.Verify(d => d.Locate(It.IsAny<nint>()), Times.Never);
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TheWindowNamed_IsWhereTheFileDialogIsLocated()
+    {
+        await CompleteAsync(NewFile);
+
+        _dialogs.Verify(d => d.Locate(Dialog), Times.Once);
     }
 
     [Fact]

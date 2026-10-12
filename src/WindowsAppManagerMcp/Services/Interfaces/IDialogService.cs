@@ -13,6 +13,12 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// by a modal dialog of its own (GW_ENABLEDPOPUP, <see cref="IPopupService"/>), that dialog, down to the front one of a
 /// chain (a Save As dialog's replace prompt); else the window itself when it is a dialog box (#32770, or an owned window
 /// with a title bar); else its frontmost open dialog. Only Win32 reads: no UI Automation call.</para>
+/// <para><b>Only the dialog read is answered</b> (<see cref="RespondAsync"/>): a press needs the dialog (or its window)
+/// named, since the dialog in front when the call runs may be one that came up after the agent read it; only cancel may be
+/// pressed in the dialog in front unnamed (InvalidArguments otherwise). A dialog named (by handle or selector) that a modal
+/// dialog of its own now disables is refused (BlockedByModal, naming that one) instead of followed to it: the agent read the
+/// dialog it named. Reading follows the chain from any window, and a named window that is no dialog (the application's
+/// window) stands for its modal dialog for a press too.</para>
 /// <para><b>Reading</b> (<see cref="ReadAsync"/>): through find_ui_elements' search (<see cref="IElementSearchService"/>,
 /// scope window) on the UI Automation worker: the visible buttons (Button, SplitButton) with refs, without the title bar's
 /// caption buttons (minimize, maximize, close, help: inside a TitleBar element's bounds), and the Text elements.
@@ -37,9 +43,10 @@ public interface IDialogService
     /// <summary>
     /// Locates the dialog, checks it as an action's target before anything is read (a pause, the policy, the host guard),
     /// reads it, presses the button through element_action and waits briefly for the dialog to close. Without a button it
-    /// only reads (allowed while input is paused; the target checks still apply). A press that was sent but had not
-    /// returned in time (ActionTimedOut) counts as sent: the result says whether the dialog closed, with a warning. Never
-    /// throws for a refusal: the result's errorCode says why.
+    /// only reads (allowed while input is paused; the target checks still apply). A press needs a named window (except
+    /// cancel), and a named dialog that a modal dialog of its own disables is refused; see the remarks. A press that was
+    /// sent but had not returned in time (ActionTimedOut) counts as sent: the result says whether the dialog closed, with a
+    /// warning. Never throws for a refusal: the result's errorCode says why.
     /// </summary>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task<DialogResponseResult> RespondAsync(DialogResponseRequest request, CancellationToken cancellationToken = default);

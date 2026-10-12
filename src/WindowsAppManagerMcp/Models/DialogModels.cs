@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Ref">The button's element ref (registered under the dialog's window).</param>
 /// <param name="Name">Its visible text, as the application gave it (untrusted data, in the user's language).</param>
 /// <param name="AutomationId">Its AutomationId: the control id for a Win32 dialog box ("6"), "CommandButton_6" for a task
-/// dialog, the developer's name for a WPF or WinForms one.</param>
+/// dialog, the developer's name for a WPF or WinForms one; at most 100 characters (a web page's HTML id can be longer).</param>
 /// <param name="Standard">The standard dialog button the AutomationId names (ok, cancel, abort, retry, ignore, yes, no,
 /// close, help, tryagain, continue: IDOK=1 to IDCONTINUE=11), the same in every language; left out for other buttons.</param>
 public sealed record DialogButton(
@@ -38,7 +38,8 @@ public sealed record DialogContent(
     bool? ButtonsTruncated = null);
 
 /// <summary>What respond_to_dialog is asked to do (roadmap M3.5).</summary>
-/// <param name="Window">The dialog, or the window whose dialog to answer; zero for the dialog in front.</param>
+/// <param name="Window">The dialog, or the window whose dialog to answer; zero for the dialog in front, which is only read
+/// (or answered cancel): a press in a dialog the agent did not name is refused.</param>
 /// <param name="Button">The button: a standard name (ok, cancel, yes, no, ...), a control id ("6"), an AutomationId or the
 /// visible text; null to only read the dialog (nothing is pressed).</param>
 /// <param name="AllowHostTarget">Lifts the host guard for the dialog (the tool allows it only for a window named by handle).</param>
@@ -54,7 +55,8 @@ public sealed record DialogResponseRequest(nint Window, string? Button, bool All
 /// <param name="Method">How element_action pressed it (Invoke, or the MSAA default action).</param>
 /// <param name="DialogClosed">True when the dialog window was gone (or hidden) after the press; false when it stayed open
 /// (a Help or Apply button, an input the dialog refused, or a further dialog it opened, see <paramref name="NextDialog"/>).</param>
-/// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next.</param>
+/// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next. Its
+/// title is at most 200 characters.</param>
 public sealed record DialogResponseResult(
     bool Success,
     long DialogHandle = 0,
@@ -85,7 +87,7 @@ public enum FileDialogAction
 }
 
 /// <summary>What file_dialog is asked to do (roadmap M3.14).</summary>
-/// <param name="Window">The file dialog, or the window whose file dialog to complete; zero for the dialog in front.</param>
+/// <param name="Window">The file dialog, or the window whose file dialog to complete. Zero (the dialog in front) is refused.</param>
 /// <param name="Path">The full path, already checked (<see cref="Services.FileDialogPaths.Check"/>).</param>
 /// <param name="Overwrite">Save: replace an existing file, answering the application's replace prompt with Yes.</param>
 /// <param name="Timeout">How long the whole call may take, the wait for the dialog to close included.</param>
@@ -99,7 +101,9 @@ public sealed record FileDialogRequest(
 
 /// <summary>Result of file_dialog (roadmap M3.14).</summary>
 /// <param name="DialogHandle">The file dialog.</param>
-/// <param name="Completed">True when the dialog closed after its default button (Open or Save) was pressed with the path.</param>
+/// <param name="Completed">True when the dialog closed after its default button (Open or Save) was pressed with the path and,
+/// for save, a file was then seen written at <paramref name="FinalPath"/> (created, or rewritten since the press). A save
+/// whose dialog closed without that succeeds with Completed false and a warning: no confirmed save.</param>
 /// <param name="FinalPath">The full path typed into the dialog's file name box. The application may still add an extension
 /// from its file type filter.</param>
 /// <param name="PromptHandled">True when the application asked whether to replace the existing file and the prompt was answered

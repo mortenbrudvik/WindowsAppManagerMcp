@@ -135,6 +135,30 @@ public sealed class DialogService : IDialogService
             "another window with element_action.");
     }
 
+    /// <summary>
+    /// The dialog to press a button of: as <see cref="Locate"/>, except for a dialog named (by handle or selector) that a
+    /// modal dialog of its own now disables. The agent read the dialog it named, not that one, so the chain is not followed:
+    /// BlockedByModal, naming the modal dialog, and nothing is pressed. A named window that is no dialog (the application's
+    /// window) still stands for its modal dialog, down to the front one of the chain.
+    /// </summary>
+    private DialogLocation LocateToPress(nint window)
+    {
+        if (window != nint.Zero && _windows.IsWindow(window) && IsDialog(window) &&
+            _popups.GetPopups(window).FirstOrDefault(p => p.IsBlocking) is { } blocking)
+        {
+            return DialogLocation.Failed(nameof(InputErrorCode.BlockedByModal),
+                $"Dialog {(long)window}{TitleOf(_windows.GetWindowText(window))} is disabled now by a modal dialog of its own: " +
+                $"{(long)blocking.Handle}{TitleOf(blocking.Title)}. Nothing was pressed: the button was asked of the dialog named, " +
+                $"and the one in front of it was not read. Read that one (respond_to_dialog with handle {(long)blocking.Handle} " +
+                "and no button), then answer it by its handle, or ask the user.");
+        }
+
+        return Locate(window);
+    }
+
+    /// <summary>" ('title')" for a message, cut; empty for no title.</summary>
+    private static string TitleOf(string? title) => string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')";
+
     /// <summary>A dialog box (#32770), or an owned window with a title bar that is no tool window (a WPF or WinForms dialog).</summary>
     private bool IsDialog(nint window)
     {
@@ -167,9 +191,13 @@ public sealed class DialogService : IDialogService
         }
 
         var dialogButtons = WithoutTitleBar(buttons.Elements ?? []);
+        // A web page's HTML id is an AutomationId too (an Electron dialog): it is cut as a name is
         var buttonList = dialogButtons.Take(MaxButtons).Select(e => new DialogButton(
-            e.Ref, EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)), EmptyToNull(e.AutomationId),
-            DialogButtons.StandardOf(e.AutomationId), e.IsEnabled)).ToList();
+            e.Ref,
+            EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)),
+            EmptyToNull(Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
+            DialogButtons.StandardOf(e.AutomationId),
+            e.IsEnabled)).ToList();
         var (text, textCut) = Text(texts.Success ? texts.Elements ?? [] : [], buttonList);
         var title = EmptyToNull(_windows.GetWindowText(dialog));
         var content = new DialogContent(
@@ -268,6 +296,17 @@ public sealed class DialogService : IDialogService
                 "such as \"6\", an AutomationId, or its visible text; leave it out to only read the dialog. Nothing was done.");
         }
 
+        if (request.Button is { } unnamed && request.Window == nint.Zero && !DialogButtons.IsCancel(unnamed))
+        {
+            // Read and pressed in one call, the dialog in front may be one that came up after the agent looked (a prompt of
+            // another application): only cancel, which answers nothing, may go to it unread
+            return Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"button '{Cut(unnamed.Trim(), 100)}' needs the dialog named by handle or window: the dialog in front now may not be " +
+                "the one you read. Read the dialog first (respond_to_dialog without button, or get_active_popups), then answer " +
+                "it by its dialogHandle as handle. Only cancel may be pressed in the dialog in front without naming it. Nothing " +
+                "was read or pressed.");
+        }
+
         if (!readOnly)
         {
             // Reading alone is no action: it is allowed while input is paused, as find_ui_elements is
@@ -281,7 +320,7 @@ public sealed class DialogService : IDialogService
             }
         }
 
-        var location = Locate(request.Window);
+        var location = readOnly ? Locate(request.Window) : LocateToPress(request.Window);
         if (!location.Found)
         {
             return Fail(location.ErrorCode!, location.Error!);
@@ -362,7 +401,7 @@ public sealed class DialogService : IDialogService
         }
 
         bool closed;
-        var next = pressed.OpenedPopup;
+        var next = pressed.OpenedPopup is { } opened ? opened with { Title = Cut(opened.Title, MaxTitleLength) } : null;
         if (pressed.Status == ElementActionStatus.InvokedPendingModal)
         {
             // The press waits for the dialog it opened: the first dialog stays until that one is answered
@@ -375,7 +414,7 @@ public sealed class DialogService : IDialogService
             {
                 next ??= NewDialogOf(dialog, before);
                 warnings.Add(next != null
-                    ? $"The dialog is still open: the press opened another dialog ('{Cut(next.Title, MaxTitleLength)}', handle {next.Handle}). Answer it next."
+                    ? $"The dialog is still open: the press opened another dialog ('{next.Title}', handle {next.Handle}). Answer it next."
                     : "The dialog is still open after the press (a button such as Help or Apply, input the dialog refused, or a busy " +
                       "application). Read it again.");
             }
@@ -428,7 +467,7 @@ public sealed class DialogService : IDialogService
         var popup = _popups.GetPopups(dialog).FirstOrDefault(p => !before.Contains(p.Handle) && p.Kind != PopupKind.Tooltip);
         return popup == null
             ? null
-            : new OpenedWindow((long)popup.Handle, popup.Title ?? string.Empty, popup.ClassName, popup.ProcessId,
+            : new OpenedWindow((long)popup.Handle, Cut(popup.Title ?? string.Empty, MaxTitleLength), popup.ClassName, popup.ProcessId,
                 _windows.GetProcessName((uint)popup.ProcessId));
     }
 
