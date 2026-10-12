@@ -106,6 +106,27 @@ public class DialogButtonsTests
         match.By.Should().Be("onlyButton");
     }
 
+    [Theory]
+    [InlineData("Schließen", "8")]
+    [InlineData("Close", "CommandButton_8")]
+    public void OK_NamesTheOnlyButton_WhenItCarriesTheIdOfClose(string name, string automationId)
+    {
+        DialogButtons.Match([Button(name, automationId)], "ok").By.Should().Be("onlyButton");
+    }
+
+    [Theory]
+    [InlineData("Restart now", "btnRestart")]
+    [InlineData("Delete", "deleteButton")]
+    [InlineData("Ja", "6")]
+    [InlineData("Wiederholen", "4")]
+    public void OK_NeverNamesAnOnlyButtonThatIsACommand(string name, string automationId)
+    {
+        // "ok" means acknowledge: a WPF or WinForms dialog's lone command, or a lone Yes, is not pressed for it
+        var match = DialogButtons.Match([Button(name, automationId)], "ok");
+
+        match.Buttons.Should().BeEmpty();
+    }
+
     [Fact]
     public void TwoButtonsWithTheText_AreAmbiguous()
     {
