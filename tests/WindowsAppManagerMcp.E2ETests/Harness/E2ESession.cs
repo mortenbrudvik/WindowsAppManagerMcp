@@ -1,3 +1,5 @@
+using WindowsAppManagerMcp.Services;
+
 namespace WindowsAppManagerMcp.E2ETests.Harness;
 
 /// <summary>
@@ -38,13 +40,21 @@ public sealed class E2ESession : IDisposable
 
     /// <summary>
     /// Starts the fixture, builds the guarded server and finds the fixture's main window through the
-    /// server. Refuses unless <paramref name="tier"/> is opted in.
+    /// server. Refuses unless <paramref name="tier"/> is opted in. Writes the server's UI Automation engine to the
+    /// output, so every scenario's log names the engine it read with.
     /// </summary>
-    /// <param name="uiaEngine">The UI Automation engine of the server (roadmap M3.2), or null for its default.</param>
+    /// <param name="uiaEngine">The UI Automation engine of the server (roadmap M3.2), or null for the server's own choice:
+    /// WAM_UIA_ENGINE in the test process, by default UIA3. A value of WAM_UIA_ENGINE the server does not understand is
+    /// refused, rather than run with the default engine, so a run meant for one engine cannot quietly read with the other.</param>
     public static E2ESession Start(DesktopTier tier, ITestOutputHelper output, FixtureLaunchOptions? launch = null, UiaEngine? uiaEngine = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         DesktopTestGate.ThrowIfNotAllowed(tier);
+        if (uiaEngine == null && UiaEngineOptions.FromEnvironment().Warning is { } warning)
+        {
+            throw new InvalidOperationException($"{warning} Unset it, or set it to uia3 or uia2, for an E2E run.");
+        }
+
         output.WriteLine($"Test host DPI awareness: {E2EProcess.EnsureServerDpiAwareness()}.");
 
         var fixture = FixtureAppSession.Launch(tier, launch, output);
@@ -53,6 +63,7 @@ public sealed class E2ESession : IDisposable
             var server = ServerHarness.Create(tier, fixture.ProcessId, uiaEngine);
             try
             {
+                output.WriteLine($"UI Automation engine: {server.Get<IUiaTree>().Engine} ({server.Get<UiaEngineOptions>().Source}).");
                 var mainWindow = Wait.ForValue(
                     () => server.Windows.FindWindows(processId: fixture.ProcessId)
                         .FirstOrDefault(w => w.Handle == fixture.MainWindowHandle),

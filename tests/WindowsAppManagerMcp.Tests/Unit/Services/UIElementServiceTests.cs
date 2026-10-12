@@ -1664,6 +1664,28 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public async Task GetUIElements_TheTitleBarOfAWpfWindow_NamesItsWin32Framework()
+    {
+        // Arrange - a WPF window as UI Automation shows it: the non-client title bar (with its buttons) comes from the
+        // window's Win32 proxy, not from WPF, so not every element of a WPF window inherits the window's framework
+        var window = new FakeUiaNode("Window", "Fixture") { FrameworkId = "WPF" }.With(
+            new FakeUiaNode("TitleBar", "Fixture") { AutomationId = "TitleBar", FrameworkId = "Win32" }.With(
+                new FakeUiaNode("Button", "Close") { AutomationId = "Close", FrameworkId = "Win32" }),
+            new FakeUiaNode("Button", "Open") { AutomationId = "openButton", FrameworkId = "WPF" });
+        _tree.WithWindow(Handle, window);
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        result.FrameworkId.Should().Be("WPF");
+        var titleBar = result.Elements![0];
+        titleBar.FrameworkId.Should().Be("Win32");
+        titleBar.Children!.Single().FrameworkId.Should().BeNull("the same framework as the title bar it is inside");
+        result.Elements[1].FrameworkId.Should().BeNull("the same framework as the window");
+    }
+
+    [Fact]
     public async Task GetUIElements_AnElementLeftOutByAFilter_PassesItsFrameworkOnToNoOne()
     {
         // Arrange - the Chrome document is left out by controlTypes; its link is compared with the window's framework
