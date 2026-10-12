@@ -12,7 +12,12 @@ namespace WindowsAppManagerMcp.Models;
 /// True for a frame capture; false for a client-area capture, whose image starts at the client area's corner, so the
 /// client area on screen is checked too (a menu bar or toolbar can move it without moving the window).
 /// </param>
-public sealed record CapturedWindow(long Handle, int ProcessId, WindowRect WindowRect, bool IncludeFrame);
+/// <param name="ClientArea">
+/// For a client-area capture: the client area on screen as it was captured, before any crop. A ref crop of it
+/// (capture_window with ref) shows only part of the client area, so this, not the crop, is what the client area is
+/// checked against. Null for a frame capture.
+/// </param>
+public sealed record CapturedWindow(long Handle, int ProcessId, WindowRect WindowRect, bool IncludeFrame, WindowRect? ClientArea = null);
 
 /// <summary>
 /// What a capture's image shows and how its pixels map to the screen: the facts the capture registry keeps under a

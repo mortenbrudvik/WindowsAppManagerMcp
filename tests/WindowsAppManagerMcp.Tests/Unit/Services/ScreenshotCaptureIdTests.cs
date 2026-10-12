@@ -62,9 +62,10 @@ public class ScreenshotCaptureIdTests
         // Act
         var metadata = CreateSut().CaptureWindow(Window, includeFrame, Defaults).Metadata;
 
-        // Assert
+        // Assert - a client capture also keeps the client area it shows (800 x 600 at (108, 231))
         var geometry = _registry.Find(metadata.CaptureId!)!.Geometry;
-        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), includeFrame));
+        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), includeFrame,
+            includeFrame ? null : new WindowRect(108, 231, 800, 600)));
         geometry.ImageToScreen.Should().Be(metadata.ImageToScreen);
         geometry.VirtualScreen.Should().BeNull();
     }
@@ -91,7 +92,8 @@ public class ScreenshotCaptureIdTests
         var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default, Defaults).Metadata;
 
         var geometry = _registry.Find(metadata.CaptureId!)!.Geometry;
-        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false));
+        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false,
+            new WindowRect(108, 231, 800, 600)));
         geometry.ImageToScreen.Should().Be(metadata.ImageToScreen);
     }
 

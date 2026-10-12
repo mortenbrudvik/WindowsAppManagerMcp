@@ -159,8 +159,9 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
 
         if (!window.IncludeFrame)
         {
+            // The client area as captured: a ref crop's region is only part of it
             var region = geometry.CapturedRegion;
-            var captured = new WindowRect(region.X, region.Y, region.Width, region.Height);
+            var captured = window.ClientArea ?? new WindowRect(region.X, region.Y, region.Width, region.Height);
             if (_hitTest.GetClientAreaOnScreen(handle) is not { } client || !Close(client, captured))
             {
                 return $"{of} has its client area somewhere else than at the capture (it was {Describe(captured)}, now " +

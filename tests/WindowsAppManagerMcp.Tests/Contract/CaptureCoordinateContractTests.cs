@@ -214,6 +214,42 @@ public class CaptureCoordinateContractTests
     }
 
     [Fact]
+    public async Task ARefCropWithoutTheFrame_ThenAClickAtItsMiddle_ClicksTheElement()
+    {
+        // Arrange - as above, but the crop is cut from the client area, which is the whole capture (1600 x 900 at (0, 100)):
+        // the crop is checked against the client area seen at capture time, not against the crop itself
+        const string saveRef = "w1000001e7";
+        var element = new UiaElement(new FakeUiaNode("Button", "Save"),
+            new UiaNodeProperties("Save", "Button", "btnSave", new UiaRect(380, 290, 40, 20), IsEnabled: true, IsOffscreen: false),
+            ClassName: null, IsKeyboardFocusable: true, UiaPatterns.Invoke, RuntimeId: [42, 7], ControlTypeId: null);
+        _elementRegistry.Setup(r => r.Lookup(saveRef)).Returns(new ElementLookup(saveRef, Notepad,
+            new ElementFingerprint("Save", "Button", "btnSave", null, null), 1));
+        _elementRegistry.Setup(r => r.ResolveAsync(saveRef, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementResolution(new ResolvedElement(saveRef, Notepad, element.Node, element, ElementResolutionPath.Live)));
+        _hitTest.Setup(h => h.GetClientAreaOnScreen(Notepad)).Returns(new WindowRect(0, 100, 1600, 900));
+        await using var server = await StartServerAsync();
+        var crop = Payload(await server.CallToolAsync("capture_window", new Dictionary<string, object?>
+        {
+            ["ref"] = saveRef,
+            ["includeFrame"] = false
+        }));
+        crop.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(372, crop.ToString());
+        crop.GetProperty("width").GetInt32().Should().Be(56);
+
+        // Act - the middle of the 56 x 36 crop
+        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        {
+            ["x"] = 28,
+            ["y"] = 18,
+            ["captureId"] = crop.GetProperty("captureId").GetString()
+        }));
+
+        // Assert
+        payload.GetProperty("success").GetBoolean().Should().BeTrue(payload.ToString());
+        (payload.GetProperty("x").GetInt32(), payload.GetProperty("y").GetInt32()).Should().Be((400, 300));
+    }
+
+    [Fact]
     public async Task AnImagePoint_WhereAnotherWindowCoversTheCapturedOne_IsTargetOccluded()
     {
         // Arrange - Calculator now covers that spot: the capture's window is the target, so the guard refuses
