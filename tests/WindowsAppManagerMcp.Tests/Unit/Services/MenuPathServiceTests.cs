@@ -228,6 +228,44 @@ public class MenuPathServiceTests
         result.Steps.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(ElementSearchTruncation.PartsSkipped)]
+    [InlineData(ElementSearchTruncation.Timeout)]
+    [InlineData(ElementSearchTruncation.WindowLimit)]
+    public async Task OneMatchOfASearchThatDidNotFinish_IsNotActedOn(ElementSearchTruncation reason)
+    {
+        // A popup of the window did not answer: another visible 'Delete' may be in it
+        _find = query => Found(query, Item("w1e1", "Delete")) with { Truncated = true, TruncationReason = reason };
+
+        var result = await RunAsync("Delete");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
+        result.Error.Should().Contain("'Delete' (item 1 of 1)").And.Contain(reason.ToString()).And.Contain("only one");
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ATruncatedMatchInTheSubmenu_GivesWayToTheOneFoundBelowItsItem()
+    {
+        // The submenu window's search stopped early; below File, the search finished with one Save As
+        _find = query => query switch
+        {
+            { WithinRef: null } when Matches(query, "File") && query.WindowHandle == Window => Found(query, Item("w1e1", "File")),
+            { WithinRef: null } when Matches(query, "Save As") => Found(query, Item("w2e1", "Save As...", FileMenu)) with
+            {
+                Truncated = true, TruncationReason = ElementSearchTruncation.Timeout
+            },
+            { WithinRef: "w1e1" } when Matches(query, "Save As") => Found(query, Item("w1e2", "Save As...")),
+            _ => Found(query)
+        };
+
+        var result = await RunAsync("File", "Save As");
+
+        result.Success.Should().BeTrue(result.Error);
+        _acted.Select(a => a.Ref).Should().Equal("w1e1", "w1e2");
+    }
+
     [Fact]
     public async Task ARefusedAction_StopsThePath_WithItsCode()
     {

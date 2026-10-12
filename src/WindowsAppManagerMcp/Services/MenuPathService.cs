@@ -196,6 +196,7 @@ public sealed class MenuPathService : IMenuPathService
         }
 
         FindElementsResult? failed = null;
+        FindElementsResult? unfinished = null;
         var incomplete = false;
         foreach (var (window, within, scope) in places)
         {
@@ -241,13 +242,33 @@ public sealed class MenuPathService : IMenuPathService
                     "was opened. Name them one at a time with find_ui_elements and element_action."));
             }
 
+            // A search that did not finish does not show that its one match is the only one (element_action's criteria
+            // refuse it too): another place may still give a finished match
+            if (result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit
+                or ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
+            {
+                incomplete = true;
+                if (result.MatchCount > 0)
+                {
+                    unfinished ??= result;
+                }
+
+                continue;
+            }
+
             if (result.Elements is [{ Ref: { } itemRef } element])
             {
                 return new FoundItem(itemRef, element.WindowHandle is { } own ? (nint)own : (nint)result.WindowHandle, null);
             }
+        }
 
-            incomplete |= result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit
-                or ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit;
+        if (unfinished != null)
+        {
+            return FoundItem.Failed(run.Fail(nameof(UIElementErrorCode.OperationTimedOut),
+                $"The search for menu item '{item}' (item {index + 1} of {request.Items.Count}) did not finish " +
+                $"({unfinished.TruncationReason}), so it is not known that only one item matches ({unfinished.MatchCount} found " +
+                "so far), so it was not acted on. Check the names with find_ui_elements (controlType MenuItem) or get_active_popups, " +
+                "and name the item by its ref with element_action."));
         }
 
         if (failed != null && index == 0)

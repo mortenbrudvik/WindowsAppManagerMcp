@@ -8,7 +8,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// </summary>
 /// <remarks>
 /// <para>Each item is a MenuItem found by its name (ignoring case, blanks around it and a trailing "..." or "…", and an
-/// accelerator after a tab), and must be the only match where it is searched. The first item is searched below the start
+/// accelerator after a tab), and must be the only match where it is searched, by a search that finished: one match of a
+/// search cut short (its timeout, the search limit, a popup that did not answer) is OperationTimedOut, as element_action's
+/// criteria are, unless another place gives a finished match. The first item is searched below the start
 /// element (a menu bar, an open menu) or in the window and, by the scope, its open popups. Each further item is searched in
 /// the submenu window the previous item opened (element_action's openedPopup, else
 /// <see cref="IPopupService.WaitForNewPopupAsync"/>), then below the previous item (WPF and WinForms show a submenu's items
