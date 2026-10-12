@@ -21,8 +21,8 @@ namespace WindowsAppManagerMcp.Services;
 /// read back into the result's state (at most 200 characters); the audit log keeps only the value's length (AuditRecord).</para>
 /// <para>Target checks: the ref's window is checked first (<see cref="IInputTargetGuard.CheckTarget"/>); an element of
 /// another process (a child or owned window of another program) has its own window checked too
-/// (<see cref="IInputTargetGuard.CheckElementWindow"/>), and a pause the user started while the element was read stops the
-/// call before it acts.</para>
+/// (<see cref="IInputTargetGuard.CheckElementWindow"/>), before its state is read, so a refusal carries no name or value of
+/// it; and a pause the user started while the element was read stops the call before it acts.</para>
 /// </remarks>
 public sealed partial class ElementActionService : IElementActionService
 {
@@ -103,6 +103,15 @@ public sealed partial class ElementActionService : IElementActionService
 
     /// <summary>How often the toggle state is read while <see cref="ToggleStateWait"/> runs.</summary>
     public TimeSpan ToggleStatePoll { get; init; } = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>The clock <see cref="ToggleStateWait"/> is measured on; the system clock by default.</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// How the toggle wait pauses between its reads, on the action's thread (<see cref="Thread.Sleep(TimeSpan)"/> by default);
+    /// a test moves its <see cref="Clock"/> here instead.
+    /// </summary>
+    public Action<TimeSpan> Sleep { get; init; } = Thread.Sleep;
 
     /// <summary>
     /// Why the request's arguments do not fit its action (a missing or invalid value, a direction for another action), or
@@ -239,7 +248,8 @@ public sealed partial class ElementActionService : IElementActionService
         }
 
         var targetProcess = UiaTargets.TargetProcessId(_windows, call.Window);
-        var prepared = await ReadAsync(call, targetProcess, token => Prepare(call, token), cancellationToken).ConfigureAwait(false);
+        // An element of another process has its own window checked in there too, before its state is read
+        var prepared = await ReadAsync(call, targetProcess, token => Prepare(call, target, token), cancellationToken).ConfigureAwait(false);
         if (prepared.Failure is { } refused)
         {
             return refused;
@@ -248,12 +258,6 @@ public sealed partial class ElementActionService : IElementActionService
         var element = prepared.Element!;
         call.Ref = element.Ref;
         call.Before = element.Before;
-
-        // An element of another process: that process's own window passes the policy, elevation and host checks too
-        if (element.ElementWindow != nint.Zero && _guard.CheckElementWindow(target, element.ElementWindow) is { Allowed: false } foreign)
-        {
-            return call.Fail(foreign.ErrorCode.ToString(), foreign.Error!);
-        }
 
         // The read can take up to the timeout: a pause the user started meanwhile stops the call before it acts
         try
@@ -364,72 +368,111 @@ public sealed partial class ElementActionService : IElementActionService
         };
     }
 
-    /// <summary>The action is still running: a new window of the application is the dialog it waits for.</summary>
+    /// <summary>
+    /// The action is still running: a new window of the application that can be a dialog (not a tooltip, a menu or a hover
+    /// card that showed meanwhile) is the dialog it waits for.
+    /// </summary>
     private ElementActionResult Pending(ActionCall call, AppWindowSnapshot windowsBefore, ElementActionMethod method, string what)
     {
         var opened = _probe.OpenedSince(windowsBefore);
-        if (opened.Count == 0)
+        if (opened.Dialogs is not [var dialog, ..])
         {
+            var others = opened.Others.Count == 0
+                ? string.Empty
+                : $" (only {(opened.Others.Count == 1 ? "a new window that is" : $"{opened.Others.Count} new windows that are")} no " +
+                  "dialog: a menu, dropdown or popup, which the action does not wait for)";
             return call.Fail(nameof(UIElementErrorCode.ActionTimedOut),
-                $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms and no new window of the application " +
-                "appeared: it may be busy. The action was sent and may still take effect, so do not repeat it blindly: read the " +
-                "element again (find_ui_elements with detail standard), or wait_for_window for a dialog.") with { Method = method };
+                $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms and no new dialog of the application " +
+                $"appeared{others}: it may be busy. The action was sent and may still take effect, so do not repeat it blindly: read " +
+                "the element again (find_ui_elements with detail standard), or wait_for_window for a dialog.") with
+            {
+                Method = method,
+                OpenedPopup = opened.Others.FirstOrDefault()
+            };
         }
 
         return call.Succeed(method) with
         {
             Status = ElementActionStatus.InvokedPendingModal,
-            OpenedPopup = opened[0],
+            OpenedPopup = dialog,
             Warnings = Warnings(
                 $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms: it waits for the window it opened " +
-                $"('{opened[0].Title}', handle {opened[0].Handle}). Read and answer it (find_ui_elements with that handle), then " +
+                $"('{dialog.Title}', handle {dialog.Handle}). Read and answer it (find_ui_elements with that handle), then " +
                 "read the element again.",
-                opened.Count > 1 ? $"{opened.Count} new windows of the application appeared; openedPopup is the topmost." : null)
+                SeveralOpened(opened))
         };
     }
 
-    /// <summary>Verified activation of the element's window, inside the gate; the failure, or null when it is in front.</summary>
-    private ElementActionResult? Activate(ActionCall call)
+    /// <summary>The warning when several windows appeared, or null.</summary>
+    private static string? SeveralOpened(AppWindowsOpened opened) => opened.All.Count > 1
+        ? $"{opened.All.Count} new windows of the application appeared; openedPopup is the topmost that can be a dialog " +
+          "(else the topmost)."
+        : null;
+
+    /// <summary>
+    /// Verified activation of the element's window, inside the gate; the failure, or null when it is in front. The codes are
+    /// the input path's (as the input guard maps its own activation): a window that is gone, does not respond, is denied or
+    /// paused keeps its code, and any other window that did not come to the front (hidden, cloaked, refused by the
+    /// foreground lock) is TargetNotForeground. A menu that activation could not close is TargetInMenuMode.
+    /// </summary>
+    /// <param name="click">The mouse path: a click, not keys, would go to the open menu.</param>
+    private ElementActionResult? Activate(ActionCall call, bool click = false)
     {
         var outcome = _foreground.EnsureForeground(call.Window);
         if (outcome.IsForeground)
         {
-            return outcome.InMenuMode
-                ? call.Fail(nameof(InputErrorCode.TargetInMenuMode),
-                    "A menu is active in the element's window, so keys would select menu items. Nothing was done. Close the menu " +
-                    "first (send_keys {ESC} with windowHandle), then try again.")
-                : null;
+            return !outcome.InMenuMode
+                ? null
+                : call.Fail(nameof(InputErrorCode.TargetInMenuMode), click
+                    ? "A menu is open in the element's window and could not be closed, so a click would only close it or choose " +
+                      "one of its items. Nothing was clicked. Close the menu first (send_keys {ESC} with windowHandle), then try again."
+                    : "A menu is active in the element's window, so keys would select menu items. Nothing was done. Close the menu " +
+                      "first (send_keys {ESC} with windowHandle), then try again.");
         }
 
-        var code = outcome.ErrorCode is WindowErrorCode.None or WindowErrorCode.FocusFailed
-            ? nameof(InputErrorCode.TargetNotForeground)
-            : outcome.ErrorCode.ToString();
+        var code = outcome.ErrorCode is WindowErrorCode.InvalidHandle or WindowErrorCode.NotResponding or WindowErrorCode.PausedByUser
+            or WindowErrorCode.TargetDeniedByPolicy
+            ? outcome.ErrorCode.ToString()
+            : nameof(InputErrorCode.TargetNotForeground);
         return call.Fail(code,
             $"The element's window could not be brought to the front ({outcome.ErrorCode}), so nothing was done. {outcome.Error} " +
             "Call focus_window for details, or ask the user to bring the window to the front.");
     }
 
-    /// <summary>The mouse path: activation and a fresh click point inside the gate, then the guarded click outside it.</summary>
+    /// <summary>
+    /// The mouse path: activation and a fresh click point inside the gate, hit-tested so that the click lands on the element
+    /// and not on another element over it (TargetOccluded), then the guarded click outside the gate.
+    /// </summary>
     private async Task<InputStep> ClickAsync(
         ActionCall call, PreparedElement element, Plan plan, IDisposable gate, int targetProcess, CancellationToken cancellationToken)
     {
-        if (Activate(call) is { } notInFront)
+        if (Activate(call, click: true) is { } notInFront)
         {
             return InputStep.Failed(notInFront);
         }
 
         // Activation can restore or move the window: the point is read again now
-        var point = await ReadAsync(call, targetProcess, _ => ClickPointOf(element.Node), cancellationToken).ConfigureAwait(false);
+        var point = await ReadAsync(call, targetProcess, _ => ClickPointOf(call, element), cancellationToken).ConfigureAwait(false);
         if (point.Failure != null)
         {
             return InputStep.Failed(point.Failure);
         }
 
-        if (point.Element is not { } at)
+        if (point.Element is { Covered: true } covered)
+        {
+            return InputStep.Failed(Covered(call, element, covered));
+        }
+
+        if (point.Element is not { Point: { } at } clickPoint)
         {
             return InputStep.Failed(call.Fail(nameof(UIElementErrorCode.ElementOffscreen),
                 "The element has no point on screen to click (it is offscreen or has no bounds). Nothing was clicked. Use " +
                 "scroll_into_view first."));
+        }
+
+        if (clickPoint.Warning != null)
+        {
+            element.Warnings.Add(clickPoint.Warning);
         }
 
         gate.Dispose();
@@ -443,7 +486,7 @@ public sealed partial class ElementActionService : IElementActionService
 
         return clicked.Success
             ? new InputStep(null, clicked.ReceivingWindow)
-            : InputStep.Failed(call.Fail(clicked.ErrorCode.ToString(), clicked.Error ?? "The click was not sent.") with
+            : InputStep.Failed(call.Fail(clicked.ErrorCode.ToString(), InputError(clicked.ErrorCode, clicked.Error, "The click was not sent.")) with
             {
                 Method = ElementActionMethod.Mouse,
                 ReceivingWindow = clicked.ReceivingWindow
@@ -505,7 +548,8 @@ public sealed partial class ElementActionService : IElementActionService
             releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
         if (!first.Success)
         {
-            return InputStep.Failed(call.Fail(first.ErrorCode.ToString(), (first.Error ?? "The keys were not sent.") + " Nothing was typed.") with
+            return InputStep.Failed(call.Fail(first.ErrorCode.ToString(),
+                InputError(first.ErrorCode, first.Error, "The keys were not sent.") + " Nothing was typed.") with
             {
                 Method = ElementActionMethod.Keyboard,
                 ReceivingWindow = first.ReceivingWindow
@@ -526,7 +570,7 @@ public sealed partial class ElementActionService : IElementActionService
             var deleted = await _input.SendKeysAsync("{DELETE}", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return deleted.Success
                 ? new InputStep(null, deleted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(deleted.ErrorCode.ToString(), deleted.Error ?? "Delete was not sent.") with
+                : InputStep.Failed(call.Fail(deleted.ErrorCode.ToString(), InputError(deleted.ErrorCode, deleted.Error, "Delete was not sent.")) with
                 {
                     Method = ElementActionMethod.Keyboard,
                     ReceivingWindow = deleted.ReceivingWindow
@@ -538,7 +582,7 @@ public sealed partial class ElementActionService : IElementActionService
             var pasted = await _input.SendKeysAsync("^v", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return pasted.Success
                 ? new InputStep(null, pasted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(pasted.ErrorCode.ToString(), pasted.Error ?? "The paste was not sent.") with
+                : InputStep.Failed(call.Fail(pasted.ErrorCode.ToString(), InputError(pasted.ErrorCode, pasted.Error, "The paste was not sent.")) with
                 {
                     Method = ElementActionMethod.Keyboard,
                     ReceivingWindow = pasted.ReceivingWindow
@@ -549,12 +593,24 @@ public sealed partial class ElementActionService : IElementActionService
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
             : InputStep.Failed(call.Fail(typed.ErrorCode.ToString(),
-                $"{typed.Error} ({typed.CharactersTyped} of {text.Length} characters were typed.)") with
+                $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} " +
+                $"({typed.CharactersTyped} of {text.Length} characters were typed.)") with
             {
                 Method = ElementActionMethod.Keyboard,
                 ReceivingWindow = typed.ReceivingWindow
             });
     }
+
+    /// <summary>
+    /// An input path's error as element_action reports it (<paramref name="ifNone"/> when it has none). The input service's
+    /// ModifiersHeld advice for a stuck key names its own releaseHeldModifiers argument, which element_action does not take
+    /// (an agent passing it would get the same refusal again): release_all_input is named instead.
+    /// </summary>
+    private static string InputError(InputErrorCode code, string? error, string ifNone) =>
+        code == InputErrorCode.ModifiersHeld && error != null
+            ? error.Replace(InputSimulationService.ReleaseHeldModifiersAdvice, "call release_all_input with releaseHeldModifiers: true",
+                StringComparison.Ordinal)
+            : error ?? ifNone;
 
     /// <summary>FocusNotOnElement when keyboard focus is not on the element or inside it; null when it is.</summary>
     private async Task<ElementActionResult?> FocusRefusalAsync(
@@ -610,11 +666,17 @@ public sealed partial class ElementActionService : IElementActionService
     {
         var request = call.Request;
         after ??= new AfterRead(element.Before, element.FullValue, element.ScrollBefore, Gone: false, Warning: null);
-        var verified = method == ElementActionMethod.None ? true : Verify(request, element, after);
+
+        // Nothing done means the state asked for was there already; except for realize, which can find nothing to do for an
+        // item that is still offscreen (no VirtualizedItem or ScrollItem pattern): its outcome, on screen, is checked
+        var verified = method == ElementActionMethod.None && request.Action != ElementActionKind.Realize
+            ? true
+            : Verify(request, element, after);
         var opened = _probe.OpenedSince(windowsBefore);
-        var warnings = new List<string?> { after.Warning };
-        if (verified == false)
+        var warnings = new List<string?> { after.Warning, SeveralOpened(opened) };
+        if (verified == false && method != ElementActionMethod.None)
         {
+            // Without an action there is nothing that could still take effect: the plan's own warning says why
             warnings.Add(UnverifiedWarning(request, element));
         }
 
@@ -623,21 +685,20 @@ public sealed partial class ElementActionService : IElementActionService
             warnings.Add("The element is gone after the action (it closed, or its list or dialog was rebuilt): its ref is stale now.");
         }
 
-        if (opened.Count > 1)
-        {
-            warnings.Add($"{opened.Count} new windows of the application appeared; openedPopup is the topmost.");
-        }
-
         // A toggle asked for a state it did not reach did not do what was asked
         if (request.Action == ElementActionKind.Toggle && request.Value != null && verified == false)
         {
-            return call.Fail(nameof(UIElementErrorCode.ActionFailed),
-                $"The element did not reach toggle state {ParseToggleState(request.Value)} after {element.Plan.Toggles} toggles " +
-                $"(it is {after.State?.ToggleState?.ToString() ?? "unknown"}). It may cycle through other states or refuse this one.") with
+            var goal = ParseToggleState(request.Value);
+            return call.Fail(nameof(UIElementErrorCode.ActionFailed), element.Plan.CycledBack
+                ? $"The element came back to {element.Before.ToggleState} after {element.Plan.Toggles} toggles without reaching " +
+                  $"toggle state {goal}: it does not have that state (a two-state check box has no Indeterminate) or skips it. " +
+                  "It was not toggled again, so it is left as it was."
+                : $"The element did not reach toggle state {goal} after {element.Plan.Toggles} toggles " +
+                  $"(it is {after.State?.ToggleState?.ToString() ?? "unknown"}). It may cycle through other states or refuse this one.") with
             {
                 Method = method,
                 After = after.State,
-                OpenedPopup = opened.FirstOrDefault()
+                OpenedPopup = opened.All.FirstOrDefault()
             };
         }
 
@@ -646,7 +707,7 @@ public sealed partial class ElementActionService : IElementActionService
             After = after.State,
             OutcomeVerified = verified,
             Scroll = request.Action == ElementActionKind.Scroll ? ScrollPosition(request, element, after) : null,
-            OpenedPopup = opened.FirstOrDefault(),
+            OpenedPopup = opened.All.FirstOrDefault(),
             ReceivingWindow = input,
             Warnings = Warnings([.. warnings, .. element.Warnings])
         };

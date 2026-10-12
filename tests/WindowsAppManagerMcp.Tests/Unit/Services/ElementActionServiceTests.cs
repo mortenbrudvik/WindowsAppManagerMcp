@@ -45,23 +45,30 @@ public sealed class ElementActionServiceTests : IDisposable
             .Returns((InputTarget target, nint window) => InputGuardResult.Allow(target, window, Main, Handle));
         _probe.Setup(p => p.Snapshot(It.IsAny<IReadOnlyCollection<int>>()))
             .Returns((IReadOnlyCollection<int> ids) => new AppWindowSnapshot(ids.ToHashSet(), new HashSet<nint> { Handle }));
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(AppWindowsOpened.None);
         _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>())).Returns(new FocusOutcome { Target = Handle, IsForeground = true });
     }
 
     public void Dispose() => _session.Dispose();
 
-    /// <param name="toggleStateWait">How long a toggle waits for the state to change (30 ms by default, so a box that never
-    /// changes fails fast); a test that needs several polls to pass must allow for the system timer, whose sleeps last up to
-    /// about 16 ms.</param>
-    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStateWait = null) => new(
+    /// <summary>
+    /// The toggle wait's clock: its sleeps move it by exactly the poll interval, so how many reads a toggle waits for never
+    /// depends on the system timer or on the load of the test run.
+    /// </summary>
+    private readonly ManualClock _clock = new();
+
+    /// <param name="toggleStatePoll">How often a toggle reads the state while it waits for it to change (1 ms by default);
+    /// it waits 30 ms of <see cref="_clock"/> at most, so a box that never changes fails fast.</param>
+    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStatePoll = null) => new(
         _tree, _worker, _registry, _guard.Object, _session, _runner, _probe.Object, _input.Object, _foreground.Object,
         _windows.Object, _clipboard.Object, toolsets)
     {
         SettleDelay = TimeSpan.Zero,
         GateTimeout = TimeSpan.FromSeconds(10),
-        ToggleStateWait = toggleStateWait ?? TimeSpan.FromMilliseconds(30),
-        ToggleStatePoll = TimeSpan.FromMilliseconds(1)
+        ToggleStateWait = TimeSpan.FromMilliseconds(30),
+        ToggleStatePoll = toggleStatePoll ?? TimeSpan.FromMilliseconds(1),
+        Clock = _clock,
+        Sleep = _clock.Advance
     };
 
     /// <summary>Puts <paramref name="node"/> in the window and gives it a ref, as a read tool would.</summary>
@@ -201,7 +208,10 @@ public sealed class ElementActionServiceTests : IDisposable
         var host = new FakeUiaNode("Pane", "Vault") { NativeWindowHandle = vault, ProcessId = vaultPid };
         _window.With(host);
         var invoke = new FakeInvokePattern();
-        var reveal = new FakeUiaNode("Button", "Reveal") { ActionPatterns = ["Invoke"], ProcessId = vaultPid }.WithPattern<IUiaInvokePattern>(invoke);
+        var value = new FakeValuePattern("secret-otp");
+        var reveal = new FakeUiaNode("Button", "Reveal 492-731") { ActionPatterns = ["Invoke", "Value"], ProcessId = vaultPid }
+            .WithPattern<IUiaInvokePattern>(invoke)
+            .WithPattern<IUiaValuePattern>(value);
         var revealRef = RefOf(reveal, host);
         _guard.Setup(g => g.CheckElementWindow(It.IsAny<InputTarget>(), vault)).Returns((InputTarget target, nint _) =>
             InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied by the policy.", target));
@@ -209,10 +219,13 @@ public sealed class ElementActionServiceTests : IDisposable
         // Act
         var result = await ActAsync(revealRef, ElementActionKind.Invoke);
 
-        // Assert
+        // Assert - refused before its state is read: neither its name nor its value comes back
         result.ErrorCode.Should().Be("TargetDeniedByPolicy");
         invoke.Invokes.Should().Be(0);
         _guard.Verify(g => g.CheckElementWindow(InputTarget.Window(Handle, false), vault), Times.Once);
+        result.Before.Should().BeNull();
+        JsonSerializer.Serialize(result).Should().NotContain("secret-otp").And.NotContain("492-731");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Interaction:Reveal") || r.StartsWith("Pattern:IUiaValuePattern"));
     }
 
     [Fact]
@@ -393,6 +406,24 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Warnings.Should().Contain(w => w.Contains("'Press'"));
     }
 
+    [Theory]
+    [InlineData(ElementActionKind.Invoke)]
+    [InlineData(ElementActionKind.Click)]
+    public async Task APasswordFieldsMsaaPattern_IsNeverRead_SoItsValueIsNot(ElementActionKind action)
+    {
+        // Arrange - MSAA's state of an element includes its value (accValue), which for a password field can be the password
+        var legacy = new RecordingLegacyPattern();
+        var password = RefOf(new FakeUiaNode("Edit", "Password") { ProcessId = Pid, IsPassword = true, OtherPatterns = UiaPatterns.LegacyIAccessible }
+            .WithPattern<IUiaLegacyIAccessiblePattern>(legacy));
+
+        // Act
+        var result = await ActAsync(password, action);
+
+        // Assert
+        result.ErrorCode.Should().Be("PatternNotSupported");
+        legacy.Calls.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Click_OnACheckBox_TogglesIt_AndIsVerifiedByTheNewState()
     {
@@ -428,6 +459,23 @@ public sealed class ElementActionServiceTests : IDisposable
         toggle.Toggles.Should().Be(toggles);
         result.After!.ToggleState.Should().Be(ElementActionService.ParseToggleState(goal));
         result.OutcomeVerified.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Toggle_ToAStateTheBoxDoesNotHave_StopsWhenItIsBackWhereItStarted()
+    {
+        // Arrange - a two-state box asked for indeterminate (its three-state parent in Windows Features looks the same)
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off);
+        var box = RefOf(CheckBox(toggle));
+
+        // Act
+        var result = await ActAsync(box, ElementActionKind.Toggle, "indeterminate");
+
+        // Assert - a third toggle could only turn it on again: the user's setting is left as it was
+        result.ErrorCode.Should().Be("ActionFailed");
+        toggle.Toggles.Should().Be(2);
+        result.After!.ToggleState.Should().Be(UiaToggleState.Off);
+        result.Error.Should().Contain("back to Off").And.Contain("as it was");
     }
 
     [Fact]
@@ -482,16 +530,38 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OutcomeVerified.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(16)] // the system timer's resolution
+    [InlineData(35)] // a poll longer than the whole wait
+    public async Task Toggle_ToAState_WaitsNoLongerThanToggleStateWait_ForAStateThatDoesNotUpdate(int pollMs)
+    {
+        // Arrange - the old state is reported for longer than the wait: there is no second toggle
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off) { StaleReads = 1000 };
+        var box = RefOf(CheckBox(toggle));
+        var start = _clock.GetTimestamp();
+
+        // Act
+        var result = await CreateSut(toggleStatePoll: TimeSpan.FromMilliseconds(pollMs))
+            .ActAsync(new ElementActionRequest(box, ElementActionKind.Toggle, "on"));
+
+        // Assert - the wait is measured on the clock, whatever the reads cost: it ends at the first read at or after 30 ms
+        result.ErrorCode.Should().Be("ActionFailed");
+        toggle.Toggles.Should().Be(1);
+        _clock.GetElapsedTime(start).Should().Be(TimeSpan.FromMilliseconds(Math.Ceiling(30.0 / pollMs) * pollMs));
+    }
+
     [Fact]
     public async Task Toggle_OfAThreeStateBox_WaitsForEachChange_AndReachesTheState()
     {
+        // Arrange - each toggle's new state shows only after three stale reads
         var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off, threeState: true) { StaleReads = 3 };
         var box = RefOf(CheckBox(toggle));
 
-        // The second toggle waits out three stale reads, 1 ms polls apart: up to about 50 ms with the system timer
-        var result = await CreateSut(toggleStateWait: TimeSpan.FromMilliseconds(500))
-            .ActAsync(new ElementActionRequest(box, ElementActionKind.Toggle, "indeterminate"));
+        // Act
+        var result = await ActAsync(box, ElementActionKind.Toggle, "indeterminate");
 
+        // Assert
         result.Success.Should().BeTrue(result.Error);
         toggle.Toggles.Should().Be(2);
         result.After!.ToggleState.Should().Be(UiaToggleState.Indeterminate);
@@ -677,7 +747,7 @@ public sealed class ElementActionServiceTests : IDisposable
         var combo = RefOf(new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["ExpandCollapse"], ProcessId = Pid }
             .WithPattern<IUiaExpandCollapsePattern>(new FakeExpandCollapsePattern(UiaExpandCollapseState.Collapsed)));
         var dropdown = new OpenedWindow(0x7700, "", "ComboLBox", Pid, "app");
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([dropdown]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [dropdown]));
 
         // Act
         var result = await ActAsync(combo, ElementActionKind.Expand);
@@ -840,7 +910,26 @@ public sealed class ElementActionServiceTests : IDisposable
         var result = await ActAsync(item, ElementActionKind.Realize);
 
         result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeTrue("it is on screen");
         result.Warnings.Should().Contain(w => w.Contains("not a virtualized item"));
+    }
+
+    [Fact]
+    public async Task Realize_OfAnOffscreenItemThatCanNeitherBeRealizedNorScrolled_IsNotVerified()
+    {
+        // Arrange - no VirtualizedItem and no ScrollItem pattern: nothing can bring it on screen
+        var item = RefOf(new FakeUiaNode("ListItem", "Row 80") { IsOffscreen = true });
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeFalse("realize's outcome is that the item is on screen, and it is not");
+        result.After!.IsOffscreen.Should().BeTrue();
+        result.Warnings.Should().Contain(w => w.Contains("cannot be scrolled into view"))
+            .And.NotContain(w => w.Contains("does not show its effect"), "nothing was done that could still take effect");
     }
 
     #endregion
@@ -979,7 +1068,7 @@ public sealed class ElementActionServiceTests : IDisposable
         _runner.Outcome = UiaActionStatus.Pending;
         var save = RefOf(Button("Save As..."));
         var dialog = new OpenedWindow(0x7800, "Save As", "#32770", Pid, "app");
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([dialog]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([dialog], []));
 
         // Act
         var result = await ActAsync(save, ElementActionKind.Invoke);
@@ -990,6 +1079,43 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OpenedPopup.Should().Be(dialog);
         result.OutcomeVerified.Should().BeNull();
         result.Warnings.Should().Contain(w => w.Contains("Save As"));
+    }
+
+    [Fact]
+    public async Task AnActionStillBlockedAtTheTimeout_WaitsForTheDialog_NotForAWindowAboveIt()
+    {
+        // Arrange - a hover card of the application showed above the dialog the Invoke waits for
+        _runner.Outcome = UiaActionStatus.Pending;
+        var save = RefOf(Button("Save As..."));
+        var card = new OpenedWindow(0x7900, "", "Chrome_WidgetWin_1", Pid, "app");
+        var dialog = new OpenedWindow(0x7800, "Save As", "#32770", Pid, "app");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([dialog], [card]));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.Status.Should().Be(ElementActionStatus.InvokedPendingModal);
+        result.OpenedPopup.Should().Be(dialog);
+        result.Warnings.Should().Contain(w => w.Contains("2 new windows"));
+    }
+
+    [Fact]
+    public async Task AnActionStillBlockedAtTheTimeout_WithOnlyAWindowThatIsNoDialog_IsActionTimedOut()
+    {
+        // Arrange - only a popup appeared (Explorer: a taskbar thumbnail the user hovered while the action was blocked)
+        _runner.Outcome = UiaActionStatus.Pending;
+        var save = RefOf(Button("Save"));
+        var popup = new OpenedWindow(0x7900, "", "TaskListThumbnailWnd", Pid, "explorer");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [popup]));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.ErrorCode.Should().Be("ActionTimedOut");
+        result.Status.Should().BeNull();
+        result.Error.Should().Contain("no new dialog").And.Contain("may still take effect");
     }
 
     [Fact]
@@ -1045,8 +1171,10 @@ public sealed class ElementActionServiceTests : IDisposable
     [Fact]
     public async Task RightClick_IsAlwaysAGuardedMouseClick_AtTheCentreWhenTheProviderHasNoClickPoint()
     {
-        // Arrange
-        var target = RefOf(Button("Save"));
+        // Arrange - UI Automation's hit test finds the button there
+        var button = Button("Save");
+        var target = RefOf(button);
+        _tree.AtPoint = (_, _) => button;
         _input.Setup(i => i.RightClick(140, 212, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
 
@@ -1055,7 +1183,117 @@ public sealed class ElementActionServiceTests : IDisposable
 
         // Assert
         result.Method.Should().Be(ElementActionMethod.Mouse);
+        result.Warnings.Should().BeNull();
         _input.Verify(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AClickPoint_ThatHitsAnElementInsideTheElement_IsOnTheElement()
+    {
+        // Arrange - a button's label is what the hit test finds
+        var button = Button("Save");
+        var target = RefOf(button);
+        var label = new FakeUiaNode("Text", "Save") { ProcessId = Pid };
+        button.With(label);
+        _tree.AtPoint = (_, _) => label;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(ElementActionKind.RightClick, ElementActionFallback.None)]
+    [InlineData(ElementActionKind.DoubleClick, ElementActionFallback.None)]
+    [InlineData(ElementActionKind.Click, ElementActionFallback.Mouse)]
+    public async Task AnElementAnotherElementCovers_IsNotClicked_AndIsTargetOccluded(ElementActionKind action, ElementActionFallback fallback)
+    {
+        // Arrange - a sticky header of the same window lies over the button wherever it is tried
+        var target = RefOf(new FakeUiaNode("Custom", "Save") { ProcessId = Pid, Bounds = new UiaRect(100, 200, 80, 24) });
+        var header = new FakeUiaNode("Pane", "Header") { ProcessId = Pid };
+        _window.With(header);
+        var tried = new List<(int X, int Y)>();
+        _tree.AtPoint = (x, y) =>
+        {
+            tried.Add((x, y));
+            return header;
+        };
+
+        // Act
+        var result = await ActAsync(target, action, fallback: fallback);
+
+        // Assert - the strict input mock has no click set up: nothing was sent
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("TargetOccluded");
+        result.Error.Should().Contain("Nothing was clicked").And.Contain("scroll_into_view");
+        tried.Should().Equal((140, 212), (120, 206), (160, 206), (120, 218), (160, 218));
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AClickPointThatIsCovered_GivesWayToAnotherPointOfTheBounds_ThatHitsTheElement()
+    {
+        // Arrange - the provider's clickable point lies under a banner, the centre does not
+        var button = Button("Save");
+        button.ClickablePoint = new UiaPoint(110, 205);
+        var target = RefOf(button);
+        var banner = new FakeUiaNode("Pane", "Cookie banner") { ProcessId = Pid };
+        _window.With(banner);
+        _tree.AtPoint = (x, y) => (x, y) == (110, 205) ? banner : button;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AClickPointWhereOnlyAnAncestorIsFound_IsClicked_WithAWarningThatItWasNotVerified()
+    {
+        // Arrange - some providers do not hit-test their inner elements: the hit test finds the window itself
+        var target = RefOf(Button("Save"));
+        _tree.AtPoint = (_, _) => _window;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().Contain(w => w.Contains("could not be checked"));
+    }
+
+    [Fact]
+    public async Task AClickPoint_IsTriedOnlyInsideTheWindow()
+    {
+        // Arrange - the element reaches past the window's right edge (at 150): the points outside it are not tried
+        var target = RefOf(new FakeUiaNode("Custom", "Wide") { ProcessId = Pid, Bounds = new UiaRect(100, 200, 200, 24) });
+        _windows.Setup(w => w.GetWindowRect(Handle)).Returns((0, 0, 150, 400));
+        var header = new FakeUiaNode("Pane", "Header") { ProcessId = Pid };
+        _window.With(header);
+        var tried = new List<(int X, int Y)>();
+        _tree.AtPoint = (x, y) =>
+        {
+            tried.Add((x, y));
+            return header;
+        };
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetOccluded");
+        tried.Should().OnlyContain(p => p.X >= 100 && p.X < 150).And.Contain((125, 212));
     }
 
     [Fact]
@@ -1071,6 +1309,47 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Method.Should().Be(ElementActionMethod.Mouse);
     }
 
+    /// <summary>The input service's ModifiersHeld message, which names its own releaseHeldModifiers parameter.</summary>
+    private const string ModifiersHeldMessage =
+        "LeftCtrl is held down, by the user or stuck, so nothing (more) was clicked: with a modifier down, keys become shortcuts " +
+        "and clicks become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing it, " +
+        "pass releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release it.";
+
+    [Fact]
+    public async Task AModifierHeldDown_IsModifiersHeld_WithAdviceThatElementActionCanFollow()
+    {
+        // Arrange - element_action has no releaseHeldModifiers: an agent that passed it would get the same refusal again
+        var button = Button("Save");
+        var target = RefOf(button);
+        _tree.AtPoint = (_, _) => button;
+        _input.Setup(i => i.RightClick(140, 212, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(false, 140, 212, "right", ModifiersHeldMessage, InputErrorCode.ModifiersHeld) { HeldModifiers = ["LeftCtrl"] });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("ModifiersHeld");
+        result.Error.Should().Contain("LeftCtrl").And.Contain("release_all_input with releaseHeldModifiers: true")
+            .And.NotContain("pass releaseHeldModifiers");
+    }
+
+    [Fact]
+    public async Task AModifierHeldDown_WhileTyping_IsModifiersHeld_WithAdviceThatElementActionCanFollow()
+    {
+        // Arrange
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SendKeysResult(false, "^a", ModifiersHeldMessage, InputErrorCode.ModifiersHeld));
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("ModifiersHeld");
+        result.Error.Should().Contain("release_all_input").And.NotContain("pass releaseHeldModifiers");
+    }
+
     [Fact]
     public async Task AWindowThatCannotBeActivated_GetsNoClick()
     {
@@ -1083,6 +1362,64 @@ public sealed class ElementActionServiceTests : IDisposable
         var result = await ActAsync(target, ElementActionKind.RightClick);
 
         result.ErrorCode.Should().Be("TargetNotForeground");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(WindowErrorCode.Cloaked, "TargetNotForeground")]      // as the input tools report it
+    [InlineData(WindowErrorCode.WindowHidden, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.FocusFailed, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.None, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.InvalidHandle, "InvalidHandle")]
+    [InlineData(WindowErrorCode.NotResponding, "NotResponding")]
+    [InlineData(WindowErrorCode.PausedByUser, "PausedByUser")]
+    [InlineData(WindowErrorCode.TargetDeniedByPolicy, "TargetDeniedByPolicy")]
+    public async Task AnActivationThatFails_IsReportedWithTheCodesTheInputPathUses(WindowErrorCode activation, string expected)
+    {
+        // Arrange
+        var target = RefOf(Button("Save"));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>())).Returns(new FocusOutcome
+        {
+            Target = Handle, IsForeground = false, ErrorCode = activation, Error = "It did not come to the front."
+        });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be(expected);
+        result.Error.Should().Contain("It did not come to the front.");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AMenuThatStaysOpen_IsTargetInMenuMode_ForAClick_WordedForTheClick()
+    {
+        // Arrange - activation could not close the menu (it ignores Esc)
+        var target = RefOf(Button("Save"));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>()))
+            .Returns(new FocusOutcome { Target = Handle, IsForeground = true, InMenuMode = true });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetInMenuMode");
+        result.Error.Should().Contain("Nothing was clicked").And.NotContain("keys would");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AMenuThatStaysOpen_IsTargetInMenuMode_ForKeys()
+    {
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>()))
+            .Returns(new FocusOutcome { Target = Handle, IsForeground = true, InMenuMode = true });
+
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        result.ErrorCode.Should().Be("TargetInMenuMode");
+        result.Error.Should().Contain("keys would select menu items");
         _input.VerifyNoOtherCalls();
     }
 
@@ -1381,5 +1718,22 @@ public sealed class ElementActionServiceTests : IDisposable
         public bool IsReadOnly => false;
 
         public void SetValue(string value) => Set = value;
+    }
+
+    /// <summary>An MSAA pattern that records every member used, which must not happen for a password field.</summary>
+    private sealed class RecordingLegacyPattern : IUiaLegacyIAccessiblePattern
+    {
+        public List<string> Calls { get; } = [];
+
+        public string? DefaultAction
+        {
+            get
+            {
+                Calls.Add(nameof(DefaultAction));
+                return "Press";
+            }
+        }
+
+        public void DoDefaultAction() => Calls.Add(nameof(DoDefaultAction));
     }
 }

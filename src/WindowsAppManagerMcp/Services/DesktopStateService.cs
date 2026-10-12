@@ -28,6 +28,9 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <summary>The tool whose absence (a toolset, an exclusion or read-only mode the user chose) turns the capture off.</summary>
     private const string CaptureTool = "capture_window";
 
+    /// <summary>The tool whose absence (a toolset or an exclusion the user chose) turns the observation off for other tools.</summary>
+    private const string StateTool = "get_desktop_state";
+
     /// <summary>What the popups' element walks may use of maxElements together, so the window keeps the rest.</summary>
     private const int PopupShareDivisor = 2;
 
@@ -40,6 +43,7 @@ public sealed class DesktopStateService : IDesktopStateService
     private readonly IScreenshotService _screenshots;
     private readonly ITargetPolicy _policy;
     private readonly bool _captureServed;
+    private readonly bool _stateServed;
 
     /// <param name="windows">The window in front, the window list and the named window.</param>
     /// <param name="session">The pause and the modifier keys that are down (get_control_status' reads).</param>
@@ -49,7 +53,8 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <param name="popups">The target's popups and find_ui_elements' default scope.</param>
     /// <param name="screenshots">capture_window's capture (captureId).</param>
     /// <param name="policy">The user's target policy: never a capture of a denied window, never an unasked read of one.</param>
-    /// <param name="toolsets">The tools the server serves; the capture follows capture_window. Null: every tool.</param>
+    /// <param name="toolsets">The tools the server serves; the capture follows capture_window, and the observation other tools
+    /// return follows get_desktop_state. Null: every tool.</param>
     public DesktopStateService(
         IWindowService windows,
         IInputSession session,
@@ -70,6 +75,7 @@ public sealed class DesktopStateService : IDesktopStateService
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _captureServed = toolsets?.Serves(CaptureTool, readOnlyHint: false) ?? true;
+        _stateServed = toolsets?.Serves(StateTool, readOnlyHint: true) ?? true;
     }
 
     /// <summary>
@@ -83,6 +89,11 @@ public sealed class DesktopStateService : IDesktopStateService
         ? null
         : "A screenshot needs capture_window, which this server does not serve: the user turned captures off (the capture " +
           "toolset, WAM_EXCLUDE_TOOLS or read-only mode). Leave the screenshot out; the rest of the observation does not need it.";
+
+    public string? StateUnavailable() => _stateServed
+        ? null
+        : "observe returns get_desktop_state's observation, and this server does not serve get_desktop_state: the user turned " +
+          "it off (the elements toolset or WAM_EXCLUDE_TOOLS). Leave observe out.";
 
     public async Task<DesktopStateSnapshot> GetStateAsync(DesktopStateRequest request, CancellationToken cancellationToken)
     {

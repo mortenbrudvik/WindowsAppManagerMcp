@@ -90,7 +90,7 @@ public partial class ElementActionTools
         [Description(UIElementTools.CriteriaScopeDescription)]
         ElementSearchScope? scope = null,
         [Description("set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, " +
-                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. menu_path: the menu items " +
+                     "'on', 'off' or 'indeterminate' (up to two toggles); leave it out to toggle once. menu_path: the menu items " +
                      "separated by '>', e.g. 'File>Save As' (names ignore case and a trailing '...'). Logged as its length only; a password " +
                      "field's value is never read or returned.")]
         string? value = null,
@@ -117,8 +117,9 @@ public partial class ElementActionTools
                      "milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.")]
         int timeoutMs = DefaultTimeoutMs,
         [Description("What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default " +
-                     "observation of the element's window, or of the window in front once that closed, as observed) or 'screenshot' " +
-                     "(as state, plus a capture of that window as image content with a captureId; needs capture_window to be served).")]
+                     "observation of the element's window, or of the window in front once that closed, as observed; needs " +
+                     "get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content with " +
+                     "a captureId; needs capture_window to be served too).")]
         ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
@@ -256,11 +257,15 @@ public partial class ElementActionTools
             observe, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Why observe cannot be honoured (checked before anything is done), or null.</summary>
+    /// <summary>
+    /// Why observe cannot be honoured (checked before anything is done), or null: the observation is get_desktop_state's
+    /// read, so it follows get_desktop_state being served, as the screenshot follows capture_window.
+    /// </summary>
     private string? ObserveError(ObserveMode observe) => observe switch
     {
         ObserveMode.None => null,
         _ when _desktopState == null => throw new InvalidOperationException("observe needs the desktop state service; the server always registers it."),
+        _ when _desktopState.StateUnavailable() is { } stateUnavailable => stateUnavailable,
         ObserveMode.Screenshot => _desktopState.ScreenshotUnavailable() is { } unavailable
             ? $"observe 'screenshot': {unavailable} Use observe 'state'."
             : null,

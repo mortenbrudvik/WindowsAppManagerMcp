@@ -248,6 +248,13 @@ public sealed class InputTargetGuard : IInputTargetGuard
     {
         ArgumentNullException.ThrowIfNull(approved);
 
+        // A converted point is checked against what it was measured on before every press: the window can move while the
+        // same window stays at the point (the 10 ms before a click, up to 500 ms between a double click's presses)
+        if (PointRefusal(approved.Target) is { } stale)
+        {
+            return stale;
+        }
+
         // The capture is read again even when the same window is at the point: it can start at any moment
         var hit = RootAt(x, y);
         if (hit == approved.Receiving)
@@ -548,7 +555,8 @@ public sealed class InputTargetGuard : IInputTargetGuard
     /// The probes, policy and host checks of a window the input would reach. The host check is skipped only
     /// for an explicit target with allowHostTarget, and only when the window is the target's top-level
     /// window <paramref name="targetRoot"/> or a window it owns: a popup that is accepted only because it
-    /// belongs to the target's process or a child process is still checked.
+    /// belongs to the target's process or a child process is still checked. A window of the server's own process
+    /// (or one it owns) is refused whatever allowHostTarget says.
     /// </summary>
     private InputGuardResult? WindowRefusal(nint hWnd, WindowRead window, InputTarget target, string action, nint targetRoot)
     {
@@ -579,6 +587,18 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 target, window.Summary);
         }
 
+        // The server's own process, whatever allowHostTarget says: its one window of its own is the hidden clipboard owner,
+        // so a window of it that input could reach is a prompt Windows showed in it, such as the security warning of a file
+        // a launch opens (ShellExecuteEx runs that check in the calling process). Only the user answers those.
+        if (IsServerWindow(hWnd, window))
+        {
+            return InputGuardResult.Refuse(InputErrorCode.TargetIsAgentHost,
+                $"{Name(window.Summary)} belongs to this server's own process, or a window of it owns it: a prompt Windows " +
+                $"showed for the server, such as the security warning of a file a launch opened. Only the user answers it. " +
+                $"Nothing was {action}, and no tool argument changes that: ask the user to answer it.",
+                target, window.Summary);
+        }
+
         // Host: the agent's own terminal, editor or chat app
         var explicitHost = target.HasWindow && target.AllowHostTarget && targetRoot != nint.Zero &&
                            (hWnd == targetRoot || WindowOwnerChain.IsOwnedBy(_windows, hWnd, targetRoot));
@@ -599,6 +619,19 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         return null;
+    }
+
+    /// <summary>Whether the window, or a window that owns it, belongs to this server's own process.</summary>
+    private bool IsServerWindow(nint hWnd, WindowRead window)
+    {
+        var server = _hostGuard.Host?.ServerProcessId ?? 0;
+        if (server <= 0)
+        {
+            return false;
+        }
+
+        return window.Info?.ProcessId == server ||
+               WindowOwnerChain.SelfAndOwners(_windows, hWnd).Any(w => (int)_windows.GetWindowThreadProcessId(w) == server);
     }
 
     private InputGuardResult? DesktopRefusal(InputTarget target)

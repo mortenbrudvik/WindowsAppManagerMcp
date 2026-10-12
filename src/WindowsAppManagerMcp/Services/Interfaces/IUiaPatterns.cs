@@ -174,7 +174,12 @@ public interface IUiaVirtualizedItemPattern : IUiaPattern
 /// <summary>LegacyIAccessiblePattern: the MSAA bridge of controls that support no other pattern. UIA3 engine only.</summary>
 public interface IUiaLegacyIAccessiblePattern : IUiaPattern
 {
-    UiaLegacyAccessibleState State { get; }
+    /// <summary>
+    /// The name of the element's MSAA default action (accDefaultAction, such as "Press"), or null when it has none. The one
+    /// property read: MSAA's other properties include the element's value (accValue), which for a password field can be
+    /// the password.
+    /// </summary>
+    string? DefaultAction { get; }
 
     void DoDefaultAction();
 }
@@ -252,14 +257,3 @@ public sealed record UiaWindowState(
     bool CanMinimize,
     UiaWindowVisualState VisualState,
     UiaWindowInteractionState InteractionState);
-
-/// <summary>What MSAA reports for an element (LegacyIAccessiblePattern).</summary>
-/// <param name="Role">The MSAA role (ROLE_SYSTEM_*).</param>
-/// <param name="State">The MSAA state flags (STATE_SYSTEM_*).</param>
-public sealed record UiaLegacyAccessibleState(
-    string? Name,
-    string? Value,
-    string? Description,
-    string? DefaultAction,
-    uint Role,
-    uint State);

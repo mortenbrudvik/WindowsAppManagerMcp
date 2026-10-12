@@ -348,6 +348,27 @@ public class ElementActionToolTests
         _actions.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(ObserveMode.State)]
+    [InlineData(ObserveMode.Screenshot)]
+    public async Task Observe_IsRefusedBeforeAnythingIsDone_WhenGetDesktopStateIsNotServed(ObserveMode observe)
+    {
+        // Arrange - WAM_TOOLSETS=-elements: the observation is get_desktop_state's read, which the user turned off
+        var sut = CreateObservingSut();
+        _desktopState.Setup(s => s.StateUnavailable()).Returns("The observation needs get_desktop_state, which this server does not serve.");
+
+        // Act - criteria that match nothing would make the call a pure read
+        var error = await RefusedAsync(() => sut.ElementAction(ElementActionKind.Invoke, window: new WindowSelector { ProcessName = "notepad" },
+            name: "zzz", observe: observe));
+
+        // Assert
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("get_desktop_state").And.EndWith("Nothing was done.");
+        _search.VerifyNoOtherCalls();
+        _actions.VerifyNoOtherCalls();
+        _desktopState.Verify(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     #endregion
 
     [Fact]

@@ -36,6 +36,13 @@ public interface IDesktopStateService
     /// </summary>
     string? ScreenshotUnavailable();
 
+    /// <summary>
+    /// Why the observation cannot be returned by another tool (element_action's observe), or null when it can: it is
+    /// get_desktop_state's read, so it follows get_desktop_state being served (not served: the elements toolset is off, or
+    /// an exclusion). Those tools refuse observe with it before they do anything.
+    /// </summary>
+    string? StateUnavailable();
+
     /// <summary>Reads the desktop as <paramref name="request"/> says, within its deadline.</summary>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task<DesktopStateSnapshot> GetStateAsync(DesktopStateRequest request, CancellationToken cancellationToken);

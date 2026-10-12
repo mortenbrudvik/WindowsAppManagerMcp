@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -14,13 +13,20 @@ public sealed partial class ElementActionService
     /// <summary>How many ancestors are looked through for the window an element of another process belongs to.</summary>
     private const int MaxWindowAncestors = 32;
 
+    /// <summary>The most toggles a toggle toward a state makes: a three-state check box reaches any state in two.</summary>
+    private const int MaxToggles = 2;
+
     /// <summary>The actions that act on an element the user can see and use: refused for a disabled or offscreen one.</summary>
     private static bool NeedsUsableElement(ElementActionKind action) => action is not (ElementActionKind.ScrollIntoView
         or ElementActionKind.Scroll or ElementActionKind.Realize or ElementActionKind.WindowClose
         or ElementActionKind.WindowMinimize or ElementActionKind.WindowMaximize);
 
-    /// <summary>Phase 1, on the worker: the hung check, the ref resolved, the state read, the checks, the plan.</summary>
-    private ReadOutcome<PreparedElement> Prepare(ActionCall call, CancellationToken token)
+    /// <summary>
+    /// Phase 1, on the worker: the hung check, the ref resolved, the identity read, the target checks of the element's own
+    /// window when it belongs to another process, then the state read, the checks and the plan. A refused element's state
+    /// (its name and value) is never read, so the refusal cannot carry it.
+    /// </summary>
+    private ReadOutcome<PreparedElement> Prepare(ActionCall call, InputTarget target, CancellationToken token)
     {
         if (UiaTargets.NotRespondingReason(_windows, call.Window, "its element was not acted on") is { } notResponding)
         {
@@ -58,10 +64,9 @@ public sealed partial class ElementActionService
                     "which window and process it belongs to. Nothing was done. Read it again with find_ui_elements.");
             }
 
-            var elementWindow = nint.Zero;
             if (!BelongsToWindowsProcess(call.Window, identity.ProcessId))
             {
-                elementWindow = OwnWindowOf(node, identity);
+                var elementWindow = OwnWindowOf(node, identity);
                 if (elementWindow == nint.Zero)
                 {
                     return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
@@ -69,13 +74,19 @@ public sealed partial class ElementActionService
                         "no window of that process could be found above it, so the target checks (policy, elevation, host) cannot " +
                         "run on it. Nothing was done.");
                 }
+
+                // That process's own window passes the policy, elevation and host checks too (Win32 reads only)
+                if (_guard.CheckElementWindow(target, elementWindow) is { Allowed: false } foreign)
+                {
+                    return Failed(call, foreign.ErrorCode.ToString(), foreign.Error!);
+                }
             }
 
             var isPassword = identity.IsPassword;
             var (before, fullValue) = ReadState(node, element, isPassword);
             call.Before = before;
 
-            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue) { ElementWindow = elementWindow };
+            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue);
             var request = call.Request;
             var properties = element.Properties;
             if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
@@ -208,16 +219,24 @@ public sealed partial class ElementActionService
                 var poll = ToggleStatePoll;
                 plan.Act = () =>
                 {
-                    // Up to three toggles: a three-state check box can need two to reach a state. Each next toggle waits until
-                    // the state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report
-                    // the old state for a while, and toggling again on a stale read would click once too often.
+                    // Up to two toggles: a three-state check box reaches any state in two. Each next toggle waits until the
+                    // state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report the
+                    // old state for a while, and toggling again on a stale read would click once too often. A box that is back
+                    // in its state before has gone round without the goal (a two-state box asked for indeterminate): it is left
+                    // there, as it was, since any further toggle could only move it away again.
                     var current = before.ToggleState;
-                    for (var i = 0; i < 3; i++)
+                    for (var i = 0; i < MaxToggles; i++)
                     {
                         toggle.Toggle();
                         plan.Toggles++;
                         if (goal == null || ToggleStateAfter(toggle, current, wait, poll) is not { } now || now == goal)
                         {
+                            break;
+                        }
+
+                        if (now == before.ToggleState)
+                        {
+                            plan.CycledBack = true;
                             break;
                         }
 
@@ -599,16 +618,16 @@ public sealed partial class ElementActionService
 
     /// <summary>
     /// The toggle state once it differs from <paramref name="previous"/>, read every <paramref name="poll"/> for up to
-    /// <paramref name="wait"/>; null when it did not change, or it (or the state before) cannot be read.
+    /// <paramref name="wait"/> of <see cref="Clock"/>; null when it did not change, or it (or the state before) cannot be read.
     /// </summary>
-    private static UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
+    private UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
     {
         if (previous == null)
         {
             return null;
         }
 
-        var clock = Stopwatch.StartNew();
+        var started = Clock.GetTimestamp();
         while (true)
         {
             UiaToggleState now;
@@ -626,12 +645,12 @@ public sealed partial class ElementActionService
                 return now;
             }
 
-            if (clock.Elapsed >= wait)
+            if (Clock.GetElapsedTime(started) >= wait)
             {
                 return null;
             }
 
-            Thread.Sleep(poll);
+            Sleep(poll);
         }
     }
 
@@ -801,26 +820,6 @@ public sealed partial class ElementActionService
              "may still be updating. Read the element again before you repeat the action."
     };
 
-    /// <summary>The click point now, on the worker: UI Automation's, else the centre of the bounds; null when offscreen.</summary>
-    private ReadOutcome<UiaPoint?> ClickPointOf(IUiaNode node)
-    {
-        try
-        {
-            var fresh = _tree.ReadElement(node);
-            if (fresh.Properties.IsOffscreen || fresh.Properties.Bounds.ToBounds() is not { Width: > 0, Height: > 0 } bounds)
-            {
-                return ReadOutcome<UiaPoint?>.Of(null);
-            }
-
-            var point = TryState(() => _tree.GetClickablePoint(node));
-            return ReadOutcome<UiaPoint?>.Of(point ?? new UiaPoint(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2));
-        }
-        catch (UiaElementUnavailableException)
-        {
-            return ReadOutcome<UiaPoint?>.Of(null);
-        }
-    }
-
     /// <summary>
     /// On the worker: whether keyboard focus is on the element itself, or, for a ComboBox, on the Edit that is its direct
     /// child (where an editable combo box takes its text). Focus anywhere else inside the element does not count: the keys
@@ -854,11 +853,15 @@ public sealed partial class ElementActionService
     private TPattern? Pattern<TPattern>(PreparedElement element, UiaPatterns flag) where TPattern : class, IUiaPattern =>
         (element.Element.Patterns & flag) != 0 ? _tree.GetPattern<TPattern>(element.Node) : null;
 
-    /// <summary>The MSAA default action, when the element has one (UIA3 engine only).</summary>
+    /// <summary>
+    /// The MSAA default action, when the element has one (UIA3 engine only). Never for a password field: the MSAA bridge is
+    /// not touched at all there, so no read of it can reach the field's value.
+    /// </summary>
     private IUiaLegacyIAccessiblePattern? DefaultAction(PreparedElement element)
     {
-        if (Pattern<IUiaLegacyIAccessiblePattern>(element, UiaPatterns.LegacyIAccessible) is not { } legacy ||
-            TryRead(() => legacy.State) is not { DefaultAction: { Length: > 0 } name })
+        if (element.IsPassword ||
+            Pattern<IUiaLegacyIAccessiblePattern>(element, UiaPatterns.LegacyIAccessible) is not { } legacy ||
+            TryRead(() => legacy.DefaultAction) is not { Length: > 0 } name)
         {
             return null;
         }
@@ -951,6 +954,9 @@ public sealed partial class ElementActionService
         /// <summary>How many toggles the toggle loop made (set on the action's thread).</summary>
         public int Toggles { get; set; }
 
+        /// <summary>The toggle loop stopped because the element was back in its state before, without the goal.</summary>
+        public bool CycledBack { get; set; }
+
         public static Plan Pattern(ElementActionMethod method, Action act) => new(PlanKind.Pattern, method) { Act = act };
 
         public static Plan Click(MouseKind mouse) => new(PlanKind.Mouse, ElementActionMethod.Mouse) { Mouse = mouse };
@@ -968,12 +974,6 @@ public sealed partial class ElementActionService
         public UiaElement Element { get; } = element;
 
         public UiaNodeIdentity Identity { get; } = identity;
-
-        /// <summary>
-        /// The element's own window when it belongs to another process than the ref's window, whose checks run too
-        /// (<see cref="IInputTargetGuard.CheckElementWindow"/>); zero when it belongs to the window's process.
-        /// </summary>
-        public nint ElementWindow { get; init; }
 
         public bool IsPassword { get; } = isPassword;
 
