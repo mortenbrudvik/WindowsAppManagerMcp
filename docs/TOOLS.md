@@ -2700,20 +2700,20 @@ An action whose state is already reached (`toggle` to its state, `expand` an exp
 
 ### respond_to_dialog
 
-Read a dialog and press one of its buttons, in one call: a message box, a prompt such as "Save changes?" or "Replace the file?", or a WPF, WinForms or WinUI dialog. It returns the dialog's title, text and buttons, so the same call shows what was asked, and it presses the button through [element_action](#element_action)'s `invoke`, so every check of an action applies. Without `button` it only reads the dialog and presses nothing: read the dialog in front first, decide, then answer that dialog by its `dialogHandle`, so a dialog that appeared in the meantime is never answered blind.
+Read a dialog and press one of its buttons: a message box, a prompt such as "Save changes?" or "Replace the file?", or a WPF, WinForms or WinUI dialog. It returns the dialog's title, text and buttons, and it presses the button through [element_action](#element_action)'s `invoke`, so every check of an action applies. Read first, then press: without `button` it only reads the dialog and presses nothing; decide on what it says, then answer that dialog by its `dialogHandle` as `handle`. A press needs `handle` or `window`: without them only `cancel` is pressed (in the dialog in front), and any other button is refused with `InvalidArguments`, with nothing read or pressed. A press asked of a dialog named by its handle that a modal dialog of its own now disables is refused with `BlockedByModal` (see below). So a dialog that appeared in the meantime is never answered blind.
 
 <!-- tools:begin params:respond_to_dialog -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| button | string | No | - | The button to press: ok, cancel, yes, no, abort, retry, ignore, close, help, tryagain, continue (by id, in every language), a control id such as '6', an AutomationId, or the button's visible text. |
-| handle | integer | No | - | Window handle (as integer) of the dialog, or of the window whose dialog to answer. Leave out handle and window for the dialog in front. |
+| button | string | No | - | The button to press: ok, cancel, yes, no, abort, retry, ignore, close, help, tryagain, continue (by id, in every language), a control id such as '6', an AutomationId, or the button's visible text. Leave it out to only read the dialog. With a button, name the dialog by handle or window. |
+| handle | integer | No | - | Window handle (as integer) of the dialog (the dialogHandle a read returned), or of the window whose modal dialog to answer. Leave out handle and window only to read the dialog in front, or to press cancel in it. |
 | window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | allowHostTarget | boolean | No | false | Allow answering a dialog of the agent's own host window (its terminal, editor or chat app). Works only with handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
 | timeoutMs | integer | No | 5000 | The bound of each read and how long the press may block, in milliseconds (default: 5000, min: 1000, max: 30000). |
 <!-- tools:end params:respond_to_dialog -->
 
-**Which dialog.** Without `handle` or `window`, the dialog in front. When the window named (or in front) is disabled by a modal dialog of its own, that dialog is answered, down to the front one of a chain (a Save As dialog's replace prompt); otherwise the window itself when it is a dialog box (`#32770`, or an owned window with a title bar), else its frontmost open dialog. A window that is none of these is `DialogNotFound`; nothing is pressed. An unowned top-level window is no dialog even when named by its handle: press its buttons with [element_action](#element_action).
+**Which dialog.** Without `handle` or `window`, the dialog in front (to read it, or to press `cancel`). When the window named (or in front) is disabled by a modal dialog of its own, that dialog is read, down to the front one of a chain (a Save As dialog's replace prompt), and answered when the window named is no dialog (the application's window, such as the window close_window reported `promptShown` for). When the window named is itself a dialog, a press is not passed on to the modal dialog in front of it, which was not read: it is `BlockedByModal`, with that dialog's handle and title in the error, and nothing is pressed; read it (no `button`, its handle), then answer it by its handle. Otherwise the window itself when it is a dialog box (`#32770`, or an owned window with a title bar), else its frontmost open dialog. A window that is none of these is `DialogNotFound`; nothing is pressed. An unowned top-level window is no dialog even when named by its handle: press its buttons with [element_action](#element_action).
 
 **Which button**, in this order, so that it works on every display language:
 1. A standard name: `ok`, `cancel`, `abort`, `retry`, `ignore`, `yes`, `no`, `close`, `help`, `tryagain`, `continue` (Win32's IDOK=1 to IDCONTINUE=11), or a control id such as `"6"`. It matches the button whose AutomationId carries that id: a Win32 dialog box or message box exposes its control ids (`"6"` is Yes), a task dialog `"CommandButton_6"` (the replace prompt of a Save As dialog is one). `"yes"` presses Ja, Oui or はい alike.
@@ -2731,10 +2731,21 @@ Two matches under the first rule that matches are `AmbiguousElement`; none is `E
 **Example:**
 > "Don't save the changes"
 
+Read Notepad's save prompt first (nothing is pressed); the result has its `dialogHandle` (1707024), text and buttons:
+
 ```json
 {
   "name": "respond_to_dialog",
-  "arguments": { "window": { "processName": "notepad" }, "button": "no" }
+  "arguments": { "window": { "processName": "notepad" } }
+}
+```
+
+The text asks what the user decided, so answer that dialog by its handle:
+
+```json
+{
+  "name": "respond_to_dialog",
+  "arguments": { "handle": 1707024, "button": "no" }
 }
 ```
 
@@ -2762,6 +2773,8 @@ Two matches under the first rule that matches are `AmbiguousElement`; none is `E
 |------|---------|
 | `DialogNotFound` | No dialog: the window in front (or named) is no dialog box and has no open dialog. Nothing was done |
 | `InvalidHandle` | The window named closed |
+| `InvalidArguments` | A `button` other than `cancel` without `handle` or `window` (read the dialog first, then answer it by its `dialogHandle`), or an empty `button`. Nothing was read or pressed |
+| `BlockedByModal` | A press asked of a dialog named by its handle that a modal dialog of its own now disables; the error names that dialog (handle, title). Nothing was pressed |
 | `ElementNotFound`, `AmbiguousElement` | No button, or several, match `button`; `buttons` lists them. Nothing was pressed |
 | `PausedByUser` (only with `button`), `TargetDeniedByPolicy`, `TargetIsAgentHost`, `TargetElevated` | Refused before anything was read |
 | element_action's codes | The press was refused or failed (`BlockedByModal`, `ElementNotEnabled`, `NotResponding`, ...) |
@@ -2779,7 +2792,7 @@ Complete an Open or Save As dialog with a full path, in one call and in any lang
 | path | string | Yes | - | The full path of the file to open or save, such as C:\Users\me\Documents\report.txt. Logged as its length only. |
 | action | string (one of: `"open"`, `"save"`) | Yes | - | 'open' (an Open dialog: the path must exist) or 'save' (a Save As dialog). |
 | overwrite | boolean | No | false | save: replace an existing file (the application's replace prompt is answered Yes). Default: false. |
-| handle | integer | No | - | Window handle (as integer) of the file dialog, or of the window whose file dialog to complete. Leave out handle and window for the file dialog in front. |
+| handle | integer | No | - | Window handle (as integer) of the file dialog (the openedPopup of the action that opened it), or of the window whose modal file dialog to complete. handle or window is required. |
 | window | object | No | - | Alternative to handle: a window selector with find_windows' filters (processName is the whole name; plus foreground, index), resolved to exactly one window or refused (AmbiguousWindow lists candidates). |
 | allowHostTarget | boolean | No | false | Allow completing a file dialog of the agent's own host window (its terminal, editor or chat app). Works only with handle (or window.handle); set it only when the user explicitly asked for it. Default: false |
 | timeoutMs | integer | No | 10000 | How long the whole call may take, the wait for the dialog to close included, in milliseconds (default: 10000, min: 1000, max: 60000). |
@@ -2788,7 +2801,7 @@ Complete an Open or Save As dialog with a full path, in one call and in any lang
 **The path** must be absolute, on a drive letter, as a capture's `outputPath`: network paths (`\\server\share\...`) and device paths (`\\?\...`) are refused before anything is touched, because checking or opening them makes Windows connect to another computer. Wildcards, quotes and the other characters a file name cannot hold are refused (a dialog takes `*.txt` as a filter), and so are an alternate data stream and an environment variable such as `%USERPROFILE%` (the dialog would expand it, so the checks here would be of another path: pass the expanded path). `open` needs the file (or folder) to exist; it only types the path into the user's own dialog, which the application then opens with the user's rights, as typing it would. `save` needs the folder to exist and a file name; an existing file is refused with `FileExists` before anything is typed unless `overwrite` is true. All refusals of the path are `InvalidArguments` (except `FileExists`), with nothing done.
 
 **Steps.**
-1. The dialog: without `handle` or `window`, the dialog in front, found as [respond_to_dialog](#respond_to_dialog) finds a dialog (the modal dialog of the window named or in front). It is checked as an action's target first (pause, policy, host, elevation), as respond_to_dialog's.
+1. The dialog: the one `handle` names (the `openedPopup` of the menu item or button that opened it, such as element_action's `menu_path` `File>Save As`), or the modal file dialog of the window `handle` or `window` names, found as [respond_to_dialog](#respond_to_dialog) finds a dialog. Without `handle` or `window` the call is refused with `InvalidArguments` and nothing is done: the file dialog in front may be another application's, which would then open the path or save its own document under it. It is checked as an action's target first (pause, policy, host, elevation), as respond_to_dialog's.
 2. The file name box, by the control ids only a file dialog has, so the path is never typed into another dialog: the Edit inside the ComboBox `1148` (Open) or `FileNameControlHost` (Save As) (or that ComboBox), else an Edit `1148`, else an old-style dialog's Edit `1152` when its file type or drive ComboBox (`1136`, `1137`) is there too (`1152` alone is also the Find dialog's Find What box). A dialog without one is `DialogNotFound`, with nothing typed: it is no file dialog this tool can fill (an ordinary dialog with an Edit and an OK button, a folder picker without a name box, a UWP file picker).
 3. The path is set through the Value pattern (element_action `set_value`) and read back; a box that does not hold it afterwards is `DialogNotCompleted`, with nothing pressed.
 4. The button with AutomationId `1` (IDOK: Open or Save) is pressed (element_action `invoke`, which may block up to 2 s while a prompt is open).
@@ -2799,10 +2812,12 @@ Complete an Open or Save As dialog with a full path, in one call and in any lang
 **Example:**
 > "Save it as meeting-notes.txt in my Documents, replacing the old one"
 
+After element_action's `menu_path` `File>Save As` returned the Save As dialog as `openedPopup` (handle 1707008):
+
 ```json
 {
   "name": "file_dialog",
-  "arguments": { "path": "C:\\Users\\me\\Documents\\meeting-notes.txt", "action": "save", "overwrite": true }
+  "arguments": { "handle": 1707008, "path": "C:\\Users\\me\\Documents\\meeting-notes.txt", "action": "save", "overwrite": true }
 }
 ```
 
@@ -2822,7 +2837,7 @@ Complete an Open or Save As dialog with a full path, in one call and in any lang
 **Error Codes:**
 | Code | Meaning |
 |------|---------|
-| `InvalidArguments` | The path is not a full local path, holds a wildcard, names a missing file (`open`) or folder (`save`). Nothing was done |
+| `InvalidArguments` | The path is not a full local path, holds a wildcard, names a missing file (`open`) or folder (`save`); or neither `handle` nor `window` names the file dialog. Nothing was done |
 | `FileExists` | `save` without `overwrite`: the file exists (nothing typed), or the application asked to replace it and was answered No (the dialog is still open) |
 | `DialogNotFound` | No dialog in front or named, or it has no file name box of a file dialog (nothing typed) |
 | `DialogNotCompleted` | The dialog did not close: an unanswered prompt (in `prompt`), a folder shown, the box did not take the path, or `timeoutMs` passed |
@@ -5887,6 +5902,15 @@ Since 1.14.0 (roadmap M3):
   `"File>Save As"`, with `handle` or `window` alone allowed), and its result a `steps` field for it. New UI element
   errorCodes `DialogNotFound` (21), `DialogNotCompleted` (22) and `FileExists` (23, the same name as the captures'
   code).
+- **Dialogs are answered only when named (review of roadmap M3.5 and M3.14).** [respond_to_dialog](#respond_to_dialog)
+  no longer reads and presses the dialog in front in one call: without `handle` or `window` it still reads it, but the
+  only button it presses there is `cancel`; any other `button` is refused with `InvalidArguments`, with nothing read or
+  pressed (read the dialog, then answer it by its `dialogHandle`). A press asked of a dialog named by its handle that a
+  modal dialog of its own now disables is refused with `BlockedByModal`, naming that dialog, where it used to be pressed
+  in it; a named application window still stands for its modal dialog. `ok` presses a dialog's only button only when it
+  carries the id of Cancel or Close. [file_dialog](#file_dialog) needs `handle` or `window` (`InvalidArguments`
+  otherwise) and no longer completes the file dialog in front unnamed. element_action's `menu_path` no longer acts on an
+  item whose only match comes from a search that did not finish (`OperationTimedOut`).
 
 ## Error Codes
 
@@ -5972,7 +5996,7 @@ table, it gives more detail.
 | `AmbiguousWindow` | Every tool that takes a `window` selector (tool error; per item in the window batches) | Several windows match the selector and it has no `index`; nothing was done. `candidates` lists up to 5 (handle, title, processName, processId, className), front to back: call again with one candidate's `handle` and `processId`, or narrow the selector. See [Window selectors](#window-selectors) |
 | `ArrangeFailed` | [apply_layout](#apply_layout) | A matched window could not be moved, resized, restored or maximized (also when its application did not answer in time), or the placement failed unexpectedly (its placement is `failed`); or it was arranged but could not be brought to the foreground or minimized (its placement is `applied` with this code); `errors` has the reason, including the [focus_window](#focus_window) error code of a failed focus |
 | `AutomationUnavailable` | [Browser Reading](#browser-reading) tools, [UI Automation](#ui-automation) tools, [capture_with_elements](#capture_with_elements) | UI Automation is not available |
-| `BlockedByModal` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent |
+| `BlockedByModal` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) | The target window (`windowHandle`) is disabled by a modal dialog, or a modal dialog of the target opened while typing (`charactersTyped` says how much was typed); the dialog is named in `blockingWindow`, and nothing (more) was sent. respond_to_dialog: a press asked of a dialog named by its handle that a modal dialog of its own now disables (the error names that dialog; nothing was pressed) |
 | `BlockedProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is blocked for security reasons |
 | `BrowserNotFound` | [launch_browser_with_debug](#launch_browser_with_debug) | The browser was not found in its default install folder or by `where.exe` |
 | `CannotTerminateHost` | [kill_process](#kill_process) | The PID belongs to the agent's host (an ancestor of this server such as its terminal or editor, the process that shows its console or the console server behind it, or the app in front when it started), or, with `forceKill`, one of its child processes does |

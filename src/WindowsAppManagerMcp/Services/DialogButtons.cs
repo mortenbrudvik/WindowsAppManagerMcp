@@ -40,6 +40,9 @@ public static class DialogButtons
         return Ids.TryGetValue(key, out var id) ? id : null;
     }
 
+    /// <summary>Whether <paramref name="name"/> is the standard name cancel (IDCANCEL), whatever its case and blanks.</summary>
+    public static bool IsCancel(string name) => StandardId(name) == Ids["cancel"];
+
     /// <summary>The standard button an AutomationId names ("6" and "CommandButton_6" are yes), or null.</summary>
     public static string? StandardOf(string? automationId)
     {

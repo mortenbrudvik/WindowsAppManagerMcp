@@ -93,8 +93,9 @@ public class DialogServiceTests
     private static PopupWindow Popup(nint handle, PopupKind kind, nint owner, bool blocking = false, string? title = null) =>
         new(handle, kind, title, kind == PopupKind.Dialog ? "#32770" : "#32768", 4242, owner, PopupRelation.Owned, null, blocking);
 
-    private Task<DialogResponseResult> RespondAsync(string? button, nint window = 0) =>
-        CreateSut().RespondAsync(new DialogResponseRequest(window, button, Timeout: TimeSpan.FromSeconds(2)));
+    /// <summary>Answers <paramref name="window"/>: by default the dialog, named by its handle as a read returned it; zero for the dialog in front.</summary>
+    private Task<DialogResponseResult> RespondAsync(string? button, nint? window = null) =>
+        CreateSut().RespondAsync(new DialogResponseRequest(window ?? Dialog, button, Timeout: TimeSpan.FromSeconds(2)));
 
     #region Which dialog
 
@@ -193,7 +194,7 @@ public class DialogServiceTests
         _buttons = [Element("w1e1", null, new string('i', 5000), "Button")];
 
         var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
-        var refused = await RespondAsync("retry", Dialog);
+        var refused = await RespondAsync("retry");
 
         content.Buttons.Single().AutomationId.Should().HaveLength(DialogService.MaxButtonNameLength);
         refused.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
@@ -356,7 +357,7 @@ public class DialogServiceTests
                 : new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.Done, ElementActionMethod.Invoke);
         };
 
-        var result = await RespondAsync("yes", Dialog);
+        var result = await RespondAsync("yes");
 
         result.NextDialog!.Title.Should().HaveLength(DialogService.MaxTitleLength);
     }
@@ -387,11 +388,11 @@ public class DialogServiceTests
     }
 
     [Fact]
-    public async Task Respond_WithoutAButton_OnlyReadsTheDialog_EvenWhilePaused()
+    public async Task Respond_WithoutAButton_OnlyReadsTheDialogInFront_EvenWhilePaused()
     {
         _session.Setup(s => s.IsPaused).Returns(true);
 
-        var result = await RespondAsync(null);
+        var result = await RespondAsync(null, window: 0);
 
         result.Success.Should().BeTrue(result.Error);
         result.DialogHandle.Should().Be((long)Dialog);
@@ -420,7 +421,7 @@ public class DialogServiceTests
         _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
             InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "The user's policy denies KeePass.", target));
 
-        await CreateSut(windowService.Object).RespondAsync(new DialogResponseRequest(0, "ok", Timeout: TimeSpan.FromSeconds(1)));
+        await CreateSut(windowService.Object).RespondAsync(new DialogResponseRequest(Dialog, "ok", Timeout: TimeSpan.FromSeconds(1)));
 
         windowService.Verify(w => w.GetWindowInfo(Dialog), Times.Once);
     }
@@ -451,6 +452,82 @@ public class DialogServiceTests
 
         result.ErrorCode.Should().Be("InvalidArguments");
         _search.VerifyNoOtherCalls();
+    }
+
+    #endregion
+
+    #region Only the dialog that was read is answered
+
+    [Theory]
+    [InlineData("no")]
+    [InlineData("yes")]
+    [InlineData("ok")]
+    [InlineData("2")]
+    [InlineData("Abbrechen")]
+    public async Task Respond_PressingAButton_WithoutNamingTheDialog_IsInvalidArguments_AndNothingIsReadOrPressed(string button)
+    {
+        // The dialog in front may not be the one the agent read: a prompt that came up meanwhile would be answered blind
+        var result = await RespondAsync(button, window: 0);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("Read the dialog first").And.Contain("dialogHandle").And.Contain("Nothing was read or pressed");
+        _search.VerifyNoOtherCalls();
+        _acted.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData(" Cancel ")]
+    public async Task Respond_Cancel_MayBePressedInTheDialogInFront_Unnamed(string button)
+    {
+        var result = await RespondAsync(button, window: 0);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Invoked!.Standard.Should().Be("cancel");
+        _acted.Should().ContainSingle().Which.Ref.Should().Be("w1e3");
+    }
+
+    [Fact]
+    public async Task Respond_ToANamedDialog_ThatAModalDialogNowDisables_IsBlockedByModal_NamingIt_AndPressesNothing()
+    {
+        // The agent read the dialog; since then it opened a prompt of its own, which has a Yes button too
+        _shown[Prompt] = ("#32770", WsCaption, Dialog, "Ersetzen bestätigen");
+        _popupsOf[Dialog] = [Popup(Prompt, PopupKind.Dialog, Dialog, blocking: true, title: "Ersetzen bestätigen")];
+
+        var result = await RespondAsync("yes");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(InputErrorCode.BlockedByModal));
+        result.Error.Should().Contain($"{(long)Prompt}").And.Contain("'Ersetzen bestätigen'").And.Contain("Nothing was pressed");
+        _search.VerifyNoOtherCalls();
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_ToANamedDialogThatAModalDialogDisables_ReadsThatModalDialog()
+    {
+        _shown[Prompt] = ("#32770", WsCaption, Dialog, "Ersetzen bestätigen");
+        _popupsOf[Dialog] = [Popup(Prompt, PopupKind.Dialog, Dialog, blocking: true)];
+
+        var result = await RespondAsync(null);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Prompt);
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_ToANamedAppWindow_PressesInTheModalDialogThatDisablesIt()
+    {
+        // The app window is no dialog: naming it means its modal dialog, down to the front one of the chain
+        _popupsOf[App] = [Popup(Dialog, PopupKind.Dialog, App, blocking: true)];
+
+        var result = await RespondAsync("no", App);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Dialog);
+        _acted.Should().ContainSingle().Which.Ref.Should().Be("w1e2");
     }
 
     #endregion

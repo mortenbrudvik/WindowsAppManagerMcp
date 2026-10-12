@@ -90,6 +90,17 @@ public sealed class FileDialogService : IFileDialogService
     {
         ArgumentNullException.ThrowIfNull(request);
         var call = new FileDialogCall(request, Stopwatch.StartNew());
+        if (request.Window == nint.Zero)
+        {
+            // The file dialog in front may be another application's, which would then open the path or save its own
+            // document under it: as respond_to_dialog presses only in a dialog named, the file dialog must be named
+            return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "file_dialog needs the file dialog named: handle (the openedPopup of the menu item or button that opened it, or " +
+                "a handle from wait_for_window or get_active_popups) or window (the application's window, whose modal file " +
+                "dialog is completed). The file dialog in front is not taken unnamed: it may be another application's. Nothing " +
+                "was done.");
+        }
+
         var path = FileDialogPaths.Check(request.Path, request.Action, request.Overwrite);
         if (path.FullPath is not { } fullPath)
         {

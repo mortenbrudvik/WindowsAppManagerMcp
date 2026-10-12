@@ -17,8 +17,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// deny list, host guard, a modal in front, audit). The path is checked first (<see cref="Services.FileDialogPaths"/>); for
 /// save, an existing file without overwrite is refused before anything is typed. A prompt the press opens is checked as a
 /// target before it is read. Another prompt (an invalid name, a missing file, a create question, a Yes/No question while
-/// no file is at the path) is not answered: the result names it, to answer with respond_to_dialog. The file dialog is
-/// found as respond_to_dialog finds a dialog (<see cref="IDialogService.Locate"/>), and must have a file name box.
+/// no file is at the path) is not answered: the result names it, to answer with respond_to_dialog. The file dialog must be
+/// named (it, or the window whose modal file dialog it is): the file dialog in front may be another application's, so an
+/// unnamed one is refused (InvalidArguments). It is found as respond_to_dialog finds a dialog
+/// (<see cref="IDialogService.Locate"/>), and must have a file name box.
 /// </remarks>
 public interface IFileDialogService
 {

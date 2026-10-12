@@ -114,7 +114,7 @@ public sealed class FileDialogServiceTests : IDisposable
 
     private Task<FileDialogResult> CompleteAsync(string path, FileDialogAction action = FileDialogAction.Save, bool overwrite = false,
         TimeSpan? timeout = null) =>
-        CreateSut().CompleteAsync(new FileDialogRequest(0, path, action, overwrite, Timeout: timeout ?? TimeSpan.FromSeconds(5)));
+        CreateSut().CompleteAsync(new FileDialogRequest(Dialog, path, action, overwrite, Timeout: timeout ?? TimeSpan.FromSeconds(5)));
 
     /// <summary>The press waits for the replace prompt it opened (a Win32 button's Invoke); the file may appear meanwhile.</summary>
     private void PressOpensThePrompt(bool fileAppears = false) => _press = request =>
@@ -213,7 +213,7 @@ public sealed class FileDialogServiceTests : IDisposable
         _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
             InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied.", target));
 
-        await CreateSut(windowService.Object).CompleteAsync(new FileDialogRequest(0, NewFile, FileDialogAction.Save, Timeout: TimeSpan.FromSeconds(5)));
+        await CreateSut(windowService.Object).CompleteAsync(new FileDialogRequest(Dialog, NewFile, FileDialogAction.Save, Timeout: TimeSpan.FromSeconds(5)));
 
         windowService.Verify(w => w.GetWindowInfo(Dialog), Times.Once);
     }
@@ -407,6 +407,31 @@ public sealed class FileDialogServiceTests : IDisposable
 
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.PausedByUser));
         _dialogs.Verify(d => d.Locate(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(FileDialogAction.Save)]
+    [InlineData(FileDialogAction.Open)]
+    public async Task WithoutNamingTheDialog_IsInvalidArguments_AndNothingIsLocatedOrTyped(FileDialogAction action)
+    {
+        // The file dialog in front may be another application's, which would then save its document under the path
+        File.WriteAllText(NewFile, "x");
+
+        var result = await CreateSut().CompleteAsync(new FileDialogRequest(0, NewFile, action, Overwrite: true, Timeout: TimeSpan.FromSeconds(5)));
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidArguments");
+        result.Error.Should().Contain("handle").And.Contain("window").And.Contain("Nothing was done");
+        _dialogs.Verify(d => d.Locate(It.IsAny<nint>()), Times.Never);
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TheWindowNamed_IsWhereTheFileDialogIsLocated()
+    {
+        await CompleteAsync(NewFile);
+
+        _dialogs.Verify(d => d.Locate(Dialog), Times.Once);
     }
 
     [Fact]

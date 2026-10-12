@@ -33,7 +33,7 @@ public class DialogToolsTests
         (await FluentActions.Awaiting(call).Should().ThrowAsync<ToolErrorException>()).Which;
 
     [Fact]
-    public async Task RespondToDialog_WithoutAWindow_AnswersTheDialogInFront()
+    public async Task RespondToDialog_WithoutAWindow_NamesTheDialogInFront_WhichTheServiceOnlyReadsOrCancels()
     {
         await CreateSut().RespondToDialog("yes");
 

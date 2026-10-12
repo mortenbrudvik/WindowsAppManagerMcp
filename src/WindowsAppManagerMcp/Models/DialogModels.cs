@@ -38,7 +38,8 @@ public sealed record DialogContent(
     bool? ButtonsTruncated = null);
 
 /// <summary>What respond_to_dialog is asked to do (roadmap M3.5).</summary>
-/// <param name="Window">The dialog, or the window whose dialog to answer; zero for the dialog in front.</param>
+/// <param name="Window">The dialog, or the window whose dialog to answer; zero for the dialog in front, which is only read
+/// (or answered cancel): a press in a dialog the agent did not name is refused.</param>
 /// <param name="Button">The button: a standard name (ok, cancel, yes, no, ...), a control id ("6"), an AutomationId or the
 /// visible text; null to only read the dialog (nothing is pressed).</param>
 /// <param name="AllowHostTarget">Lifts the host guard for the dialog (the tool allows it only for a window named by handle).</param>
@@ -86,7 +87,7 @@ public enum FileDialogAction
 }
 
 /// <summary>What file_dialog is asked to do (roadmap M3.14).</summary>
-/// <param name="Window">The file dialog, or the window whose file dialog to complete; zero for the dialog in front.</param>
+/// <param name="Window">The file dialog, or the window whose file dialog to complete. Zero (the dialog in front) is refused.</param>
 /// <param name="Path">The full path, already checked (<see cref="Services.FileDialogPaths.Check"/>).</param>
 /// <param name="Overwrite">Save: replace an existing file, answering the application's replace prompt with Yes.</param>
 /// <param name="Timeout">How long the whole call may take, the wait for the dialog to close included.</param>
