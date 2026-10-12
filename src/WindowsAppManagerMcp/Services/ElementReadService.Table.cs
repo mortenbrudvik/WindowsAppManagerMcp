@@ -312,7 +312,11 @@ public sealed partial class ElementReadService
         return null;
     }
 
-    /// <summary>The children of a row or header, read in one cached call when there are few, else the first ones one by one.</summary>
+    /// <summary>
+    /// The cells of a row or header: its children, read in one cached call when there are few, else the first ones one by one,
+    /// but for nested tree items. An expanded tree item's child items are rows of their own, not its cells (a treegrid row's
+    /// cells are DataItems, which stay).
+    /// </summary>
     private IReadOnlyList<UiaElement> CellsOf(UiaElement row, CancellationToken token)
     {
         var children = TryRead(() => _tree.GetChildren(row.Node, token)) ?? [];
@@ -321,15 +325,12 @@ public sealed partial class ElementReadService
             return [];
         }
 
-        if (children.Count <= CachedCellsLimit && TryRead(() => _tree.GetChildElements(row.Node, token)) is { } cached)
-        {
-            return cached;
-        }
-
-        return children.Take(MaxColumnsLimit)
-            .Select(child => TryRead(() => _tree.ReadElement(child)))
-            .OfType<UiaElement>()
-            .ToList();
+        var cells = children.Count <= CachedCellsLimit && TryRead(() => _tree.GetChildElements(row.Node, token)) is { } cached
+            ? cached
+            : children.Take(MaxColumnsLimit).Select(child => TryRead(() => _tree.ReadElement(child))).OfType<UiaElement>().ToList();
+        return cells.Any(cell => cell.Properties.ControlType == "TreeItem")
+            ? cells.Where(cell => cell.Properties.ControlType != "TreeItem").ToList()
+            : cells;
     }
 
     /// <summary>

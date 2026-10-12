@@ -479,6 +479,42 @@ public class ElementReadServiceTableTests
     }
 
     [Fact]
+    public async Task ReadTable_OfATree_TakesAnExpandedItemsChildItemsAsNoCells()
+    {
+        // Arrange - Explorer's navigation pane: an expanded tree item's children are tree items of their own
+        var tree = new FakeUiaNode("Tree", "Navigation").With(
+            new FakeUiaNode("TreeItem", "This PC").With(new FakeUiaNode("TreeItem", "Desktop"), new FakeUiaNode("TreeItem", "Documents")),
+            new FakeUiaNode("TreeItem", "Network"));
+        var elementRef = Add(tree);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().HaveCount(2);
+        result.Rows![0].Should().Equal("This PC");
+        result.Rows[1].Should().Equal("Network");
+        result.TotalColumns.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfATreeGridRow_KeepsItsDataItemCells_AndLeavesItsNestedRowOut()
+    {
+        // Arrange - a web treegrid's row: a TreeItem whose cells are DataItems, here with a nested row under it
+        var tree = new FakeUiaNode("Tree", "Files").With(
+            new FakeUiaNode("TreeItem", "src").With(
+                new FakeUiaNode("DataItem", "a"), new FakeUiaNode("DataItem", "b"), new FakeUiaNode("TreeItem", "nested")));
+        var elementRef = Add(tree);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().ContainSingle().Which.Should().Equal("a", "b");
+        result.TotalColumns.Should().Be(2);
+    }
+
+    [Fact]
     public async Task ReadTable_OfAnEmptyList_ReturnsNoRows()
     {
         var elementRef = Add(new FakeUiaNode("List", "Empty"));
