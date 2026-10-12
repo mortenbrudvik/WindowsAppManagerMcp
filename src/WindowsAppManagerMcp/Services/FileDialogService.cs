@@ -280,13 +280,51 @@ public sealed class FileDialogService : IFileDialogService
         _popups.GetPopups(dialog).FirstOrDefault(p => p.Kind == PopupKind.Dialog && !before.Contains(p.Handle))?.Handle ?? nint.Zero;
 
     /// <summary>
-    /// The replace prompt: a dialog with the standard Yes and No buttons (by id, so in every language) while the file the
-    /// path names exists. Another Yes/No question (a folder the user may not write to: save elsewhere?) is not taken for it:
-    /// it is handed back, neither answered Yes with overwrite nor reported as FileExists.
+    /// The replace prompt: a dialog with the standard Yes and No buttons (by id, so in every language), while the file the
+    /// path names exists, whose text names that file (<see cref="NamesFile"/>: "report.txt already exists", in any
+    /// language). Another Yes/No question (a folder the user may not write to: save in Documents instead?, or an
+    /// application's own question) does not name the file, so it is not taken for it: it is handed back, neither answered
+    /// Yes with overwrite nor reported as FileExists.
     /// </summary>
     private static bool IsReplacePrompt(DialogContent content, string? path) =>
         path != null && File.Exists(path) &&
-        content.Buttons.Any(b => b.Standard == "yes") && content.Buttons.Any(b => b.Standard == "no");
+        content.Buttons.Any(b => b.Standard == "yes") && content.Buttons.Any(b => b.Standard == "no") &&
+        NamesFile(content.Text, path);
+
+    /// <summary>
+    /// Whether the text names the file: its name, or its name without the extension (Explorer hides known extensions), as a
+    /// whole name (not part of a longer one such as "myreport.txt"), ignoring case. A file name is the same in every
+    /// language, unlike the prompt's words, which are never read.
+    /// </summary>
+    private static bool NamesFile(IReadOnlyList<string> text, string path)
+    {
+        var name = Path.GetFileName(path);
+        var stem = Path.GetFileNameWithoutExtension(path);
+        return text.Any(line => HasWholeName(line, name) || (stem.Length > 0 && HasWholeName(line, stem)));
+    }
+
+    private static bool HasWholeName(string text, string name)
+    {
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        for (var at = text.IndexOf(name, StringComparison.OrdinalIgnoreCase); at >= 0;
+             at = text.IndexOf(name, at + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            var end = at + name.Length;
+            if ((at == 0 || !IsNameCharacter(text[at - 1])) && (end == text.Length || !IsNameCharacter(text[end])))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>A character that continues a file name next to it: a letter, a digit, '_' or '-'.</summary>
+    private static bool IsNameCharacter(char c) => char.IsLetterOrDigit(c) || c is '_' or '-';
 
     /// <summary>
     /// The ref of the file name box, found by the control ids that mark a file dialog, so the path is never typed into

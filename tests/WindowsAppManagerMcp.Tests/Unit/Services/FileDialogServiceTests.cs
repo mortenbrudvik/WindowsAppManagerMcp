@@ -101,6 +101,9 @@ public sealed class FileDialogServiceTests : IDisposable
     private static DialogContent PromptContent(params DialogButton[] buttons) =>
         new((long)Prompt, "Speichern unter bestätigen", "#32770", ["report.txt ist bereits vorhanden. Möchten Sie sie ersetzen?"], buttons);
 
+    /// <summary>A Yes/No prompt with <paramref name="text"/>, as the dialog's Text elements read.</summary>
+    private static DialogContent YesNoPrompt(params string[] text) => new((long)Prompt, "Speichern unter bestätigen", "#32770", text, [Yes, No]);
+
     private static readonly DialogButton Yes = new("w3e1", "Ja", "CommandButton_6", "yes", true);
     private static readonly DialogButton No = new("w3e2", "Nein", "CommandButton_7", "no", true);
 
@@ -282,6 +285,45 @@ public sealed class FileDialogServiceTests : IDisposable
         result.Prompt.Should().Be(_promptContent);
         result.PromptHandled.Should().BeFalse();
         _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("You don't have permission to save in this location. Contact the administrator to obtain permission.",
+        "Would you like to save in the Documents folder instead?")]
+    [InlineData("myreport.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    [InlineData("report2.txt ist bereits vorhanden.", "Möchten Sie sie ersetzen?")]
+    public async Task AYesNoPrompt_ThatDoesNotNameTheFile_IsNoReplacePrompt_EvenWithOverwrite(string first, string second)
+    {
+        // The file exists, but the question is another one (or about another file): Yes would answer it blind
+        var file = ExistingFile();
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(first, second);
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Prompt.Should().Be(_promptContent);
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("report.txt ist bereits vorhanden.")]
+    [InlineData("REPORT.TXT already exists.")]
+    [InlineData("report already exists.")] // Explorer hides the known extension
+    [InlineData("report.txtは既に存在します。")]
+    [InlineData("«report.txt» existe déjà.")]
+    [InlineData("{folder}\\report.txt already exists.\nDo you want to replace it?")] // the old-style dialog shows the full path
+    public async Task Save_WithOverwrite_AnswersAYesNoPromptThatNamesTheFile_InAnyLanguage(string text)
+    {
+        var file = ExistingFile();
+        PressOpensThePrompt();
+        _promptContent = YesNoPrompt(text.Replace("{folder}", _folder, StringComparison.Ordinal));
+
+        var result = await CompleteAsync(file, overwrite: true);
+
+        result.PromptHandled.Should().BeTrue(result.Error);
+        _answers.Should().ContainSingle().Which.Button.Should().Be("yes");
     }
 
     [Fact]
