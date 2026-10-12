@@ -276,7 +276,7 @@ public class ElementRegistryTests
         _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(0u);
         var noProcess = sut.Lookup(save!);
         _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(100u);
-        _windows.Setup(w => w.GetClassName(Handle)).Returns((string?)null);
+        _windows.Setup(w => w.GetClassName(Handle)).Returns(string.Empty);
         var noClass = sut.Lookup(save!);
         sut.NextGeneration();
 
