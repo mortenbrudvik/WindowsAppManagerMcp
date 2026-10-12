@@ -95,6 +95,8 @@ public static class ServiceRegistration
             sp.GetRequiredService<IUiaWorker>(), sp.GetRequiredService<IElementRegistry>()));
         // read_element_text and read_table (roadmap M3.9): text and tables through the patterns, by ref or find's criteria
         services.AddSingleton<IElementReadService, ElementReadService>();
+        // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above
+        services.AddSingleton<IElementWaitService, ElementWaitService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -187,6 +189,7 @@ public static class ServiceRegistration
         services.AddSingleton<UIElementTools>();
         services.AddSingleton<PopupTools>();
         services.AddSingleton<ElementReadTools>();
+        services.AddSingleton<ElementWaitTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -258,6 +261,7 @@ public static class ServiceRegistration
             .WithServerTools<UIElementTools>()
             .WithServerTools<PopupTools>()
             .WithServerTools<ElementReadTools>()
+            .WithServerTools<ElementWaitTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

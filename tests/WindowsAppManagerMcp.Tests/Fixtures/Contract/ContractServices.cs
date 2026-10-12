@@ -70,6 +70,7 @@ public sealed class ContractServices : IDisposable
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
     public Mock<IWindowWaitService> WindowWait { get; } = new();
+    public Mock<IElementWaitService> ElementWait { get; } = new();
     public Mock<ILaunchPlacementService> Placement { get; } = new();
     public InputSession Session { get; }
     public IScreenshotService Screenshots { get; private set; } = null!;
@@ -111,6 +112,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Windows.Object);
         services.AddSingleton(CloseVerifier.Object);
         services.AddSingleton(WindowWait.Object);
+        services.AddSingleton(ElementWait.Object);
         services.AddSingleton(Placement.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
@@ -348,6 +350,10 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync(TypicalDesktop.MessageText);
         ElementReads.Setup(r => r.ReadTableAsync(It.IsAny<ElementTableRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(TypicalDesktop.ProcessTable);
+        // wait_for_element (roadmap M3.8): the Save button enabled after 3 checks
+        ElementWait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WaitForElementResult(true, true, false, ElapsedMs: 480, Polls: 3, WindowHandle: TypicalDesktop.NotepadHandle,
+                Element: TypicalDesktop.FoundButtons[0], MatchCount: 1));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -505,6 +511,11 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((ElementTableRequest request, CancellationToken _) => new ElementTableResult(
                 false, request.Ref, 0, null, null, null, request.StartRow, null, null, false, 0.5, Error: stale,
                 ErrorCode: UIElementErrorCode.ElementStale));
+        ElementWait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WaitForElementResult(false, false, true, ElapsedMs: 10_000, Polls: 24, WindowHandle: TypicalDesktop.NotepadHandle,
+                Element: TypicalDesktop.FoundButtons[0] with { IsEnabled = false }, MatchCount: 1,
+                LastObservedState: "Button 'Save' (w4120035e9) is disabled", ErrorCode: "WaitTimedOut",
+                Error: "No element matching name 'Save' became enabled within 10000 ms (24 checks): Button 'Save' (w4120035e9) is disabled."));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

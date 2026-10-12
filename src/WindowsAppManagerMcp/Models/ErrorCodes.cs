@@ -139,7 +139,8 @@ public enum WindowErrorCode
 
     /// <summary>
     /// wait_for_window (roadmap M3.7): the condition was not met within timeoutMs. The result still says what was last
-    /// seen (satisfied false, timedOut true, the window as last seen).
+    /// seen (satisfied false, timedOut true, the window as last seen). wait_for_element (roadmap M3.8) reports it too, with
+    /// the element as last seen and lastObservedState.
     /// </summary>
     WaitTimedOut = 37
 }

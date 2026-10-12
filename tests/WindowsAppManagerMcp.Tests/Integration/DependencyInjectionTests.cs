@@ -117,6 +117,15 @@ public class DependencyInjectionTests : IDisposable
             .Equal(typeof(IUiaTree), typeof(IUiaWorker), typeof(INativeWindowWrapper));
     }
 
+    [Fact]
+    public void TheElementWait_IsASingleton()
+    {
+        // wait_for_element (roadmap M3.8); resolving it starts no UI Automation client
+        var wait = _serviceProvider.GetRequiredService<IElementWaitService>();
+
+        wait.Should().BeOfType<ElementWaitService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementWaitService>());
+    }
+
     #endregion
 
     #region T7.3.2: INativeWindowWrapper Singleton

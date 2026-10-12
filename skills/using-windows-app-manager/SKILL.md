@@ -23,7 +23,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 59 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 60 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -72,15 +72,16 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 
 ### 4. Wait
 
-There is no sleep tool, and you do not need one. Wait on the server with `wait_for_window` instead of guessing a delay or calling `find_windows` again and again; `launch_application` with `waitForWindow: true` already waits for a launch's window (`waitTimeoutMs`).
+There is no sleep tool, and you do not need one. Wait on the server with `wait_for_window` (windows) or `wait_for_element` (controls) instead of guessing a delay or calling `find_windows` or `find_ui_elements` again and again; `launch_application` with `waitForWindow: true` already waits for a launch's window (`waitTimeoutMs`).
 
 - **A dialog or window your action opens:** before the action, read the matching windows (`find_windows`), then call `wait_for_window` with the selector and their handles as `excludeHandles`, so the window that was already there does not count and a dialog that opened before the wait started still does (`newOnly` would miss it). An untitled dialog needs `className` (`#32770`) or `includeUntitled`.
 - **A window that should close:** `condition: "gone"` (after `close_window` reports `stillOpen`, or after a button that closes a dialog). A `warning` means the selector matched nothing to begin with: check it.
 - **A window that should come to the front or on screen:** `condition: "foreground"` or `"visible"`.
 - **A save or navigation:** `condition: "title_changed"` with the window's `handle` and the title you read before acting as `previousTitle`, or `exists` with `{"handle": ..., "titleContains": "report.txt"}` for a title you know.
-- **Right after a launch:** `condition: "input_idle"` is best effort (Windows reports it once per process, never for console programs); read the controls with `get_ui_elements` before you type.
+- **Right after a launch:** `condition: "input_idle"` is best effort (Windows reports it once per process, never for console programs); wait for the control you need with `wait_for_element` before you type.
+- **A control inside a window:** `wait_for_element` with the window and find_ui_elements' criteria (it waits for the window first, so it covers a window that is still opening), or with a `ref` you already have. `condition`: `exists` (default), `gone` (a spinner or "Loading" text), `enabled` (a button that waits for validation), `visible`, `focused`, `name_equals` / `value_equals` with the exact `expected` text (a status label, a field's value after `type_text`; a password field's value is never read, so check it another way), `toggle_state` with `expected` `on`/`off`. The result's `element` has the `ref` and `clickPoint` to act on next. `ElementStale` or `AmbiguousElement` from a `ref`: find the element again; never act on a look-alike.
 
-The condition must hold for `stableMs` (300 by default, which skips splash screens). A result with `satisfied: true` and no `window` means several windows match: pick one from `candidates` by handle. A timeout is an error (`WaitTimedOut`, with `timedOut: true` and the window as last seen): do not go on as if the window were there; look at what is on screen, wait again, or ask the user. For changes inside a window (a control appearing, a field's value), re-read with `get_ui_elements` or `get_focused_element`.
+The condition must hold for `stableMs` (300 by default, which skips splash screens). A result with `satisfied: true` and no `window` means several windows match: pick one from `candidates` by handle. A timeout is an error (`WaitTimedOut`, with `timedOut: true` and the window as last seen, or for `wait_for_element` the element as last seen and `lastObservedState`): do not go on as if the window or control were there; look at what is on screen, wait again, or ask the user.
 
 ### 5. Verify
 
@@ -122,7 +123,7 @@ The condition must hold for `stableMs` (300 by default, which skips splash scree
 
 - `PromptShown`: a close reached the window, but the app shows a prompt (`prompt`: title, text, buttons); nothing was answered. Ask the user which button to press, then answer it (an `inWindowDialog` is inside the window: use `get_ui_elements` on its handle).
 - `StillOpen`: the window did not close within the wait and shows no prompt: check it, wait longer (`wait_for_window` with `condition: "gone"`), or ask the user before `kill_process`.
-- `WaitTimedOut`: `wait_for_window`'s condition did not hold within `timeoutMs`; `window` is what was last seen (still open, not in front, old title). Look at the screen before you wait again; never act as if the window were there.
+- `WaitTimedOut`: `wait_for_window`'s or `wait_for_element`'s condition did not hold within `timeoutMs`; `window` (or `element` and `lastObservedState`) is what was last seen (still open, not in front, old title, still disabled). Look at the screen before you wait again; never act as if the window or control were there.
 - `notSent` (a batch item's or `close_application` window's `status`): that window got no close message; its `errorCode` says why (`ProtectedWindow`, `TargetDeniedByPolicy`, `AccessDenied`, `HandleMismatch`, ...). The other windows were still closed.
 - `close_application` closes only the windows on the current virtual desktop: `otherDesktopWindows` lists the app's windows on other desktops, which stay open, so `status: "closed"` does not mean the app has ended; `exited` and `runningProcessIds` say whether its processes did.
 
@@ -200,7 +201,7 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (59)
+## Available Tools (60)
 
 ### Window Discovery (6 tools)
 
@@ -257,7 +258,7 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` (with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`.
 
-### UI Automation (7 tools)
+### UI Automation (8 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -268,6 +269,7 @@ All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG)
 | `get_active_popups` | Open menus, dropdowns, flyouts and dialogs of an app, with refs | window (or handle), timeoutMs |
 | `read_element_text` | An element's text a page at a time (document, value or name); never a password | ref, window (with criteria), offset, maxLength |
 | `read_table` | A table's or list's headers and cells a page of rows at a time | ref, startRow, maxRows, maxColumns |
+| `wait_for_element` | Wait until an element exists, is gone, enabled, visible, focused, or has a name, value or toggle state | window, ref, name, automationId, controlType, condition, expected, timeoutMs |
 
 ### Browser Reading (4 tools)
 

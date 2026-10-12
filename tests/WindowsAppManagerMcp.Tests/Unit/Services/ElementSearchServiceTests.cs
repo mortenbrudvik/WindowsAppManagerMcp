@@ -574,5 +574,22 @@ public class ElementSearchServiceTests
         warmup.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task Find_WithWarmUpOff_SearchesWithoutWarmingUp()
+    {
+        // Arrange - wait_for_element's checks after its first one (roadmap M3.8)
+        BuildEditor();
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object, warmup.Object);
+
+        // Act
+        var result = await sut.FindAsync(Query(name: "Save") with { WarmUp = false });
+
+        // Assert
+        result.MatchCount.Should().Be(1);
+        result.AccessibilityWarmup.Should().BeNull();
+        warmup.VerifyNoOtherCalls();
+    }
+
     #endregion
 }

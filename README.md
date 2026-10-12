@@ -96,7 +96,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (59)
+## Available Tools (60)
 
 | Category | Tools |
 |----------|-------|
@@ -105,7 +105,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
-| UI Automation | `get_ui_elements`, `find_ui_elements`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table` |
+| UI Automation | `get_ui_elements`, `find_ui_elements`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |

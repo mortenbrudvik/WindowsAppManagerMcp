@@ -343,14 +343,14 @@ public sealed class FakeUiaNode : IUiaNode
     }
 
     public string ControlType { get; init; }
-    public string? Name { get; init; }
+    public string? Name { get; set; }
     public string? AutomationId { get; init; }
     public UiaRect Bounds { get; init; } = new(0, 0, 100, 30);
-    public bool IsEnabled { get; init; } = true;
-    public bool IsOffscreen { get; init; }
+    public bool IsEnabled { get; set; } = true;
+    public bool IsOffscreen { get; set; }
 
     public bool IsKeyboardFocusable { get; init; }
-    public bool HasKeyboardFocus { get; init; }
+    public bool HasKeyboardFocus { get; set; }
     public IReadOnlyList<string> ActionPatterns { get; init; } = [];
 
     public string? ClassName { get; init; }
@@ -358,7 +358,7 @@ public sealed class FakeUiaNode : IUiaNode
     public int ProcessId { get; init; }
     public nint NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
-    public string? Value { get; init; }
+    public string? Value { get; set; }
 
     /// <summary>The Window pattern's IsModal, or null when the node has no Window pattern.</summary>
     public bool? IsModal { get; init; }

@@ -254,7 +254,7 @@ public sealed class ElementSearchService : IElementSearchService
 
                 // A window with web content builds its page's tree only once asked: ask, and wait for it a moment, so the
                 // search does not miss the page's elements
-                started.Warmup = _warmup?.WarmUp(handle, warmupBudget, token);
+                started.Warmup = query.WarmUp ? _warmup?.WarmUp(handle, warmupBudget, token) : null;
                 started.Title = TryReadName(window);
             }
 
@@ -630,7 +630,9 @@ public sealed class ElementSearchService : IElementSearchService
         return found;
     }
 
-    private static FoundElement Minimal(UiaElement match, string? elementRef)
+    /// <summary>A match as detail minimal reports it, from what the search read (no further call); the click point is the
+    /// centre of its bounds. Shared with wait_for_element (roadmap M3.8).</summary>
+    internal static FoundElement Minimal(UiaElement match, string? elementRef)
     {
         var properties = match.Properties;
         var bounds = properties.Bounds.ToBounds();

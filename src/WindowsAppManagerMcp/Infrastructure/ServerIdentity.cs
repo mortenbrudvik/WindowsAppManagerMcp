@@ -21,7 +21,7 @@ public static class ServerIdentity
         "- Activate and verify: focus_window brings a window to the front and reports what is in front; check it before you type.",
         "- Act: pass the target window as windowHandle (or a window selector) to every input tool (click, right_click, double_click, mouse_move, scroll, type_text, send_keys). Click at a clickPoint or element bounds, not at points read off an image. Close windows with close_window, not with key chords.",
         "- Verify: read every result (success, errorCode, receivingWindow, foregroundAfter, bounds) and check the new state with a read tool or a capture before the next step.",
-        "- Wait by checking, not sleeping: wait_for_window waits for a window to appear, close, come to the front or change its title; otherwise re-read the state.",
+        "- Wait, not sleeping: wait_for_window (a window opens, closes, comes to the front, is retitled), wait_for_element (a control appears, goes, enables, changes).",
         "Coordinates are physical virtual-screen pixels; monitors left of or above the primary one have negative coordinates. Capture images are usually scaled: send an image point with the capture's captureId (the server converts it), or map it with imageToScreen, never with scaleFactor.",
         "Error codes that mean stop or change course:",
         "- PausedByUser: the user paused input with the pause hotkey. Stop and tell the user; never resume input yourself. Call resume_input only when the user asks, and it asks them to confirm.",

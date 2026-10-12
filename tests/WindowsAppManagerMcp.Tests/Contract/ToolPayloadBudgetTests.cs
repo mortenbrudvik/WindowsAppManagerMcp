@@ -81,6 +81,7 @@ public class ToolPayloadBudgetTests
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
         ["get_active_popups"] = 300, // a context menu and a Save As dialog with refs (roadmap M3.5)
+        ["wait_for_element"] = 140, // 92: the Save button that became enabled, with its ref (roadmap M3.8)
 
         // Browser Reading
         ["get_browser_url"] = 100, // 56
