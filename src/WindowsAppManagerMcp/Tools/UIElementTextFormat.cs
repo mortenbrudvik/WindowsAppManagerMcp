@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using WindowsAppManagerMcp.Models;
 
@@ -9,8 +10,8 @@ namespace WindowsAppManagerMcp.Tools;
 /// </summary>
 /// <remarks>
 /// <para>A text line is: the element's ref (roadmap M3.4) when it has one; the control type; the name in single quotes (a
-/// quote or backslash inside is escaped with a backslash, control characters become spaces, and a name longer than
-/// <see cref="MaxNameLength"/> characters is cut with an ellipsis), left out when the element has none; <c>aid=</c> and the
+/// quote or backslash inside is escaped with a backslash, control characters and line or paragraph separators become
+/// spaces, and a name longer than <see cref="MaxNameLength"/> characters is cut with an ellipsis), left out when the element has none; <c>aid=</c> and the
 /// automation id (quoted the same way when it holds a space, a quote, a backslash, '@', '[' or ']', so it cannot be read as
 /// another token), when it has one; <c>fw=</c> and the UI framework where it changes (<see cref="UIElementInfo.FrameworkId"/>,
 /// roadmap M3.3), quoted the same way; <c>@x,y wxh</c>, the bounds in physical screen pixels, when it has any; then the
@@ -116,9 +117,17 @@ public static class UIElementTextFormat
 
     // '@' and '[' start the bounds and flag tokens of a line, so an id holding them is quoted too
     private static bool NeedsQuotes(string value) =>
-        value.Any(c => char.IsWhiteSpace(c) || c is '\'' or '\\' or '@' or '[' or ']' || char.IsControl(c));
+        value.Any(c => char.IsWhiteSpace(c) || c is '\'' or '\\' or '@' or '[' or ']' || BreaksTheLine(c));
 
-    private static string Quote(string value, int maxLength)
+    /// <summary>A control character, or a line or paragraph separator, which many viewers show as a new line.</summary>
+    private static bool BreaksTheLine(char c) =>
+        char.IsControl(c) || char.GetUnicodeCategory(c) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
+
+    /// <summary>
+    /// The value in single quotes, as a name is written: a quote or backslash escaped, a character that could break the line
+    /// a space, and cut at <paramref name="maxLength"/> characters with an ellipsis. get_desktop_state's header lines use it too.
+    /// </summary>
+    internal static string Quote(string value, int maxLength = MaxNameLength)
     {
         var cut = value.Length > maxLength ? value[..maxLength] : value;
         var quoted = new StringBuilder("'", cut.Length + 3);
@@ -128,7 +137,7 @@ public static class UIElementTextFormat
             {
                 '\'' => "\\'",
                 '\\' => "\\\\",
-                _ when char.IsControl(c) => " ",
+                _ when BreaksTheLine(c) => " ",
                 _ => c.ToString()
             });
         }

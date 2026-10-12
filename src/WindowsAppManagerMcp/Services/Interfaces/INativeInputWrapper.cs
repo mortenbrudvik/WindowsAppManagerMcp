@@ -33,7 +33,9 @@ public interface INativeInputWrapper
 
     /// <summary>
     /// Whether a toggle key (Caps Lock, Num Lock, Scroll Lock) is on: the low bit of GetKeyState, as Windows reports it to
-    /// the calling thread. Null when it cannot be read. Only reads (get_desktop_state reports Caps Lock with it).
+    /// the calling thread (not yet verified on a real desktop from a thread-pool thread, which has no message queue). Null
+    /// means unknown; the native wrapper always returns the bit, so only a fake returns null. Only reads (get_desktop_state
+    /// reports Caps Lock with it).
     /// </summary>
     bool? IsKeyToggled(ushort virtualKey);
 }

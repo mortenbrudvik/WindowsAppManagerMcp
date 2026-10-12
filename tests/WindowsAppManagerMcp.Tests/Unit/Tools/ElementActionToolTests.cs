@@ -303,6 +303,27 @@ public class ElementActionToolTests
         payload.Observed.Should().NotBeNull("what is there helps after ElementNotFound");
     }
 
+    [Theory]
+    [InlineData(nameof(InputErrorCode.TargetDeniedByPolicy))]
+    [InlineData(nameof(InputErrorCode.TargetIsAgentHost))]
+    public async Task AnActionRefusedForItsWindow_DoesNotObserveThatWindowByName(string refusal)
+    {
+        // The agent asked for an action, not a read of a denied app or its own terminal: the default rules apply
+        _actions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementActionResult(false, "invoke", "w1e7", Handle, Error: "Refused.", ErrorCode: refusal));
+        var sut = CreateObservingSut();
+        DesktopStateRequest? observed = null;
+        _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DesktopStateRequest request, CancellationToken _) => observed = request)
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, 0, null, null, null, null, new DesktopInputState(false),
+                null, null, null, null, null, null, 9), null));
+
+        var result = await sut.ElementAction(ElementActionKind.Invoke, @ref: "w1e7", observe: ObserveMode.State);
+
+        result.IsError.Should().BeTrue();
+        observed!.Window.Should().BeNull("the window the action was refused for is not read by name");
+    }
+
     [Fact]
     public async Task ObserveScreenshot_IsRefusedBeforeAnythingIsDone_WhenCapturesAreOff()
     {

@@ -21,8 +21,11 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para><b>What is not read.</b> When no window is named, the window in front is read, unless it is the agent's own host
 /// window (TargetIsAgentHost: the agent's terminal holds the conversation, not the app it means) or one the user's target
 /// policy denies (TargetDeniedByPolicy): a sweep the agent did not aim reads neither, as find_ui_elements' desktop scope.
-/// A named window is read as get_ui_elements reads it. The capture follows capture_window: never of a denied window, and only
-/// while capture_window is served (<see cref="ScreenshotUnavailable"/>).</para>
+/// A named window is read as get_ui_elements reads it. The focused element follows the same rule for the window that holds
+/// it (the window in front when the read does not say): it is left out, with a focus error, when that window was not named
+/// and is the host or denied, or cannot be read to be checked. The capture follows capture_window: never of a denied window
+/// (nor of one that cannot be read to be checked), and only while capture_window is served
+/// (<see cref="ScreenshotUnavailable"/>).</para>
 /// </remarks>
 public interface IDesktopStateService
 {

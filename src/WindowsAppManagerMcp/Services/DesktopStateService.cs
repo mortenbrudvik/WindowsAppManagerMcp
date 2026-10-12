@@ -99,13 +99,13 @@ public sealed class DesktopStateService : IDesktopStateService
         // The cheap parts: Win32 reads that no window's thread answers
         var foreground = Read(_windows.GetForegroundWindow);
         var target = ChooseTarget(request.Window, foreground);
+        var input = ReadInputState();
         if (target.Invalid)
         {
-            return new DesktopStateSnapshot(Failed(request.Window!.Value, watch), null);
+            return new DesktopStateSnapshot(Failed(request.Window!.Value, input, watch), null);
         }
 
         var cursor = Read(_input.GetCursorPos) is { } point ? new ScreenPoint(point.X, point.Y) : null;
-        var input = ReadInputState();
 
         var needsTarget = include.Contains(DesktopStateSection.Elements) || include.Contains(DesktopStateSection.Popups) ||
                           include.Contains(DesktopStateSection.Screenshot);
@@ -113,6 +113,14 @@ public sealed class DesktopStateService : IDesktopStateService
         if (needsTarget && target.Refusal is { } refusal)
         {
             errors.Add(refusal);
+        }
+
+        // Keyboard focus is in the window in front: when that window is not read unasked, neither is its focus
+        var readFocus = include.Contains(DesktopStateSection.Focus);
+        if (readFocus && target.Refusal is { ErrorCode: nameof(InputErrorCode.TargetIsAgentHost) or nameof(InputErrorCode.TargetDeniedByPolicy) } skipped)
+        {
+            errors.Add(FocusError(skipped.ErrorCode, "the window in front"));
+            readFocus = false;
         }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -126,7 +134,7 @@ public sealed class DesktopStateService : IDesktopStateService
         var windowsTask = include.Contains(DesktopStateSection.Windows)
             ? Task.Run(() => _windows.GetAllWindows(includeMinimized: true), CancellationToken.None)
             : null;
-        var focusTask = include.Contains(DesktopStateSection.Focus)
+        var focusTask = readFocus
             ? Start(() => _inspection.GetFocusedElementAsync(partBudget, deadline.Token))
             : null;
         var popupsTask = include.Contains(DesktopStateSection.Popups) && hasTarget
@@ -173,7 +181,7 @@ public sealed class DesktopStateService : IDesktopStateService
         var rows = windows?.Take(Math.Max(1, request.MaxWindows)).Select(Row).ToList();
 
         var focus = Collect(focusTask, "focus", timeoutMs, errors) is { } focused
-            ? FocusOf(focused, errors)
+            ? FocusOf(focused, request.Window, foreground, errors)
             : null;
 
         var popups = Collect(popupsTask, "popups", timeoutMs, errors) is { } popupResult
@@ -266,7 +274,15 @@ public sealed class DesktopStateService : IDesktopStateService
             return new DesktopStateError("screenshot", ToolErrorReporting.InvalidArgumentsErrorCode, unavailable);
         }
 
-        return Read(() => _windows.GetWindowInfo(handle)) is { } window && _policy.Evaluate(window) is { Allowed: false } verdict
+        // A window whose process cannot be read cannot be checked against the policy: nothing is captured (as capture_window)
+        if (Read(() => _windows.GetWindowInfo(handle)) is not { } window)
+        {
+            return new DesktopStateError("screenshot", nameof(ScreenshotErrorCode.CaptureFailed),
+                "The window could not be read (it may have closed), so it could not be checked against the user's target " +
+                "policy. Nothing was captured; call get_desktop_state again, or capture_window.");
+        }
+
+        return _policy.Evaluate(window) is { Allowed: false } verdict
             ? new DesktopStateError("screenshot", nameof(ScreenshotErrorCode.TargetDeniedByPolicy),
                 $"The window is refused by the user's target policy: {verdict.Reason}. Nothing was captured; no argument changes that.")
             : null;
@@ -402,15 +418,10 @@ public sealed class DesktopStateService : IDesktopStateService
         text.Append(lines);
     }
 
-    /// <summary>A title in single quotes, as the element lines quote names (a quote or backslash escaped, at most 100 characters).</summary>
-    private static string Quote(string value)
-    {
-        var cut = value.Length > UIElementTextFormat.MaxNameLength ? value[..UIElementTextFormat.MaxNameLength] + "…" : value;
-        return "'" + cut.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("'", "\\'", StringComparison.Ordinal)
-            .Replace('\n', ' ').Replace('\r', ' ') + "'";
-    }
+    /// <summary>A title in single quotes, exactly as the element lines quote names (nothing in it can start another line).</summary>
+    private static string Quote(string value) => UIElementTextFormat.Quote(value);
 
-    private static DesktopFocus? FocusOf(FocusedElementResult focused, List<DesktopStateError> errors)
+    private DesktopFocus? FocusOf(FocusedElementResult focused, nint? named, WindowInfo? foreground, List<DesktopStateError> errors)
     {
         if (!focused.Success || focused.Element is not { } element)
         {
@@ -418,10 +429,53 @@ public sealed class DesktopStateService : IDesktopStateService
             return null;
         }
 
+        if (FocusRefusal(focused, named, foreground) is { } refusal)
+        {
+            errors.Add(refusal);
+            return null;
+        }
+
         // The value is left out: get_focused_element reads it when it is needed (never for a password field)
         return new DesktopFocus(element.Ref, element.ControlType, element.Name, NullIfEmpty(element.AutomationId), element.Bounds,
             focused.WindowHandle, focused.ProcessName, element.IsPassword ? true : null);
     }
+
+    /// <summary>
+    /// Why the focused element is left out: its window (the window in front when the read does not say) was not named and is
+    /// the agent's host or a window the policy denies, or it cannot be checked. A window that was named is read, as its
+    /// elements are.
+    /// </summary>
+    private DesktopStateError? FocusRefusal(FocusedElementResult focused, nint? named, WindowInfo? foreground)
+    {
+        var window = focused.WindowHandle is { } known and not 0 ? (nint)known : foreground?.Handle ?? nint.Zero;
+        if (window != nint.Zero && window == named)
+        {
+            return null;
+        }
+
+        var info = window == nint.Zero ? null : window == foreground?.Handle ? foreground : Read(() => _windows.GetWindowInfo(window));
+        if (info is null)
+        {
+            return new DesktopStateError("focus", nameof(UIElementErrorCode.OperationException),
+                "The window that holds the keyboard focus could not be read, so it could not be checked against the user's " +
+                "target policy, and the focused element was left out. Read it with get_focused_element.");
+        }
+
+        if (info.IsAgentHost)
+        {
+            return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})");
+        }
+
+        return _policy.Evaluate(info) is { Allowed: false }
+            ? FocusError(nameof(InputErrorCode.TargetDeniedByPolicy), $"'{info.Title}' ({info.ProcessName})")
+            : null;
+    }
+
+    private static DesktopStateError FocusError(string code, string window) => new("focus", code,
+        code == nameof(InputErrorCode.TargetIsAgentHost)
+            ? $"The keyboard focus is in {window}, which is not read unless you name it, so the focused element was left out."
+            : $"The keyboard focus is in {window}, an app the user's target policy refuses, so the focused element was left out; " +
+              "no argument lets you act on it.");
 
     private static IReadOnlyList<ActivePopup>? PopupsOf(ActivePopupsResult result, List<DesktopStateError> errors)
     {
@@ -474,14 +528,14 @@ public sealed class DesktopStateService : IDesktopStateService
     private static IReadOnlyList<DesktopStateError> Ordered(List<DesktopStateError> errors) =>
         errors.OrderBy(e => Array.IndexOf(SectionOrder, e.Section)).ToList();
 
-    private static DesktopState Failed(nint window, Stopwatch watch) => new(
+    private static DesktopState Failed(nint window, DesktopInputState input, Stopwatch watch) => new(
         Success: false,
         WindowHandle: window,
         WindowTitle: null,
         Foreground: null,
         Focus: null,
         Cursor: null,
-        Input: new DesktopInputState(false),
+        Input: input,
         Windows: null,
         WindowCount: null,
         Popups: null,

@@ -219,7 +219,10 @@ public class ElementActionTools
         var include = observe == ObserveMode.Screenshot
             ? new HashSet<DesktopStateSection>(DesktopStateRequest.DefaultInclude) { DesktopStateSection.Screenshot }
             : DesktopStateRequest.DefaultInclude;
-        nint? window = result.WindowHandle != 0 && _windowService?.IsValidWindow((nint)result.WindowHandle) != false
+        // A window the action was refused for (a denied app, the agent's own host) is not read by name: the agent asked for an
+        // action there, not a read, so the observation follows the default rules for the window in front
+        var refusedWindow = result.ErrorCode is nameof(InputErrorCode.TargetDeniedByPolicy) or nameof(InputErrorCode.TargetIsAgentHost);
+        nint? window = !refusedWindow && result.WindowHandle != 0 && _windowService?.IsValidWindow((nint)result.WindowHandle) != false
             ? (nint)result.WindowHandle
             : null;
         var snapshot = await _desktopState.GetStateAsync(DesktopStateTools.Request(window, include), cancellationToken).ConfigureAwait(false);
