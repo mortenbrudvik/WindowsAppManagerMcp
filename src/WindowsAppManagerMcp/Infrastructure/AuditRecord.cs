@@ -17,7 +17,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// The arguments are summarized by default-deny against the tool's declared input schema, so a new tool or parameter,
 /// or a value of the wrong type, cannot leak what it carries (<see cref="SummarizeArguments"/>): an argument the tool
 /// does not declare is only counted; a number or boolean is kept only where the tool declares one; a string is kept
-/// only when its name is in <see cref="NamedStringArguments"/> (process and preset names, fixed values), a program to
+/// only when its name is in <see cref="NamedStringArguments"/> (process and preset names, fixed values) and it is no
+/// content for that tool (<see cref="ContentArguments"/>: element_action's name criterion), a program to
 /// launch is kept as a path or as a URL's scheme and host (<see cref="RedactExecutable"/>), and any other value is
 /// recorded as its length (<c>&lt;name&gt;Length</c>) or count (<c>&lt;name&gt;Count</c>). So typed text, keys,
 /// clipboard text, URL paths and queries, working directories and command-line arguments never reach the file. Of the
@@ -37,6 +38,8 @@ public static class AuditRecord
     /// <summary>
     /// The string arguments that are kept as they are: they name a process, a layout preset or a fixed value, never
     /// content. <c>executable</c> is kept too, as a path or as a URL's scheme and host only (<see cref="RedactExecutable"/>).
+    /// <c>name</c> is a layout preset's name (apply_layout, save_layout, delete_layout); element_action's <c>name</c> is an
+    /// element's name, which is content, and is recorded as nameLength (<see cref="ContentArguments"/>).
     /// </summary>
     public static IReadOnlySet<string> NamedStringArguments { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -47,6 +50,17 @@ public static class AuditRecord
         // recorded as pathLength: a file name can say what the user works on
         "button"
     };
+
+    /// <summary>
+    /// The arguments of <see cref="NamedStringArguments"/> that are content for one tool, and are recorded as their length
+    /// there: element_action's <c>name</c> criterion is an element's name (a file in Explorer, an email's subject, a
+    /// contact), which can say what the user works on, as file_dialog's path can.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlySet<string>> ContentArguments { get; } =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            [ElementActionTool] = new HashSet<string>(StringComparer.Ordinal) { "name" }
+        };
 
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
     private const string ClipboardOriginProperty = "origin";
@@ -97,7 +111,7 @@ public static class AuditRecord
                 ? Window(window)
                 : null,
             items,
-            SummarizeArguments(call.Arguments, call.DeclaredTypes),
+            SummarizeArguments(call.Arguments, call.DeclaredTypes, call.Tool),
             body == null ? null : Scalars(body, call.Tool),
             serverPid,
             call.RequestId);
@@ -114,19 +128,23 @@ public static class AuditRecord
     /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
     /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
     /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c> redacted, with
-    /// <c>executableLength</c> when something was cut); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
+    /// <c>executableLength</c> when something was cut), unless it is content for <paramref name="tool"/>
+    /// (<see cref="ContentArguments"/>); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
     /// <item>An array is recorded as <c>&lt;name&gt;Count</c>; objects and nulls are left out.</item>
     /// </list>
     /// Null when nothing is left.
     /// </summary>
     /// <param name="arguments">The call's arguments.</param>
     /// <param name="declaredTypes">The JSON types the tool declares per parameter (<see cref="DeclaredTypes"/>); null when unknown.</param>
+    /// <param name="tool">The tool called, for <see cref="ContentArguments"/>; null keeps every name of <see cref="NamedStringArguments"/>.</param>
     public static JsonObject? SummarizeArguments(
         IReadOnlyDictionary<string, JsonElement> arguments,
-        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes)
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes,
+        string? tool = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
+        var content = tool != null && ContentArguments.TryGetValue(tool, out var names) ? names : null;
         var summary = new JsonObject();
         var unknown = 0;
         foreach (var (name, value) in arguments)
@@ -157,7 +175,7 @@ public static class AuditRecord
                     }
 
                     break;
-                case JsonValueKind.String when NamedStringArguments.Contains(name):
+                case JsonValueKind.String when NamedStringArguments.Contains(name) && content?.Contains(name) != true:
                     summary[name] = Cut(value.GetString()!, MaxTitleLength);
                     break;
                 case JsonValueKind.String:

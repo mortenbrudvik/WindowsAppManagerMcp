@@ -103,9 +103,10 @@ to do anything for it, and cannot turn it off.
   command-line arguments or any result text. The arguments are checked against the tool's declared parameters:
   - A string argument is recorded as its length (`textLength`, `keysLength`, `urlLength`), and an array as its count
     (`argumentsCount`). Only the strings that name a process, a layout preset or a fixed value (`processName`,
-    `expectedProcessName`, `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`, and
+    `expectedProcessName`, a layout preset's `name`, `matchBy`, `browser`, `state`, `position`, `format`, the mouse tools' `space`, and
     element_action's `ref`, `action`, `mode`, `direction`, `amount`, `fallback` and `observe`) are kept; element_action's `value` is
-    recorded as `valueLength`, and its result's `method` and `status` are kept (whether it used a pattern or moved the
+    recorded as `valueLength`, and its `name` criterion as `nameLength` (an element's name, such as a file name or an email's
+    subject, can say what the user works on), and its result's `method` and `status` are kept (whether it used a pattern or moved the
     pointer or typed, and whether it left a dialog pending); a mouse tool's `captureId` is recorded as its length, and its `x` and `y` and the result's converted `x` and `y`
     as numbers.
   - `executable` is kept as a program name or file path. A URL keeps only its scheme, host and port

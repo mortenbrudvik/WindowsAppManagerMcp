@@ -169,6 +169,24 @@ public class AuditLogContractTests
     }
 
     [Fact]
+    public async Task ElementAction_RecordsTheNameCriterionsLengthOnly_WhileALayoutsNameIsKept()
+    {
+        // Act - an element's name is UI content (a file, an email subject, a contact); a layout preset's name is the user's label
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle, ["name"] = "meeting-notes.docx", ["action"] = "invoke"
+        });
+        var (_, layoutLines) = await CallAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "layout-1" });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("meeting-notes", "an element's name can say what the user works on");
+        line.GetProperty("args").GetProperty("nameLength").GetInt32().Should().Be(18);
+        line.GetProperty("args").GetProperty("action").GetString().Should().Be("invoke");
+        layoutLines.Single().GetProperty("args").GetProperty("name").GetString().Should().Be("layout-1");
+    }
+
+    [Fact]
     public async Task ElementAction_RecordsObserve_ButNotTheObservation()
     {
         // Act - roadmap M3.12: the observation after the action holds window titles and element names
