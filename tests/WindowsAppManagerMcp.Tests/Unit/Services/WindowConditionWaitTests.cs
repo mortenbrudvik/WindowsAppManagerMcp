@@ -540,6 +540,59 @@ public class WindowConditionWaitTests
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.WindowNotFound));
     }
 
+    [Fact]
+    public async Task TitleChanged_AHandleNamedWithItsOldTitle_AfterTheChangeAlreadyHappened_IsSatisfied()
+    {
+        // Arrange - the save finished before the wait: the window the agent names by its old title shows the file now
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged,
+            previousTitle: "Untitled - Notepad");
+
+        // Assert - the same window with a new title, not a reused handle
+        result.Satisfied.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.Window!.Title.Should().Be("report.txt - Notepad");
+        result.PreviousTitle.Should().Be("Untitled - Notepad");
+    }
+
+    [Fact]
+    public async Task TitleChanged_AHandleReusedByAnotherProcess_IsStillHandleMismatch()
+    {
+        // The process filter still guards against a reused handle; only the title filters describe the title that changes
+        var notepad = _desktop.Add("Untitled - Notepad", "Notepad", processName: "notepad");
+        _desktop.Reuse(notepad, "Inbox - Outlook", 999, "outlook");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, ProcessName = "notepad", TitleContains = "Untitled" },
+            WindowWaitCondition.TitleChanged);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.HandleMismatch));
+    }
+
+    [Fact]
+    public async Task TitleChanged_AHandleNamedWithItsOldTitle_WithoutPreviousTitle_SaysTheChangeMayHaveHappenedAlready()
+    {
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged,
+            timeoutMs: 1000);
+
+        result.TimedOut.Should().BeTrue();
+        result.Error.Should().Contain("titleContains 'Untitled'").And.Contain("previousTitle");
+    }
+
+    [Fact]
+    public async Task TitleChanged_AFilterSelectorNamingTheOldTitle_SaysTheTitleMayHaveChangedAlready()
+    {
+        _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad", TitleContains = "Untitled" }, WindowWaitCondition.TitleChanged);
+
+        result.ErrorCode.Should().Be(nameof(WindowErrorCode.WindowNotFound));
+        result.Error.Should().Contain("may already have changed").And.Contain("handle");
+    }
+
     #endregion
 
     #region input_idle

@@ -48,10 +48,26 @@ public sealed partial class WindowWaitService
             return Ended(InvalidArgumentsCode, initial.Error ?? "window cannot be used.", Elapsed());
 
         // title_changed follows one window, the one the selector names now
-        if (request.Condition == WindowWaitCondition.TitleChanged && !initial.Success)
+        if (request.Condition == WindowWaitCondition.TitleChanged)
         {
-            return Ended(initial.ErrorCode ?? nameof(WindowErrorCode.WindowNotFound), initial.Error ?? "No single window matched.",
-                Elapsed(), initial.Candidates, initial.MatchCount);
+            // A handle names its window whatever its title: the title filters describe the title that is to change, and may
+            // have changed already, so only the process and class filters guard against a reused handle
+            if (request.Window.Handle.HasValue && HasTitleFilter(request.Window))
+                initial = _windows.ResolveWindow(WithoutTitleFilters(request.Window));
+
+            if (!initial.Success)
+            {
+                var error = initial.Error ?? "No single window matched.";
+                if (initial.ErrorCode == nameof(WindowErrorCode.WindowNotFound) && HasTitleFilter(request.Window))
+                {
+                    error += " The title may already have changed: title_changed follows the window the selector names when the call " +
+                             "starts, so name it by handle or by its process, not by the title that changes, and pass the title you " +
+                             "read before acting as previousTitle.";
+                }
+
+                return Ended(initial.ErrorCode ?? nameof(WindowErrorCode.WindowNotFound), error, Elapsed(), initial.Candidates,
+                    initial.MatchCount);
+            }
         }
 
         var watch = new ConditionWatch(this, request, timeoutMs, initial,
@@ -93,6 +109,17 @@ public sealed partial class WindowWaitService
         _ => condition.ToString()
     };
 
+    private static bool HasTitleFilter(WindowSelector selector) =>
+        !string.IsNullOrEmpty(selector.TitleContains) || !string.IsNullOrEmpty(selector.TitleEquals) || !string.IsNullOrEmpty(selector.TitleRegex);
+
+    /// <summary>The selector without its title filters.</summary>
+    private static WindowSelector WithoutTitleFilters(WindowSelector selector) =>
+        selector with { TitleContains = null, TitleEquals = null, TitleRegex = null };
+
+    /// <summary>Only the selector's title filters, for messages.</summary>
+    private static WindowSelector TitleFilters(WindowSelector selector) =>
+        new() { TitleContains = selector.TitleContains, TitleEquals = selector.TitleEquals, TitleRegex = selector.TitleRegex };
+
     private static WindowConditionResult Ended(
         string errorCode, string error, long elapsedMs, IReadOnlyList<WindowInfo>? candidates = null, int matchCount = 0) => new()
     {
@@ -119,6 +146,7 @@ public sealed partial class WindowWaitService
         private readonly Dictionary<nint, long> _since = new();
         private readonly WindowInfo? _tracked;
         private readonly string _previousTitle = string.Empty;
+        private readonly bool _titleFiltersMissedAtStart;
         private long? _goneSince;
         private (string Title, long Since)? _newTitle;
         private int? _matchesAtStart;
@@ -141,6 +169,22 @@ public sealed partial class WindowWaitService
             {
                 _tracked = initial.Window;
                 _previousTitle = request.PreviousTitle ?? initial.Window!.Title;
+
+                // A handle named by a title it no longer had at the start: the change most likely came before the call
+                _titleFiltersMissedAtStart = request.PreviousTitle == null && HasTitleFilter(_selector) && TitleMissed(initial.Window!);
+            }
+        }
+
+        /// <summary>Whether the window's title does not match the selector's title filters (a pattern that runs too long: no).</summary>
+        private bool TitleMissed(WindowInfo window)
+        {
+            try
+            {
+                return WindowMatching.Mismatches(window, TitleFilters(_selector)).Count > 0;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return false;
             }
         }
 
@@ -349,7 +393,11 @@ public sealed partial class WindowWaitService
 
                 case WindowWaitCondition.TitleChanged:
                     window = _lastSeen ?? _tracked;
-                    error = $"The title of window {_tracked!.Handle} is still '{_previousTitle}' after {_timeoutMs} ms.";
+                    error = $"The title of window {_tracked!.Handle} is still '{_previousTitle}' after {_timeoutMs} ms." +
+                            (_titleFiltersMissedAtStart
+                                ? $" It already did not match {TitleFilters(_selector).Describe()} when the wait started, so it may have " +
+                                  "changed before the call: pass the title you read before acting as previousTitle."
+                                : "");
                     break;
 
                 case WindowWaitCondition.Visible when _matches.Count > 0:
