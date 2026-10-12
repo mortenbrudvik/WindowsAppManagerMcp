@@ -55,6 +55,7 @@ public class EveryToolContractTests
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
             ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["get_desktop_state"] = Args("""{ "handle": 1706796 }"""),
             ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),
             ["find_ui_elements"] = Args("""{ "handle": 1706796, "name": "Save", "controlType": "Button" }"""),
             ["read_element_text"] = Args("""{ "ref": "w4120035e57" }"""),
@@ -98,6 +99,12 @@ public class EveryToolContractTests
             // Paused, and the test client cannot ask the user (no elicitation): ResumeNeedsUser
             ["resume_input"] = services => services.Session.Pause(InputControlSources.Hotkey)
         };
+
+    /// <summary>
+    /// Tools that name their text block's payload ([ToolResultPayload]) but return an image only when the call asks for one
+    /// (get_desktop_state's include screenshot, element_action's observe screenshot; DesktopStateContractTests checks those).
+    /// </summary>
+    private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal) { "get_desktop_state", "element_action" };
 
     /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>
     private static readonly HashSet<string> NoFailingCall = new(StringComparer.Ordinal)
@@ -151,7 +158,7 @@ public class EveryToolContractTests
     [MemberData(nameof(ServedTools))]
     public async Task TypicalCall_OfACaptureTool_ReturnsTheImageFirst(string tool)
     {
-        var isCapture = ServerToolCatalog.Tools[tool].GetCustomAttribute<ToolResultPayloadAttribute>() != null;
+        var isCapture = ServerToolCatalog.Tools[tool].GetCustomAttribute<ToolResultPayloadAttribute>() != null && !ImageOnRequest.Contains(tool);
 
         var result = await TypicalCallAsync(tool);
 

@@ -107,7 +107,7 @@ public class ElementActionRealizeToolTests
     [Fact]
     public async Task Realize_WithoutMaxScrolls_DoesNotScroll_WhenTheItemIsNotFound()
     {
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message");
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message").Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("ElementNotFound");
         _requests.Should().BeEmpty();
@@ -118,7 +118,7 @@ public class ElementActionRealizeToolTests
     {
         // Act - a web list without ItemContainer: the item appears on the third page
         var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
-            allowHostTarget: true, timeoutMs: 20000);
+            allowHostTarget: true, timeoutMs: 20000).Payload<ElementActionResult>();
 
         // Assert - every page is an element_action scroll of the list, then the item is realized: no pattern call around them
         result.Success.Should().BeTrue(result.Error);
@@ -148,7 +148,7 @@ public class ElementActionRealizeToolTests
         _atEnd = page => page == 2;
 
         // Act
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4);
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4).Payload<ElementActionResult>();
 
         // Assert
         result.ErrorCode.Should().Be("ElementNotFound");
@@ -162,7 +162,7 @@ public class ElementActionRealizeToolTests
     {
         _listCount = 2;
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10);
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("AmbiguousElement");
         result.Error.Should().Contain("w1e2").And.Contain("w1e3").And.Contain("Nothing was scrolled");
@@ -174,7 +174,7 @@ public class ElementActionRealizeToolTests
     {
         _listCount = 0;
 
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10);
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("ElementNotFound");
         result.Error.Should().Contain("No visible list");
@@ -191,7 +191,7 @@ public class ElementActionRealizeToolTests
             : null;
 
         // Act
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10);
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
 
         // Assert
         result.ErrorCode.Should().Be("PausedByUser");
@@ -215,7 +215,7 @@ public class ElementActionRealizeToolTests
             : null;
 
         // Act
-        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10);
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
 
         // Assert - not ElementNotFound, and the scroll fallback does not start
         result.Success.Should().BeFalse();
@@ -241,7 +241,7 @@ public class ElementActionRealizeToolTests
 
         // Act
         var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
-            timeoutMs: 5000);
+            timeoutMs: 5000).Payload<ElementActionResult>();
 
         // Assert - the later pages, their searches and the realize get what is left, not the whole timeout again
         result.Success.Should().BeTrue(result.Error);

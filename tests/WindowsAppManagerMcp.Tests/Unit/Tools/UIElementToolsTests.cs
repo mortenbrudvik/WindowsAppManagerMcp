@@ -689,6 +689,18 @@ public class UIElementToolsTests
         UIElementTextFormat.Line(element).Should().Be($"Button {expected}");
     }
 
+    [Theory]
+    [InlineData("a\u2028b")]
+    [InlineData("a\u2029b")]
+    [InlineData("a\u0085b")]
+    public void TextFormat_NeverLetsANameBreakTheLine(string name)
+    {
+        // A line or paragraph separator reads as a new line in many viewers, as a control character does
+        var element = new UIElementInfo(name, "Button", name, null, true, false);
+
+        UIElementTextFormat.Line(element).Should().Be("Button 'a b' aid='a b'");
+    }
+
     [Fact]
     public void TextFormat_NamesTheFrameworkWhereItChanges_BeforeTheBounds()
     {

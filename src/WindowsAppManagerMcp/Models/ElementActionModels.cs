@@ -240,6 +240,8 @@ public sealed record OpenedWindow(long Handle, string Title, string? ClassName, 
 /// <param name="OpenedPopup">A new top-level window of the element's application that appeared during the action (a dialog,
 /// menu or dropdown), the topmost one when several did.</param>
 /// <param name="ReceivingWindow">The window the mouse or keyboard input went to, for a Mouse or Keyboard method.</param>
+/// <param name="Observed">With observe 'state' or 'screenshot' (roadmap M3.12): get_desktop_state's observation of the
+/// element's window after the action; serialized last.</param>
 public sealed record ElementActionResult(
     bool Success,
     string Action,
@@ -256,7 +258,8 @@ public sealed record ElementActionResult(
     IReadOnlyList<string>? Warnings = null,
     string? Error = null,
     string? ErrorCode = null,
-    double ElapsedMilliseconds = 0);
+    double ElapsedMilliseconds = 0,
+    DesktopState? Observed = null);
 
 /// <summary>What element_action is asked to do (roadmap M3.6); the tool builds it from its arguments.</summary>
 /// <param name="Ref">The element, as a ref (the tool resolves element criteria to one first).</param>

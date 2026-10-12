@@ -183,7 +183,7 @@ public class CriteriaScopeTests
         var sut = new ElementActionTools(actions.Object, _search, _registry);
 
         // Act
-        var result = await sut.ElementAction(ElementActionKind.Invoke, handle: Main, name: "Rename", controlType: "MenuItem", scope: scope);
+        var result = await sut.ElementAction(ElementActionKind.Invoke, handle: Main, name: "Rename", controlType: "MenuItem", scope: scope).Payload<ElementActionResult>();
 
         // Assert
         result.Success.Should().Be(found);

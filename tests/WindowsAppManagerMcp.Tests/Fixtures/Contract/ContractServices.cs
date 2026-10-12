@@ -29,7 +29,7 @@ public sealed class ContractServices : IDisposable
         Mode = mode;
         ElementRegistry.Setup(r => r.Lookup(It.IsAny<string>()))
             .Returns((string elementRef) => new ElementLookup(elementRef, (nint)TypicalDesktop.NotepadHandle, null, 1));
-        Session = new InputSession(new FakeInputWrapper());
+        Session = new InputSession(InputWrapper);
         Hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, PauseHotkeyOptions.DefaultSource));
         SetUpServerInfoSources();
 
@@ -76,6 +76,10 @@ public sealed class ContractServices : IDisposable
     public Mock<IElementWaitService> ElementWait { get; } = new();
     public Mock<ILaunchPlacementService> Placement { get; } = new();
     public InputSession Session { get; }
+
+    /// <summary>The fake input layer under <see cref="Session"/>: the cursor, the keys that are down and Caps Lock (get_desktop_state).</summary>
+    public FakeInputWrapper InputWrapper { get; } = new();
+
     public IScreenshotService Screenshots { get; private set; } = null!;
 
     /// <summary>The capture registry the typical captures register in and the mouse tools' image points resolve through (roadmap M3.11).</summary>
@@ -144,6 +148,10 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
             SystemInfo.Object, SecurityProbe.Object, Monitors.Object, Safety.Object, Session, Hotkey.Object, Layouts.Object,
             NativeWindows.Object, sp.GetService<ToolsetSelection>(), Audit));
+        // get_desktop_state and element_action's observe (roadmap M3.12): the real observation over the mocks above
+        services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
+            Windows.Object, Session, InputWrapper, Inspection.Object, UiElements.Object, Popups.Object, Screenshots,
+            sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
     }
 
     public void Dispose()
@@ -333,11 +341,17 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) => new LayoutDeleteResult(true, name));
 
+        // get_desktop_state (roadmap M3.12): the pointer over Notepad's editor
+        InputWrapper.MovePointer(640, 480);
+
         var tree = TypicalDesktop.UiTree();
         UiElements.Setup(u => u.IsAvailable()).Returns(true);
         UiElements.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
-            .ReturnsAsync((nint handle, int depth, UIElementFilter? _, IProgress<OperationProgress>? _, CancellationToken _) => new UIElementResult(
-                true, handle, notepad.Title, tree, TypicalDesktop.Count(tree), depth, 184.5, DepthReached: 3));
+            .ReturnsAsync((nint handle, int depth, UIElementFilter? filter, IProgress<OperationProgress>? _, CancellationToken _) =>
+                filter?.MaxElements is { } max && max < TypicalDesktop.Count(tree)
+                    ? new UIElementResult(true, handle, notepad.Title, TypicalDesktop.Take(tree, max), max, depth, 184.5, DepthReached: 3,
+                        Truncated: true, TruncationReason: UIElementTruncationReason.MaxElements)
+                    : new UIElementResult(true, handle, notepad.Title, tree, TypicalDesktop.Count(tree), depth, 184.5, DepthReached: 3));
 
         Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(true, TypicalDesktop.FocusedEdit, TypicalDesktop.NotepadHandle, notepad.Title,

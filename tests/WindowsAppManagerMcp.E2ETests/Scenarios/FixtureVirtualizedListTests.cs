@@ -1,3 +1,6 @@
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Tools;
 
 namespace WindowsAppManagerMcp.E2ETests.Scenarios;
@@ -41,6 +44,10 @@ public class FixtureVirtualizedListTests
                               string.Join(", ", info.Containers.Select(c => $"{c.Ref} {c.ControlType} '{c.Name}' itemContainer={c.ItemContainer}")));
         }
     }
+
+    /// <summary>element_action's result, read back from the tool result's JSON text block.</summary>
+    private static ElementActionResult Payload(CallToolResult result) =>
+        JsonSerializer.Deserialize<ElementActionResult>(result.Content.OfType<TextContentBlock>().Single().Text, ToolJson.SerializerOptions)!;
 
     private void Log(ElementActionResult result) =>
         _output.WriteLine($"  success={result.Success} method={result.Method} verified={result.OutcomeVerified} before={result.Before} " +
@@ -101,8 +108,8 @@ public class FixtureVirtualizedListTests
         var tools = e2e.Server.Get<ElementActionTools>();
 
         // Act
-        var result = await tools.ElementAction(ElementActionKind.Realize, handle: e2e.Fixture.MainWindowHandle,
-            name: FixtureContract.VirtualListItem(9000), controlType: "ListItem", timeoutMs: 10_000);
+        var result = Payload(await tools.ElementAction(ElementActionKind.Realize, handle: e2e.Fixture.MainWindowHandle,
+            name: FixtureContract.VirtualListItem(9000), controlType: "ListItem", timeoutMs: 10_000));
         Log(result);
 
         // Assert
@@ -118,8 +125,8 @@ public class FixtureVirtualizedListTests
         var tools = e2e.Server.Get<ElementActionTools>();
 
         // Act
-        var result = await tools.ElementAction(ElementActionKind.Realize, handle: e2e.Fixture.MainWindowHandle,
-            name: "Item 00150", nameMatch: ElementNameMatch.Contains, controlType: "ListItem", maxScrolls: 40, timeoutMs: 30_000);
+        var result = Payload(await tools.ElementAction(ElementActionKind.Realize, handle: e2e.Fixture.MainWindowHandle,
+            name: "Item 00150", nameMatch: ElementNameMatch.Contains, controlType: "ListItem", maxScrolls: 40, timeoutMs: 30_000));
         Log(result);
 
         // Assert

@@ -169,6 +169,21 @@ public class AuditLogContractTests
     }
 
     [Fact]
+    public async Task ElementAction_RecordsObserve_ButNotTheObservation()
+    {
+        // Act - roadmap M3.12: the observation after the action holds window titles and element names
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["ref"] = "w4120035e17", ["action"] = "invoke", ["observe"] = "state"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("observe").GetString().Should().Be("state");
+        line.GetRawText().Should().NotContain("Problems").And.NotContain("Google Chrome", "the observed elements and windows are never logged");
+    }
+
+    [Fact]
     public async Task TypeText_RecordsTheTargetAndReceivingWindow_AndTheTextsLengthOnly()
     {
         // Act

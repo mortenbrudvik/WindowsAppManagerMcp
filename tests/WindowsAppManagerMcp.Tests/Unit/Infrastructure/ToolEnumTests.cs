@@ -33,7 +33,7 @@ public class ToolEnumTests
             typeof(ElementNameMatch), typeof(ElementDetail), typeof(CoordinateSpace), typeof(ElementSearchScope),
             typeof(ElementWaitCondition),
             typeof(ElementActionKind), typeof(ElementActionFallback), typeof(ElementValueMode), typeof(ElementScrollDirection),
-            typeof(ElementScrollAmount), typeof(CaptureElementDetail)
+            typeof(ElementScrollAmount), typeof(CaptureElementDetail), typeof(DesktopStateSection), typeof(ObserveMode)
         });
     }
 

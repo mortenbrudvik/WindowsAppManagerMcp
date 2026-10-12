@@ -102,6 +102,11 @@ public static class ServiceRegistration
         services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
         services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
         services.AddSingleton<IElementActionService, ElementActionService>();
+        // get_desktop_state (roadmap M3.12) and element_action's observe: one observation through the reads above, under one deadline
+        services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
+            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IInputSession>(), sp.GetRequiredService<INativeInputWrapper>(),
+            sp.GetRequiredService<IElementInspectionService>(), sp.GetRequiredService<IUIElementService>(), sp.GetRequiredService<IPopupService>(),
+            sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -196,6 +201,7 @@ public static class ServiceRegistration
         services.AddSingleton<ElementReadTools>();
         services.AddSingleton<ElementWaitTools>();
         services.AddSingleton<ElementActionTools>();
+        services.AddSingleton<DesktopStateTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -269,6 +275,7 @@ public static class ServiceRegistration
             .WithServerTools<ElementReadTools>()
             .WithServerTools<ElementWaitTools>()
             .WithServerTools<ElementActionTools>()
+            .WithServerTools<DesktopStateTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

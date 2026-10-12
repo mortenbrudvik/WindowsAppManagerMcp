@@ -33,6 +33,7 @@ public partial class ServerInstructionsTests
     [InlineData("imageToScreen")]
     [InlineData("never with scaleFactor")]
     [InlineData("get_server_info")]
+    [InlineData("get_server_info once")]
     [InlineData("untrusted")]
     [InlineData("not sleeping")]
     [InlineData("close_window")]

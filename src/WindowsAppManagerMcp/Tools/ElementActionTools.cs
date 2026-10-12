@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
@@ -20,18 +21,22 @@ public partial class ElementActionTools
     private readonly IElementSearchService _search;
     private readonly IElementRegistry _registry;
     private readonly IWindowService? _windowService;
+    private readonly IDesktopStateService? _desktopState;
 
     /// <param name="actions">Acts on the element.</param>
     /// <param name="search">Resolves window and element criteria to one element, as find_ui_elements searches.</param>
     /// <param name="registry">Tells which window a ref belongs to.</param>
     /// <param name="windowService">Resolves the window selector; the server always passes it.</param>
+    /// <param name="desktopState">get_desktop_state's observation, for observe (roadmap M3.12); the server always passes it.</param>
     public ElementActionTools(
-        IElementActionService actions, IElementSearchService search, IElementRegistry registry, IWindowService? windowService = null)
+        IElementActionService actions, IElementSearchService search, IElementRegistry registry, IWindowService? windowService = null,
+        IDesktopStateService? desktopState = null)
     {
         _actions = actions;
         _search = search;
         _registry = registry;
         _windowService = windowService;
+        _desktopState = desktopState;
     }
 
     [McpServerTool(Name = "element_action", Title = "Act on UI Element", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -51,8 +56,11 @@ public partial class ElementActionTools
                  "scrolling the list). A password field's value is never " +
                  "read or returned. Refused, with nothing done, for apps the user's policy denies (TargetDeniedByPolicy), the " +
                  "agent's own host window (TargetIsAgentHost), elevated apps (TargetElevated), a window a modal dialog blocks " +
-                 "(BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume).")]
-    public async Task<ElementActionResult> ElementAction(
+                 "(BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume). " +
+                 "observe 'state' adds get_desktop_state's observation of the window after the action (observed), 'screenshot' " +
+                 "also a capture of it as image content.")]
+    [ToolResultPayload(typeof(ElementActionResult))]
+    public async Task<CallToolResult> ElementAction(
         [Description("What to do: invoke, click, double_click, right_click, focus, set_value, append_text, toggle, select, " +
                      "add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, " +
                      "window_close, window_minimize, window_maximize.")]
@@ -102,6 +110,10 @@ public partial class ElementActionTools
         [Description("How long the action may block, for example on a dialog it opened, and the bound of each read, in " +
                      "milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.")]
         int timeoutMs = DefaultTimeoutMs,
+        [Description("What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default " +
+                     "observation of the element's window, or of the window in front once that closed, as observed) or 'screenshot' " +
+                     "(as state, plus a capture of that window as image content with a captureId; needs capture_window to be served).")]
+        ObserveMode observe = ObserveMode.None,
         CancellationToken cancellationToken = default)
     {
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));
@@ -116,6 +128,11 @@ public partial class ElementActionTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "maxScrolls is for realize with element criteria (it scrolls the list to find the item), not for " +
                 $"{(@ref != null ? "a ref, which names its element already" : ToolEnum<ElementActionKind>.Name(action))}. Nothing was done.");
+        }
+
+        if (ObserveError(observe) is { } observeError)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, observeError + " Nothing was done.");
         }
 
         var controlTypes = UIElementTools.ParseControlTypes(controlType);
@@ -139,7 +156,8 @@ public partial class ElementActionTools
                 $"ref '{@ref}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
                 "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements. Nothing was done.");
             NoteWindow(_registry.Lookup(normalized).WindowHandle);
-            return await _actions.ActAsync(request with { Ref = normalized }, cancellationToken).ConfigureAwait(false);
+            return await ObserveAsync(await _actions.ActAsync(request with { Ref = normalized }, cancellationToken).ConfigureAwait(false),
+                observe, cancellationToken).ConfigureAwait(false);
         }
 
         if (!hasCriteria)
@@ -186,17 +204,55 @@ public partial class ElementActionTools
         if (found.Failure is { ErrorCode: nameof(UIElementErrorCode.ElementNotFound) } && action == ElementActionKind.Realize && maxScrolls > 0)
         {
             NoteWindow(windowHandle);
-            return await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), stopwatch, found.Failure, cancellationToken)
-                .ConfigureAwait(false);
+            return await ObserveAsync(
+                await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), stopwatch, found.Failure, cancellationToken)
+                    .ConfigureAwait(false),
+                observe, cancellationToken).ConfigureAwait(false);
         }
 
         if (found.Failure is { } failure)
         {
-            return failure;
+            return await ObserveAsync(failure, observe, cancellationToken).ConfigureAwait(false);
         }
 
         NoteWindow(windowHandle);
-        return await _actions.ActAsync(request with { Ref = found.Ref! }, cancellationToken).ConfigureAwait(false);
+        return await ObserveAsync(await _actions.ActAsync(request with { Ref = found.Ref! }, cancellationToken).ConfigureAwait(false),
+            observe, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Why observe cannot be honoured (checked before anything is done), or null.</summary>
+    private string? ObserveError(ObserveMode observe) => observe switch
+    {
+        ObserveMode.None => null,
+        _ when _desktopState == null => throw new InvalidOperationException("observe needs the desktop state service; the server always registers it."),
+        ObserveMode.Screenshot => _desktopState.ScreenshotUnavailable() is { } unavailable
+            ? $"observe 'screenshot': {unavailable} Use observe 'state'."
+            : null,
+        _ => null
+    };
+
+    /// <summary>
+    /// The tool result: the action's result, with observe (roadmap M3.12) get_desktop_state's observation of the element's window
+    /// (of the window in front once that closed) after the action, and with 'screenshot' its capture as image content first.
+    /// </summary>
+    private async Task<CallToolResult> ObserveAsync(ElementActionResult result, ObserveMode observe, CancellationToken cancellationToken)
+    {
+        if (observe == ObserveMode.None || _desktopState == null)
+        {
+            return ToolImages.Create(result, null, isError: !result.Success, ToolJson.SerializerOptions);
+        }
+
+        var include = observe == ObserveMode.Screenshot
+            ? new HashSet<DesktopStateSection>(DesktopStateRequest.DefaultInclude) { DesktopStateSection.Screenshot }
+            : DesktopStateRequest.DefaultInclude;
+        // A window the action was refused for (a denied app, the agent's own host) is not read by name: the agent asked for an
+        // action there, not a read, so the observation follows the default rules for the window in front
+        var refusedWindow = result.ErrorCode is nameof(InputErrorCode.TargetDeniedByPolicy) or nameof(InputErrorCode.TargetIsAgentHost);
+        nint? window = !refusedWindow && result.WindowHandle != 0 && _windowService?.IsValidWindow((nint)result.WindowHandle) != false
+            ? (nint)result.WindowHandle
+            : null;
+        var snapshot = await _desktopState.GetStateAsync(DesktopStateTools.Request(window, include), cancellationToken).ConfigureAwait(false);
+        return ToolImages.Create(result with { Observed = snapshot.State }, snapshot.Image, isError: !result.Success, DesktopStateTools.StateJsonOptions);
     }
 
     /// <summary>The ref of the one element the query matches, or the failure: none, several, or a search that did not finish.</summary>

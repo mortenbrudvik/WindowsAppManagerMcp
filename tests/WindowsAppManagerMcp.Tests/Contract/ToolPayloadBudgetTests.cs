@@ -74,6 +74,7 @@ public class ToolPayloadBudgetTests
         ["capture_with_elements"] = 3_500, // 2,312: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full)
 
         // UI Automation
+        ["get_desktop_state"] = 3_200, // 2,129: 15 window rows, the focus, 2 popups and 80 element lines with refs (roadmap M3.12)
         ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
         ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
         ["read_element_text"] = 1_200, // 802: the first page of a 3,000-character e-mail in the reading pane (roadmap M3.9)
