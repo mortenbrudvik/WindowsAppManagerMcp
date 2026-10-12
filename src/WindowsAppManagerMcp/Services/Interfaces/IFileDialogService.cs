@@ -10,7 +10,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// default button (AutomationId 1, IDOK: Open or Save) is pressed through element_action invoke, a replace prompt (a
 /// dialog of the file dialog with the standard Yes and No buttons, while the file exists, whose text names the file) is
 /// answered through respond_to_dialog's service by <see cref="FileDialogRequest.Overwrite"/>, and the call waits for the
-/// file dialog to close.
+/// file dialog to close. A save is completed only once the file is seen written at the path (created, or rewritten), which
+/// tells a save from an Open dialog that took the path, in every language; open is refused in a dialog whose file name box
+/// only a Save As dialog has (FileNameControlHost).
 /// </summary>
 /// <remarks>
 /// Every action goes through <see cref="IElementActionService"/>, so its guards apply (pause, input gate, target policy and

@@ -101,7 +101,9 @@ public sealed record FileDialogRequest(
 
 /// <summary>Result of file_dialog (roadmap M3.14).</summary>
 /// <param name="DialogHandle">The file dialog.</param>
-/// <param name="Completed">True when the dialog closed after its default button (Open or Save) was pressed with the path.</param>
+/// <param name="Completed">True when the dialog closed after its default button (Open or Save) was pressed with the path and,
+/// for save, a file was then seen written at <paramref name="FinalPath"/> (created, or rewritten since the press). A save
+/// whose dialog closed without that succeeds with Completed false and a warning: no confirmed save.</param>
 /// <param name="FinalPath">The full path typed into the dialog's file name box. The application may still add an extension
 /// from its file type filter.</param>
 /// <param name="PromptHandled">True when the application asked whether to replace the existing file and the prompt was answered

@@ -22,10 +22,16 @@ public sealed class FileDialogService : IFileDialogService
 
     /// <summary>
     /// The AutomationIds of the ComboBox that holds the file name Edit, which only file dialogs have: cmb13 = 1148 (an Open
-    /// dialog; its Edit is 1148 too) and the Save As dialog's FileNameControlHost (its Edit is 1001). The Edit inside is
-    /// taken, whatever its id.
+    /// dialog, and an old-style Save As dialog; its Edit is 1148 too) and the Save As dialog's FileNameControlHost (its Edit
+    /// is 1001). The Edit inside is taken, whatever its id.
     /// </summary>
-    public static IReadOnlyList<string> FileNameComboIds { get; } = ["1148", "FileNameControlHost"];
+    public static IReadOnlyList<string> FileNameComboIds { get; } = ["1148", SaveFileNameComboId];
+
+    /// <summary>
+    /// The file name ComboBox only a Save As dialog (Vista style) has; open is refused there. The ComboBox 1148 is no sign of
+    /// an Open dialog: the old-style (Explorer) Save As dialog, which apps with hooks or templates still get, has it too.
+    /// </summary>
+    public const string SaveFileNameComboId = "FileNameControlHost";
 
     /// <summary>The AutomationId of a file name Edit outside such a ComboBox that marks a file dialog by itself (cmb13's 1148).</summary>
     public const string FileNameEditId = "1148";
@@ -84,6 +90,12 @@ public sealed class FileDialogService : IFileDialogService
 
     /// <summary>How often the dialog is checked while the call waits for it to close.</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// How long a save waits, after its dialog closed, for the application to write the file at the path (at most what is
+    /// left of the call's time): the application writes it once the dialog returns.
+    /// </summary>
+    public TimeSpan WriteWait { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <inheritdoc />
     public async Task<FileDialogResult> CompleteAsync(FileDialogRequest request, CancellationToken cancellationToken = default)
@@ -165,6 +177,7 @@ public sealed class FileDialogService : IFileDialogService
         }
 
         var before = _popups.GetPopups(dialog).Select(p => p.Handle).ToHashSet();
+        call.FileBefore = FileStamp.Of(fullPath);
         var pressTimeout = call.StepTimeout < PressTimeout ? call.StepTimeout : PressTimeout;
         var pressed = await _actions.ActAsync(new ElementActionRequest(
             button.Ref!, ElementActionKind.Invoke, AllowHostTarget: request.AllowHostTarget, Timeout: pressTimeout),
@@ -200,14 +213,9 @@ public sealed class FileDialogService : IFileDialogService
         {
             if (!_windows.IsWindow(dialog) || !_windows.IsWindowVisible(dialog))
             {
-                if (request.Action == FileDialogAction.Save && call.FinalPath is { } saved && !File.Exists(saved))
-                {
-                    // Only whether it exists is read: the application may add its default extension, or write the file later
-                    call.Warnings.Add("The dialog closed, but no file is at finalPath yet: the application may have added its " +
-                                      "default extension to the name, or writes the file later. Check before relying on it.");
-                }
-
-                return call.Succeed();
+                return request.Action == FileDialogAction.Save
+                    ? await SavedAsync(call, cancellationToken).ConfigureAwait(false)
+                    : call.Succeed();
             }
 
             var prompt = pending != nint.Zero && _windows.IsWindow(pending) ? pending : NewPromptOf(dialog, before);
@@ -273,6 +281,46 @@ public sealed class FileDialogService : IFileDialogService
 
             await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// A save whose dialog closed: completed once a file is seen written at the path (created, or rewritten: its time or
+    /// length changed since before the press), within <see cref="WriteWait"/>. Whether the dialog was a Save As dialog is
+    /// not known from its ids (an Open dialog and an old-style Save As dialog share their file name box), and the file is
+    /// the same in every language; so a dialog that closed without that is no confirmed save: success, but completed
+    /// false, with a warning.
+    /// </summary>
+    private async Task<FileDialogResult> SavedAsync(FileDialogCall call, CancellationToken cancellationToken)
+    {
+        var path = call.FinalPath!;
+        var remaining = call.Remaining;
+        var wait = remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining < WriteWait ? remaining : WriteWait;
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            var now = FileStamp.Of(path);
+            if (now.Exists && now != call.FileBefore)
+            {
+                return call.Succeed();
+            }
+
+            if (clock.Elapsed >= wait)
+            {
+                break;
+            }
+
+            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        var waited = $"{wait.TotalMilliseconds:0} ms";
+        call.Warnings.Add(call.FileBefore.Exists
+            ? $"The dialog closed, but the file at finalPath was not rewritten within {waited} (its time and length are " +
+              "unchanged): the dialog may have been an Open dialog, which only read it, or the application writes the file " +
+              "later. This is no confirmed save: check the file before relying on it."
+            : $"The dialog closed, but no file was written at finalPath within {waited}: the application may have added its " +
+              "default extension to the name, writes the file later, or the dialog was an Open dialog. This is no confirmed " +
+              "save: check the file (or the window title) before relying on it.");
+        return call.Unconfirmed();
     }
 
     /// <summary>A dialog the file dialog opened after the press (not one seen before), or zero.</summary>
@@ -348,6 +396,18 @@ public sealed class FileDialogService : IFileDialogService
             if (comboList.FirstOrDefault(e => e.AutomationId == id && e.Ref != null) is not { } combo)
             {
                 continue;
+            }
+
+            if (id == SaveFileNameComboId && call.Request.Action == FileDialogAction.Open)
+            {
+                // Only a Save As dialog has this box (an Open dialog's is 1148, which an old-style Save As dialog shares, so
+                // only this direction is known): its default button would save over the file to open
+                var saveTitle = _windows.GetWindowText(dialog);
+                return new Found(null, call.Fail(nameof(UIElementErrorCode.DialogNotFound),
+                    $"Window {(long)dialog}{(string.IsNullOrEmpty(saveTitle) ? string.Empty : $" ('{Cut(saveTitle, DialogService.MaxTitleLength)}')")} " +
+                    $"is a Save As dialog (its file name box is {SaveFileNameComboId}), not an Open dialog: its default button would " +
+                    "save over the file to open. Nothing was typed. Pass action save to save under the path, or name the Open " +
+                    "dialog."));
             }
 
             var inner = await FindAsync(new ElementQuery(dialog, WithinRef: combo.Ref, ControlTypes: ["Edit"], MaxResults: 2,
@@ -431,6 +491,24 @@ public sealed class FileDialogService : IFileDialogService
         }
     }
 
+    /// <summary>What a save can change of the file at a path: whether it exists, its last write time and its length.</summary>
+    private readonly record struct FileStamp(bool Exists, DateTime LastWriteTimeUtc, long Length)
+    {
+        /// <summary>The file's stamp now; none (not existing) when it cannot be read.</summary>
+        public static FileStamp Of(string path)
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                return file.Exists ? new FileStamp(true, file.LastWriteTimeUtc, file.Length) : default;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                return default;
+            }
+        }
+    }
+
     /// <summary>A search's result, the ref it found, or the call's failure.</summary>
     private sealed record Found(string? Ref, FileDialogResult? Failure)
     {
@@ -449,6 +527,9 @@ public sealed class FileDialogService : IFileDialogService
         public string? FinalPath { get; set; }
 
         public bool PromptHandled { get; set; }
+
+        /// <summary>The file at the path just before the default button was pressed, to see whether a save wrote it.</summary>
+        public FileStamp FileBefore { get; set; }
 
         public List<string> Warnings { get; } = [];
 
@@ -473,6 +554,9 @@ public sealed class FileDialogService : IFileDialogService
         public FileDialogResult Succeed() => new(
             true, Action, (long)Dialog, Completed: true, FinalPath, PromptHandled,
             Warnings: Warnings.Count == 0 ? null : [.. Warnings], ElapsedMilliseconds: Elapsed);
+
+        /// <summary>The dialog closed, but the save it was asked for was not seen: success, not completed (a warning says why).</summary>
+        public FileDialogResult Unconfirmed() => Succeed() with { Completed = false };
 
         private double Elapsed => Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2);
     }

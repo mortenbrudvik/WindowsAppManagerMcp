@@ -84,7 +84,8 @@ public class DialogTools
                  "the dialog to close. Name the file dialog by handle (the openedPopup of the menu item or button that opened it) " +
                  "or window (the app's window: its modal file dialog); without either it is refused (InvalidArguments). " +
                  "path: absolute, on a drive letter (no network or device paths); open needs it to exist; save needs its folder, " +
-                 "and an existing file is refused before anything is typed unless overwrite is true. Returns completed, finalPath " +
+                 "and an existing file is refused before anything is typed unless overwrite is true. Returns completed (save: only " +
+                 "once a file was seen written at finalPath; completed false with a warning is no confirmed save), finalPath " +
                  "(the application may add an extension) and promptHandled; another prompt (an invalid name, an error) is returned " +
                  "as prompt (DialogNotCompleted) to answer with respond_to_dialog. Every step goes through element_action's checks: " +
                  "refused for apps the user's policy denies, the agent's own host, elevated apps, and while input is paused (PausedByUser).")]
