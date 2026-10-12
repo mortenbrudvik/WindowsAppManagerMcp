@@ -96,10 +96,24 @@ public class ElementReadContractTests
     }
 
     [Fact]
+    public async Task ReadElementText_WritesNonAsciiTextAndQuotesAsTheyAre()
+    {
+        // Arrange
+        var (arrange, elementRef) = RealReads(
+            new FakeUiaNode("Document", "Letter") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(new FakeTextPattern("Привет, 'мир' & <все>")));
+
+        // Act
+        var result = await CallAsync("read_element_text", new() { ["ref"] = elementRef }, arrange);
+
+        // Assert - the tool's JSON is text the agent reads: a \uXXXX escape costs six bytes and reads as code
+        Text(result).Should().Contain("Привет, 'мир' & <все>");
+        Text(result).Should().NotContain("\\u");
+    }
+
+    [Fact]
     public async Task ReadElementText_OfAHugeDocument_StaysWithinTheLargestResult()
     {
-        // Arrange - a million characters of prose in lines. The SDK's JSON escapes the line breaks, and also quotes, <, >, &
-        // and every non-ASCII character (six bytes each), so a text full of those costs more per character than this
+        // Arrange - a million characters of prose in lines. The JSON escapes the line breaks (two bytes each)
         var document = string.Concat(Enumerable.Repeat("The release ships on Monday, after the last review of the notes.\r\n", 16_000));
         var (arrange, elementRef) = RealReads(
             new FakeUiaNode("Document", "Log") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(new FakeTextPattern(document)));

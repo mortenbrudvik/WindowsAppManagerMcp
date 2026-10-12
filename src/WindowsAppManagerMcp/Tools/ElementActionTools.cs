@@ -295,7 +295,7 @@ public partial class ElementActionTools
             ? (nint)result.WindowHandle
             : null;
         var snapshot = await _desktopState.GetStateAsync(DesktopStateTools.Request(window, include), cancellationToken).ConfigureAwait(false);
-        return ToolImages.Create(result with { Observed = snapshot.State }, snapshot.Image, isError: !result.Success, DesktopStateTools.StateJsonOptions);
+        return ToolImages.Create(result with { Observed = snapshot.State }, snapshot.Image, isError: !result.Success, ToolJson.SerializerOptions);
     }
 
     /// <summary>menu_path (roadmap M3.5): the path's items, each acted on through element_action by the menu path service.</summary>

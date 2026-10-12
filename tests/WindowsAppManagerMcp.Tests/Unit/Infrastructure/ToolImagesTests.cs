@@ -98,6 +98,19 @@ public class ToolImagesTests
         json.TryGetProperty("ImageToScreen", out _).Should().BeFalse("member names are camelCase");
     }
 
+    [Fact]
+    public void Metadata_KeepsNonAsciiTextAndQuotesReadable()
+    {
+        // Arrange - a window title in Cyrillic with quotes, as an error message carries it
+        var failure = TestDataFactory.CreateScreenshotResult(success: false, error: "Окно 'Отчёт' <закрыто>", errorCode: "CaptureFailed");
+
+        // Act
+        var text = ToolImages.ToCallToolResult(new ScreenCapture<ScreenshotResult>(failure, null)).Content.OfType<TextContentBlock>().Single().Text;
+
+        // Assert - the relaxed encoder of every tool result, not six-byte \uXXXX escapes
+        text.Should().Contain("Окно 'Отчёт' <закрыто>");
+    }
+
     private static JsonElement Json(CallToolResult result) =>
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;
 }

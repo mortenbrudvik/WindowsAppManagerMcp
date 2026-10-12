@@ -1,6 +1,4 @@
 using System.ComponentModel;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using WindowsAppManagerMcp.Infrastructure;
@@ -24,13 +22,6 @@ public class DesktopStateTools
     internal const int DefaultTimeoutMs = 5000;
     private const int MinTimeoutMs = 1000;
     private const int MaxTimeoutMs = 30000;
-
-    /// <summary>
-    /// How results that carry a <see cref="DesktopState"/> are written: the server's options (<see cref="ToolJson.SerializerOptions"/>),
-    /// but with quotes, apostrophes and non-ASCII text left as they are instead of six-byte \uXXXX escapes. The element lines quote
-    /// every name, so this keeps the observation smaller. Still valid JSON for any client; nothing here is HTML.
-    /// </summary>
-    internal static JsonSerializerOptions StateJsonOptions { get; } = CreateStateJsonOptions();
 
     private readonly IDesktopStateService _state;
     private readonly IWindowService? _windowService;
@@ -103,14 +94,7 @@ public class DesktopStateTools
         var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, scope, maxWindows,
             screenshotMaxLongEdge, timeoutMs), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        return ToolImages.Create(snapshot.State, snapshot.Image, isError: !snapshot.State.Success, StateJsonOptions);
-    }
-
-    private static JsonSerializerOptions CreateStateJsonOptions()
-    {
-        var options = new JsonSerializerOptions(ToolJson.SerializerOptions) { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-        options.MakeReadOnly();
-        return options;
+        return ToolImages.Create(snapshot.State, snapshot.Image, isError: !snapshot.State.Success, ToolJson.SerializerOptions);
     }
 
     /// <summary>The request of a call, with its numbers clamped to their ranges.</summary>
