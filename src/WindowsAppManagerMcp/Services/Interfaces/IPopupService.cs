@@ -6,8 +6,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// The open popups of a window (roadmap M3.5): its menus (#32768), combo box dropdowns (ComboLBox), WPF popups, WinUI
 /// flyouts, dialogs and the popups a WebView2 child process draws. They are top-level windows of their own, outside the
 /// UI Automation subtree of the window that opened them, so a search of that window alone cannot find "Delete" in its
-/// context menu. find_ui_elements' windowAndPopups scope searches them, get_active_popups lists them, and the tools that
-/// act or wait (M3.6 element_action's openedPopup, M3.8 wait_for_element) use the same enumeration.
+/// context menu. find_ui_elements' windowAndPopups scope searches them (and so do the criteria of read_element_text,
+/// wait_for_element and element_action, which share its search), and get_active_popups lists them. element_action's
+/// openedPopup does not use this service: see <see cref="IAppWindowProbe"/> for why.
 /// </summary>
 /// <remarks>
 /// <para><b>Which windows</b> (<see cref="GetPopups"/>): the visible, uncloaked top-level windows with a size, other than the
@@ -37,7 +38,7 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <para><b>Refs.</b> An element of a popup is registered under the popup's own top-level window
 /// (<see cref="PopupWindow.Handle"/>), the window a resolution searches: a ref of a menu item becomes ElementStale when
 /// the menu closes.</para>
-/// <para><b>For element_action (openedPopup) and wait_for_element.</b> Take <see cref="GetPopups"/> before acting, act, then
+/// <para><b>Waiting for a popup an action opens.</b> Take <see cref="GetPopups"/> before acting, act, then
 /// <see cref="WaitForNewPopupAsync"/> with the handles seen before: it returns the first popup that was not there, or null
 /// when none opened in the time given. A popup does not need the input gate or the worker: none of these members sends
 /// input or changes a window.</para>

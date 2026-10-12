@@ -54,6 +54,40 @@ public class UIElementTools
         "the window or one of its popups is in front, else window. One timeoutMs and maxResults cover all the windows. With " +
         "withinRef, only 'window'.";
 
+    /// <summary>
+    /// The scope of the tools that name one element by find_ui_elements' criteria in a window they require (read_element_text,
+    /// wait_for_element, element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope.
+    /// </summary>
+    internal const string CriteriaScopeDescription =
+        "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), " +
+        "'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' " +
+        "(every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own " +
+        "terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not " +
+        "with ref; with withinRef, only 'window'.";
+
+    /// <summary>
+    /// The InvalidArguments message for a scope that cannot apply: with a ref (it names its element), or a scope other than
+    /// window with withinRef (it searches below one element of one window); null when the scope fits.
+    /// </summary>
+    internal static string? CriteriaScopeError(ElementSearchScope? scope, bool hasRef, bool hasWithinRef)
+    {
+        if (scope is not { } given)
+        {
+            return null;
+        }
+
+        if (hasRef)
+        {
+            return $"scope applies to the element criteria, not to a ref, which names its element in its own window: leave scope " +
+                   $"out (it is '{ToolEnum<ElementSearchScope>.Name(given)}').";
+        }
+
+        return hasWithinRef && given != ElementSearchScope.Window
+            ? $"withinRef searches below one element of one window, so scope '{ToolEnum<ElementSearchScope>.Name(given)}' cannot " +
+              "apply: leave scope out (or pass 'window'), or leave withinRef out."
+            : null;
+    }
+
     private const int DefaultMaxResults = 20;
     private const int DefaultFindTimeoutMs = 5000;
 
@@ -229,11 +263,9 @@ public class UIElementTools
 
         var windowHandle = WindowTargeting.Optional(_windowService, handle, window);
         string? within = null;
-        if (withinRef != null && scope is { } withinScope && withinScope != ElementSearchScope.Window)
+        if (CriteriaScopeError(scope, hasRef: false, hasWithinRef: withinRef != null) is { } scopeError)
         {
-            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"withinRef searches below one element of one window, so scope '{ToolEnum<ElementSearchScope>.Name(withinScope)}' " +
-                "cannot apply: leave scope out (or pass 'window'), or leave withinRef out. Nothing was searched.");
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, scopeError + " Nothing was searched.");
         }
 
         if (withinRef != null)

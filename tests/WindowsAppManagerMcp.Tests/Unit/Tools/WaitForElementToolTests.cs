@@ -188,4 +188,43 @@ public class WaitForElementToolTests
 
         error.ErrorCode.Should().Be("InvalidControlType");
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.WindowAndPopups)]
+    [InlineData(ElementSearchScope.Desktop)]
+    public async Task TheScope_ReachesTheService_OnTheCriteria(ElementSearchScope? scope)
+    {
+        await CreateSut().WaitForElement(window: Notepad, name: "Delete", controlType: "MenuItem", scope: scope);
+
+        _request!.Criteria!.Scope.Should().Be(scope, "find_ui_elements' search runs with the scope asked for (roadmap M3.5)");
+    }
+
+    [Fact]
+    public async Task AScope_WithARef_IsRefused()
+    {
+        var error = await RefusedAsync(() => CreateSut().WaitForElement(@ref: "w1e2", scope: ElementSearchScope.WindowAndPopups));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("not to a ref");
+    }
+
+    [Theory]
+    [InlineData(ElementSearchScope.WindowAndPopups)]
+    [InlineData(ElementSearchScope.Desktop)]
+    public async Task AWiderScope_WithWithinRef_IsRefused(ElementSearchScope scope)
+    {
+        var error = await RefusedAsync(() => CreateSut().WaitForElement(withinRef: "w1e1", name: "Save", scope: scope));
+
+        error.Message.Should().Contain("withinRef searches below one element of one window");
+    }
+
+    [Fact]
+    public async Task ScopeWindow_WithWithinRef_IsAllowed()
+    {
+        await CreateSut().WaitForElement(withinRef: "w1e1", name: "Save", scope: ElementSearchScope.Window);
+
+        _request!.Criteria!.Scope.Should().Be(ElementSearchScope.Window);
+    }
 }

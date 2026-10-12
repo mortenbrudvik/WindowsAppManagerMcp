@@ -27,7 +27,8 @@ public class ElementWaitTools
     [Description("Wait on the server until a UI element condition holds, instead of sleeping or calling find_ui_elements again and " +
                  "again: after a launch, a click that opens a dialog, a load or a validation. Name the element by ref (from an earlier " +
                  "read), or by find_ui_elements' criteria (name, nameMatch, automationId, controlType, className, withinRef) in window, " +
-                 "which is waited for first, so it may still be opening. condition: 'exists' (default: an element matches, offscreen " +
+                 "which is waited for first, so it may still be opening; scope as find_ui_elements' (its open menus and dialogs are " +
+                 "searched too while it is in front). condition: 'exists' (default: an element matches, offscreen " +
                  "or disabled included), 'gone' (none is left; by ref: its element is gone), 'enabled', 'visible' (not offscreen, with " +
                  "a size), 'focused' (has keyboard focus), 'name_equals' or 'value_equals' (exactly expected, case-sensitive; a " +
                  "password field's value is never read, so value_equals refuses it), 'toggle_state' (expected on, off or " +
@@ -54,6 +55,8 @@ public class ElementWaitTools
         string? className = null,
         [Description("Search only below this element: a ref from an earlier read. Its window is searched, so window is left out")]
         string? withinRef = null,
+        [Description(UIElementTools.CriteriaScopeDescription)]
+        ElementSearchScope? scope = null,
         [Description("What to wait for: 'exists' (default), 'gone', 'enabled', 'visible', 'focused', 'name_equals', 'value_equals' or 'toggle_state'")]
         ElementWaitCondition condition = ElementWaitCondition.Exists,
         [Description("name_equals and value_equals: the exact text (case-sensitive). toggle_state: 'on', 'off' or 'indeterminate'. Not for the other conditions")]
@@ -63,14 +66,15 @@ public class ElementWaitTools
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var request = CheckArguments(window, @ref, name, nameMatch, automationId, controlType, className, withinRef, condition, expected, timeoutMs);
+        var request = CheckArguments(window, @ref, name, nameMatch, automationId, controlType, className, withinRef, scope, condition, expected,
+            timeoutMs);
         return await _wait.WaitAsync(request, ToolProgress.ForServices(progress), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The request, or InvalidArguments (InvalidControlType for an unknown control type) before anything waits.</summary>
     private static ElementWaitRequest CheckArguments(
         WindowSelector? window, string? elementRef, string? name, ElementNameMatch nameMatch, string? automationId, string? controlType,
-        string? className, string? withinRef, ElementWaitCondition condition, string? expected, int timeoutMs)
+        string? className, string? withinRef, ElementSearchScope? scope, ElementWaitCondition condition, string? expected, int timeoutMs)
     {
         static ToolErrorException Invalid(string message) =>
             new(ToolErrorReporting.InvalidArgumentsErrorCode, message + " Nothing was waited for.");
@@ -97,6 +101,9 @@ public class ElementWaitTools
         var controlTypes = UIElementTools.ParseControlTypes(controlType);
         var hasCriteria = !string.IsNullOrEmpty(name) || !string.IsNullOrEmpty(automationId) || controlTypes != null ||
                           !string.IsNullOrEmpty(className);
+
+        if (UIElementTools.CriteriaScopeError(scope, elementRef != null, withinRef != null) is { } scopeError)
+            throw Invalid(scopeError);
 
         if (elementRef != null)
         {
@@ -148,7 +155,8 @@ public class ElementWaitTools
                 NameMatch: nameMatch,
                 AutomationId: automationId,
                 ControlTypes: controlTypes,
-                ClassName: className),
+                ClassName: className,
+                Scope: scope),
             Condition = condition,
             Expected = expected,
             TimeoutMs = timeoutMs

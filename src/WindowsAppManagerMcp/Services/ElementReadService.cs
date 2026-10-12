@@ -186,9 +186,12 @@ public sealed partial class ElementReadService : IElementReadService
         }
 
         if (found.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
-            ElementSearchTruncation.PartsSkipped)
+            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
         {
-            error = $"The search did not cover the whole window ({found.TruncationReason}), so the one element it found may not " +
+            var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
+                ? "every window of its scope"
+                : "the whole window";
+            error = $"The search did not cover {covered} ({found.TruncationReason}), so the one element it found may not " +
                     "be the only match. Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
             code = found.TruncationReason == ElementSearchTruncation.PartsSkipped
                 ? UIElementErrorCode.ElementAccessFailed

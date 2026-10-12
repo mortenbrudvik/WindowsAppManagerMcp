@@ -86,7 +86,7 @@ public static class ToolDocCatalog
             new("get_active_popups", "Open menus, dropdowns, flyouts and dialogs of an app, with refs", "window (or handle)", "timeoutMs"),
             new("read_element_text", "An element's text a page at a time (document, value or name); never a password", "ref", "window (with criteria)", "offset", "maxLength"),
             new("read_table", "A table's or list's headers and cells a page of rows at a time", "ref", "startRow", "maxRows", "maxColumns"),
-            new("wait_for_element", "Wait until an element exists, is gone, enabled, visible, focused, or has a name, value or toggle state", "window", "ref", "name", "automationId", "controlType", "condition", "expected", "timeoutMs"),
+            new("wait_for_element", "Wait until an element exists, is gone, enabled, visible, focused, or has a name, value or toggle state", "window", "ref", "name", "automationId", "controlType", "scope", "condition", "expected", "timeoutMs"),
         ]),
         new("Browser Reading",
         [

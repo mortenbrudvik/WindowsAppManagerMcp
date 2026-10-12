@@ -40,7 +40,8 @@ public class ElementActionTools
                  "scroll_into_view, scroll, set_range_value, realize, focus; double_click and right_click are guarded mouse clicks; " +
                  "window_close, window_minimize and window_maximize are for windows inside an application (a top-level window: " +
                  "close_window, set_window_state). Name the element by ref (from find_ui_elements or get_ui_elements), or by handle " +
-                 "or window plus name, automationId, controlType or className, which must match exactly one element (else " +
+                 "or window plus name, automationId, controlType or className (in its open menus and dialogs too while it is in front: " +
+                 "scope), which must match exactly one element (else " +
                  "AmbiguousElement or ElementNotFound). Returns method, before and after (value, toggle, expand and selection " +
                  "state, name, enabled), outcomeVerified and openedPopup (a window of the app that appeared). A disabled or " +
                  "offscreen element is refused (ElementNotEnabled, ElementOffscreen: use scroll_into_view); an element without the " +
@@ -71,6 +72,8 @@ public class ElementActionTools
         string? controlType = null,
         [Description("Element criteria: the element's class name.")]
         string? className = null,
+        [Description(UIElementTools.CriteriaScopeDescription)]
+        ElementSearchScope? scope = null,
         [Description("set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, " +
                      "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. Logged as its length only; a password " +
                      "field's value is never read or returned.")]
@@ -107,6 +110,11 @@ public class ElementActionTools
         var controlTypes = UIElementTools.ParseControlTypes(controlType);
         var hasCriteria = !string.IsNullOrEmpty(name) || !string.IsNullOrEmpty(automationId) || controlTypes != null ||
                           !string.IsNullOrEmpty(className);
+        if (UIElementTools.CriteriaScopeError(scope, @ref != null, hasWithinRef: false) is { } scopeError)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, scopeError + " Nothing was done.");
+        }
+
         if (@ref != null)
         {
             if (hasCriteria || handle != null || window != null)
@@ -156,7 +164,8 @@ public class ElementActionTools
             EnabledOnly: false,
             MaxResults: 2,
             Detail: ElementDetail.Minimal,
-            Timeout: timeout), action, cancellationToken).ConfigureAwait(false);
+            Timeout: timeout,
+            Scope: scope), action, cancellationToken).ConfigureAwait(false);
         if (found.Failure is { } failure)
         {
             return failure;
@@ -191,10 +200,11 @@ public class ElementActionTools
             return (null, Fail(result.ErrorCode.ToString(), $"{result.Error} Nothing was done."));
         }
 
-        if (result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or ElementSearchTruncation.PartsSkipped)
+        if (result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
+            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
         {
             return (null, Fail(nameof(UIElementErrorCode.OperationTimedOut),
-                $"The search for the element did not cover the whole window ({result.TruncationReason}), so it is not known that " +
+                $"The search for the element did not cover {Covered(result)} ({result.TruncationReason}), so it is not known that " +
                 $"only one element matches ({result.MatchCount} found so far). Nothing was done. Narrow the criteria (automationId, " +
                 "controlType), or find the element with find_ui_elements and pass its ref."));
         }
@@ -202,7 +212,7 @@ public class ElementActionTools
         if (result.MatchCount == 0 || result.Elements is not { Count: > 0 } elements)
         {
             return (null, Fail(nameof(UIElementErrorCode.ElementNotFound),
-                "No element of the window matches the criteria (offscreen and disabled elements included). Nothing was done. " +
+                $"No element of {Searched(result)} matches the criteria (offscreen and disabled elements included). Nothing was done. " +
                 "Check them with find_ui_elements, or get_ui_elements format text."));
         }
 
@@ -220,6 +230,18 @@ public class ElementActionTools
             : (null, Fail(nameof(UIElementErrorCode.ElementAccessFailed),
                 "The element has no runtime id, so it cannot be named for the action. Nothing was done."));
     }
+
+    /// <summary>What the search had to cover: the window, or with a wider scope the windows of that scope.</summary>
+    private static string Covered(FindElementsResult result) =>
+        result.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop ? "every window of its scope" : "the whole window";
+
+    /// <summary>What was searched, for a search that found nothing.</summary>
+    private static string Searched(FindElementsResult result) => result.Scope switch
+    {
+        ElementSearchScope.WindowAndPopups => "the window or its open popups",
+        ElementSearchScope.Desktop => "the windows searched",
+        _ => "the window"
+    };
 
     /// <summary>Notes the element's window for the audit log line, as it is before the action.</summary>
     private void NoteWindow(nint handle)

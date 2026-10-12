@@ -152,4 +152,30 @@ public class ElementReadToolsTests
     }
 
     #endregion
+
+    #region scope
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.WindowAndPopups)]
+    [InlineData(ElementSearchScope.Desktop)]
+    public async Task ReadText_ByCriteria_PassesTheScope(ElementSearchScope? scope)
+    {
+        await CreateSut().ReadElementText(window: Window, name: "Delete", controlType: "MenuItem", scope: scope);
+
+        _textRequest!.Query!.Scope.Should().Be(scope, "find_ui_elements' search runs with the scope asked for (roadmap M3.5)");
+    }
+
+    [Fact]
+    public async Task ReadText_WithARefAndAScope_IsRefused()
+    {
+        var error = await RefusedAsync(() => CreateSut().ReadElementText(@ref: "w1e1", scope: ElementSearchScope.WindowAndPopups));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("not to a ref").And.EndWith("Nothing was read.");
+        _reads.VerifyNoOtherCalls();
+    }
+
+    #endregion
 }

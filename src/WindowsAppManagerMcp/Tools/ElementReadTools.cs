@@ -39,7 +39,7 @@ public class ElementReadTools
 
     [McpServerTool(Name = "read_element_text", Title = "Read Element Text", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Read the text of one element: a document, an edit box, a reading pane, a label. Name it by ref (from find_ui_elements, " +
-                 "get_ui_elements, ...) or by window plus find_ui_elements' criteria, which must find exactly one element " +
+                 "get_ui_elements, ...) or by window plus find_ui_elements' criteria (and scope), which must find exactly one element " +
                  "(AmbiguousElement lists the candidates with their refs; ElementNotFound when none). Sources in order: the Text " +
                  "pattern's document, read a page at a time; the Value pattern's value; the element's name. Returns text, source, " +
                  "offset, totalLength (when known), truncated and nextOffset: call again with offset=nextOffset for the next page. " +
@@ -61,6 +61,8 @@ public class ElementReadTools
         string? controlType = null,
         [Description("With window: the element's class name, ignoring case.")]
         string? className = null,
+        [Description(UIElementTools.CriteriaScopeDescription)]
+        ElementSearchScope? scope = null,
         [Description("Where the page starts, in characters (default: 0). Use the nextOffset of the previous page.")]
         int offset = 0,
         [Description("The most characters to return (default: 20000, min: 1, max: 50000).")]
@@ -80,6 +82,11 @@ public class ElementReadTools
                           !string.IsNullOrEmpty(className);
         var timeout = ClampTimeout(timeoutMs);
         ElementTextRequest request;
+        if (UIElementTools.CriteriaScopeError(scope, @ref != null, hasWithinRef: false) is { } scopeError)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, scopeError + " Nothing was read.");
+        }
+
         if (@ref != null)
         {
             if (window != null || hasCriteria)
@@ -116,7 +123,8 @@ public class ElementReadTools
                 ControlTypes: controlTypes,
                 ClassName: className,
                 MaxResults: CriteriaCandidates,
-                Timeout: timeout);
+                Timeout: timeout,
+                Scope: scope);
             request = new ElementTextRequest(null, query, offset, maxLength, timeout);
         }
 

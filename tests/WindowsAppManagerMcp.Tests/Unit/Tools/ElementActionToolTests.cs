@@ -168,4 +168,45 @@ public class ElementActionToolTests
 
         _request!.AllowHostTarget.Should().BeTrue();
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ElementSearchScope.Window)]
+    [InlineData(ElementSearchScope.WindowAndPopups)]
+    [InlineData(ElementSearchScope.Desktop)]
+    public async Task TheScope_ReachesTheSearch_OfTheCriteria(ElementSearchScope? scope)
+    {
+        await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete", controlType: "MenuItem", scope: scope);
+
+        _query!.Scope.Should().Be(scope, "find_ui_elements' search runs with the scope asked for (roadmap M3.5)");
+        _request!.Ref.Should().Be("w1e7");
+    }
+
+    [Fact]
+    public async Task AScope_WithARef_IsRefused_BeforeAnythingIsDone()
+    {
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.Invoke, @ref: "w1e7", scope: ElementSearchScope.Window));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("not to a ref").And.EndWith("Nothing was done.");
+        _actions.VerifyNoOtherCalls();
+        _search.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ASearchThatLeftWindowsOfItsScopeOut_IsNotProofOfOneMatch_AndNothingIsDone()
+    {
+        // More popups were open than one search covers (or, for desktop, more windows): another match may be in the rest
+        _found = Found(1, Element("w1e7")) with
+        {
+            Scope = ElementSearchScope.WindowAndPopups, TruncationReason = ElementSearchTruncation.WindowLimit
+        };
+
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
+        result.Error.Should().Contain("every window of its scope").And.Contain("WindowLimit");
+        _actions.VerifyNoOtherCalls();
+    }
 }
