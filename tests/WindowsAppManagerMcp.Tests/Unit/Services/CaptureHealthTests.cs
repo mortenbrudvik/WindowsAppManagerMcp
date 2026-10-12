@@ -109,7 +109,7 @@ public class CaptureHealthTests
 
         // Act
         var capture = CreateSut().CaptureWindowWithElements(Window, "Tray app", [], includeFrame: true,
-            highlightInteractable: true, FullResolution);
+            ElementOverlayOptions.Default, FullResolution);
 
         // Assert
         capture.Metadata.ErrorCode.Should().Be("WindowHidden");
@@ -218,7 +218,7 @@ public class CaptureHealthTests
 
         // Act
         var metadata = CreateSut().CaptureWindowWithElements(Window, null, [], includeFrame: true,
-            highlightInteractable: true, FullResolution).Metadata;
+            ElementOverlayOptions.Default, FullResolution).Metadata;
 
         // Assert
         metadata.Success.Should().BeTrue();
@@ -292,7 +292,7 @@ public class CaptureHealthTests
 
         // Act
         var metadata = CreateSut().CaptureWindowWithElements(Window, null, [button], includeFrame: true,
-            highlightInteractable: true, FullResolution).Metadata;
+            ElementOverlayOptions.Default, FullResolution).Metadata;
 
         // Assert
         metadata.CapturedRegion.Should().Be(new CapturedRegion(7, 0, 86, 73));
@@ -357,7 +357,7 @@ public class CaptureHealthTests
 
         // Act
         var metadata = CreateSut().CaptureWindowWithElements(Window, null, [button], includeFrame: false,
-            highlightInteractable: true, FullResolution).Metadata;
+            ElementOverlayOptions.Default, FullResolution).Metadata;
 
         // Assert
         metadata.Warnings.Should().ContainSingle(w => w.StartsWith("ImageBlank:"));

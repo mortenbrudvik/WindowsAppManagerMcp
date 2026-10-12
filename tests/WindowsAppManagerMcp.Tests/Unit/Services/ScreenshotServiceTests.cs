@@ -492,7 +492,7 @@ public class ScreenshotServiceTests
 
         // Act
         var capture = CreateSut().CaptureWindowWithElements(handle, "Notepad", [], includeFrame: true,
-            highlightInteractable: true, Defaults);
+            ElementOverlayOptions.Default, Defaults);
 
         // Assert
         capture.Metadata.Success.Should().BeFalse();
@@ -532,7 +532,7 @@ public class ScreenshotServiceTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(handle, "Dialog", [element], includeFrame: false,
-            highlightInteractable: true, Defaults).Metadata;
+            ElementOverlayOptions.Default, Defaults).Metadata;
 
         // Assert
         metadata.Success.Should().BeTrue();
@@ -555,7 +555,7 @@ public class ScreenshotServiceTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(handle, null, [ElementAt(80, 120, 50, 20)], includeFrame: true,
-            highlightInteractable: true, Defaults).Metadata;
+            ElementOverlayOptions.Default, Defaults).Metadata;
 
         // Assert
         metadata.Elements.Should().ContainSingle()
@@ -575,7 +575,7 @@ public class ScreenshotServiceTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(handle, null, [parent], includeFrame: true,
-            highlightInteractable: true, Defaults).Metadata;
+            ElementOverlayOptions.Default, Defaults).Metadata;
 
         // Assert
         metadata.Elements.Should().ContainSingle().Which.ScreenBounds.Should().Be(child.Bounds);
@@ -593,7 +593,7 @@ public class ScreenshotServiceTests
 
         // Act
         var capture = sut.CaptureWindowWithElements(handle, null, [ElementAt(400, 100, 800, 200)], includeFrame: true,
-            highlightInteractable: true, new CaptureOptions { Format = "png" });
+            ElementOverlayOptions.Default, new CaptureOptions { Format = "png" });
 
         // Assert - a 2-pixel line drawn at full resolution would end up one faint pixel wide
         capture.Metadata.Width.Should().Be(1568);
@@ -611,7 +611,7 @@ public class ScreenshotServiceTests
 
         // Act
         var capture = sut.CaptureWindowWithElements(nint.Zero, null, [], includeFrame: true,
-            highlightInteractable: true, Defaults);
+            ElementOverlayOptions.Default, Defaults);
 
         // Assert
         capture.Metadata.Success.Should().BeFalse();
@@ -629,7 +629,7 @@ public class ScreenshotServiceTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(new nint(12345), "Title", [], includeFrame: true,
-            highlightInteractable: true, Defaults).Metadata;
+            ElementOverlayOptions.Default, Defaults).Metadata;
 
         // Assert
         metadata.ErrorCode.Should().Be("CaptureFailed");

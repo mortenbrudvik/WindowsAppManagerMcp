@@ -20,6 +20,8 @@ public interface ICaptureMetadata
 /// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say. <see cref="CaptureId"/> names
 /// the capture for the mouse tools' image space (roadmap M3.11): they convert a point of this image to the screen
 /// themselves, and refuse when the captured window moved since; null when the capture failed or was not registered.
+/// <see cref="Ref"/> is set for capture_window with a ref (roadmap M3.11): the element the image is cropped to, under the
+/// ref it resolved to (the one asked for, or the element's own ref when it was found again under another).
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -40,7 +42,8 @@ public record ScreenshotResult(
     string? CaptureMethod = null,
     string? CoordinateSpace = null,
     IReadOnlyList<string>? Warnings = null,
-    string? CaptureId = null
+    string? CaptureId = null,
+    string? Ref = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -119,6 +122,11 @@ public record VirtualScreenBounds(
 /// <see cref="AccessibilityWarmup"/> is set when the window shows web content and the walk waited for it first (roadmap
 /// M3.3), as in get_ui_elements.
 /// <see cref="CaptureId"/> is as for <see cref="ScreenshotResult.CaptureId"/>.
+/// <see cref="Legend"/> (roadmap M3.11) has one line per mark, in the order of <see cref="Elements"/>, for example
+/// <c>[w4120035e17] Button 'Save' #btnSave center=(392,196)</c>: the ref drawn on the mark, the control type, the name,
+/// the automation id and the mark's centre in pixels of the returned image (a click there with <see cref="CaptureId"/>
+/// lands on it); see Tools.ElementMarkLegend. Null when there are no marks. capture_with_elements leaves
+/// <see cref="Elements"/> out unless detail is full.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -149,8 +157,22 @@ public record AnnotatedScreenshotResult(
     bool? Truncated = null,
     string? TruncationReason = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
-    string? CaptureId = null
+    string? CaptureId = null,
+    string? Legend = null
 ) : ICaptureMetadata;
+
+/// <summary>
+/// How capture_with_elements draws its elements (roadmap M3.11). The overlays are drawn on the returned image after it was
+/// scaled, so a 2-pixel box and an 11-pixel tag stay legible at any maxDimension.
+/// </summary>
+/// <param name="Draw">Draw the boxes and tags; false returns the image as captured, with the marks only in the metadata.</param>
+/// <param name="Labels">Draw each mark's ref as a filled tag at its box (an element without a ref gets only its box).</param>
+/// <param name="HighlightInteractable">Dim the boxes of disabled elements.</param>
+public sealed record ElementOverlayOptions(bool Draw = true, bool Labels = true, bool HighlightInteractable = true)
+{
+    /// <summary>Boxes and labelled tags, disabled elements dimmed.</summary>
+    public static ElementOverlayOptions Default { get; } = new();
+}
 
 /// <summary>
 /// An element annotation.

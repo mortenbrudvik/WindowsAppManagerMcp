@@ -151,7 +151,7 @@ public class ScreenshotScalingTests
         var region = sut.CaptureRegion(0, 0, 100, 50, options).Metadata;
         var window = sut.CaptureWindow(new nint(12345), includeFrame: true, options).Metadata;
         var annotated = sut.CaptureWindowWithElements(new nint(12345), null, [], includeFrame: true,
-            highlightInteractable: true, options).Metadata;
+            ElementOverlayOptions.Default, options).Metadata;
 
         // Assert
         foreach (var (success, error, errorCode) in new[]
@@ -392,7 +392,7 @@ public class ScreenshotScalingTests
 
         // Act
         var capture = sut.CaptureWindowWithElements(new nint(12345), null, [element], includeFrame: true,
-            highlightInteractable: true, new CaptureOptions { MaxDimension = 100 });
+            ElementOverlayOptions.Default, new CaptureOptions { MaxDimension = 100 });
 
         // Assert
         var metadata = capture.Metadata;
@@ -419,7 +419,7 @@ public class ScreenshotScalingTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(new nint(12345), null, [element], includeFrame: true,
-            highlightInteractable: true, new CaptureOptions { MaxWidth = 80 }).Metadata;
+            ElementOverlayOptions.Default, new CaptureOptions { MaxWidth = 80 }).Metadata;
 
         // Assert
         metadata.Success.Should().BeTrue();
@@ -439,7 +439,7 @@ public class ScreenshotScalingTests
 
         // Act
         var metadata = sut.CaptureWindowWithElements(new nint(12345), null, [element], includeFrame: true,
-            highlightInteractable: true, new CaptureOptions()).Metadata;
+            ElementOverlayOptions.Default, new CaptureOptions()).Metadata;
 
         // Assert - 3136 scaled to 1568 is exactly half
         metadata.ImageToScreen.Should().Be(new ImageToScreenTransform(-3200, 100, 2, 2));

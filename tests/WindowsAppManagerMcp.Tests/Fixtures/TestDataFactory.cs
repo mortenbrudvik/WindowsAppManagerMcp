@@ -562,7 +562,7 @@ public static class TestDataFactory
                 It.IsAny<string?>(),
                 It.IsAny<IReadOnlyList<UIElementInfo>>(),
                 It.IsAny<bool>(),
-                It.IsAny<bool>(),
+                It.IsAny<ElementOverlayOptions>(),
                 It.IsAny<CaptureOptions>()))
             .Returns(new ScreenCapture<AnnotatedScreenshotResult>(annotated, success ? CreateEncodedImage() : null));
 

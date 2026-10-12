@@ -143,12 +143,12 @@
     {
       "name": "capture_window",
       "title": "Capture Window",
-      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a specific window, even when other windows cover it. A minimized window fails with WindowMinimized (or pass restoreIfMinimized), a hidden one with WindowHidden, one on another virtual desktop with Cloaked, and a window of an app the user's policy denies with TargetDeniedByPolicy. A window that is not responding is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. With ref, the image is cropped to that element (plus padding) for a small, sharp view of one control; the crop's corner is its origin. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "handle": {
-            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.",
+            "description": "Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both; with ref both may be left out.",
             "type": [
               "integer",
               "null"
@@ -224,6 +224,22 @@
               }
             },
             "additionalProperties": false,
+            "default": null
+          },
+          "ref": {
+            "description": "An element ref (from capture_with_elements, find_ui_elements, get_ui_elements, ...): crop the window's image to that element, read again now, plus padding, clipped to the window. The window is the ref's own; a handle or window that names another fails with InvalidArguments. ElementStale or AmbiguousElement when the element is gone, ElementOffscreen when it is offscreen or outside the window.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "padding": {
+            "description": "Pixels of the window kept around the ref's element on every side (0-500). Default: 8. Only with ref.",
+            "type": [
+              "integer",
+              "null"
+            ],
             "default": null
           },
           "includeFrame": {
@@ -310,7 +326,7 @@
     {
       "name": "capture_with_elements",
       "title": "Capture Window with Element Boxes",
-      "description": "Capture a window with UI element bounding boxes drawn on it. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
+      "description": "Capture a window with its UI elements drawn on it as numbered marks (Set-of-Marks): a box per element and a filled tag with the element's ref, such as w4120035e17. Pick a target in the image, then act on it with element_action(ref) (no coordinates), or click the legend's center with this captureId. Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. The metadata's legend has one line per mark: '[ref] Type 'Name' #automationId center=(x,y)', center in pixels of the returned image. By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80; detail 'full' adds the elements list with imageBounds and screenBounds. Boxes are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. The image is returned even when the UI Automation walk fails or times out: then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). A successful capture can carry warnings, each starting with a code: ImageBlank (one solid color), WindowNotResponding (copied from the screen, covering windows show), DpiScaledWindow, RegionClipped and others. Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. scaleFactor is the monitor's DPI scale, for information only; never multiply by it.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -432,6 +448,14 @@
             "type": "boolean",
             "default": false
           },
+          "actionableOnly": {
+            "description": "Only mark elements an agent can act on: those with an Invoke, Toggle, Value, SelectionItem, ExpandCollapse or RangeValue pattern, enabled or not (a disabled one is dimmed and flagged [disabled] in the legend). Labels and containers are left out, but the elements inside them are still marked. Default: true when controlTypes is empty, false with controlTypes.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
           "visibleOnly": {
             "description": "Only include elements that are not offscreen. Default: true. This filter drops whole subtrees: everything inside an element reported as offscreen is left out too. Pass false if the control may be scrolled out of view.",
             "type": "boolean",
@@ -446,6 +470,30 @@
             "description": "Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000",
             "type": "integer",
             "default": 5000
+          },
+          "maxElements": {
+            "description": "Stop the walk once this many elements are found (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. An element without bounds or outside the image gets no mark, so there can be fewer marks. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.",
+            "type": "integer",
+            "default": 80
+          },
+          "labels": {
+            "description": "Draw each mark's ref as a filled tag at its box. Default: true. false draws the boxes only.",
+            "type": "boolean",
+            "default": true
+          },
+          "drawOverlays": {
+            "description": "Draw the marks on the image. Default: true. false returns the clean image, with the marks only in the legend.",
+            "type": "boolean",
+            "default": true
+          },
+          "detail": {
+            "description": "What the metadata says about the marks: 'legend' (default: one compact line per mark) or 'full' (also the elements list with imageBounds, screenBounds and overlayColor).",
+            "default": "legend",
+            "type": "string",
+            "enum": [
+              "legend",
+              "full"
+            ]
           },
           "maxDimension": {
             "description": "Longest edge of the image in pixels; larger captures are scaled down proportionally. Default (null): 1568, the size vision models work at. 0 keeps full resolution. imageToScreen reports the resulting scale. imageBounds are scaled with the image; screenBounds stay in screen pixels.",

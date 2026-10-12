@@ -98,6 +98,19 @@ public enum CaptureFormat
     Jpeg
 }
 
+/// <summary>What capture_with_elements reports about its marks besides the image (roadmap M3.11).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "element detail", NullMeans = "legend")]
+public enum CaptureElementDetail
+{
+    /// <summary>The legend only: one compact line per mark with its ref, type, name, automation id and centre.</summary>
+    [JsonStringEnumMemberName("legend")]
+    Legend,
+
+    /// <summary>The legend and the elements list with each mark's imageBounds, screenBounds and overlay color.</summary>
+    [JsonStringEnumMemberName("full")]
+    Full
+}
+
 /// <summary>The browser launch_browser_with_debug starts.</summary>
 [ToolEnum(nameof(BrowserErrorCode.UnsupportedBrowser), "browser", NullMeans = "chrome")]
 public enum DebugBrowser

@@ -126,7 +126,7 @@ public class ScreenshotToolsCaptureHealthTests
 
         // Assert
         _screenshots.Verify(s => s.CaptureWindowWithElements(Window, "Context", It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()), Times.Once);
     }
 
     [Theory]
@@ -201,7 +201,7 @@ public class ScreenshotToolsCaptureHealthTests
             .Callback(() => _events.Add("walk"))
             .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]));
         _screenshots.Setup(s => s.CaptureWindowWithElements(Window, It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()))
+                It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()))
             .Callback(() => _events.Add("capture"))
             .Returns(new ScreenCapture<AnnotatedScreenshotResult>(TestDataFactory.CreateAnnotatedScreenshotResult(), TestDataFactory.CreateEncodedImage()));
 
@@ -409,7 +409,7 @@ public class ScreenshotToolsCaptureHealthTests
 
     private void VerifyNotCaptured() =>
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(),
-            It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()), Times.Never);
 
     private static JsonElement Metadata(CallToolResult result) =>
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;

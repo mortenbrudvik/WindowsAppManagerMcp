@@ -23,7 +23,7 @@ namespace WindowsAppManagerMcp.Services;
 /// itself.</item>
 /// <item>maxDepth counts levels below the window: its children are level 1, and nothing below
 /// level maxDepth is read.</item>
-/// <item>The controlTypes, size and interactable filters decide only whether an element itself is
+/// <item>The controlTypes, size, interactable and actionable filters decide only whether an element itself is
 /// returned. An element that fails one is left out, and the elements inside it that pass take its
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
 /// <item>maxElements stops the walk once that many elements are returned. truncationReason MaxElements says something
@@ -768,9 +768,10 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>
-        /// The controlTypes, size and interactable filters, cheapest first. A fetched element's interaction
-        /// properties came with it; an element read on its own reads them only when it passes the others. Throws only
-        /// when the element disappeared.
+        /// The controlTypes, size, interactable and actionable filters, cheapest first; an element must pass every
+        /// filter that is set. A fetched element's interaction properties came with it; an element read on its own
+        /// reads them (focus and patterns for interactable, a fresh element read for actionable) only when it passes
+        /// the filters before. Throws only when the element disappeared.
         /// </summary>
         private bool PassesFilters(Candidate candidate, UiaNodeProperties properties)
         {
@@ -798,26 +799,67 @@ public class UIElementService : IUIElementService
                     return false;
                 }
 
-                if (candidate.Cached is { } cached)
+                if (!IsInteractable(candidate))
                 {
-                    return cached.IsInteractable;
-                }
-
-                try
-                {
-                    return tree.IsInteractable(candidate.Node);
-                }
-                catch (Exception ex) when (ex is not UiaElementUnavailableException)
-                {
-                    // Only this element's own properties failed (a provider that rejects a pattern
-                    // query, for example): leave the element out, but keep walking the elements
-                    // inside it. A vanished element is skipped with its subtree, which is gone too.
-                    Count(ref _skippedElementCount);
                     return false;
                 }
             }
 
+            if (filter?.ActionableOnly == true && !IsActionable(candidate))
+            {
+                return false;
+            }
+
             return true;
+        }
+
+        /// <summary>
+        /// Whether the element can take focus or supports an action pattern: from the properties fetched with its level,
+        /// or from a fresh read when it was read on its own. An element whose properties cannot be read counts as
+        /// skipped and is left out; its subtree is still walked.
+        /// </summary>
+        private bool IsInteractable(Candidate candidate)
+        {
+            if (candidate.Cached is { } cached)
+            {
+                return cached.IsInteractable;
+            }
+
+            try
+            {
+                return tree.IsInteractable(candidate.Node);
+            }
+            catch (Exception ex) when (ex is not UiaElementUnavailableException)
+            {
+                // Only this element's own properties failed (a provider that rejects a pattern
+                // query, for example): leave the element out, but keep walking the elements
+                // inside it. A vanished element is skipped with its subtree, which is gone too.
+                Count(ref _skippedElementCount);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Whether the element supports an action pattern: from the patterns fetched with its level, or from one fresh read
+        /// of the element (a cross-process call) when it was read on its own. An element whose patterns cannot be read is
+        /// left out and counted, and the elements inside it are still walked; one that disappeared throws.
+        /// </summary>
+        private bool IsActionable(Candidate candidate)
+        {
+            if (candidate.Cached is { } cached)
+            {
+                return (cached.Patterns & UiaPatterns.Actions) != 0;
+            }
+
+            try
+            {
+                return (tree.ReadElement(candidate.Node).Patterns & UiaPatterns.Actions) != 0;
+            }
+            catch (Exception ex) when (ex is not UiaElementUnavailableException)
+            {
+                Count(ref _skippedElementCount);
+                return false;
+            }
         }
 
         private bool StopRequested()

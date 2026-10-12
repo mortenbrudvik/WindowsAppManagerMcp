@@ -88,7 +88,7 @@ public class ScreenshotCaptureIdTests
     [Fact]
     public void CaptureWithElements_RegistersTheWindow()
     {
-        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, highlightInteractable: true, Defaults).Metadata;
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default, Defaults).Metadata;
 
         var geometry = _registry.Find(metadata.CaptureId!)!.Geometry;
         geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false));
