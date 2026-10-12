@@ -275,21 +275,26 @@ public class ProcessKillTests
     [Fact]
     public async Task KillProcess_Graceful_CancelledWhileWaitingForTheExit_Throws()
     {
-        // Arrange - the close request is sent; the process does not exit before the call is cancelled
+        // Arrange - the close request is sent; the process does not exit before the call is cancelled. The call is
+        // cancelled once it waits for the exit, not by a timer, so a slow start cannot cancel it before the close request
+        using var call = new CancellationTokenSource();
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockProcess.Setup(p => p.CloseMainWindow()).Returns(true);
         _mockProcess.Setup(p => p.WaitForExitAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .Returns(async (int _, CancellationToken token) =>
             {
+                waiting.TrySetResult();
                 await Task.Delay(System.Threading.Timeout.Infinite, token);
                 return true;
             });
-        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         // Act
-        var act = () => CreateSut().KillProcessAsync(Pid, confirm: true, gracefulTimeoutMs: 60000, cancellationToken: call.Token);
+        var kill = CreateSut().KillProcessAsync(Pid, confirm: true, gracefulTimeoutMs: 60000, cancellationToken: call.Token);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        call.Cancel();
 
         // Assert - reported as cancelled, not as a TerminationException result; never escalated
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await FluentActions.Awaiting(() => kill).Should().ThrowAsync<OperationCanceledException>();
         _mockProcess.Verify(p => p.CloseMainWindow(), Times.Once);
         VerifyNeverForceKilled();
     }

@@ -22,6 +22,8 @@ public class ForceAccessibilityLaunchTests
     private readonly Mock<IWindowWaitService> _windowWait = new();
     private readonly List<WindowInfo> _open = [];
     private readonly List<ProcessStartInfo> _started = [];
+    private readonly Dictionary<int, (int ParentProcessId, string ImageName)> _running = [];
+    private readonly Dictionary<int, string> _imagePaths = [];
 
     public ForceAccessibilityLaunchTests()
     {
@@ -39,6 +41,8 @@ public class ForceAccessibilityLaunchTests
             .Callback((ProcessStartInfo info) => _started.Add(info))
             .Returns(_launched.Object);
         _windows.Setup(w => w.GetApplicationWindows()).Returns(() => _open);
+        _processes.Setup(p => p.GetProcessList()).Returns(() => _running);
+        _processes.Setup(p => p.GetProcessImagePath(It.IsAny<int>())).Returns((int id) => _imagePaths.GetValueOrDefault(id));
         _windowWait.Setup(w => w.TakeBaseline()).Returns(new WindowBaseline(new Dictionary<nint, string>(), nint.Zero));
     }
 
@@ -149,10 +153,84 @@ public class ForceAccessibilityLaunchTests
         // Act
         var result = await LaunchAsync(Code);
 
-        // Assert
+        // Assert - closing the windows is not enough when the browser keeps a process without one
         result.Status.Should().Be(LaunchStatus.PossibleHandoff);
         result.ForceAccessibilityApplied.Should().BeTrue("the flag was on the command line");
-        result.Warning.Should().Contain("already running").And.Contain("close every window");
+        result.Warning.Should().Contain("already running")
+            .And.Contain("Startup boost")
+            .And.Contain("background apps")
+            .And.Contain("list_processes with includeWindowless");
+    }
+
+    /// <summary>A running process: <paramref name="processId"/> with its image name and path.</summary>
+    private void Running(int processId, string imagePath)
+    {
+        _running[processId] = (1, Path.GetFileName(imagePath));
+        _imagePaths[processId] = imagePath;
+    }
+
+    [Fact]
+    public async Task WhenTheAppIsAlreadyRunning_ALaunchWithoutAWait_WarnsThatTheSwitchMostLikelyHasNoEffect()
+    {
+        // Arrange - VS Code runs, with or without a window: the new Code.exe hands its request to it and exits
+        Running(900, Code);
+
+        // Act
+        var result = await LaunchAsync(Code);
+
+        // Assert
+        result.Status.Should().Be(LaunchStatus.Started);
+        result.ForceAccessibilityApplied.Should().BeTrue("the flag was on the command line");
+        result.Warning.Should().Contain("already running").And.Contain("900").And.Contain("Startup boost");
+        _started.Single().Arguments.Should().Be(Flag, "the launch itself still happens");
+    }
+
+    [Fact]
+    public async Task AnotherProgramWithTheSameImageName_IsNotTheAppRunning()
+    {
+        // Arrange - a Code.exe of another installation
+        Running(900, @"C:\Other\Code.exe");
+
+        // Act
+        var result = await LaunchAsync(Code);
+
+        // Assert
+        result.ForceAccessibilityApplied.Should().BeTrue();
+        result.Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task InABatch_ASecondLaunchOfTheApp_WarnsThatTheFirstIsAlreadyRunning()
+    {
+        // Arrange - the first item's process runs once it is started
+        _processes.Setup(p => p.StartProcess(It.IsAny<ProcessStartInfo>()))
+            .Callback((ProcessStartInfo info) =>
+            {
+                _started.Add(info);
+                Running(4321, Code);
+            })
+            .Returns(_launched.Object);
+
+        // Act
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+        [
+            new LaunchRequest(Code, ForceAccessibility: true),
+            new LaunchRequest(Code, ["."], ForceAccessibility: true)
+        ]);
+
+        // Assert
+        results[0].Warning.Should().BeNull();
+        results[1].Warning.Should().Contain("already running").And.Contain("4321");
+    }
+
+    [Fact]
+    public async Task WithoutForceAccessibility_TheRunningProcessesAreNotRead()
+    {
+        // Act
+        await LaunchAsync(Code, forceAccessibility: false);
+
+        // Assert
+        _processes.Verify(p => p.GetProcessList(), Times.Never);
     }
 
     [Fact]

@@ -13,6 +13,8 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// <param name="Target">The resolved target (null when rejected before resolution): what the window wait looks for.</param>
 /// <param name="ForceAccessibilityApplied">With forceAccessibility (roadmap M3.3): whether --force-renderer-accessibility is
 /// on the command line (the target is a Chromium, Electron or CEF program); null when it was not asked for.</param>
+/// <param name="RunningInstance">With forceAccessibility applied: a process of the program that was running right before the
+/// start, to which the new process most likely hands its request; null when none was (or it was not looked for).</param>
 public record LaunchPlan(
     ProcessStartInfo? StartInfo,
     LaunchTargetKind? TargetKind = null,
@@ -20,7 +22,8 @@ public record LaunchPlan(
     string? ErrorMessage = null,
     string? ErrorCode = null,
     ResolvedLaunchTarget? Target = null,
-    bool? ForceAccessibilityApplied = null)
+    bool? ForceAccessibilityApplied = null,
+    int? RunningInstance = null)
 {
     public bool IsValid => StartInfo != null;
 

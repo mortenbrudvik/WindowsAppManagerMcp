@@ -50,7 +50,7 @@ public class AccessibilityWarmupTests
         public string ClassName { get; } = className;
         public uint ProcessId { get; set; } = processId;
         public nint Parent { get; } = parent;
-        public bool Visible { get; } = visible;
+        public bool Visible { get; set; } = visible;
         public bool Alive { get; set; } = true;
     }
 
@@ -411,6 +411,74 @@ public class AccessibilityWarmupTests
         // Assert
         info.Should().BeNull();
         _tree.Reads.Count.Should().Be(readsBefore, "a remembered window is not read again");
+    }
+
+    [Fact]
+    public void WarmUp_OfAWarmedWindow_WarmsUpATabThatWasShownSince()
+    {
+        // Arrange - the first tab was warmed up; then another tab is shown, whose page Chromium builds only now
+        ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None)!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        _desktop[RenderWidget].Visible = false;
+        _desktop[HiddenTab] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        var shownTab = new FakeUiaNode("Document", "Other page");
+        _tree.WithWindow(HiddenTab, shownTab);
+        _afterWait = () => AddChildren(shownTab, shownTab.Children.Count == 0 ? 3 : 0);
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().NotBeNull("the page that is shown now was never warmed up");
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.DocumentChildCount.Should().Be(3);
+        info.Polls.Should().BeGreaterThan(1);
+    }
+
+    [Fact]
+    public void WarmUp_OfAWarmedWindow_WhoseShownTabWasWarmedUp_DoesNotReadAgain()
+    {
+        // Arrange - the second tab was warmed up while it was shown
+        ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        _desktop[RenderWidget].Visible = false;
+        _desktop[HiddenTab] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        var shownTab = new FakeUiaNode("Document", "Other page");
+        AddChildren(shownTab, 4);
+        _tree.WithWindow(HiddenTab, shownTab);
+        sut.WarmUp(Browser, Budget, CancellationToken.None).Should().NotBeNull();
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var info = sut.WarmUp(Browser, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.Reads.Count.Should().Be(readsBefore);
+    }
+
+    [Fact]
+    public void WarmUp_OfATabShownInAWarmedWindowThatStaysEmpty_IsWaitedForOnlyThreeTimes()
+    {
+        // Arrange - the first tab was warmed up; the tab shown now stays empty
+        ChromeWithPage(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(Browser, Budget, CancellationToken.None);
+        _desktop[RenderWidget].Visible = false;
+        _desktop[HiddenTab] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, BrowserProcess, Browser);
+        _tree.WithWindow(HiddenTab, new FakeUiaNode("Document", "Empty page"));
+
+        // Act
+        var attempts = Enumerable.Range(0, AccessibilityWarmup.MaxWaitingAttempts + 1)
+            .Select(_ => sut.WarmUp(Browser, Budget, CancellationToken.None)!)
+            .ToList();
+
+        // Assert
+        attempts.Should().OnlyContain(i => i.Status == AccessibilityWarmupStatus.NotReady);
+        attempts.Take(AccessibilityWarmup.MaxWaitingAttempts).Should().OnlyContain(i => i.WaitedMs == 1500);
+        attempts[^1].WaitedMs.Should().Be(0);
     }
 
     [Fact]
