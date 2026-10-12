@@ -89,15 +89,96 @@ public class ElementReadServiceTextTests
         // Arrange - "a\r\nb\r\nc" is five of the provider's characters
         var elementRef = Add(Document("a\r\nb\r\nc", lineBreakIsOneCharacter: true));
 
-        // Act
-        var first = await Read(elementRef, maxLength: 2);
-        var second = await Read(elementRef, offset: first.NextOffset!.Value, maxLength: 2);
+        // Act - three of the provider's characters ("a\r\nb") would be four UTF-16 characters
+        var first = await Read(elementRef, maxLength: 3);
+        var second = await Read(elementRef, offset: first.NextOffset!.Value, maxLength: 3);
 
-        // Assert - nothing is skipped or read twice
+        // Assert - the page spans fewer characters, so it fits maxLength and nothing is skipped or read twice
         first.Text.Should().Be("a\r\n");
         first.NextOffset.Should().Be(2);
         second.Text.Should().Be("b\r\n");
         second.NextOffset.Should().Be(4);
+        first.TextSkipped.Should().BeNull();
+    }
+
+    [Fact]
+    public void FakeTextPattern_WithWideCharacters_ReturnsMoreTextThanThePageSpans()
+    {
+        // The fake is a provider's range, not an engine adapter: the tests below rely on its pages being too long
+        new FakeTextPattern(new string('x', 100)) { CharacterLength = 10 }.GetTextPage(0, 5).Text.Should().HaveLength(50);
+    }
+
+    [Fact]
+    public async Task ReadText_WhenAPageHoldsMoreTextThanMaxLength_ReadsFewerCharacters_AndSkipsNothing()
+    {
+        // Arrange - each of the provider's characters is ten UTF-16 characters: a page of 100 holds 1,000
+        var document = string.Concat(Enumerable.Range(0, 1_000).Select(i => (i % 10).ToString()));
+        var pattern = new FakeTextPattern(document) { CharacterLength = 10 };
+        var elementRef = Add(new FakeUiaNode("Document", "Body") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(pattern));
+
+        // Act
+        var first = await Read(elementRef, maxLength: 100);
+        var second = await Read(elementRef, offset: first.NextOffset!.Value, maxLength: 100);
+
+        // Assert - the server caps the page itself, and the next page continues where it ends
+        first.Text!.Length.Should().BeLessThanOrEqualTo(100).And.BeGreaterThan(0);
+        first.Truncated.Should().BeTrue();
+        first.NextOffset.Should().Be(first.Text.Length / 10);
+        second.Offset.Should().Be(first.NextOffset);
+        (first.Text + second.Text).Should().Be(document[..(first.Text.Length + second.Text!.Length)]);
+        first.TextSkipped.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadText_OfACharacterLongerThanMaxLength_CutsIt_AndSaysTextWasSkipped()
+    {
+        // Arrange - the provider counts "\r\n" as one character; a page of one character cannot hold it
+        var elementRef = Add(Document("a\r\nb", lineBreakIsOneCharacter: true));
+
+        // Act
+        var result = await Read(elementRef, offset: 1, maxLength: 1);
+
+        // Assert
+        result.Text.Should().Be("\r");
+        result.TextSkipped.Should().BeTrue();
+        result.NextOffset.Should().Be(2);
+    }
+
+    [Theory]
+    [InlineData('ж', 2)] // Cyrillic: two bytes in UTF-8
+    [InlineData('中', 3)] // CJK: three bytes
+    public async Task ReadText_OfNonAsciiText_StaysWithinTheByteLimit_AndPagesOnWithoutAGap(char letter, int bytesPerCharacter)
+    {
+        // Arrange
+        var document = new string(letter, 100_000);
+        var elementRef = Add(Document(document));
+
+        // Act
+        var first = await Read(elementRef, maxLength: ElementReadService.MaxTextLength);
+        var second = await Read(elementRef, offset: first.NextOffset!.Value, maxLength: ElementReadService.MaxTextLength);
+
+        // Assert
+        first.Text!.Length.Should().Be(ElementReadService.MaxTextBytes / bytesPerCharacter);
+        first.NextOffset.Should().Be(first.Text.Length);
+        first.Truncated.Should().BeTrue();
+        second.Offset.Should().Be(first.Text.Length);
+        first.TextSkipped.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadText_OfANonAsciiValue_StaysWithinTheByteLimit()
+    {
+        // Arrange
+        var elementRef = Add(new FakeUiaNode("Edit", "Notes") { ActionPatterns = ["Value"], Value = new string('ж', 100_000) });
+
+        // Act
+        var result = await Read(elementRef, maxLength: ElementReadService.MaxTextLength);
+
+        // Assert
+        result.Source.Should().Be(ElementTextSource.Value);
+        result.Text!.Length.Should().Be(ElementReadService.MaxTextBytes / 2);
+        result.NextOffset.Should().Be(result.Text.Length);
+        result.TotalLength.Should().Be(100_000);
     }
 
     [Fact]

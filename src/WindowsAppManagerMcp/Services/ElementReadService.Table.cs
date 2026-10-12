@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -388,6 +389,9 @@ public sealed partial class ElementReadService
     /// </summary>
     private sealed class TableProgress(int startRow, int maxColumns)
     {
+        /// <summary>The bytes of a null cell in the result's JSON, with its comma.</summary>
+        private const int NullCellBytes = 5;
+
         private readonly object _gate = new();
         private readonly List<IReadOnlyList<string?>> _rows = [];
         private string? _ref;
@@ -395,7 +399,7 @@ public sealed partial class ElementReadService
         private IReadOnlyList<string?>? _headers;
         private int? _totalRows;
         private int? _totalColumns;
-        private int _length;
+        private int _bytes;
         private bool _cellsTruncated;
         private bool _rowsRemain;
         private ElementTableTruncation? _stop;
@@ -431,8 +435,8 @@ public sealed partial class ElementReadService
         {
             lock (_gate)
             {
-                _headers = headers is { Count: > 0 } ? headers.Select(Cap).ToList() : null;
-                _length += _headers?.Sum(h => h?.Length ?? 0) ?? 0;
+                _headers = headers is { Count: > 0 } ? Fit(headers.Select(Cap).ToList(), MaxTableTextBytes / 2) : null;
+                _bytes += _headers?.Sum(CellBytes) ?? 0;
                 if (headerCount > 0 && _totalColumns == null)
                 {
                     _totalColumns = headerCount;
@@ -456,20 +460,29 @@ public sealed partial class ElementReadService
             }
         }
 
-        /// <summary>Adds a whole row; false (and stopped with Size) when it would pass the size limit.</summary>
+        /// <summary>
+        /// Adds a whole row; false (and stopped with Size) when it would pass the size limit. The page's first row is always
+        /// added, its cells cut to what is left when it alone would pass the limit, so that every page moves the read on.
+        /// </summary>
         public bool TryAddRow(IReadOnlyList<string?> cells)
         {
             var capped = cells.Select(Cap).ToList();
-            var length = capped.Sum(c => c?.Length ?? 0);
+            var bytes = capped.Sum(CellBytes);
             lock (_gate)
             {
-                if (_length + length > MaxTableTextLength)
+                if (_bytes + bytes > MaxTableTextBytes)
                 {
-                    _stop ??= ElementTableTruncation.Size;
-                    return false;
+                    if (_rows.Count > 0 || _stop != null)
+                    {
+                        _stop ??= ElementTableTruncation.Size;
+                        return false;
+                    }
+
+                    capped = Fit(capped, MaxTableTextBytes - _bytes);
+                    bytes = capped.Sum(CellBytes);
                 }
 
-                _length += length;
+                _bytes += bytes;
                 _rows.Add(capped);
                 return true;
             }
@@ -530,5 +543,32 @@ public sealed partial class ElementReadService
             _cellsTruncated = true;
             return text[..end];
         }
+
+        /// <summary>
+        /// The cells cut so that together they take at most <paramref name="budget"/> bytes, each to an equal share, noting a
+        /// cut. Called under the lock.
+        /// </summary>
+        private List<string?> Fit(List<string?> cells, int budget)
+        {
+            if (cells.Sum(CellBytes) <= budget)
+            {
+                return cells;
+            }
+
+            var share = Math.Max(0, budget / cells.Count - NullCellBytes);
+            return cells.Select(cell =>
+            {
+                if (cell == null || FittingLength(cell, cell.Length, share) is var end && end == cell.Length)
+                {
+                    return cell;
+                }
+
+                _cellsTruncated = true;
+                return cell[..end];
+            }).ToList();
+        }
+
+        /// <summary>The bytes a header or cell takes in the result's JSON: its text with its quotes and comma, or null and its comma.</summary>
+        private static int CellBytes(string? cell) => cell == null ? NullCellBytes : ToolJson.StringBytes(cell) + 3;
     }
 }

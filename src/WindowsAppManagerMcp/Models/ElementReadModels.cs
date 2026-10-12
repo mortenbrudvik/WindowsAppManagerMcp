@@ -85,6 +85,9 @@ public sealed record ElementTableRequest(
 /// <param name="IsPassword">True for a password field (nothing was read); left out otherwise.</param>
 /// <param name="Candidates">For AmbiguousElement from the criteria: the elements they found (up to 5), each with its ref.</param>
 /// <param name="AccessibilityWarmup">Set when the window shows web content and this call waited for it (roadmap M3.3).</param>
+/// <param name="TextSkipped">True when the page ends inside one of the provider's characters that was longer than the page
+/// could hold (a line break counted as one character, with maxLength 1): the rest of that character is not returned, and
+/// nextOffset is after it. Left out otherwise.</param>
 public sealed record ElementTextResult(
     bool Success,
     string? Ref,
@@ -101,7 +104,8 @@ public sealed record ElementTextResult(
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
     IReadOnlyList<FoundElement>? Candidates = null,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    bool? TextSkipped = null
 );
 
 /// <summary>Result of read_table (roadmap M3.9).</summary>

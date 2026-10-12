@@ -758,25 +758,27 @@ public sealed class Uia3Tree : IUiaTree
             return maxLength >= 0 && text.Length > maxLength ? text[..maxLength] : text;
         });
 
-        public UiaTextPage GetTextPage(int offset, int maxLength) => UiaComErrors.Run(() =>
-        {
-            // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
-            var range = pattern.DocumentRange;
-            var start = offset > 0
-                ? range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, offset)
-                : 0;
-            range.MoveEndpointByRange(
-                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start);
-            var length = range.MoveEndpointByUnit(
-                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, Math.Max(1, maxLength));
-            var text = length > 0 ? range.GetText(-1) ?? string.Empty : string.Empty;
+        // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
+        public UiaTextPage GetTextPage(int offset, int maxLength) =>
+            UiaComErrors.Run(() => new TextPageReader(pattern.DocumentRange).Read(offset, maxLength));
+    }
 
-            // A full page: one more character after it tells whether text follows
-            var hasMore = length >= maxLength &&
-                          range.Clone().MoveEndpointByUnit(
-                              TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1) > 0;
-            return new UiaTextPage(text, start, length, hasMore);
-        });
+    /// <summary>The page reader of both engines over a COM text range.</summary>
+    private sealed class TextPageReader(IUIAutomationTextRange range) : UiaTextPageReader
+    {
+        protected override int MoveStart(int count) =>
+            range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, count);
+
+        protected override void Collapse() => range.MoveEndpointByRange(
+            TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start);
+
+        protected override int MoveEnd(int count) =>
+            range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, count);
+
+        protected override string GetText(int maxLength) => range.GetText(maxLength) ?? string.Empty;
+
+        protected override bool HasCharacterAfterEnd() =>
+            range.Clone().MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1) > 0;
     }
 
     private sealed class GridPattern(IUIAutomationGridPattern pattern) : IUiaGridPattern

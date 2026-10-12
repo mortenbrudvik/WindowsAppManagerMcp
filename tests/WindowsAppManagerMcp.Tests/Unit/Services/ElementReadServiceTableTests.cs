@@ -211,8 +211,31 @@ public class ElementReadServiceTableTests
         // Assert
         result.Truncated.Should().BeTrue();
         result.TruncationReason.Should().Be(ElementTableTruncation.Size);
-        result.Rows!.Sum(r => r.Sum(c => c?.Length ?? 0)).Should().BeLessThanOrEqualTo(ElementReadService.MaxTableTextLength);
+        result.Rows!.Sum(r => r.Sum(c => c?.Length ?? 0)).Should().BeLessThanOrEqualTo(ElementReadService.MaxTableTextBytes);
         result.NextStartRow.Should().Be(result.Rows!.Count);
+    }
+
+    [Fact]
+    public async Task ReadTable_CountsTheLimitInBytes_AndCutsAFirstRowThatAloneIsOverIt()
+    {
+        // Arrange - 3 rows of 50 Cyrillic cells of 500 characters: one row alone is 50,000 bytes of JSON
+        var cells = Enumerable.Range(0, 3)
+            .Select(_ => (IReadOnlyList<FakeUiaNode?>)Enumerable.Range(0, 50).Select(_ => (FakeUiaNode?)Cell(new string('ж', 500))).ToList())
+            .ToList();
+        var elementRef = Add(Grid(cells));
+
+        // Act
+        var first = await Read(elementRef, maxColumns: 50);
+        var second = await Read(elementRef, startRow: first.NextStartRow!.Value, maxColumns: 50);
+
+        // Assert - each page holds one row, cut to fit, so the read moves on
+        first.Rows.Should().ContainSingle().Which.Should().HaveCount(50);
+        first.Rows![0].Sum(c => System.Text.Encoding.UTF8.GetByteCount(c!) + 3).Should().BeLessThanOrEqualTo(ElementReadService.MaxTableTextBytes);
+        first.CellsTruncated.Should().BeTrue();
+        first.TruncationReason.Should().Be(ElementTableTruncation.Size);
+        first.NextStartRow.Should().Be(1);
+        second.Rows.Should().ContainSingle();
+        second.NextStartRow.Should().Be(2);
     }
 
     [Fact]

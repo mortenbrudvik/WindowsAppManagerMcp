@@ -127,6 +127,26 @@ public class ElementReadContractTests
         Tokens(result).Should().BeLessThanOrEqualTo(MaxResultTokens);
     }
 
+    [Theory]
+    [InlineData("ж")] // two bytes in UTF-8
+    [InlineData("中")] // three bytes
+    [InlineData("\U0001F600")] // an emoji: two UTF-16 characters, each written as a six-byte escape
+    [InlineData("\"")] // a quote: written as \"
+    public async Task ReadElementText_OfAHugeNonAsciiDocument_StaysWithinTheLargestResult(string letter)
+    {
+        // Arrange - a million characters that each cost more than one byte of JSON
+        var document = string.Concat(Enumerable.Repeat(letter, 1_000_000 / letter.Length));
+        var (arrange, elementRef) = RealReads(
+            new FakeUiaNode("Document", "Log") { OtherPatterns = UiaPatterns.Text }.WithPattern<IUiaTextPattern>(new FakeTextPattern(document)));
+
+        // Act
+        var result = await CallAsync("read_element_text", new() { ["ref"] = elementRef, ["maxLength"] = 10_000_000 }, arrange);
+
+        // Assert
+        Json(result).GetProperty("truncated").GetBoolean().Should().BeTrue();
+        Tokens(result).Should().BeLessThanOrEqualTo(MaxResultTokens);
+    }
+
     [Fact]
     public async Task ReadTable_ResultShape_NamesTheSourceAndTheReason()
     {
@@ -142,18 +162,22 @@ public class ElementReadContractTests
     }
 
     [Theory]
-    [InlineData(2_000)] // long cells: the size limit ends the page
-    [InlineData(0)] // empty cells: the most rows and columns, where the JSON around the cells costs the most
-    public async Task ReadTable_OfAHugeGrid_StaysWithinTheLargestResult(int cellLength)
+    [InlineData(2_000, 'z')] // long cells: the size limit ends the page
+    [InlineData(0, 'z')] // empty cells: the most rows and columns, where the JSON around the cells costs the most
+    [InlineData(4, 'z')] // short cells: the JSON around them costs about as much as their text
+    [InlineData(2_000, 'ж')] // long Cyrillic cells: two bytes a character
+    [InlineData(2_000, '中')] // long CJK cells: three bytes a character
+    public async Task ReadTable_OfAHugeGrid_StaysWithinTheLargestResult(int cellLength, char letter)
     {
-        // Arrange - 1000 rows of 100 columns
+        // Arrange - 1000 rows of 100 columns, read through GetItem (a WinForms grid, which GetItem does not scroll)
         var cells = Enumerable.Range(0, 1000)
             .Select(_ => (IReadOnlyList<FakeUiaNode?>)Enumerable.Range(0, 100)
-                .Select(_ => (FakeUiaNode?)new FakeUiaNode("DataItem", new string('z', cellLength)))
+                .Select(_ => (FakeUiaNode?)new FakeUiaNode("DataItem", new string(letter, cellLength)))
                 .ToList())
             .ToList();
         var (arrange, elementRef) = RealReads(
-            new FakeUiaNode("DataGrid", "Big") { OtherPatterns = UiaPatterns.Grid }.WithPattern<IUiaGridPattern>(new FakeGridPattern(cells)));
+            new FakeUiaNode("DataGrid", "Big") { OtherPatterns = UiaPatterns.Grid, FrameworkId = "WinForm" }
+                .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells)));
 
         // Act - asking for everything gets the limits
         var result = await CallAsync("read_table",

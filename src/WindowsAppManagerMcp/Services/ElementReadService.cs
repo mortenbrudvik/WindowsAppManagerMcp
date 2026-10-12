@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -25,13 +26,20 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="CachedRowsLimit"/> children), a Header child or a first row of HeaderItems gives the headers, and a row's
 /// children are its cells (a row without children is one cell, its own text). A cell's text is its name, else its value
 /// (never a password field's), else the names of its children. The read stops at the timeout (whole rows only), at
-/// <see cref="MaxTableTextLength"/> characters, and between cells when the token is cancelled; the rows read until the
+/// <see cref="MaxTableTextBytes"/> bytes of JSON, and between cells when the token is cancelled; the rows read until the
 /// worker abandons a stuck call are still returned.</para>
 /// </remarks>
 public sealed partial class ElementReadService : IElementReadService
 {
     /// <summary>The most characters one read_element_text call returns.</summary>
     public const int MaxTextLength = 50_000;
+
+    /// <summary>
+    /// The most bytes a read_element_text page takes in the result's JSON (<see cref="ToolJson.StringBytes"/>: UTF-8 with the
+    /// escapes), so that a page costs at most about 15,000 tokens in any script: 60,000 ASCII characters, 30,000 Cyrillic,
+    /// 20,000 CJK, 5,000 emoji. <see cref="MaxTextLength"/> still bounds the characters.
+    /// </summary>
+    public const int MaxTextBytes = 60_000;
 
     /// <summary>The most rows one read_table call returns.</summary>
     public const int MaxRowsLimit = 200;
@@ -42,8 +50,12 @@ public sealed partial class ElementReadService : IElementReadService
     /// <summary>A header or cell longer than this is cut (cellsTruncated).</summary>
     public const int MaxCellLength = 500;
 
-    /// <summary>The most characters of headers and cells one read_table call returns; the rows after it are left out (Size).</summary>
-    public const int MaxTableTextLength = 40_000;
+    /// <summary>
+    /// The most bytes the headers and cells of one read_table call take in the result's JSON (<see cref="ToolJson.StringBytes"/>
+    /// of each, with its quotes and comma); the rows after it are left out (Size). A page's first row is always returned, its
+    /// cells cut to fit when it alone would pass the limit, and headers that would take more than half of it are cut too.
+    /// </summary>
+    public const int MaxTableTextBytes = 40_000;
 
     /// <summary>A table with at most this many children has its rows read in one cached call; a larger one row by row.</summary>
     public const int CachedRowsLimit = 1_000;
@@ -56,6 +68,9 @@ public sealed partial class ElementReadService : IElementReadService
 
     /// <summary>How many of a grid's first children are checked for a Header.</summary>
     private const int HeaderSearchChildren = 3;
+
+    /// <summary>How many times a text page that does not fit one result is read again over fewer characters before it is cut.</summary>
+    private const int TextPageFits = 3;
 
     /// <summary>How long to keep waiting after the timeout for a table read to stop and hand back its rows.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
@@ -267,8 +282,12 @@ public sealed partial class ElementReadService : IElementReadService
             var page = (patterns & UiaPatterns.Text) != 0 ? TryTextPage(node, offset, maxLength) : null;
             if (page != null && (!hasValue || page is not { Start: 0, Length: 0, HasMore: false }))
             {
+                page = FitTextPage(node, page, offset, maxLength);
                 int? next = page.HasMore ? page.Start + page.Length : null;
-                return Page(page.Text, ElementTextSource.Text, page.Start, page.HasMore ? null : page.Start + page.Length, next);
+                return Page(page.Text, ElementTextSource.Text, page.Start, page.HasMore ? null : page.Start + page.Length, next) with
+                {
+                    TextSkipped = page.Cut ? true : null
+                };
             }
 
             if (hasValue && TryValue(node) is { } value)
@@ -286,14 +305,7 @@ public sealed partial class ElementReadService : IElementReadService
             ElementTextResult Slice(string text, ElementTextSource source)
             {
                 var start = Math.Min(offset, text.Length);
-                var end = (int)Math.Min((long)start + maxLength, text.Length);
-
-                // Never end a page between the two halves of a surrogate pair (unless the page would be empty)
-                if (end < text.Length && end > start + 1 && char.IsHighSurrogate(text[end - 1]))
-                {
-                    end--;
-                }
-
+                var end = start + FittingLength(text.AsSpan(start), maxLength, MaxTextBytes);
                 return Page(text[start..end], source, start, text.Length, end < text.Length ? end : null);
             }
         }
@@ -328,6 +340,63 @@ public sealed partial class ElementReadService : IElementReadService
             // A provider whose Text pattern fails: the value or the name may still have the text
             return null;
         }
+    }
+
+    /// <summary>
+    /// The page made to fit one result: at most <paramref name="maxLength"/> characters and <see cref="MaxTextBytes"/> bytes of
+    /// JSON. A page whose text does not fit is read again over fewer of the provider's characters, in proportion to the part
+    /// that fits, so that its end (Start + Length, the next page's offset) is still just past its text and nothing is skipped.
+    /// Only when that does not work (one of the provider's characters is longer than the page, or the document changes under
+    /// the read) is the text cut, and the page says so (<see cref="UiaTextPage.Cut"/>: the rest of its range is skipped).
+    /// </summary>
+    private UiaTextPage FitTextPage(IUiaNode node, UiaTextPage page, int offset, int maxLength)
+    {
+        for (var tries = 0; tries < TextPageFits; tries++)
+        {
+            var fits = FittingLength(page.Text, maxLength, MaxTextBytes);
+            if (fits == page.Text.Length || page.Length <= 1)
+            {
+                break;
+            }
+
+            var fewer = (int)Math.Clamp((long)page.Length * fits / page.Text.Length, 1, page.Length - 1);
+            if (TryTextPage(node, offset, fewer) is not { } shorter)
+            {
+                break;
+            }
+
+            page = shorter;
+        }
+
+        var end = FittingLength(page.Text, maxLength, MaxTextBytes);
+        return end == page.Text.Length ? page : page with { Text = page.Text[..end], Cut = true };
+    }
+
+    /// <summary>
+    /// How many characters from the start of <paramref name="text"/> fit both limits: at most <paramref name="maxChars"/>
+    /// characters that take at most <paramref name="maxBytes"/> bytes in the result's JSON (<see cref="ToolJson.StringBytes"/>),
+    /// never ending between the two halves of a surrogate pair (unless that would leave nothing).
+    /// </summary>
+    private static int FittingLength(ReadOnlySpan<char> text, int maxChars, int maxBytes)
+    {
+        var end = Math.Min(text.Length, maxChars);
+        var bytes = 0;
+        for (var i = 0; i < end; i++)
+        {
+            bytes += ToolJson.CharBytes(text[i]);
+            if (bytes > maxBytes)
+            {
+                end = i;
+                break;
+            }
+        }
+
+        if (end < text.Length && end > 1 && char.IsHighSurrogate(text[end - 1]))
+        {
+            end--;
+        }
+
+        return end;
     }
 
     private string? TryValue(IUiaNode node)
