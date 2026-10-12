@@ -21,8 +21,8 @@ namespace WindowsAppManagerMcp.Services;
 /// read back into the result's state (at most 200 characters); the audit log keeps only the value's length (AuditRecord).</para>
 /// <para>Target checks: the ref's window is checked first (<see cref="IInputTargetGuard.CheckTarget"/>); an element of
 /// another process (a child or owned window of another program) has its own window checked too
-/// (<see cref="IInputTargetGuard.CheckElementWindow"/>), and a pause the user started while the element was read stops the
-/// call before it acts.</para>
+/// (<see cref="IInputTargetGuard.CheckElementWindow"/>), before its state is read, so a refusal carries no name or value of
+/// it; and a pause the user started while the element was read stops the call before it acts.</para>
 /// </remarks>
 public sealed partial class ElementActionService : IElementActionService
 {
@@ -593,7 +593,8 @@ public sealed partial class ElementActionService : IElementActionService
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
             : InputStep.Failed(call.Fail(typed.ErrorCode.ToString(),
-                $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} ({typed.CharactersTyped} of {text.Length} characters were typed.)") with
+                $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} " +
+                $"({typed.CharactersTyped} of {text.Length} characters were typed.)") with
             {
                 Method = ElementActionMethod.Keyboard,
                 ReceivingWindow = typed.ReceivingWindow

@@ -67,7 +67,12 @@ public sealed partial class ElementActionService
     private static ElementActionResult Covered(ActionCall call, PreparedElement element, ClickPoint covered)
     {
         var point = covered.Point!.Value;
-        var others = covered.Tried > 1 ? $" and at {covered.Tried - 1} other points of its bounds" : string.Empty;
+        var others = covered.Tried switch
+        {
+            1 => string.Empty,
+            2 => " and at another point of its bounds",
+            _ => $" and at {covered.Tried - 1} other points of its bounds"
+        };
         return call.Fail(nameof(InputErrorCode.TargetOccluded),
             $"{Name(element.Element)} is covered: at its click point ({point.X}, {point.Y}){others} UI Automation finds another " +
             "element (an overlay, a sticky header, a banner or an open dropdown), so the click would reach that one. Nothing was " +
