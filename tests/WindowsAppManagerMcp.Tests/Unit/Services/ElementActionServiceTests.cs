@@ -1134,8 +1134,10 @@ public sealed class ElementActionServiceTests : IDisposable
     [Fact]
     public async Task RightClick_IsAlwaysAGuardedMouseClick_AtTheCentreWhenTheProviderHasNoClickPoint()
     {
-        // Arrange
-        var target = RefOf(Button("Save"));
+        // Arrange - UI Automation's hit test finds the button there
+        var button = Button("Save");
+        var target = RefOf(button);
+        _tree.AtPoint = (_, _) => button;
         _input.Setup(i => i.RightClick(140, 212, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
             .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
 
@@ -1144,7 +1146,117 @@ public sealed class ElementActionServiceTests : IDisposable
 
         // Assert
         result.Method.Should().Be(ElementActionMethod.Mouse);
+        result.Warnings.Should().BeNull();
         _input.Verify(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AClickPoint_ThatHitsAnElementInsideTheElement_IsOnTheElement()
+    {
+        // Arrange - a button's label is what the hit test finds
+        var button = Button("Save");
+        var target = RefOf(button);
+        var label = new FakeUiaNode("Text", "Save") { ProcessId = Pid };
+        button.With(label);
+        _tree.AtPoint = (_, _) => label;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(ElementActionKind.RightClick, ElementActionFallback.None)]
+    [InlineData(ElementActionKind.DoubleClick, ElementActionFallback.None)]
+    [InlineData(ElementActionKind.Click, ElementActionFallback.Mouse)]
+    public async Task AnElementAnotherElementCovers_IsNotClicked_AndIsTargetOccluded(ElementActionKind action, ElementActionFallback fallback)
+    {
+        // Arrange - a sticky header of the same window lies over the button wherever it is tried
+        var target = RefOf(new FakeUiaNode("Custom", "Save") { ProcessId = Pid, Bounds = new UiaRect(100, 200, 80, 24) });
+        var header = new FakeUiaNode("Pane", "Header") { ProcessId = Pid };
+        _window.With(header);
+        var tried = new List<(int X, int Y)>();
+        _tree.AtPoint = (x, y) =>
+        {
+            tried.Add((x, y));
+            return header;
+        };
+
+        // Act
+        var result = await ActAsync(target, action, fallback: fallback);
+
+        // Assert - the strict input mock has no click set up: nothing was sent
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("TargetOccluded");
+        result.Error.Should().Contain("Nothing was clicked").And.Contain("scroll_into_view");
+        tried.Should().Equal((140, 212), (120, 206), (160, 206), (120, 218), (160, 218));
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AClickPointThatIsCovered_GivesWayToAnotherPointOfTheBounds_ThatHitsTheElement()
+    {
+        // Arrange - the provider's clickable point lies under a banner, the centre does not
+        var button = Button("Save");
+        button.ClickablePoint = new UiaPoint(110, 205);
+        var target = RefOf(button);
+        var banner = new FakeUiaNode("Pane", "Cookie banner") { ProcessId = Pid };
+        _window.With(banner);
+        _tree.AtPoint = (x, y) => (x, y) == (110, 205) ? banner : button;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AClickPointWhereOnlyAnAncestorIsFound_IsClicked_WithAWarningThatItWasNotVerified()
+    {
+        // Arrange - some providers do not hit-test their inner elements: the hit test finds the window itself
+        var target = RefOf(Button("Save"));
+        _tree.AtPoint = (_, _) => _window;
+        _input.Setup(i => i.RightClick(140, 212, InputTarget.Window(Handle, false), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(true, 140, 212, "right") { ReceivingWindow = Main });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().Contain(w => w.Contains("could not be checked"));
+    }
+
+    [Fact]
+    public async Task AClickPoint_IsTriedOnlyInsideTheWindow()
+    {
+        // Arrange - the element reaches past the window's right edge (at 150): the points outside it are not tried
+        var target = RefOf(new FakeUiaNode("Custom", "Wide") { ProcessId = Pid, Bounds = new UiaRect(100, 200, 200, 24) });
+        _windows.Setup(w => w.GetWindowRect(Handle)).Returns((0, 0, 150, 400));
+        var header = new FakeUiaNode("Pane", "Header") { ProcessId = Pid };
+        _window.With(header);
+        var tried = new List<(int X, int Y)>();
+        _tree.AtPoint = (x, y) =>
+        {
+            tried.Add((x, y));
+            return header;
+        };
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetOccluded");
+        tried.Should().OnlyContain(p => p.X >= 100 && p.X < 150).And.Contain((125, 212));
     }
 
     [Fact]

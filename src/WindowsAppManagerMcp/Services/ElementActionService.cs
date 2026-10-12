@@ -413,7 +413,10 @@ public sealed partial class ElementActionService : IElementActionService
             "Call focus_window for details, or ask the user to bring the window to the front.");
     }
 
-    /// <summary>The mouse path: activation and a fresh click point inside the gate, then the guarded click outside it.</summary>
+    /// <summary>
+    /// The mouse path: activation and a fresh click point inside the gate, hit-tested so that the click lands on the element
+    /// and not on another element over it (TargetOccluded), then the guarded click outside the gate.
+    /// </summary>
     private async Task<InputStep> ClickAsync(
         ActionCall call, PreparedElement element, Plan plan, IDisposable gate, int targetProcess, CancellationToken cancellationToken)
     {
@@ -423,17 +426,27 @@ public sealed partial class ElementActionService : IElementActionService
         }
 
         // Activation can restore or move the window: the point is read again now
-        var point = await ReadAsync(call, targetProcess, _ => ClickPointOf(element.Node), cancellationToken).ConfigureAwait(false);
+        var point = await ReadAsync(call, targetProcess, _ => ClickPointOf(call, element), cancellationToken).ConfigureAwait(false);
         if (point.Failure != null)
         {
             return InputStep.Failed(point.Failure);
         }
 
-        if (point.Element is not { } at)
+        if (point.Element is { Covered: true } covered)
+        {
+            return InputStep.Failed(Covered(call, element, covered));
+        }
+
+        if (point.Element is not { Point: { } at } clickPoint)
         {
             return InputStep.Failed(call.Fail(nameof(UIElementErrorCode.ElementOffscreen),
                 "The element has no point on screen to click (it is offscreen or has no bounds). Nothing was clicked. Use " +
                 "scroll_into_view first."));
+        }
+
+        if (clickPoint.Warning != null)
+        {
+            element.Warnings.Add(clickPoint.Warning);
         }
 
         gate.Dispose();

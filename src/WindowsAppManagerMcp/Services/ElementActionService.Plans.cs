@@ -820,26 +820,6 @@ public sealed partial class ElementActionService
              "may still be updating. Read the element again before you repeat the action."
     };
 
-    /// <summary>The click point now, on the worker: UI Automation's, else the centre of the bounds; null when offscreen.</summary>
-    private ReadOutcome<UiaPoint?> ClickPointOf(IUiaNode node)
-    {
-        try
-        {
-            var fresh = _tree.ReadElement(node);
-            if (fresh.Properties.IsOffscreen || fresh.Properties.Bounds.ToBounds() is not { Width: > 0, Height: > 0 } bounds)
-            {
-                return ReadOutcome<UiaPoint?>.Of(null);
-            }
-
-            var point = TryState(() => _tree.GetClickablePoint(node));
-            return ReadOutcome<UiaPoint?>.Of(point ?? new UiaPoint(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2));
-        }
-        catch (UiaElementUnavailableException)
-        {
-            return ReadOutcome<UiaPoint?>.Of(null);
-        }
-    }
-
     /// <summary>
     /// On the worker: whether keyboard focus is on the element itself, or, for a ComboBox, on the Edit that is its direct
     /// child (where an editable combo box takes its text). Focus anywhere else inside the element does not count: the keys
