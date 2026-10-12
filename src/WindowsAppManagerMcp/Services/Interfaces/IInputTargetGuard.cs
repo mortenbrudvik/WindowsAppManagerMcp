@@ -20,8 +20,9 @@ public enum KeyboardInputKind
 /// <item>The request: send_keys with a destructive chord and no target (DestructiveChordNeedsTarget).</item>
 /// <item>Desktop probes: SessionLocked, DesktopUnavailable.</item>
 /// <item>An explicit target: InvalidHandle; then its probes, policy and host checks (TargetElevated,
-/// TargetDeniedByPolicy, TargetIsAgentHost unless allowHostTarget); then BlockedByModal when a modal
-/// dialog disables it.</item>
+/// TargetDeniedByPolicy, TargetIsAgentHost unless allowHostTarget, and always for a window of the server's own
+/// process or one such a window owns: a prompt Windows showed for the server, which only the user answers); then
+/// BlockedByModal when a modal dialog disables it.</item>
 /// <item>The receiving window (keys: the foreground window, after EnsureForeground brought the target to
 /// the front; mouse: the top-level window at the point; no window there is TargetOccluded). With a target it
 /// must belong to the target first (TargetNotForeground, TargetOccluded). Then the same probes, policy and

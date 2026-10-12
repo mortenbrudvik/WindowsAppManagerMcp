@@ -1662,4 +1662,88 @@ public class InputTargetGuardTests
     }
 
     #endregion
+
+    #region The server's own process: allowHostTarget never applies
+
+    private static readonly nint SecurityWarning = 0x900; // the Attachment Services prompt a launch shows, drawn in the server's process
+    private const int ServerPid = 9001;
+
+    /// <summary>
+    /// The server's process shows 'Open File - Security Warning' (ShellExecuteEx runs the zone check in the calling
+    /// process). Every window of the server's process is a host window.
+    /// </summary>
+    private void SecurityWarningOfTheServer()
+    {
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [new HostProcess(TerminalPid, null)], nint.Zero, null, null, null));
+        Window(SecurityWarning, ServerPid, "WindowsAppManagerMcp", "Open File - Security Warning");
+        _windows.Setup(w => w.GetClassName(SecurityWarning)).Returns("#32770");
+        _hostGuard.Setup(g => g.IsHostWindow(SecurityWarning)).Returns(true);
+    }
+
+    [Fact]
+    public void CheckTarget_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        // Arrange
+        SecurityWarningOfTheServer();
+
+        // Act
+        var result = CreateSut().CheckTarget(To(SecurityWarning, allowHostTarget: true));
+
+        // Assert - only the user answers it, and the refusal does not tell the agent how to get past it
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain("this server's own process").And.Contain("ask the user").And.NotContain("allowHostTarget");
+    }
+
+    [Fact]
+    public void Mouse_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+        At(SecurityWarning);
+
+        CreateSut().CheckMouse(500, 300, To(SecurityWarning, allowHostTarget: true)).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void Keyboard_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+
+        CreateSut().CheckKeyboard(To(SecurityWarning, allowHostTarget: true), KeyboardInputKind.Keys, null).ErrorCode
+            .Should().Be(InputErrorCode.TargetIsAgentHost);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void CheckElementWindow_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+
+        CreateSut().CheckElementWindow(To(SecurityWarning, allowHostTarget: true), SecurityWarning).ErrorCode
+            .Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void AWindowAServerWindowOwns_IsRefused_EvenWithAllowHostTarget()
+    {
+        // Arrange - a dialog of another process owned by a window of the server's process
+        SecurityWarningOfTheServer();
+        var ownedPrompt = new nint(0x910);
+        Window(ownedPrompt, CalculatorPid, "OpenWith", "How do you want to open this file?", owner: SecurityWarning);
+        _hostGuard.Setup(g => g.IsHostWindow(ownedPrompt)).Returns(true);
+
+        // Act & Assert
+        CreateSut().CheckTarget(To(ownedPrompt, allowHostTarget: true)).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void TheHostsOwnWindow_WithAllowHostTarget_IsStillAllowed_WhenTheServersProcessIsKnown()
+    {
+        SecurityWarningOfTheServer();
+        At(Terminal);
+
+        CreateSut().CheckTarget(To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
+        CreateSut().CheckMouse(500, 300, To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
+    }
+
+    #endregion
 }
