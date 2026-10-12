@@ -53,8 +53,18 @@ public enum ElementSearchTruncation
     /// </summary>
     SearchLimit = 3,
 
-    /// <summary>Parts of the window could not be searched (their elements disappeared or their provider failed).</summary>
-    PartsSkipped = 4
+    /// <summary>
+    /// Parts of the window could not be searched (their elements disappeared or their provider failed), or, with a scope
+    /// beyond the window, windows of the scope could not be read (they did not respond, or closed meanwhile).
+    /// </summary>
+    PartsSkipped = 4,
+
+    /// <summary>
+    /// scope desktop: more windows were open than one search covers (<see cref="Services.PopupService.DesktopWindowLimit"/>);
+    /// scope windowAndPopups: more popups were open than <see cref="Services.PopupService.MaxPopups"/>. The ones furthest
+    /// back were not searched (roadmap M3.5).
+    /// </summary>
+    WindowLimit = 5
 }
 
 /// <summary>A point in physical screen pixels, the same space as click's coordinates.</summary>
@@ -79,6 +89,9 @@ public record ScreenPoint(int X, int Y);
 /// <param name="IsKeyboardFocusable">standard: whether it can take keyboard focus.</param>
 /// <param name="FrameworkId">full: the UI framework, for example Win32, WPF, XAML, WinForm, DirectUI or Chrome.</param>
 /// <param name="NativeWindowHandle">full: its own window handle, when it is a window of its own.</param>
+/// <param name="WindowHandle">The top-level window the element is in, when that is not the result's window: a popup (a menu,
+/// a dropdown, a dialog) of a windowAndPopups search, or another window of a desktop search (roadmap M3.5). Its ref is
+/// registered under that window. Left out for an element of the window searched.</param>
 public record FoundElement(
     [property: JsonPropertyOrder(-1)] string? Ref,
     string? Name,
@@ -104,7 +117,8 @@ public record FoundElement(
     string? HelpText = null,
     string? AccessKey = null,
     string? AcceleratorKey = null,
-    string? LocalizedControlType = null
+    string? LocalizedControlType = null,
+    long? WindowHandle = null
 );
 
 /// <summary>Result of find_ui_elements (roadmap M3.4).</summary>
@@ -119,6 +133,13 @@ public record FoundElement(
 /// <param name="AccessibilityWarmup">Set when the window shows web content (Chromium, Electron or WebView2) and this call
 /// waited for its accessibility tree before searching (roadmap M3.3); null otherwise, also for a window an earlier call
 /// warmed up.</param>
+/// <param name="Scope">The windows the search covered (roadmap M3.5): the scope asked for, or the default one chose
+/// (windowAndPopups when the window or one of its popups was in the foreground, else window). Null on a failure before
+/// the search.</param>
+/// <param name="WindowsSearched">With scope windowAndPopups or desktop: how many windows were searched, the window itself
+/// included. Left out for scope window.</param>
+/// <param name="WindowsExcluded">With scope desktop: visible windows left out because the target policy denies their process
+/// or they are the agent's own host windows. Left out when none was.</param>
 public record FindElementsResult(
     bool Success,
     long WindowHandle,
@@ -131,7 +152,10 @@ public record FindElementsResult(
     ElementSearchTruncation? TruncationReason = null,
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    ElementSearchScope? Scope = null,
+    int? WindowsSearched = null,
+    int? WindowsExcluded = null
 );
 
 /// <summary>
@@ -139,11 +163,15 @@ public record FindElementsResult(
 /// <paramref name="Name"/>, <paramref name="AutomationId"/>, <paramref name="ControlTypes"/> and
 /// <paramref name="ClassName"/> is set (the tool checks it).
 /// </summary>
-/// <param name="WindowHandle">The window to search.</param>
+/// <param name="WindowHandle">The window to search; zero only with <see cref="ElementSearchScope.Desktop"/> (no window
+/// named: the desktop's windows are searched in z-order).</param>
 /// <param name="WithinRef">Search only below this ref's element (it must belong to <paramref name="WindowHandle"/>).</param>
 /// <param name="ControlTypes">Control type names (UiaControlTypes.Names); an element of any of them matches.</param>
 /// <param name="MaxResults">How many matches to return (1-100).</param>
 /// <param name="Timeout">How long the search and the reads of the matches may take.</param>
+/// <param name="Scope">Which windows to search (roadmap M3.5): null for the default (windowAndPopups when the window or one
+/// of its popups is in the foreground, else window); always the window alone with <paramref name="WithinRef"/>. Every
+/// window is searched under the one <paramref name="Timeout"/>, <paramref name="MaxResults"/> and candidate limit.</param>
 public record ElementQuery(
     nint WindowHandle,
     string? WithinRef = null,
@@ -156,5 +184,6 @@ public record ElementQuery(
     bool EnabledOnly = false,
     int MaxResults = 20,
     ElementDetail Detail = ElementDetail.Minimal,
-    TimeSpan? Timeout = null
+    TimeSpan? Timeout = null,
+    ElementSearchScope? Scope = null
 );

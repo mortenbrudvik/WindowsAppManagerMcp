@@ -109,8 +109,9 @@ public static class Toolsets
                 "Screenshots of monitors, regions and windows, as image content.",
                 ["take_screenshot", "capture_region", "capture_window", "capture_with_elements"]),
             new("elements", OnByDefault: true,
-                "UI Automation: element trees, searches that return element refs, the focused element, the element at a point.",
-                ["get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point"]),
+                "UI Automation: element trees, searches that return element refs (also in menus, dropdowns and dialogs), the " +
+                "focused element, the element at a point, an app's open popups.",
+                ["get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point", "get_active_popups"]),
             new("input", OnByDefault: true,
                 "Guarded mouse and keyboard input to a named window.",
                 ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"]),

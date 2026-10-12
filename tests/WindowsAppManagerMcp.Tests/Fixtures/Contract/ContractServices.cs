@@ -55,6 +55,9 @@ public sealed class ContractServices : IDisposable
     public Mock<IElementInspectionService> Inspection { get; } = new();
     public Mock<IElementSearchService> ElementSearch { get; } = new();
 
+    /// <summary>The popups of a window (roadmap M3.5): a context menu and a Save As dialog of Notepad.</summary>
+    public Mock<IPopupService> Popups { get; } = new();
+
     /// <summary>The element registry (roadmap M3.4): every ref belongs to Notepad's window unless a test arranges otherwise.</summary>
     public Mock<IElementRegistry> ElementRegistry { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
@@ -116,6 +119,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
         services.AddSingleton(ElementSearch.Object);
+        services.AddSingleton(Popups.Object);
         services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
@@ -332,7 +336,12 @@ public sealed class ContractServices : IDisposable
                 notepad.ProcessId, notepad.ProcessName, 12.5));
         ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
-                true, query.WindowHandle, notepad.Title, MatchCount: 2, Truncated: false, TypicalDesktop.FoundButtons, 21.5));
+                true, query.WindowHandle, notepad.Title, MatchCount: 2, Truncated: false, TypicalDesktop.FoundButtons, 21.5,
+                Scope: ElementSearchScope.Window));
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
+                true, window == 0 ? TypicalDesktop.NotepadHandle : (long)window, notepad.Title, IsForeground: true,
+                TypicalDesktop.NotepadPopups, 4.25));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -479,6 +488,9 @@ public sealed class ContractServices : IDisposable
         ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
                 false, query.WindowHandle, null, 0, false, null, 1.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
+                false, (long)window, null, false, null, 0.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

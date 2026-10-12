@@ -1,7 +1,7 @@
 # Windows App Manager - MCP Tools Reference
 
 <!-- tools:begin summary (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-A comprehensive guide to all 56 MCP tools for managing Windows applications, windows, and layouts.
+A comprehensive guide to all 57 MCP tools for managing Windows applications, windows, and layouts.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ A comprehensive guide to all 56 MCP tools for managing Windows applications, win
 | [Batch Operations](#batch-operations) | [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [launch_applications_batch](#launch_applications_batch) | 5 |
 | [Monitor Info](#monitor-info) | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor) | 2 |
 | [Screenshot](#screenshot) | [list_screens](#list_screens), [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | 5 |
-| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) | 4 |
+| [UI Automation](#ui-automation) | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups) | 5 |
 | [Browser Reading](#browser-reading) | [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [launch_browser_with_debug](#launch_browser_with_debug) | 4 |
 | [Input Simulation](#input-simulation) | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) | 7 |
 | [Input Control](#input-control) | [get_control_status](#get_control_status), [resume_input](#resume_input), [release_all_input](#release_all_input) | 3 |
@@ -60,7 +60,7 @@ The policy applies to:
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
 - [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
 
-[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area. Keeping such a window minimized limits what the agent can see, but it is not a guarantee: the window tools above do not restore or raise it, yet input still can (a click on its taskbar button, Alt+Tab), and so can the app itself (for example when it is started again with [launch_application](#launch_application)). Restoring an allowed window with the other window tools (for example set_window_state `restore`) can also show a denied app's dialog that the window owns; focus_window checks those windows first. So close such apps, or keep them on another virtual desktop, while the agent works. The UI Automation and browser reading tools are not covered yet.
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area. Keeping such a window minimized limits what the agent can see, but it is not a guarantee: the window tools above do not restore or raise it, yet input still can (a click on its taskbar button, Alt+Tab), and so can the app itself (for example when it is started again with [launch_application](#launch_application)). Restoring an allowed window with the other window tools (for example set_window_state `restore`) can also show a denied app's dialog that the window owns; focus_window checks those windows first. So close such apps, or keep them on another virtual desktop, while the agent works. The UI Automation and browser reading tools are not covered yet for a window they are given; only [find_ui_elements](#find_ui_elements) with `scope: "desktop"` leaves out the denied windows it was not named (roadmap M3.5).
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart.
 
@@ -245,7 +245,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 | `windows` | on | Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches. | [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [focus_window](#focus_window), [move_window](#move_window), [resize_window](#resize_window), [set_window_bounds](#set_window_bounds), [set_window_state](#set_window_state), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), [close_window](#close_window), [set_windows_bounds_batch](#set_windows_bounds_batch), [snap_windows_batch](#snap_windows_batch), [set_windows_state_batch](#set_windows_state_batch), [close_windows_batch](#close_windows_batch), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window) |
 | `monitors` | on | The monitors: bounds, work areas, scale factors. | [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens) |
 | `capture` | on | Screenshots of monitors, regions and windows, as image content. | [take_screenshot](#take_screenshot), [capture_region](#capture_region), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) |
-| `elements` | on | UI Automation: element trees, searches that return element refs, the focused element, the element at a point. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point) |
+| `elements` | on | UI Automation: element trees, searches that return element refs (also in menus, dropdowns and dialogs), the focused element, the element at a point, an app's open popups. | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups) |
 | `input` | on | Guarded mouse and keyboard input to a named window. | [click](#click), [right_click](#right_click), [double_click](#double_click), [mouse_move](#mouse_move), [scroll](#scroll), [type_text](#type_text), [send_keys](#send_keys) |
 | `clipboard` | on | Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent. | [get_clipboard](#get_clipboard), [set_clipboard](#set_clipboard) |
 | `launch` | on | Start applications, optionally waiting for their window. | [launch_application](#launch_application), [launch_applications_batch](#launch_applications_batch) |
@@ -259,7 +259,7 @@ Every tool the server serves sits in the agent's context on every turn, and a lo
 **Read-only mode** serves the tools that only read: windows, monitors, UI elements, browser pages, processes, layouts, the server's own state and get_clipboard (which then returns only what the user allows, since nothing the agent did can have filled the clipboard). The capture tools can write image files (`outputPath`), so they are not read-only, and neither is anything that sends input, changes or closes windows, starts or ends processes, or writes or deletes layouts. Which tool counts as read-only is the tool's own annotation (`readOnlyHint`), and contract tests check that every tool annotated read-only is one the input gate also treats as read-only and is none of the tools that write files (save_layout, delete_layout, the captures). The list below is generated from the annotations:
 
 <!-- tools:begin read-only (generated from the readOnlyHint annotations: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-Read-only mode serves these 22 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
+Read-only mode serves these 23 tools: [find_windows](#find_windows), [get_all_windows](#get_all_windows), [get_foreground_window](#get_foreground_window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [wait_for_window](#wait_for_window), [get_monitors](#get_monitors), [get_primary_monitor](#get_primary_monitor), [list_screens](#list_screens), [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [get_browser_url](#get_browser_url), [get_active_browser_url](#get_active_browser_url), [get_browser_content](#get_browser_content), [get_control_status](#get_control_status), [list_processes](#list_processes), [get_clipboard](#get_clipboard), [list_layouts](#list_layouts), [get_layout](#get_layout), [get_server_info](#get_server_info).
 <!-- tools:end read-only -->
 
 **When tools are off**, the server instructions every client gets end with one more line that names the toolsets, the read-only mode and the excluded tools the user turned off, and tells the agent to skip the steps whose tools it does not see and to tell the user instead of working around them.
@@ -2171,7 +2171,7 @@ Each element carries its [ref](#ui-automation), the same one get_ui_elements and
 
 ## UI Automation
 
-Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class, the element that has keyboard focus, and the element at a screen point. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
+Tools for reading UI elements through Windows UI Automation: the element tree of a window, a search for elements by name, automation id, control type and class (also in the window's open menus, dropdowns and dialogs), the element that has keyboard focus, the element at a screen point, and an app's open popups. They only read; none of them clicks, types or changes focus. Every read runs under a timeout, because an application that hangs can block UI Automation indefinitely.
 
 **Element refs.** Every element these tools return (and every element of [capture_with_elements](#capture_with_elements)) carries a `ref`, such as `w4120035e17`: a short name for that element that later calls use instead of coordinates or a repeated search (the element actions and waits of roadmap M3 take it; today [find_ui_elements](#find_ui_elements)' `withinRef` does). The rules:
 - The same element keeps its ref in every read of the server session, whichever tool read it: a ref is tied to the element's UI Automation runtime id and its window, and checked against its control type, automation id and class. A list, tree or grid item without an automation id is also checked against its name, because a scrolling list reuses an item's element for another row: the row it shows now gets a new ref.
@@ -2357,7 +2357,7 @@ Find elements in a window by name, automation id, control type and class, in one
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| handle | integer | No | - | Window handle from find_windows or get_all_windows. Pass `handle`, `window` or `withinRef` |
+| handle | integer | No | - | Window handle from find_windows or get_all_windows. Pass `handle`, `window` or `withinRef` (or neither with `scope: "desktop"`) |
 | window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front; handle plus filters must still match (HandleMismatch). |
 | name | string | No | - | The element's name (its label or text), ignoring case; compared as `nameMatch` says |
 | nameMatch | string (one of: `"exact"`, `"contains"`, `"regex"`) | No | "exact" | `exact`: the whole name, searched by the provider; `contains`: a part of it; `regex`: a .NET regular expression found anywhere in it, at most 100 ms per name. `contains` and `regex` test what the other criteria match |
@@ -2365,6 +2365,7 @@ Find elements in a window by name, automation id, control type and class, in one
 | controlType | string | No | - | One control type, or several separated by commas (any of them matches), as `controlTypes` of get_ui_elements. Unknown names fail with `InvalidControlType` |
 | className | string | No | - | The element's class name, ignoring case |
 | withinRef | string | No | - | Search only below this element: a ref from an earlier read. Its window is searched, so `handle` and `window` can be left out |
+| scope | string (one of: `"window"`, `"windowAndPopups"`, `"desktop"`) | No | windowAndPopups when the window is in front, else window | Which windows to search: `window` (the window alone), `windowAndPopups` (also its open menus, dropdowns, flyouts and dialogs, front first) or `desktop` (every visible window, at most 40, without denied and host windows; `handle` and `window` optional). See [Popups and scope](#find_ui_elements). Only `window` with `withinRef` |
 | visibleOnly | boolean | No | true | Leave out elements reported as offscreen (each on its own: unlike get_ui_elements, not their subtrees) |
 | enabledOnly | boolean | No | false | Leave out disabled elements |
 | maxResults | integer | No | 20 | How many matches to return (1-100); `matchCount` still counts every match (`truncationReason: MaxResults`) |
@@ -2378,6 +2379,14 @@ Find elements in a window by name, automation id, control type and class, in one
 - `controlType` takes the names of [get_ui_elements](#get_ui_elements)' `controlTypes`, one or several separated by commas (an element of any of them matches); an unknown name fails with `InvalidControlType`. AppBar and SemanticZoom are searched by their ids; with `WAM_UIA_ENGINE=uia2` they are tested on the server by their (localized) names, as `Unknown` always is.
 - `visibleOnly` (default `true`) leaves out elements reported as offscreen. Unlike in get_ui_elements, an offscreen element does not hide the elements inside it.
 - `withinRef` searches only below an element found before (its descendants, not the element itself). Its window is searched, so `handle` and `window` can be left out; given, they must name that window. A stale ref fails the call with its code (`ElementStale` or `AmbiguousElement`) and an `error` that starts with `withinRef:`. The result's `withinRef` is the ref the element has now: when it was found again and already had a ref of its own, that one (keep using it).
+
+**Popups and scope (roadmap M3.5):** a context menu (`#32768`), a combo box's list (`ComboLBox`), a WPF popup, a WinUI flyout, a menu a WebView2 page draws and most dialogs are top-level windows of their own, outside the window's element tree, so a search of the window alone cannot find "Delete" in its context menu. `scope` says which windows are searched:
+- `window`: the window alone (the only scope with `withinRef`).
+- `windowAndPopups`: the window and its open popups, the windows [get_active_popups](#get_active_popups) lists (owned windows, popup, tool and dialog windows of its process that no other main window of the process owns, popups of a WebView2 child process), front first: the popups before the window, since they are in front of it. With more than 16 popups open, the ones furthest back are not searched (`truncationReason: "WindowLimit"`).
+- `desktop`: every visible window, front first, at most 40 (the named window first, when one is given; without `handle`, `window` or `withinRef` the desktop alone). Windows whose process the [target policy](#target-policy) denies, and the agent's own host windows (its terminal or editor and their popups), are left out and counted in `windowsExcluded`, unless named: a window nobody named is not read for the agent, while reading a named window stays allowed, as it always was for find_ui_elements and get_ui_elements. Windows beyond 40 are not searched (`truncationReason: "WindowLimit"`).
+- Left out, the scope is `windowAndPopups` when the window, a window it owns or another window of its process is in front (an open menu belongs to the app in front: it closes when the app loses the foreground), else `window`. The result's `scope` says which one ran.
+
+Every window is searched under the one `timeoutMs`, the one `maxResults` and the one limit of 2000 provider matches: a scope never multiplies the cost, and windows not reached before the deadline are not searched (`truncationReason: "Timeout"`). The popups searched before the named window may use at most 1000 of the 2000, so a large palette cannot keep the named window from being searched (`truncationReason: "SearchLimit"` then says a popup was not searched to the end). An element found in another window than the one named has `windowHandle`, and its ref belongs to that window: it becomes `ElementStale` once the menu or dialog closes. Only the named window is warmed up and checked for `NotResponding`; another window that does not respond, closed meanwhile, fails, or does not answer in time before `timeoutMs` has passed is skipped and the search goes on with the next window (`truncationReason: "PartsSkipped"`).
 
 **How the search works:** the top of the tree is read first, a few levels breadth first, to split the window into parts; then the provider searches each part in one call. Between parts the search stops when `timeoutMs` passes (the matches found so far are returned with `truncationReason: "Timeout"`, or `OperationTimedOut` when there are none yet) or once the provider has matched 2000 elements before the name filter (`truncationReason: "SearchLimit"`: narrow the search); with `nameMatch` `contains` or `regex` it also stops within a part's results. One part is one provider call, so a very wide level (a list of thousands of rows) is searched in one call that only UI Automation's own timeout ends. A part whose elements disappear or whose provider fails is skipped (`PartsSkipped`). A window that does not respond is not read (`NotResponding`). A window with a web page is warmed up first (see [Web content](#ui-automation)).
 
@@ -2424,11 +2433,12 @@ Find elements in a window by name, automation id, control type and class, in one
 
 **Response fields:**
 - `matchCount`: how many elements matched in the part of the window that was searched; `elements` holds the first `maxResults` of them, those nearest the window's top levels first, then in tree order.
-- `truncated` and `truncationReason`: `MaxResults` (more matched than `maxResults`; `matchCount` is the total), `Timeout`, `SearchLimit` or `PartsSkipped` (the search did not cover the whole window, so `matchCount` counts only what it covered).
+- `truncated` and `truncationReason`: `MaxResults` (more matched than `maxResults`; `matchCount` is the total), `Timeout`, `SearchLimit`, `PartsSkipped` (a part of the window, or a popup or window of the scope, could not be searched) or `WindowLimit` (`desktop`: more than 40 windows; `windowAndPopups`: more than 16 popups): the search did not cover everything, so `matchCount` counts only what it covered.
 - `clickPoint`: where a click hits the element, in physical screen pixels (the space [click](#click) uses): UI Automation's clickable point, or else the centre of `bounds`. Absent for an offscreen element or one without bounds.
 - `patterns`: the control patterns it supports: the action patterns Invoke, Toggle, Value, SelectionItem, ExpandCollapse and RangeValue first, then ScrollItem, Scroll, Window, Text, Grid, Table, ItemContainer and VirtualizedItem.
 - `detail: "standard"` adds `value` (the Value pattern's text, at most 200 characters, `valueTruncated: true` when cut; never read for a password field, which has `isPassword: true` instead), `toggleState` (`On`, `Off`, `Indeterminate`), `expandCollapseState` (`Collapsed`, `Expanded`, `PartiallyExpanded`, `LeafNode`), `isSelected`, `hasKeyboardFocus` and `isKeyboardFocusable`, each only when the element has the pattern or the property could be read. `detail: "full"` adds `frameworkId`, `processId`, `nativeWindowHandle` (when the element is a window of its own), `helpText`, `accessKey`, `acceleratorKey` and `localizedControlType`. Each costs one more call per element and property group.
 - `withinRef`: the ref that was searched below, when one was given.
+- `scope`: the scope searched (`window`, `windowAndPopups` or `desktop`). `windowsSearched` (scopes beyond `window`): how many windows were searched, the named one included. `windowsExcluded` (`desktop`): windows left out by the target policy or as the agent's host. `elements[].windowHandle`: the popup or other window an element is in, when that is not `windowHandle`. `windowHandle` is 0 for a desktop search without a window.
 - `accessibilityWarmup`: present when the window shows a web page and this call waited for it before searching, within a third of `timeoutMs` (see [Web content](#ui-automation)). With `status: "NotReady"` and `matchCount: 0`, the page's elements were not there yet: search again before you conclude that the control is missing.
 - Element names and values come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
 
@@ -2598,6 +2608,76 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 | `AutomationUnavailable` | UI Automation not available |
 | `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
+
+---
+
+### get_active_popups
+
+List the open menus, dropdowns, flyouts and dialogs of an app (roadmap M3.5). A context menu (`#32768`), the list of an open combo box (`ComboLBox`), a WPF popup, a WinUI flyout, the menu or dropdown a WebView2 page draws, and most dialogs are top-level windows of their own, outside the UI Automation tree of the window that opened them, so get_ui_elements of that window does not show them. This tool names them, each with a [ref](#ui-automation) of its own element; [find_ui_elements](#find_ui_elements) searches them by default when the app is in front (see [Popups](#find_ui_elements)). It only reads.
+
+<!-- tools:begin params:get_active_popups -->
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| handle | integer | No | the app in front | Window handle of the app window, from find_windows. Pass `handle` or `window`, or neither for the app in front |
+| window | object | No | - | Alternative to handle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates). Filters as in find_windows |
+| timeoutMs | integer | No | 5000 | Timeout in ms (1000-30000) for reading the popups' elements; a popup not read in time is listed without `ref` |
+<!-- tools:end params:get_active_popups -->
+
+Without `handle` or `window` it lists the popups of the app in front: the window that owns the window in front, so a dialog in front is listed as a popup of its app. Which windows count, front first (z-order), at most 16:
+- the windows the app window owns, directly or through its other owned windows (its dialogs, palettes and their popups, of any process);
+- the windows of the app's process (for a UWP app, the app's own process, not the shared ApplicationFrameHost) that are not tied to another of its main windows: unowned windows without a title bar or tool windows (context menus, dropdowns, palettes), unowned dialog boxes (`#32770`) while the process shows no other main window, and windows owned by a hidden or untitled window (a WinForms or Delphi dialog). Another main window of the same process (a second Explorer, browser, Word or Notepad window) is not a popup, and neither are the dialogs and popups it owns;
+- popups (no title bar, or tool windows) of a process the app's process started, such as `msedgewebview2.exe` for a WebView2 pane, checked against one process snapshot with start times; never the children of the desktop shell (`explorer.exe`), which starts almost every program;
+- never hidden, cloaked or zero-size windows, the desktop, the taskbars, or the input helper windows (IME).
+
+**Example:**
+> "Which menu is open in Notepad?"
+
+```json
+{
+  "name": "get_active_popups",
+  "arguments": { "window": { "processName": "notepad" } }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "windowHandle": 1706796,
+  "windowTitle": "notes.txt - Notepad",
+  "isForeground": true,
+  "popups": [
+    {
+      "ref": "w4120036e1",
+      "handle": 2493112,
+      "kind": "Menu",
+      "className": "#32768",
+      "processId": 4120,
+      "processName": "Notepad",
+      "bounds": { "x": 612, "y": 240, "width": 268, "height": 410 },
+      "controlType": "Menu"
+    }
+  ],
+  "elapsedMilliseconds": 4.25,
+  "truncated": false,
+  "errorCode": "None"
+}
+```
+
+**Response fields:**
+- `windowHandle`, `windowTitle`: the app window whose popups are listed; `isForeground`: it, or one of its popups, is in front.
+- `popups[].kind`: `Menu` (`#32768`, or an element that is a Menu, as a browser's own menus are), `Dropdown` (`ComboLBox`, or a List element), `Dialog` (`#32770`, or an owned window with a title bar), `Flyout` (a WinUI or XAML popup window), `Tooltip`, `Popup` (another window without a title bar) or `Window` (a palette with a title bar). WPF popups and Chromium menus have no telling class, so their kind comes from their element's `controlType` when it was read.
+- `popups[].ref`: the ref of the popup window's own element, registered under the popup's window: pass it as find_ui_elements `withinRef` to search only that menu or dialog. It becomes `ElementStale` once the popup closes. Absent when the popup did not respond or closed before it was read (it is still listed).
+- `popups[].isBlocking`: `true` for the modal dialog that disabled the app window and takes its input (GW_ENABLEDPOPUP), as [get_owned_windows](#get_owned_windows) reports it.
+- `truncated`: more than 16 popups were open; the ones furthest back are left out.
+- Titles and names come from the application and are untrusted (see [Untrusted content](#untrusted-content)).
+
+**Error Codes:**
+| Code | Description |
+|------|-------------|
+| `InvalidHandle` | The window handle is no window (it closed) |
+| `WindowNotFound` | No window is in front (the desktop or the lock screen has focus) and none was named, or a `window` selector named no window (a tool error) |
 
 ---
 
@@ -5082,6 +5162,18 @@ Since 1.14.0 (roadmap M3):
   instructions' locate and act lines now name find_ui_elements and its click points (same number of lines).
   find_ui_elements warms up a window with web content like the other reads (roadmap M3.3) and then carries
   `accessibilityWarmup`.
+- **Popup-aware search and get_active_popups (roadmap M3.5).** [find_ui_elements](#find_ui_elements) takes `scope`
+  (`window`, `windowAndPopups`, `desktop`). Left out, it is `windowAndPopups` when the window, a window it owns or
+  another window of its process is in front, so a search of an app in front now also covers its open menus, dropdowns,
+  flyouts and dialogs (windows of their own) and can return more matches than before, popups first; pass
+  `scope: "window"` for the earlier window-only search (a window not in front is searched alone, as before, and so is
+  every `withinRef` search). The result gains `scope` (always), `windowsSearched` and `windowsExcluded` (wider scopes), and
+  `elements[].windowHandle` for an element in another window, whose ref belongs to that window;
+  `truncationReason` gains `WindowLimit` (`desktop`: over 40 windows; `windowAndPopups`: over 16 popups), and
+  `PartsSkipped` also covers a popup that did not respond or answer in time. With `scope: "desktop"`, `handle` and `window` may be left out (`windowHandle: 0`); the target policy's denied
+  windows and the agent's host windows are not searched unless named. New read-only tool
+  [get_active_popups](#get_active_popups) in the `elements` toolset (read-only mode serves it, so it is in the Observer
+  profile) lists an app's open popups with refs. No new error code.
 - **captureId and coordinate spaces (roadmap M3.11, after 1.14.0).** Every successful capture result has a new field
   `captureId`, and take_screenshot takes `monitorIndex: -1` for the whole virtual screen (it used to fail with
   `InvalidMonitorIndex`). click, right_click, double_click, mouse_move and scroll take `space`

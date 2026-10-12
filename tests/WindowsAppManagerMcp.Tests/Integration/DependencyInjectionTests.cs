@@ -78,6 +78,18 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void ThePopupService_IsASingleton_AndTheElementSearchUsesIt()
+    {
+        // Resolving constructs them only: nothing is enumerated and no UI Automation client starts (roadmap M3.5)
+        var popups = _serviceProvider.GetRequiredService<IPopupService>();
+        var search = _serviceProvider.GetRequiredService<IElementSearchService>();
+
+        popups.Should().BeOfType<PopupService>().And.BeSameAs(_serviceProvider.GetRequiredService<IPopupService>());
+        typeof(ElementSearchService).GetField("_popups", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(search)
+            .Should().BeSameAs(popups, "find_ui_elements' popup and desktop scopes need it");
+    }
+
+    [Fact]
     public void TheElementRegistryAndSearch_AreSingletons_BuiltWithTheProductionConstructor()
     {
         // Resolving constructs them only: neither UI Automation engine starts a client before its first read

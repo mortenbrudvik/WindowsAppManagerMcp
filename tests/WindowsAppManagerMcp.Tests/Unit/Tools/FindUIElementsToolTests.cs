@@ -55,6 +55,60 @@ public class FindUIElementsToolTests
         error.Message.Should().Contain("handle").And.Contain("withinRef");
     }
 
+    #region scope (roadmap M3.5)
+
+    [Fact]
+    public async Task Find_PassesTheScope_AndLeavesItOutWhenNotGiven()
+    {
+        await CreateSut().FindUIElements(handle: Handle, name: "Delete", scope: ElementSearchScope.WindowAndPopups);
+        _query!.Scope.Should().Be(ElementSearchScope.WindowAndPopups);
+
+        await CreateSut().FindUIElements(handle: Handle, name: "Delete");
+        _query!.Scope.Should().BeNull("the service chooses the default from the foreground");
+    }
+
+    [Fact]
+    public async Task Find_WithScopeDesktop_NeedsNoWindow()
+    {
+        await CreateSut().FindUIElements(name: "Save", scope: ElementSearchScope.Desktop);
+
+        _query!.WindowHandle.Should().Be(nint.Zero);
+        _query.Scope.Should().Be(ElementSearchScope.Desktop);
+    }
+
+    [Fact]
+    public async Task Find_WithoutAWindow_AndAnotherScope_IsRefused_NamingTheDesktopScope()
+    {
+        var error = await RefusedAsync(() => CreateSut().FindUIElements(name: "Save", scope: ElementSearchScope.WindowAndPopups));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("scope 'desktop'");
+    }
+
+    [Theory]
+    [InlineData(ElementSearchScope.WindowAndPopups, "windowAndPopups")]
+    [InlineData(ElementSearchScope.Desktop, "desktop")]
+    public async Task Find_WithinRef_WithAScopeBeyondTheWindow_IsRefused(ElementSearchScope scope, string name)
+    {
+        var error = await RefusedAsync(() => CreateSut().FindUIElements(name: "Save", withinRef: "w3e7", scope: scope));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain($"scope '{name}'").And.Contain("Nothing was searched");
+        _registry.Verify(r => r.Lookup(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Find_WithinRef_WithScopeWindow_IsAccepted()
+    {
+        _registry.Setup(r => r.Lookup("w3e7")).Returns(new ElementLookup("w3e7", Handle, null, 1));
+
+        await CreateSut().FindUIElements(name: "Save", withinRef: "w3e7", scope: ElementSearchScope.Window);
+
+        _query!.Scope.Should().Be(ElementSearchScope.Window);
+    }
+
+    #endregion
+
     [Fact]
     public async Task Find_WithAWithinRefThatIsNoRef_IsRefused()
     {

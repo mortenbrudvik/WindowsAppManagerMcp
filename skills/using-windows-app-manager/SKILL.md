@@ -23,7 +23,7 @@ description: |
 # Using Windows App Manager
 
 <!-- tools:begin count -->
-Windows App Manager provides 56 MCP tools for managing Windows applications, windows, and desktop layouts.
+Windows App Manager provides 57 MCP tools for managing Windows applications, windows, and desktop layouts.
 <!-- tools:end count -->
 
 These tools act on the user's real desktop. Every task follows one loop: **locate** the window or element, **activate and verify** that it is the one in front, **act** on it by its handle, and **verify** the new state before the next step. Never act on a window you have not located in this task, and never assume an action worked because the call returned.
@@ -51,6 +51,7 @@ Call `get_server_info` once at the start of a task, and again whenever tools beh
 - **A program that is not running yet:** `launch_application` with `waitForWindow: true` returns the `window` it opened, whichever process owns it (a browser, Calculator or VS Code instance the launcher handed off to), with `launchStatus`: `windowObserved` (a new window), `reusedExistingWindow` or `openedInTab` (single-instance and tabbed apps such as Windows 11 Notepad, Terminal, VS Code and Explorer reuse a window that was already open). For a Store app (`shell:AppsFolder\<AppUserModelID>`), a Settings page (`ms-settings:...`) or a document, pass `expectWindow` (`processName` or `titleContains`, each matched as a part of the name or title, ignoring case: unlike a selector's `processName`, `Code` also matches `Code - Insiders`) so the wait can recognise its window.
 - **Launch and arrange in one call:** add `placement` (`{"snap": "left_half", "monitorIndex": 1, "focus": true}`, or `bounds`, or `state`) instead of following the launch with `find_windows`, `snap_window` and `focus_window`; it waits for the window, places it, places it again if the app restores its own saved bounds, and returns `placement.finalBounds`, `finalState` and `focused`. Add `reuseExisting: true` to use a window of the app that is already open (`launchStatus` `alreadyOpen`, nothing started) instead of opening a second copy; with a file or folder argument only a window whose title shows that exact name counts, and a Store app or document also needs `expectWindow.processName`. When `placement.errorCode` is set the app was still launched: arrange the window with the window tools, never launch again.
 - **A control you can name:** `find_ui_elements` with the window and what you know of the control (`name`, `automationId`, `controlType`, `className`; `nameMatch: "contains"` or `"regex"` for part of a name, best with a `controlType`) finds it at any depth in one call and returns `matchCount` and each match's `ref`, `clickPoint` (screen pixels: click there) and `patterns`; `detail: "standard"` adds its value, toggle, expand and selection state and focus. Several matches: narrow the query (`automationId`, `controlType`, or `withinRef`, a ref of the pane or dialog to search in) instead of taking the first. `matchCount: 0` means not there (or offscreen: `visibleOnly: false`); in a web app, check `accessibilityWarmup` (below) before you conclude it is missing.
+- **Menus, dropdowns and dialogs:** a context menu, an open combo box list, a flyout or a dialog is a window of its own, outside the app window's tree. While the app is in front, `find_ui_elements` searches its open popups too (`scope: "windowAndPopups"` is the default then; the result's `scope` says what ran), front first: after `right_click` opens a menu, `find_ui_elements` with the app `window`, `name: "Delete"` and `controlType: "MenuItem"` finds the item; a match in a popup has `windowHandle`, the popup's window, and its ref dies when the popup closes. `get_active_popups` lists what is open (kind `Menu`, `Dropdown`, `Dialog`, ...; `isBlocking` for a modal prompt) with a ref to pass as `withinRef`. `scope: "window"` keeps to the window; `scope: "desktop"` searches every visible window (at most 40, policy-denied and your own terminal left out) when you do not know which app shows it.
 - **Element refs:** every element of `find_ui_elements`, `get_ui_elements`, `get_focused_element`, `get_element_at_point` and `capture_with_elements` has a `ref` such as `w4120035e17`, the same for the same element in every read. Keep refs instead of coordinates, but not across a server restart. A ref never names another element: `ElementStale` means its element is gone (find it again), `AmbiguousElement` that several now fit it (narrow the search). After the UI changes (a row deleted, a list scrolled), find again rather than reuse an old ref.
 - **Controls inside a window:** `get_ui_elements` with `controlTypes` (`Button`, `Edit`, ...) or `interactableOnly: true` gives names, automation IDs and screen `bounds`. Pass `format: "text"` to get one compact line per element (`w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]`: the ref first, `fw=` where the UI framework changes, bounds after `@`, centre at `x + w/2`, `y + h/2`), which costs far fewer tokens than the JSON tree. It returns at most `maxElements` elements (300), the levels nearest the window first; on `truncationReason: MaxElements`, narrow the call (`controlTypes`, `interactableOnly`, a smaller `maxDepth`) instead of raising the limit. `NotResponding` means the app is hung or busy: wait and read again, do not act on it. `get_focused_element` says what has keyboard focus; `get_element_at_point` what is at a point.
 - **Web pages inside apps** (browsers, VS Code, Slack, Teams, the new Outlook): the server waits briefly for the page's elements on the first read. When a result carries `accessibilityWarmup` with `status` `NotReady` or `Partial`, the page was not fully there yet: read again before you conclude that a control is missing, or fall back to a capture. To launch such an app readable from the start, pass `forceAccessibility: true` to `launch_application` with the program's .exe (`Code.exe`, not `code`). `frameworkId` `Chrome` (`fw=Chrome` in text) marks web content.
@@ -198,7 +199,7 @@ Use this skill when the user asks to:
 - "Why can't you see the [tool] tool?"
 
 <!-- tools:begin tool-tables -->
-## Available Tools (56)
+## Available Tools (57)
 
 ### Window Discovery (6 tools)
 
@@ -255,14 +256,15 @@ Every tool that takes a window's `handle` (or `windowHandle`) also takes `window
 
 All capture tools also accept `format` (`auto`, `png`, `jpeg`), `quality` (JPEG), `outputPath` and `overwrite` (with output `file` or `both`), and the legacy `saveToFile` and `maxWidth`.
 
-### UI Automation (4 tools)
+### UI Automation (5 tools)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `get_ui_elements` | Get UI element tree | handle, maxDepth, controlTypes, timeoutMs |
-| `find_ui_elements` | Find elements by name, automationId, controlType or className; refs, click points | window (or handle), name, nameMatch, automationId, controlType, withinRef, detail |
+| `find_ui_elements` | Find elements by name, automationId, controlType or className; refs, click points | window (or handle), name, nameMatch, automationId, controlType, withinRef, scope, detail |
 | `get_focused_element` | Element with keyboard focus, its window and process | timeoutMs |
 | `get_element_at_point` | Element at a screen point, its ancestors and window | x, y, ancestors |
+| `get_active_popups` | Open menus, dropdowns, flyouts and dialogs of an app, with refs | window (or handle), timeoutMs |
 
 ### Browser Reading (4 tools)
 
