@@ -55,6 +55,44 @@ public class FindUIElementsToolTests
         error.Message.Should().Contain("handle").And.Contain("withinRef");
     }
 
+    #region searchVirtualized (roadmap M3.10)
+
+    [Fact]
+    public async Task SearchVirtualized_ReachesTheSearch_AndIsOffByDefault()
+    {
+        await CreateSut().FindUIElements(handle: Handle, name: "Item 05000");
+        _query!.SearchVirtualized.Should().BeFalse();
+
+        await CreateSut().FindUIElements(handle: Handle, name: "Item 05000", searchVirtualized: true);
+        _query!.SearchVirtualized.Should().BeTrue();
+
+        await CreateSut().FindUIElements(handle: Handle, automationId: "row-5000", name: "item", nameMatch: ElementNameMatch.Contains, searchVirtualized: true);
+        _query!.SearchVirtualized.Should().BeTrue("the automation id is what the list is asked for");
+    }
+
+    [Theory]
+    [InlineData("Item", ElementNameMatch.Contains)]
+    [InlineData(null, ElementNameMatch.Exact)]
+    public async Task SearchVirtualized_WithoutAWholeNameOrAnAutomationId_IsRefused_BeforeAnythingIsSearched(string? name, ElementNameMatch nameMatch)
+    {
+        var error = await RefusedAsync(() => CreateSut().FindUIElements(
+            handle: Handle, name: name, nameMatch: nameMatch, controlType: "ListItem", searchVirtualized: true));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("automationId, or name with nameMatch exact").And.EndWith("Nothing was searched.");
+        _search.Verify(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SearchVirtualized_OverTheDesktopWithoutAWindow_IsRefused()
+    {
+        var error = await RefusedAsync(() => CreateSut().FindUIElements(name: "Item 05000", scope: ElementSearchScope.Desktop, searchVirtualized: true));
+
+        error.Message.Should().Contain("one window");
+    }
+
+    #endregion
+
     #region scope (roadmap M3.5)
 
     [Fact]

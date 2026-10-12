@@ -309,13 +309,7 @@ public sealed partial class ElementActionService
             }
 
             case ElementActionKind.Realize:
-                if (Pattern<IUiaVirtualizedItemPattern>(element, UiaPatterns.VirtualizedItem) is { } virtualized)
-                {
-                    return element.Use(Plan.Pattern(ElementActionMethod.VirtualizedItem, virtualized.Realize));
-                }
-
-                element.Warnings.Add("The element is not a virtualized item (it supports no VirtualizedItem pattern): it is real already.");
-                return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+                return ChooseRealize(element);
 
             case ElementActionKind.WindowClose:
             case ElementActionKind.WindowMinimize:
@@ -379,6 +373,60 @@ public sealed partial class ElementActionService
 
         // The current value is read again on the action's thread, whole (the state shows at most 200 characters)
         return element.Use(Plan.Pattern(ElementActionMethod.Value, () => value.SetValue((value.Value ?? string.Empty) + text)));
+    }
+
+    /// <summary>
+    /// realize (roadmap M3.10), the one implementation behind element_action realize, whether the item was named by a ref
+    /// (find_ui_elements' searchVirtualized gives the refs of items that are not realized) or by criteria: the VirtualizedItem
+    /// pattern's Realize, then, when the item is still offscreen, its ScrollItem pattern's ScrollIntoView, both on the action
+    /// runner like every pattern action. An item that is real already is only scrolled into view when it is offscreen.
+    /// </summary>
+    private ElementActionResult? ChooseRealize(PreparedElement element)
+    {
+        var node = element.Node;
+        if (Pattern<IUiaVirtualizedItemPattern>(element, UiaPatterns.VirtualizedItem) is { } virtualized)
+        {
+            return element.Use(Plan.Pattern(ElementActionMethod.VirtualizedItem, () =>
+            {
+                virtualized.Realize();
+                ScrollIntoViewWhenOffscreen(node);
+            }));
+        }
+
+        if (element.Before.IsOffscreen && Pattern<IUiaScrollItemPattern>(element, UiaPatterns.ScrollItem) is { } scrollItem)
+        {
+            element.Warnings.Add("The element is not a virtualized item (it supports no VirtualizedItem pattern): it is real already, " +
+                                 "so it was only scrolled into view.");
+            return element.Use(Plan.Pattern(ElementActionMethod.ScrollItem, scrollItem.ScrollIntoView));
+        }
+
+        element.Warnings.Add("The element is not a virtualized item (it supports no VirtualizedItem pattern): it is real already" +
+                             (element.Before.IsOffscreen ? ", and it cannot be scrolled into view (no ScrollItem pattern)." : " and in view."));
+        return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+    }
+
+    /// <summary>
+    /// On the action's thread, after Realize: the item scrolled into view when it is still offscreen (a provider whose Realize
+    /// creates the item without scrolling to it). Its patterns are read again, since a placeholder may offer ScrollItem only
+    /// once it is real; a read that fails leaves it as Realize left it, and the state read afterwards tells.
+    /// </summary>
+    private void ScrollIntoViewWhenOffscreen(IUiaNode node)
+    {
+        UiaElement now;
+        try
+        {
+            now = _tree.ReadElement(node);
+        }
+        catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+        {
+            return;
+        }
+
+        if (now.Properties.IsOffscreen && (now.Patterns & UiaPatterns.ScrollItem) != 0 &&
+            _tree.GetPattern<IUiaScrollItemPattern>(node) is { } scrollItem)
+        {
+            scrollItem.ScrollIntoView();
+        }
     }
 
     private ElementActionResult? ChooseScroll(ActionCall call, PreparedElement element, IUiaNode node)
@@ -687,7 +735,7 @@ public sealed partial class ElementActionService
             ElementActionKind.RemoveFromSelection => state.IsSelected == false,
             ElementActionKind.Expand => state.ExpandCollapseState is UiaExpandCollapseState.Expanded or UiaExpandCollapseState.PartiallyExpanded,
             ElementActionKind.Collapse => state.ExpandCollapseState == UiaExpandCollapseState.Collapsed,
-            ElementActionKind.ScrollIntoView => !state.IsOffscreen,
+            ElementActionKind.ScrollIntoView or ElementActionKind.Realize => !state.IsOffscreen,
             ElementActionKind.Scroll => ScrollVerified(request, element, after),
             ElementActionKind.SetRangeValue => state.RangeValue is { } value && element.RangeTarget is { } target
                 ? Math.Abs(value - target) <= RangeTolerance(target)

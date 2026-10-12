@@ -92,6 +92,9 @@ public record ScreenPoint(int X, int Y);
 /// <param name="WindowHandle">The top-level window the element is in, when that is not the result's window: a popup (a menu,
 /// a dropdown, a dialog) of a windowAndPopups search, or another window of a desktop search (roadmap M3.5). Its ref is
 /// registered under that window. Left out for an element of the window searched.</param>
+/// <param name="Virtualized">searchVirtualized (roadmap M3.10): true for an item its list's ItemContainer pattern found that the
+/// tree search did not, usually because the list has not realized it (it is not in the tree yet: offscreen, no bounds, no
+/// clickPoint). element_action realize makes it real and scrolls it into view. Left out otherwise.</param>
 public record FoundElement(
     [property: JsonPropertyOrder(-1)] string? Ref,
     string? Name,
@@ -118,7 +121,8 @@ public record FoundElement(
     string? AccessKey = null,
     string? AcceleratorKey = null,
     string? LocalizedControlType = null,
-    long? WindowHandle = null
+    long? WindowHandle = null,
+    bool? Virtualized = null
 );
 
 /// <summary>Result of find_ui_elements (roadmap M3.4).</summary>
@@ -140,6 +144,8 @@ public record FoundElement(
 /// included. Left out for scope window.</param>
 /// <param name="WindowsExcluded">With scope desktop: visible windows left out because the target policy denies their process
 /// or they are the agent's own host windows. Left out when none was.</param>
+/// <param name="Virtualized">With searchVirtualized (roadmap M3.10): the lists searched through their ItemContainer pattern
+/// and how many items only they found. Left out otherwise.</param>
 public record FindElementsResult(
     bool Success,
     long WindowHandle,
@@ -155,8 +161,26 @@ public record FindElementsResult(
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     ElementSearchScope? Scope = null,
     int? WindowsSearched = null,
-    int? WindowsExcluded = null
+    int? WindowsExcluded = null,
+    VirtualizedSearchInfo? Virtualized = null
 );
+
+/// <summary>
+/// What find_ui_elements' searchVirtualized searched (roadmap M3.10): the lists of the window (or of withinRef's element),
+/// and how many matching items were found through their ItemContainer pattern that the tree search had not found.
+/// </summary>
+/// <param name="ItemsFound">The matches only the lists' ItemContainer pattern found (each has virtualized true).</param>
+/// <param name="Containers">The lists searched for, at most <see cref="Services.ElementSearchService.MaxVirtualizedContainers"/>:
+/// List, Tree, DataGrid and Table elements, withinRef's element itself when it is one.</param>
+/// <param name="Note">Why nothing more could be searched (no list, no ItemContainer pattern, the timeout), or null.</param>
+public record VirtualizedSearchInfo(int ItemsFound, IReadOnlyList<VirtualizedContainer> Containers, string? Note = null);
+
+/// <summary>A list searchVirtualized looked at (roadmap M3.10).</summary>
+/// <param name="Ref">The list's ref (element_action scroll scrolls it; find_ui_elements withinRef searches it).</param>
+/// <param name="ItemContainer">Whether it supports the ItemContainer pattern, so its items were searched realized or not. A
+/// list without it can only be searched by scrolling it (element_action realize with maxScrolls).</param>
+/// <param name="Scrollable">Whether it has a Scroll pattern of its own.</param>
+public record VirtualizedContainer(string? Ref, string ControlType, string? Name, bool ItemContainer, bool Scrollable);
 
 /// <summary>
 /// What find_ui_elements searches for (roadmap M3.4). The criteria are combined with AND; at least one of
@@ -193,4 +217,13 @@ public record ElementQuery(
     /// (roadmap M3.8) warms up once, on its first check, and turns it off for the checks after it.
     /// </summary>
     public bool WarmUp { get; init; } = true;
+
+    /// <summary>
+    /// Also search the items of the window's lists that are not realized yet (roadmap M3.10; default false): after the tree
+    /// search, the List, Tree, DataGrid and Table elements of the named window (or withinRef's element) that support the
+    /// ItemContainer pattern are asked for items whose automation id (else whole name) equals the criterion
+    /// (FindItemByProperty, compared by the provider, usually case-sensitively). Only reads: nothing is realized or scrolled.
+    /// Needs automationId, or name with nameMatch exact (<see cref="Services.ElementSearchService.VirtualizedArgumentError"/>).
+    /// </summary>
+    public bool SearchVirtualized { get; init; }
 }

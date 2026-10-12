@@ -181,12 +181,18 @@ public sealed class FakeLegacyPattern(string? defaultAction) : IUiaLegacyIAccess
     public void DoDefaultAction() => DefaultActions++;
 }
 
-/// <summary>A VirtualizedItem pattern.</summary>
+/// <summary>A VirtualizedItem pattern: <see cref="OnRealize"/> runs inside (a virtual list puts the item in the tree).</summary>
 public sealed class FakeVirtualizedItemPattern : IUiaVirtualizedItemPattern
 {
     public int Realizes { get; private set; }
 
-    public void Realize() => Realizes++;
+    public Action? OnRealize { get; set; }
+
+    public void Realize()
+    {
+        Realizes++;
+        OnRealize?.Invoke();
+    }
 }
 
 /// <summary>An <see cref="IUiaActionRunner"/> that runs the action on the calling thread, or reports it pending or refused.</summary>

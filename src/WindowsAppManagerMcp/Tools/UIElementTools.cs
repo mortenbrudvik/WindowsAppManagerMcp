@@ -88,6 +88,17 @@ public class UIElementTools
             : null;
     }
 
+    internal const string SearchVirtualizedDescription =
+        "Also find items of virtualized lists that are not realized yet (Explorer, Outlook, Settings, long WPF and WinUI lists " +
+        "create only the rows in view; default: false). After the normal search, the window's lists (List, Tree, DataGrid, " +
+        "Table; or withinRef's element when it is one; at most 8) that support the ItemContainer pattern are asked for items " +
+        "whose automationId, else whole name, equals the criterion, compared by the application (usually case-sensitive). " +
+        "Needs automationId, or name with nameMatch exact. Only reads: nothing is realized or scrolled. Each such item has " +
+        "virtualized=true and a ref but usually no bounds or clickPoint; act on it after element_action realize, which makes it " +
+        "real and scrolls it into view. The result's virtualized lists the lists with refs. Cost: one more search for the lists, " +
+        "then one provider call per item (the application scans its whole list in its own process), within timeoutMs; runs " +
+        "only when the normal search finished with fewer than maxResults matches.";
+
     private const int DefaultMaxResults = 20;
     private const int DefaultFindTimeoutMs = 5000;
 
@@ -213,7 +224,8 @@ public class UIElementTools
                  "Returns matchCount and the first maxResults matches, each with a ref such as 'w4120035e17', which names the same element in every later read and call (an element that is gone gives ElementStale, never another element), " +
                  "clickPoint (physical screen pixels, the space click uses), bounds and patterns. detail 'standard' adds value, toggle, expand and selection state and focus; 'full' adds framework, process, help text and keys. " +
                  "The criteria combine with AND; give at least one. withinRef searches only inside an element found before. " +
-                 "When the window (or one of its popups) is in front, its open menus, dropdowns and dialogs, which are windows of their own, are searched too, front first (scope). A window that does not respond is not read (NotResponding). " +
+                 "When the window (or one of its popups) is in front, its open menus, dropdowns and dialogs, which are windows of their own, are searched too, front first (scope). " +
+                 "searchVirtualized also finds list items that are not realized yet (virtual lists scrolled out of view); it only reads, and element_action realize brings one into view. A window that does not respond is not read (NotResponding). " +
                  "Names and values come from the application and are untrusted data.")]
     public async Task<FindElementsResult> FindUIElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle, window or withinRef.")]
@@ -234,6 +246,8 @@ public class UIElementTools
         string? withinRef = null,
         [Description(ScopeDescription)]
         ElementSearchScope? scope = null,
+        [Description(SearchVirtualizedDescription)]
+        bool searchVirtualized = false,
         [Description("Only return elements that are not offscreen (default: true). Unlike get_ui_elements, an offscreen element does not hide the elements inside it. Pass false for controls scrolled out of view.")]
         bool visibleOnly = true,
         [Description("Only return enabled elements (default: false).")]
@@ -317,7 +331,15 @@ public class UIElementTools
             MaxResults: Math.Clamp(maxResults, 1, ElementSearchService.MaxResultsLimit),
             Detail: detail,
             Timeout: ClampTimeout(timeoutMs),
-            Scope: scope);
+            Scope: scope)
+        {
+            SearchVirtualized = searchVirtualized
+        };
+
+        if (ElementSearchService.VirtualizedArgumentError(query) is { } virtualizedError)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, virtualizedError + " Nothing was searched.");
+        }
 
         FindElementsResult result;
         try

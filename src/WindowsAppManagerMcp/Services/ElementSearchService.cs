@@ -42,8 +42,13 @@ namespace WindowsAppManagerMcp.Services;
 /// the server. Reads of a match's details that fail leave those fields out; once the deadline has passed, or a provider did
 /// not answer in time, the remaining matches are described from what the search read (no further call). A read the worker
 /// abandons still returns the matches found until then, described the same way, with truncationReason Timeout.</para>
+/// <para><b>searchVirtualized</b> (roadmap M3.10, ElementSearchService.Virtualized.cs): after a tree search of the named
+/// window that finished with room left among maxResults, its lists (List, Tree, DataGrid, Table; withinRef's element itself
+/// when it is one) that support the ItemContainer pattern are asked for the items whose automation id or whole name equals the
+/// criterion, realized or not, one FindItemByProperty call per item, within the same deadline. Items the tree search did not
+/// find (by runtime id) are added with virtualized true and a ref. Only reads: realizing and scrolling are element_action's.</para>
 /// </remarks>
-public sealed class ElementSearchService : IElementSearchService
+public sealed partial class ElementSearchService : IElementSearchService
 {
     /// <summary>The most matches one call returns.</summary>
     public const int MaxResultsLimit = 100;
@@ -114,6 +119,11 @@ public sealed class ElementSearchService : IElementSearchService
         if (handle == nint.Zero && scope != ElementSearchScope.Desktop)
         {
             return Failure("Invalid window handle (zero)", UIElementErrorCode.InvalidHandle);
+        }
+
+        if (VirtualizedArgumentError(query) is { } virtualizedError)
+        {
+            throw new ArgumentException(virtualizedError, nameof(query));
         }
 
         if (UIElementService.ParseControlTypes(query.ControlTypes, out var controlTypes) is { } invalidControlTypes)
@@ -381,11 +391,21 @@ public sealed class ElementSearchService : IElementSearchService
                     UIElementErrorCode.OperationTimedOut, title);
             }
 
-            var unique = query.WithinRef == null
+            // searchVirtualized (roadmap M3.10): the named window's lists, asked for items they have not realized
+            var virtualized = query.SearchVirtualized && root != null
+                ? SearchVirtualized(criteria, root, query.WithinRef != null, total, maxResults, token)
+                : null;
+
+            // Items found through a list can be look-alikes of a tree match: no match is proven unique then
+            var unique = query.WithinRef == null && virtualized is not { Items.Count: > 0 }
                 ? Uniqueness(criteria, controlTypesOnServer, started.Searched, handle, token)
                 : _ => null;
             var result = Result(query, withinRef, title, total,
                 Describe(query, criteria, total.Matches, generation, mayRead: true, unique, token), started.Warmup, stopwatch);
+            if (virtualized != null)
+            {
+                result = WithVirtualized(result, virtualized, query, criteria, generation, token);
+            }
             return scope == ElementSearchScope.Window
                 ? result with { Scope = scope }
                 : result with
