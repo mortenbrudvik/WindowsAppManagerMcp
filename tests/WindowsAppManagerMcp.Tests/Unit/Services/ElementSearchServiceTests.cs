@@ -422,30 +422,33 @@ public class ElementSearchServiceTests
     [Fact]
     public async Task Find_WhenTheTimeoutPassesBeforeAnyMatch_FailsWithOperationTimedOut()
     {
-        // Arrange - the deadline passes during the first part's search
+        // Arrange - the deadline passes during the first part's search: its provider call returns only once the search's
+        // deadline (the token the worker runs it with) is cancelled, however slow the machine is
         var lists = Enumerable.Range(1, 3).Select(i => new FakeUiaNode("List", $"L{i}").With(
             Enumerable.Range(1, 60).Select(j => new FakeUiaNode("Text", $"T{j}")).ToArray())).ToArray();
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(lists));
         var sut = CreateSut();
-        using var cancel = new CancellationTokenSource();
-        lists[0].OnFindAll = _ => Thread.Sleep(1200);
+        var deadlinePassed = false;
+        lists[0].OnFindAll = _ => deadlinePassed = _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
         var result = await sut.FindAsync(Query(controlTypes: ["Button"]) with { Timeout = TimeSpan.FromMilliseconds(1000) });
 
-        // Assert
+        // Assert - the search stopped after that part
+        deadlinePassed.Should().BeTrue();
         result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
         result.Error.Should().Contain("before any element");
+        _tree.Finds.Should().Equal("L1:Descendants");
     }
 
     [Fact]
     public async Task Find_WhenTheTimeoutPassesAfterSomeMatches_ReturnsThemTruncated()
     {
-        // Arrange
+        // Arrange - the deadline passes during the second part's search (its provider call returns once it has)
         var lists = Enumerable.Range(1, 3).Select(i => new FakeUiaNode("List", $"L{i}").With(
             Enumerable.Range(1, 60).Select(j => new FakeUiaNode("Button", $"B{i}.{j}")).ToArray())).ToArray();
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(lists));
-        lists[1].OnFindAll = _ => Thread.Sleep(1200);
+        lists[1].OnFindAll = _ => _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
         var result = await CreateSut().FindAsync(Query(controlTypes: ["Button"]) with { Timeout = TimeSpan.FromMilliseconds(1000) });
