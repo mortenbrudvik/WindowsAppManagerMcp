@@ -163,6 +163,10 @@ public sealed class DesktopStateService : IDesktopStateService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // A part still running is abandoned: ask it to stop now, before its tokens' sources are disposed
+        await partStop.CancelAsync().ConfigureAwait(false);
+        await deadline.CancelAsync().ConfigureAwait(false);
         var timeoutMs = (int)request.Timeout.TotalMilliseconds;
 
         var windows = Collect(windowsTask, "windows", timeoutMs, errors);
