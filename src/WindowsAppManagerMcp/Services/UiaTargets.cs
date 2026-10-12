@@ -91,8 +91,11 @@ public static class UiaTargets
     /// <summary>
     /// Why the window must not be read, or null when it responds (or cannot be checked): Windows reports its thread hung
     /// (IsHungAppWindow), or it does not answer a no-op message within <see cref="RespondTimeoutMs"/> (SendMessageTimeout
-    /// WM_NULL with SMTO_ABORTIFHUNG). A handle that is no window is left to the UI Automation lookup, which reports
-    /// WindowNotFound. A check that throws does not stop the read: the read's own deadline still bounds it.
+    /// WM_NULL with SMTO_ABORTIFHUNG). For a UWP frame window (ApplicationFrameWindow), the CoreWindow it hosts is checked
+    /// the same way: the frame's thread is the shared ApplicationFrameHost's, while the app's elements are served by the
+    /// CoreWindow's thread in the app's own process (see <see cref="UwpFrames"/>). A handle that is no window is left to the
+    /// UI Automation lookup, which reports WindowNotFound. A check that throws does not stop the read: the read's own
+    /// deadline still bounds it.
     /// </summary>
     /// <param name="windows">The window wrapper, or null to check nothing.</param>
     /// <param name="windowHandle">The window to check.</param>
@@ -111,33 +114,52 @@ public static class UiaTargets
                 return null;
             }
 
-            if (windows.IsHungAppWindow(windowHandle))
+            if (Unresponsive(windows, windowHandle, windowHandle, what) is { } frame)
             {
-                return $"The window is not responding (Windows reports it hung), so {what}: every UI " +
-                       "Automation call to it would block until it recovers. Wait, then check it again with find_windows or " +
-                       "get_window_info (isResponding).";
+                return frame;
             }
 
-            // Null: the message could not be sent (the window is gone, or a more privileged one); the read decides
-            if (windows.RespondsWithin(windowHandle, RespondTimeoutMs) == false)
-            {
-                // It may have closed meanwhile; then the lookup reports that
-                if (!windows.IsWindow(windowHandle))
-                {
-                    return null;
-                }
-
-                return $"The window did not answer a message within {RespondTimeoutMs} ms, so {what}: " +
-                       "the application is busy or hung. Wait, then try again.";
-            }
-
-            return null;
+            // A UWP app answers on its CoreWindow's thread, not the frame host's
+            var processId = windows.GetWindowThreadProcessId(windowHandle);
+            return processId != 0 && WindowClassification.IsApplicationFrameWindow(windows.GetClassName(windowHandle)) &&
+                   UwpFrames.FindHostedCoreWindow(windows, windowHandle, processId) is { } core
+                ? Unresponsive(windows, core.Window, windowHandle, what)
+                : null;
         }
         catch (Exception)
         {
             // The check is a courtesy: the read's own deadline still bounds it
             return null;
         }
+    }
+
+    /// <summary>
+    /// The not-responding message when <paramref name="probed"/> is reported hung or does not answer WM_NULL in time, or
+    /// null; a window that closed meanwhile (<paramref name="window"/>, the one to read) is left to the lookup.
+    /// </summary>
+    private static string? Unresponsive(INativeWindowWrapper windows, nint probed, nint window, string what)
+    {
+        if (windows.IsHungAppWindow(probed))
+        {
+            return $"The window is not responding (Windows reports it hung), so {what}: every UI " +
+                   "Automation call to it would block until it recovers. Wait, then check it again with find_windows or " +
+                   "get_window_info (isResponding).";
+        }
+
+        // Null: the message could not be sent (the window is gone, or a more privileged one); the read decides
+        if (windows.RespondsWithin(probed, RespondTimeoutMs) == false)
+        {
+            // It may have closed meanwhile; then the lookup reports that
+            if (!windows.IsWindow(probed) || !windows.IsWindow(window))
+            {
+                return null;
+            }
+
+            return $"The window did not answer a message within {RespondTimeoutMs} ms, so {what}: " +
+                   "the application is busy or hung. Wait, then try again.";
+        }
+
+        return null;
     }
 
     /// <summary>

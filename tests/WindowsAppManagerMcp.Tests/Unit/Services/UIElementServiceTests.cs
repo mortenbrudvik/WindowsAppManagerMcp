@@ -1341,6 +1341,30 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public async Task GetUIElements_OfAUwpFrameWhoseAppIsHung_ReturnsNotResponding_WithoutReadingIt()
+    {
+        // Arrange - the frame host answers for the frame; the app behind its CoreWindow is hung
+        BuildToolbarWindow();
+        var coreWindow = new nint(0x6001);
+        var windows = RespondingWindow();
+        windows.Setup(w => w.GetClassName(Handle)).Returns("ApplicationFrameWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(6000u);
+        windows.Setup(w => w.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(coreWindow)).Returns(7000u);
+        windows.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, callback) => callback(coreWindow));
+        windows.Setup(w => w.IsHungAppWindow(coreWindow)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.NotResponding);
+        _tree.Reads.Should().BeEmpty();
+        _tree.ChildListings.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetUIElements_OfAWindowThatDoesNotAnswerAMessageInTime_ReturnsNotResponding()
     {
         // Arrange - not hung long enough for IsHungAppWindow, but busy

@@ -121,6 +121,57 @@ public class UiaTargetsTests
     }
 
     [Fact]
+    public void NotRespondingReason_OfAUwpFrameWhoseAppIsHung_IsGiven_ThoughTheFrameHostAnswers()
+    {
+        // Arrange - the frame belongs to ApplicationFrameHost, which answers; the app's UI thread, behind its CoreWindow, is hung
+        UwpFrame("CalculatorApp");
+        _windows.Setup(w => w.RespondsWithin(Frame, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.RespondsWithin(CoreWindow, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.IsHungAppWindow(CoreWindow)).Returns(true);
+
+        // Act
+        var reason = UiaTargets.NotRespondingReason(_windows.Object, Frame);
+
+        // Assert
+        reason.Should().Contain("not responding");
+    }
+
+    [Fact]
+    public void NotRespondingReason_OfAUwpFrameWhoseAppDoesNotAnswer_IsGiven()
+    {
+        // Arrange
+        UwpFrame("CalculatorApp");
+        _windows.Setup(w => w.RespondsWithin(Frame, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.RespondsWithin(CoreWindow, It.IsAny<uint>())).Returns(false);
+
+        // Act
+        var reason = UiaTargets.NotRespondingReason(_windows.Object, Frame);
+
+        // Assert
+        reason.Should().Contain($"did not answer a message within {UiaTargets.RespondTimeoutMs} ms");
+    }
+
+    [Fact]
+    public void NotRespondingReason_OfAUwpFrameWithoutItsCoreWindow_IsNone()
+    {
+        // Arrange - a minimized or suspended app's CoreWindow is not in the frame; the frame itself answers
+        Window(Frame, "ApplicationFrameWindow", 500, "ApplicationFrameHost");
+        _windows.Setup(w => w.RespondsWithin(Frame, It.IsAny<uint>())).Returns(true);
+
+        // Act & Assert
+        UiaTargets.NotRespondingReason(_windows.Object, Frame).Should().BeNull();
+    }
+
+    [Fact]
+    public void NotRespondingReason_OfAnOrdinaryWindow_ListsNoChildren()
+    {
+        _windows.Setup(w => w.RespondsWithin(Notepad, It.IsAny<uint>())).Returns(true);
+
+        UiaTargets.NotRespondingReason(_windows.Object, Notepad).Should().BeNull();
+        _windows.Verify(w => w.EnumChildWindows(It.IsAny<nint>(), It.IsAny<Func<nint, bool>>()), Times.Never);
+    }
+
+    [Fact]
     public void PolicyRefusal_NamesTheWindowAndTheReason_AndSaysNothingWasRead()
     {
         // Act
