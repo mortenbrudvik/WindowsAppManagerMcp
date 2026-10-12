@@ -16,9 +16,10 @@ namespace WindowsAppManagerMcp.Services;
 /// </summary>
 /// <remarks>
 /// The UI Automation parts get a little less than the deadline (<see cref="PartBudget"/>), so a walk that is asked to stop
-/// can still hand back what it read before the call returns; whatever has not answered at the deadline itself is reported
-/// as OperationTimedOut and left to finish on its own (its refs are registered as usual). Nothing here takes the input gate:
-/// every part only reads.
+/// can still hand back what it read before the call returns: a read still stuck in a UI Automation call then is abandoned
+/// after <see cref="StopGrace"/>, which ends before the deadline, and the walk's lines read so far and the popups' list are
+/// kept. Whatever has not answered at the deadline itself is reported as OperationTimedOut and left to finish on its own
+/// (its refs are registered as usual). Nothing here takes the input gate: every part only reads.
 /// </remarks>
 public sealed class DesktopStateService : IDesktopStateService
 {
@@ -85,6 +86,14 @@ public sealed class DesktopStateService : IDesktopStateService
     public static TimeSpan PartBudget(TimeSpan timeout) =>
         timeout - TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(1).Ticks, timeout.Ticks / 5));
 
+    /// <summary>
+    /// How long a UI Automation part that was asked to stop may stay in a call before it is abandoned with what it read: half
+    /// of what <see cref="PartBudget"/> leaves of the deadline, so the part is back before the deadline (the walk's and the
+    /// popups' own graces, 2 s and 1 s, are longer than that for every timeout). An abandoned read counts as a stuck read
+    /// of its application until it returns, as any read the worker gives up on.
+    /// </summary>
+    public static TimeSpan StopGrace(TimeSpan timeout) => (timeout - PartBudget(timeout)) / 2;
+
     public string? ScreenshotUnavailable() => _captureServed
         ? null
         : "A screenshot needs capture_window, which this server does not serve: the user turned captures off (the capture " +
@@ -137,7 +146,15 @@ public sealed class DesktopStateService : IDesktopStateService
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(request.Timeout);
-        var partBudget = PartBudget(request.Timeout);
+
+        // The parts stop from the call's start, as the deadline counts, not from after the cheap reads
+        var partBudget = PartBudget(request.Timeout) - watch.Elapsed;
+        if (partBudget < TimeSpan.Zero)
+        {
+            partBudget = TimeSpan.Zero;
+        }
+
+        var stopGrace = StopGrace(request.Timeout);
         using var partStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         partStop.CancelAfter(partBudget);
 
@@ -150,10 +167,10 @@ public sealed class DesktopStateService : IDesktopStateService
             ? Start(() => _inspection.GetFocusedElementAsync(partBudget, deadline.Token))
             : null;
         var popupsTask = include.Contains(DesktopStateSection.Popups) && hasTarget
-            ? Start(() => _popups.GetActivePopupsAsync(handle, partBudget, deadline.Token))
+            ? Start(() => _popups.GetActivePopupsAsync(handle, partBudget, deadline.Token, stopGrace))
             : null;
         var elementsTask = include.Contains(DesktopStateSection.Elements) && hasTarget
-            ? Start(() => WalkAsync(handle, target.Title, request, partBudget, partStop.Token))
+            ? Start(() => WalkAsync(handle, target.Title, request, partBudget, stopGrace, partStop.Token))
             : null;
         Task<ScreenCapture<ScreenshotResult>>? captureTask = null;
         if (include.Contains(DesktopStateSection.Screenshot) && hasTarget)
@@ -356,7 +373,7 @@ public sealed class DesktopStateService : IDesktopStateService
     /// window with what is left.
     /// </summary>
     private async Task<ElementsWalk> WalkAsync(
-        nint window, string? title, DesktopStateRequest request, TimeSpan budget, CancellationToken stop)
+        nint window, string? title, DesktopStateRequest request, TimeSpan budget, TimeSpan stopGrace, CancellationToken stop)
     {
         var scope = request.Scope ?? (_popups.IsInForeground(window) ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window);
         var (readable, excluded) = scope == ElementSearchScope.WindowAndPopups && _popups.GetPopupList(window) is { } list
@@ -383,8 +400,8 @@ public sealed class DesktopStateService : IDesktopStateService
             UIElementResult read;
             try
             {
-                read = await _elements.GetUIElementsAsync(popup.Handle, MaxDepth, Filter(request, popupBudget, warmupBudget), null, stop)
-                    .ConfigureAwait(false);
+                read = await _elements.GetUIElementsAsync(popup.Handle, MaxDepth, Filter(request, popupBudget, warmupBudget, stopGrace),
+                    null, stop).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -419,7 +436,14 @@ public sealed class DesktopStateService : IDesktopStateService
             return new ElementsWalk(Elements(text, count, true, UIElementTruncationReason.MaxElements, scope, null), null, excluded);
         }
 
-        var result = await _elements.GetUIElementsAsync(window, MaxDepth, Filter(request, remaining, warmupBudget), null, stop)
+        // Asked to stop during the popups: a window walk started now would only spend the time left before the deadline on
+        // its hung-window check and first reads, and hand back nothing
+        if (stop.IsCancellationRequested)
+        {
+            return new ElementsWalk(Elements(text, count, true, UIElementTruncationReason.Timeout, scope, null), null, excluded);
+        }
+
+        var result = await _elements.GetUIElementsAsync(window, MaxDepth, Filter(request, remaining, warmupBudget, stopGrace), null, stop)
             .ConfigureAwait(false);
         if (!result.Success)
         {
@@ -449,11 +473,12 @@ public sealed class DesktopStateService : IDesktopStateService
         return new ElementsWalk(Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup), null, excluded);
     }
 
-    private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget) => new(
+    private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget, TimeSpan stopGrace) => new(
         InteractableOnly: request.InteractableOnly,
         VisibleOnly: true,
         MaxElements: maxElements,
-        AccessibilityWarmupBudget: warmupBudget);
+        AccessibilityWarmupBudget: warmupBudget,
+        StopGrace: stopGrace);
 
     private static DesktopElements Elements(
         StringBuilder text, int count, bool truncated, UIElementTruncationReason? reason, ElementSearchScope scope,

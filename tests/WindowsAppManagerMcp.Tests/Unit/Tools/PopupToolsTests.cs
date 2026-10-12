@@ -16,9 +16,9 @@ public class PopupToolsTests
 
     public PopupToolsTests()
     {
-        _popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .Callback((nint window, TimeSpan timeout, CancellationToken _) => (_window, _timeout) = (window, timeout))
-            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(true, (long)window, "W", true, [], 1));
+        _popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .Callback((nint window, TimeSpan timeout, CancellationToken _, TimeSpan? _) => (_window, _timeout) = (window, timeout))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(true, (long)window, "W", true, [], 1));
     }
 
     private PopupTools CreateSut() => new(_popups.Object, _windows.Object);
@@ -59,6 +59,6 @@ public class PopupToolsTests
         var call = () => CreateSut().GetActivePopups(handle: 0x4400, window: new WindowSelector { ProcessName = "notepad" });
 
         (await call.Should().ThrowAsync<ToolErrorException>()).Which.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
-        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()), Times.Never);
     }
 }

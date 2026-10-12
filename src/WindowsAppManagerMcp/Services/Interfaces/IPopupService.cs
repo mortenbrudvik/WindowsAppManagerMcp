@@ -87,8 +87,14 @@ public interface IPopupService
     /// </summary>
     /// <param name="window">The app window, or zero for the app in front: the window that owns the foreground window
     /// (WindowOwnerChain.TopOwner), so a dialog in front is listed as a popup of its app.</param>
+    /// <param name="timeout">How long the popups' elements may be read.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <param name="stopGrace">How long a read still running at <paramref name="timeout"/> may take to return before it is
+    /// abandoned and the popups are listed without the refs not read; null for the default (1 s). get_desktop_state passes
+    /// less, so the list is back before its own deadline.</param>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
-    Task<ActivePopupsResult> GetActivePopupsAsync(nint window, TimeSpan timeout, CancellationToken cancellationToken);
+    Task<ActivePopupsResult> GetActivePopupsAsync(nint window, TimeSpan timeout, CancellationToken cancellationToken,
+        TimeSpan? stopGrace = null);
 
     /// <summary>
     /// Waits up to <paramref name="wait"/> for a popup of <paramref name="window"/> whose handle is not in

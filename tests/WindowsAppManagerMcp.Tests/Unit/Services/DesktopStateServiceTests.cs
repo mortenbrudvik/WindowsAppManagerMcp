@@ -60,8 +60,8 @@ public class DesktopStateServiceTests
                 handle == Menu
                     ? Walk(handle, Element("w4120036e1", "MenuItem", "Delete"), Element("w4120036e2", "MenuItem", "Rename"))
                     : Walk(handle, Element("w4120035e7", "Button", "Save"), Element("w4120035e8", "Edit", "File name")));
-        _popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(true, window, "notes.txt - Notepad", true,
+        _popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(true, window, "notes.txt - Notepad", true,
                 [new ActivePopup("w4120036e0", Menu, PopupKind.Menu, null, "#32768", 4242, "notepad", null, new BoundsDto(600, 200, 200, 300), "Menu")],
                 2));
         _popups.Setup(p => p.IsInForeground(It.IsAny<nint>())).Returns(false);
@@ -162,7 +162,7 @@ public class DesktopStateServiceTests
         state.Popups.Should().BeNull();
         state.Cursor.Should().NotBeNull("the cheap parts are always read");
         _elements.VerifyNoOtherCalls();
-        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()), Times.Never);
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public class DesktopStateServiceTests
 
         named.Errors![0].Error.Should().Contain("notes.txt - Notepad").And.Contain("not read");
         _elements.VerifyNoOtherCalls();
-        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()), Times.Never);
         _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never,
             "neither observation reads the denied window's focus at all");
     }
@@ -487,6 +487,86 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task TheElementsWalk_StuckInACallWhenItIsAskedToStop_StillHandsBackWhatItRead_BeforeTheDeadline()
+    {
+        // Arrange - the real walk over a fake tree: the second level's listing blocks past the deadline and ignores the stop
+        using var release = new ManualResetEventSlim();
+        var panel = new FakeUiaNode("Pane", "Panel") { OnGetChildren = () => release.Wait(TimeSpan.FromSeconds(5)) };
+        var tree = new FakeUiaTree().WithWindow(Notepad,
+            new FakeUiaNode("Window", "notes.txt - Notepad").With(new FakeUiaNode("Button", "Save") { ActionPatterns = ["Invoke"] }, panel));
+        var sut = new DesktopStateService(_windows.Object, _session, _input, _inspection.Object, new UIElementService(tree, new UiaWorker()),
+            _popups.Object, _screenshots.Object, _policy);
+
+        try
+        {
+            // Act
+            var (state, _) = await sut.GetStateAsync(Request(window: Notepad, timeout: TimeSpan.FromSeconds(2)), CancellationToken.None);
+
+            // Assert - the first level, cut short by the timeout; not an elements error with nothing
+            state.Errors.Should().BeNull();
+            state.Elements!.Text.Should().Contain("Button 'Save'");
+            state.Elements.Truncated.Should().BeTrue();
+            state.Elements.TruncationReason.Should().Be(UIElementTruncationReason.Timeout);
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task TheUiAutomationParts_GetAStopGraceThatEndsBeforeTheDeadline()
+    {
+        // Arrange
+        TimeSpan? popupsGrace = null;
+        _popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .Callback((nint _, TimeSpan _, CancellationToken _, TimeSpan? grace) => popupsGrace = grace)
+            .ReturnsAsync(new ActivePopupsResult(true, Notepad, "notes.txt - Notepad", true, [], 1));
+        var timeout = TimeSpan.FromSeconds(1);
+        var slack = timeout - DesktopStateService.PartBudget(timeout);
+
+        // Act
+        await CreateSut().GetStateAsync(Request(timeout: timeout), CancellationToken.None);
+
+        // Assert
+        popupsGrace.Should().NotBeNull().And.BeGreaterThan(TimeSpan.Zero).And.BeLessThan(slack);
+        _walks.Should().ContainSingle().Which.Filter!.StopGrace.Should().NotBeNull().And.BeLessThan(slack);
+    }
+
+    [Fact]
+    public async Task AStopDuringThePopupsWalks_ReturnsTheirLines_WithoutStartingTheWindowsWalk()
+    {
+        // Arrange - the menu's walk runs until it is asked to stop, then hands back what it read
+        _popups.Setup(p => p.IsInForeground(Notepad)).Returns(true);
+        _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
+            [new PopupWindow(Menu, PopupKind.Menu, null, "#32768", 4242, 0, PopupRelation.SameProcess, null, false)], false));
+        _elements.Setup(e => e.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (nint handle, int _, UIElementFilter? filter, IProgress<OperationProgress>? _, CancellationToken token) =>
+            {
+                lock (_walks)
+                {
+                    _walks.Add((handle, filter));
+                }
+
+                await Task.Delay(Timeout.Infinite, token).ContinueWith(_ => { }, TaskScheduler.Default);
+                return Walk(handle, Element("w4120036e1", "MenuItem", "Delete")) with
+                {
+                    Truncated = true, TruncationReason = UIElementTruncationReason.Timeout
+                };
+            });
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(timeout: TimeSpan.FromSeconds(2)), CancellationToken.None);
+
+        // Assert - a window walk started with a stopped token would only cost time the deadline does not have
+        _walks.Select(w => w.Handle).Should().Equal(Menu);
+        state.Elements!.Text.Should().StartWith("# popup").And.Contain("MenuItem 'Delete'");
+        state.Elements.TruncationReason.Should().Be(UIElementTruncationReason.Timeout);
+        state.Errors.Should().BeNull();
+    }
+
+    [Fact]
     public async Task APopupOfADeniedAppOrOfTheAgentsHost_IsNotWalked_AndIsCounted()
     {
         // Arrange - the named window owns a credential prompt of a denied app (in front) and a popup of the agent's host
@@ -500,7 +580,7 @@ public class DesktopStateServiceTests
                 IsAgentHost: true),
             new PopupWindow(Menu, PopupKind.Menu, null, "#32768", 4242, 0, PopupRelation.SameProcess, null, false)
         ], false));
-        _popups.Setup(p => p.GetActivePopupsAsync(Notepad, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        _popups.Setup(p => p.GetActivePopupsAsync(Notepad, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
             .ReturnsAsync(new ActivePopupsResult(true, Notepad, "notes.txt - Notepad", true,
                 [new ActivePopup("w4120036e0", Menu, PopupKind.Menu, null, "#32768", 4242, "notepad", null, null, "Menu")], 2,
                 PopupsExcluded: 2));

@@ -405,7 +405,8 @@ public sealed class PopupService : IPopupService
     }
 
     /// <inheritdoc />
-    public async Task<ActivePopupsResult> GetActivePopupsAsync(nint window, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<ActivePopupsResult> GetActivePopupsAsync(
+        nint window, TimeSpan timeout, CancellationToken cancellationToken, TimeSpan? stopGrace = null)
     {
         var stopwatch = Stopwatch.StartNew();
         var named = window != nint.Zero;
@@ -473,7 +474,7 @@ public sealed class PopupService : IPopupService
                         return true;
                     },
                     deadline.Token,
-                    StopGrace).ConfigureAwait(false);
+                    stopGrace ?? StopGrace).ConfigureAwait(false);
             }
             catch (TimeoutException) when (!cancellationToken.IsCancellationRequested)
             {

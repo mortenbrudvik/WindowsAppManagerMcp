@@ -112,6 +112,9 @@ public enum UIElementTruncationReason
 /// ExpandCollapse, RangeValue: <see cref="Services.Interfaces.UiaPatterns.Actions"/>), enabled or not: the elements an agent
 /// can act on with element_action. Unlike <see cref="InteractableOnly"/>, keyboard focus alone does not count, and a disabled
 /// element is kept (capture_with_elements' marks show it dimmed; roadmap M3.11).</param>
+/// <param name="StopGrace">How long a walk that was asked to stop may stay in a UI Automation call before it is abandoned
+/// and what it read so far is returned, or null for the default (2 s). Not a filter: get_desktop_state passes less, so the
+/// walk is back before its own deadline.</param>
 public record UIElementFilter(
     string[]? ControlTypes = null,
     bool InteractableOnly = false,
@@ -120,7 +123,8 @@ public record UIElementFilter(
     int? MinHeight = null,
     int? MaxElements = null,
     TimeSpan? AccessibilityWarmupBudget = null,
-    bool ActionableOnly = false
+    bool ActionableOnly = false,
+    TimeSpan? StopGrace = null
 );
 
 /// <summary>

@@ -72,7 +72,8 @@ public class UIElementService : IUIElementService
 
     /// <summary>
     /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
-    /// tree. A walk still stuck in a UI Automation call after that is abandoned.
+    /// tree, unless the filter sets its own (<see cref="UIElementFilter.StopGrace"/>). A walk still stuck in a UI
+    /// Automation call after that is abandoned.
     /// </summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
 
@@ -153,7 +154,7 @@ public class UIElementService : IUIElementService
                 TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, started, progress, token),
                 cancellationToken,
-                StopGrace).ConfigureAwait(false);
+                filter?.StopGrace ?? StopGrace).ConfigureAwait(false);
         }
         catch (TimeoutException ex)
         {
