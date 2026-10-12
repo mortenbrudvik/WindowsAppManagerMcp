@@ -5967,6 +5967,18 @@ Since 1.14.0 (roadmap M3):
   when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the
   arguments. element_action's `name` criterion is recorded as `nameLength`, as file_dialog's path is; the `name` of
   apply_layout, save_layout and delete_layout is still kept.
+- **Waits (M3 review).** [wait_for_element](#wait_for_element)'s `gone` is satisfied, with a `warning`, when
+  `window.handle` had already closed or `withinRef`'s element is gone, where it ended with `InvalidHandle` or
+  `ElementStale`; a `ref` or `withinRef` this server session never issued now ends it with `ElementStale`, where it
+  satisfied it. Without `scope`, `gone` searches the window's popups on every check, whatever is in front, and a check
+  that left one of them out unread (`windowsExcluded`) no longer satisfies it. A window counts as closed
+  (`WindowNotFound`, or `gone` satisfied) only once Win32 says so: UI Automation failing to open a window that is still
+  there is a check that cannot tell. The docs now give the real bound: a wait can end up to about 3 s after `timeoutMs`
+  when UI Automation is slow (they said a second). [wait_for_window](#wait_for_window) refuses `newOnly`, and an
+  `excludeHandles` that holds the handle, with `window.handle` (`InvalidArguments`: such a wait could only time out);
+  `newOnly` counts a window that was hidden at the start and is shown during the wait as new; a satisfied wait returns
+  only the windows that held the condition for `stableMs`; and title_changed by `handle` no longer checks the title
+  filters, so it follows a window whose title already changed instead of ending with `HandleMismatch`.
 
 ## Error Codes
 
