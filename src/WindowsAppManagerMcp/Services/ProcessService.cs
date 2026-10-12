@@ -112,6 +112,7 @@ public class ProcessService : IProcessService
             plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
         }
 
+        plan = plan with { RunningInstance = RunningInstanceOf(plan) };
         var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
@@ -134,12 +135,19 @@ public class ProcessService : IProcessService
         }
     }
 
+    /// <summary>What to do so that --force-renderer-accessibility takes effect, when an instance of the app runs.</summary>
+    private const string ForceAccessibilityAdvice =
+        "To apply it, no process of the app may be left, not only no window: Edge's Startup boost and Chrome's background " +
+        "apps keep one running without a window (list_processes with includeWindowless: true lists them; ask the user " +
+        "before ending one). Then launch it again.";
+
     /// <summary>
     /// Says whether forceAccessibility took effect (roadmap M3.3), when it was asked for and the request was valid: false
     /// when nothing was started (reuseExisting found an open window) or the start failed. The flag only matters when the
     /// app's main process starts with it: when the launch went to an instance that was already running (a handoff, a
     /// reused window or a new tab, or a launcher that exited), that instance keeps the mode it started with, and the result
-    /// warns about it.
+    /// warns about it. A launch that did not wait cannot tell yet, so it warns when a process of the program was running
+    /// before the start (<see cref="LaunchPlan.RunningInstance"/>): the new process most likely hands off to it.
     /// </summary>
     private static LaunchResult WithForceAccessibility(LaunchResult result, LaunchPlan plan)
     {
@@ -165,16 +173,39 @@ public class ProcessService : IProcessService
 
         var handedOff = result.Status is LaunchStatus.PossibleHandoff or LaunchStatus.ReusedExistingWindow or LaunchStatus.OpenedInTab ||
                         result.LauncherExited == true;
+        var note = handedOff
+            ? $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the launch went to an instance of the app that was " +
+              $"already running, which keeps the accessibility mode it started with. {ForceAccessibilityAdvice}"
+            : result.Status == LaunchStatus.Started && plan.RunningInstance is { } running
+                ? $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the app was already running (process {running}, " +
+                  "with or without a window), so the new process most likely hands its request to that instance and exits, and " +
+                  $"the instance keeps the accessibility mode it started with. {ForceAccessibilityAdvice}"
+                : null;
         return result with
         {
             ForceAccessibilityApplied = true,
-            Warning = handedOff
-                ? CombineWarnings(result.Warning,
-                    $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the launch went to an instance of the app " +
-                    "that was already running, which keeps the accessibility mode it started with. To apply it, close every " +
-                    "window of the app and launch it again.")
-                : result.Warning
+            Warning = CombineWarnings(result.Warning, note)
         };
+    }
+
+    /// <summary>
+    /// With forceAccessibility applied: a process of the program that is running before the start (its image path is the
+    /// program's), from one process snapshot, or null when none is or the list cannot be read. Only reads.
+    /// </summary>
+    private int? RunningInstanceOf(LaunchPlan plan)
+    {
+        if (plan.ForceAccessibilityApplied != true || plan.Target is not { } target || !Path.IsPathFullyQualified(target.FileName))
+            return null;
+
+        var imageName = Path.GetFileName(target.FileName);
+        foreach (var (processId, entry) in _processWrapper.GetProcessList() ?? new Dictionary<int, (int, string)>())
+        {
+            if (string.Equals(entry.ImageName, imageName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(_processWrapper.GetProcessImagePath(processId), target.FileName, StringComparison.OrdinalIgnoreCase))
+                return processId;
+        }
+
+        return null;
     }
 
     private static LaunchResult Rejected(LaunchPlan plan) =>
@@ -1058,6 +1089,9 @@ public class ProcessService : IProcessService
                     plans[i] = plan;
                 }
 
+                // Read right before this item's start, so an earlier item's process counts as running
+                plan = plan with { RunningInstance = RunningInstanceOf(plan) };
+                plans[i] = plan;
                 var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
                 if (launch.Outcome is { } ended)
                 {

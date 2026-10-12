@@ -40,7 +40,8 @@ public class AppLauncherTools
         "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, " +
         "so get_ui_elements sees its web content from the first read (default false). Added only when the executable is such a " +
         "program's .exe (for VS Code Code.exe, not code); otherwise nothing is added and warning says why. forceAccessibilityApplied " +
-        "reports it. An app that is already running keeps its mode: close it first";
+        "reports it. An app that is already running keeps its mode, and warning says so: end every process of it first (a browser " +
+        "may keep one without a window)";
 
     private readonly IProcessService _processService;
     private readonly IWindowService? _windowService;
