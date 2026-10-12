@@ -352,11 +352,33 @@ public sealed class ElementRegistry : IElementRegistry
             // Gone: look for it again
         }
 
-        var window = _tree.FromHandle(entry.Window.Handle);
+        IUiaNode? window;
+        try
+        {
+            window = _tree.FromHandle(entry.Window.Handle);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            window = null;
+        }
+
         if (window == null)
         {
-            return ElementResolution.Failed(UIElementErrorCode.ElementStale,
-                $"Element ref '{entry.Ref}' is stale: its window can no longer be read. Find the element again with find_ui_elements.");
+            // Stale only when the window is gone; a window UI Automation cannot read now says nothing about the element
+            if (!IsSameWindow(entry.Window))
+            {
+                lock (_gate)
+                {
+                    DropWindow(entry.Window);
+                }
+
+                return ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                    $"Element ref '{entry.Ref}' is stale: its window closed. Find the element again with find_ui_elements.");
+            }
+
+            return ElementResolution.Failed(UIElementErrorCode.WindowNotFound,
+                $"Element ref '{entry.Ref}': UI Automation could not read its window {(long)entry.Window.Handle}, which is still " +
+                "open, so it is not known whether its element is there; the ref was kept. Try again in a moment.");
         }
 
         // 2. The same runtime id in the window (an engine can hand out a new proxy for the same element), if it is still
@@ -596,9 +618,29 @@ public sealed class ElementRegistry : IElementRegistry
     /// <summary>
     /// True when the record's window still exists with the same process and class: its handle was not reused by another
     /// window. A reuse by a window of the same process and class is not told apart; it is rare, since a handle value comes
-    /// back only after its slot's 16-bit reuse counter wraps.
+    /// back only after its slot's 16-bit reuse counter wraps. A read of the process or class that fails (0, or no class)
+    /// tells nothing: only IsWindow, or a process or class read that differs, makes the window gone.
     /// </summary>
-    private bool IsSameWindow(WindowRecord record) => WindowIdentityOf(record.Handle) == record.Identity;
+    private bool IsSameWindow(WindowRecord record)
+    {
+        try
+        {
+            if (!_windows.IsWindow(record.Handle))
+            {
+                return false;
+            }
+
+            var processId = _windows.GetWindowThreadProcessId(record.Handle);
+            var className = _windows.GetClassName(record.Handle);
+            return (processId == 0 || processId == record.Identity.ProcessId) &&
+                   (string.IsNullOrEmpty(className) || className == record.Identity.ClassName);
+        }
+        catch (Exception)
+        {
+            // Not known to be gone
+            return true;
+        }
+    }
 
     /// <summary>Drops a window and its refs. Under the lock.</summary>
     private void DropWindow(WindowRecord record)

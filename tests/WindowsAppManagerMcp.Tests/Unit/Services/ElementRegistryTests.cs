@@ -266,6 +266,27 @@ public class ElementRegistryTests
     }
 
     [Fact]
+    public void AWindowWhoseProcessOrClassCannotBeRead_IsNotTakenForClosed()
+    {
+        // Arrange - the window is still there (IsWindow), but a read of its process or class fails: that tells nothing
+        var sut = CreateSut();
+        var save = Register(sut, Button("Save"));
+
+        // Act
+        _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(0u);
+        var noProcess = sut.Lookup(save!);
+        _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(100u);
+        _windows.Setup(w => w.GetClassName(Handle)).Returns((string?)null);
+        var noClass = sut.Lookup(save!);
+        sut.NextGeneration();
+
+        // Assert - the ref is kept
+        noProcess.Success.Should().BeTrue(noProcess.Error);
+        noClass.Success.Should().BeTrue(noClass.Error);
+        sut.Count.Should().Be(1);
+    }
+
+    [Fact]
     public void NextGeneration_CountsUp_AndDropsTheRefsOfClosedWindows()
     {
         // Arrange
@@ -424,6 +445,49 @@ public class ElementRegistryTests
 
         // Assert - not moved to the twin
         resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public void Resolve_WhenUiAutomationCannotReadAWindowThatIsStillOpen_IsWindowNotFound_AndKeepsTheRef()
+    {
+        // Arrange - the window is open (IsWindow), but UI Automation gives no element for it (no node, or a read that fails)
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        _ = new FakeUiaNode("Pane", "Toolbar").With(save);
+        var saveRef = Register(sut, save, selector: ByAutomationId("SaveButton"));
+        save.ReadException = FakeUiaTree.Vanished();
+
+        // Act
+        var noNode = sut.Resolve(saveRef!, None);
+        Window(Handle);
+        _tree.FromHandleException = FakeUiaTree.Vanished("window");
+        var failed = sut.Resolve(saveRef!, None);
+
+        // Assert - not stale: a caller can try again (a gone wait is not satisfied by it)
+        noNode.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        noNode.Error.Should().Contain("could not read").And.Contain("kept");
+        failed.ErrorCode.Should().Be(UIElementErrorCode.WindowNotFound);
+        sut.Lookup(saveRef!).Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_WhenTheWindowClosesDuringTheResolution_IsStale()
+    {
+        // Arrange - the element's read fails because its window just closed
+        var sut = CreateSut();
+        var save = Button("Save", "SaveButton");
+        _ = new FakeUiaNode("Pane", "Toolbar").With(save);
+        var saveRef = Register(sut, save);
+        save.ReadException = FakeUiaTree.Vanished();
+        save.OnRead = () => _processes.Remove(Handle);
+
+        // Act
+        var resolution = sut.Resolve(saveRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("its window closed");
+        sut.Count.Should().Be(0);
     }
 
     [Fact]
