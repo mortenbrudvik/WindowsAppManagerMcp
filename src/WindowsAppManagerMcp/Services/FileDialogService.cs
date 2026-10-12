@@ -21,13 +21,24 @@ public sealed class FileDialogService : IFileDialogService
     public static readonly TimeSpan PressTimeout = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// The AutomationIds of the file name box, in the order tried: the Edit of an Open dialog (1148, inside the ComboBox
-    /// 1148), of a Save As dialog (1001, inside FileNameControlHost) and of the old-style dialogs (edt1 = 1152).
+    /// The AutomationIds of the ComboBox that holds the file name Edit, which only file dialogs have: cmb13 = 1148 (an Open
+    /// dialog; its Edit is 1148 too) and the Save As dialog's FileNameControlHost (its Edit is 1001). The Edit inside is
+    /// taken, whatever its id.
     /// </summary>
-    public static IReadOnlyList<string> FileNameEditIds { get; } = ["1148", "1001", "1152"];
-
-    /// <summary>The AutomationIds of the ComboBox that holds the file name Edit (cmb13 = 1148, and the Save As host).</summary>
     public static IReadOnlyList<string> FileNameComboIds { get; } = ["1148", "FileNameControlHost"];
+
+    /// <summary>The AutomationId of a file name Edit outside such a ComboBox that marks a file dialog by itself (cmb13's 1148).</summary>
+    public const string FileNameEditId = "1148";
+
+    /// <summary>
+    /// The old-style (Windows 3.1) file dialog's file name Edit (edt1 = 1152). The id is also the Find What box of the Find
+    /// and Replace dialogs and a page box of the old Print dialog, so it counts only next to the old dialog's own file type
+    /// or drive ComboBox (<see cref="OldStyleComboIds"/>).
+    /// </summary>
+    public const string OldStyleEditId = "1152";
+
+    /// <summary>The old-style file dialog's file type (cmb1 = 1136) and drive (cmb2 = 1137) ComboBoxes.</summary>
+    public static IReadOnlyList<string> OldStyleComboIds { get; } = ["1136", "1137"];
 
     /// <summary>The AutomationId of the default button (IDOK): Open or Save, in every language.</summary>
     public const string DefaultButtonId = "1";
@@ -102,20 +113,19 @@ public sealed class FileDialogService : IFileDialogService
 
         var dialog = location.Dialog;
         call.Dialog = dialog;
+        NoteWindow(dialog);
         var allowed = _guard.CheckTarget(InputTarget.Window(dialog, request.AllowHostTarget));
         if (!allowed.Allowed)
         {
             return call.Fail(allowed.ErrorCode.ToString(), $"{allowed.Error} Nothing was read or typed.");
         }
 
-        // 1. The file name box, by its control id
+        // 1. The file name box, by the control ids only a file dialog has
         var box = await FindFileNameBoxAsync(call, cancellationToken).ConfigureAwait(false);
         if (box.Failure != null)
         {
             return box.Failure;
         }
-
-        NoteWindow(dialog);
 
         // 2. The full path, through the Value pattern
         var set = await _actions.ActAsync(new ElementActionRequest(
@@ -179,6 +189,13 @@ public sealed class FileDialogService : IFileDialogService
         {
             if (!_windows.IsWindow(dialog) || !_windows.IsWindowVisible(dialog))
             {
+                if (request.Action == FileDialogAction.Save && call.FinalPath is { } saved && !File.Exists(saved))
+                {
+                    // Only whether it exists is read: the application may add its default extension, or write the file later
+                    call.Warnings.Add("The dialog closed, but no file is at finalPath yet: the application may have added its " +
+                                      "default extension to the name, or writes the file later. Check before relying on it.");
+                }
+
                 return call.Succeed();
             }
 
@@ -187,6 +204,17 @@ public sealed class FileDialogService : IFileDialogService
             if (prompt != nint.Zero)
             {
                 before.Add(prompt);
+
+                // The prompt is checked as a target before it is read, as the dialog was: a prompt of another process (a
+                // credential prompt of a network drive) that the user's policy denies is neither read nor answered
+                var promptAllowed = _guard.CheckTarget(InputTarget.Window(prompt, request.AllowHostTarget));
+                if (!promptAllowed.Allowed)
+                {
+                    return call.Fail(promptAllowed.ErrorCode.ToString(),
+                        $"The dialog opened a prompt (handle {(long)prompt}) that is refused as a target: {promptAllowed.Error} It was " +
+                        "neither read nor answered; the file dialog is still open.");
+                }
+
                 var read = await _dialogs.ReadAsync(prompt, call.StepTimeout, cancellationToken).ConfigureAwait(false);
                 if (read.Content is not { } content)
                 {
@@ -195,7 +223,7 @@ public sealed class FileDialogService : IFileDialogService
                         "find_ui_elements, and answer it with respond_to_dialog.");
                 }
 
-                if (request.Action != FileDialogAction.Save || call.PromptHandled || !IsReplacePrompt(content))
+                if (request.Action != FileDialogAction.Save || call.PromptHandled || !IsReplacePrompt(content, call.FinalPath))
                 {
                     return call.Fail(nameof(UIElementErrorCode.DialogNotCompleted),
                         "The dialog showed a prompt that file_dialog does not answer (see prompt: its text and buttons, the " +
@@ -240,29 +268,24 @@ public sealed class FileDialogService : IFileDialogService
     private nint NewPromptOf(nint dialog, IReadOnlySet<nint> before) =>
         _popups.GetPopups(dialog).FirstOrDefault(p => p.Kind == PopupKind.Dialog && !before.Contains(p.Handle))?.Handle ?? nint.Zero;
 
-    /// <summary>The replace prompt: a dialog with the standard Yes and No buttons (by id, so in every language).</summary>
-    private static bool IsReplacePrompt(DialogContent content) =>
+    /// <summary>
+    /// The replace prompt: a dialog with the standard Yes and No buttons (by id, so in every language) while the file the
+    /// path names exists. Another Yes/No question (a folder the user may not write to: save elsewhere?) is not taken for it:
+    /// it is handed back, neither answered Yes with overwrite nor reported as FileExists.
+    /// </summary>
+    private static bool IsReplacePrompt(DialogContent content, string? path) =>
+        path != null && File.Exists(path) &&
         content.Buttons.Any(b => b.Standard == "yes") && content.Buttons.Any(b => b.Standard == "no");
 
-    /// <summary>The ref of the file name box: an Edit by id, else the Edit inside the file name ComboBox (or that ComboBox).</summary>
+    /// <summary>
+    /// The ref of the file name box, found by the control ids that mark a file dialog, so the path is never typed into
+    /// another dialog's Edit (a rename box, a Find What box): the Edit inside the file name ComboBox (1148 or
+    /// FileNameControlHost; that ComboBox when it has none), else an Edit 1148, else an old-style dialog's Edit 1152 next to
+    /// its file type or drive ComboBox. DialogNotFound, with nothing typed, otherwise.
+    /// </summary>
     private async Task<Found> FindFileNameBoxAsync(FileDialogCall call, CancellationToken cancellationToken)
     {
         var dialog = call.Dialog;
-        var edits = await FindAsync(new ElementQuery(dialog, ControlTypes: ["Edit"], MaxResults: MaxEdits, Timeout: call.StepTimeout,
-            Scope: ElementSearchScope.Window), call, cancellationToken).ConfigureAwait(false);
-        if (edits.Failure != null)
-        {
-            return edits;
-        }
-
-        foreach (var id in FileNameEditIds)
-        {
-            if (edits.Result!.Elements?.FirstOrDefault(e => e.AutomationId == id && e.Ref != null) is { } edit)
-            {
-                return new Found(edit.Ref, null);
-            }
-        }
-
         var combos = await FindAsync(new ElementQuery(dialog, ControlTypes: ["ComboBox"], MaxResults: MaxEdits, Timeout: call.StepTimeout,
             Scope: ElementSearchScope.Window), call, cancellationToken).ConfigureAwait(false);
         if (combos.Failure != null)
@@ -270,9 +293,10 @@ public sealed class FileDialogService : IFileDialogService
             return combos;
         }
 
+        var comboList = combos.Result!.Elements ?? [];
         foreach (var id in FileNameComboIds)
         {
-            if (combos.Result!.Elements?.FirstOrDefault(e => e.AutomationId == id && e.Ref != null) is not { } combo)
+            if (comboList.FirstOrDefault(e => e.AutomationId == id && e.Ref != null) is not { } combo)
             {
                 continue;
             }
@@ -284,13 +308,35 @@ public sealed class FileDialogService : IFileDialogService
                 : new Found(combo.Ref, null);
         }
 
+        var edits = await FindAsync(new ElementQuery(dialog, ControlTypes: ["Edit"], MaxResults: MaxEdits, Timeout: call.StepTimeout,
+            Scope: ElementSearchScope.Window), call, cancellationToken).ConfigureAwait(false);
+        if (edits.Failure != null)
+        {
+            return edits;
+        }
+
+        var editList = edits.Result!.Elements ?? [];
+        if (editList.FirstOrDefault(e => e.AutomationId == FileNameEditId && e.Ref != null) is { } edit)
+        {
+            return new Found(edit.Ref, null);
+        }
+
+        if (comboList.Any(c => OldStyleComboIds.Contains(c.AutomationId)) &&
+            editList.FirstOrDefault(e => e.AutomationId == OldStyleEditId && e.Ref != null) is { } oldStyle)
+        {
+            return new Found(oldStyle.Ref, null);
+        }
+
         var title = _windows.GetWindowText(dialog);
         return new Found(null, call.Fail(nameof(UIElementErrorCode.DialogNotFound),
-            $"Window {(long)dialog}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{title}')")} has no file name box (AutomationId " +
-            $"{string.Join(", ", FileNameEditIds)} or the Edit of ComboBox {string.Join(", ", FileNameComboIds)}), so it is no Open " +
-            "or Save As dialog file_dialog can fill. Nothing was typed. Name the file dialog (wait_for_window, get_active_popups), " +
-            "or fill this dialog with element_action."));
+            $"Window {(long)dialog}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, DialogService.MaxTitleLength)}')")} " +
+            $"has no file name box of a file dialog (the Edit of ComboBox {string.Join(" or ", FileNameComboIds)}, an Edit " +
+            $"{FileNameEditId}, or an old-style dialog's Edit {OldStyleEditId}), so it is no Open or Save As dialog file_dialog " +
+            "can fill. Nothing was typed. Name the file dialog (wait_for_window, get_active_popups), or fill this dialog with " +
+            "element_action."));
     }
+
+    private static string Cut(string text, int length) => text.Length <= length ? text : text[..length];
 
     /// <summary>The ref of the default button (AutomationId 1, IDOK), which must be the only one.</summary>
     private async Task<Found> FindDefaultButtonAsync(FileDialogCall call, CancellationToken cancellationToken)

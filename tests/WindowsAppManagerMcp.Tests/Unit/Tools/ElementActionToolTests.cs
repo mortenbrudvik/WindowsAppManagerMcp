@@ -278,4 +278,17 @@ public class ElementActionToolTests
         error.Message.Should().Contain("menu_path needs value");
         _menuPaths.VerifyNoOtherCalls();
     }
+
+    [Fact]
+    public async Task MenuPath_WithFallbackMouse_IsRefused_NotIgnored()
+    {
+        SetUpMenuPaths();
+
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, value: "File>Save As",
+            fallback: ElementActionFallback.Mouse));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("fallback mouse");
+        _menuPaths.VerifyNoOtherCalls();
+    }
 }

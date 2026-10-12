@@ -55,6 +55,19 @@ public sealed class FileDialogPathsTests : IDisposable
     }
 
     [Fact]
+    public void AnEnvironmentVariable_TheDialogWouldExpand_IsInvalid()
+    {
+        // The dialog would expand it, so the existence and overwrite checks would be of another path
+        var check = FileDialogPaths.Check(Path.Combine(_folder, "%SystemRoot%.txt"), FileDialogAction.Save, overwrite: false);
+
+        check.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        check.Error.Should().Contain("environment variable");
+
+        // A percent sign that names no variable is an ordinary character of a file name
+        FileDialogPaths.Check(Path.Combine(_folder, "100% done.txt"), FileDialogAction.Save, overwrite: false).FullPath.Should().NotBeNull();
+    }
+
+    [Fact]
     public void Open_OfAnExistingFile_TypesItsFullPath()
     {
         var file = Existing();

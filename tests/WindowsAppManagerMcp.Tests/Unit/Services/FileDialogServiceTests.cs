@@ -23,8 +23,9 @@ public sealed class FileDialogServiceTests : IDisposable
     private readonly List<ElementActionRequest> _acted = [];
     private readonly List<ElementQuery> _queries = [];
     private readonly List<DialogResponseRequest> _answers = [];
-    private IReadOnlyList<FoundElement> _edits = [Element("w2e1", "File name:", "1001", "Edit")];
-    private IReadOnlyList<FoundElement> _combos = [];
+    // A Save As dialog: the file name Edit (1001) inside the ComboBox FileNameControlHost; a search box elsewhere
+    private IReadOnlyList<FoundElement> _edits = [Element("w2e2", "Search", "SearchEditBox", "Edit")];
+    private IReadOnlyList<FoundElement> _combos = [Element("w2e4", "File name:", "FileNameControlHost", "ComboBox")];
     private Func<ElementActionRequest, ElementActionResult>? _press;
     private DialogContent? _promptContent;
 
@@ -88,8 +89,8 @@ public sealed class FileDialogServiceTests : IDisposable
         return new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.Done, ElementActionMethod.Invoke);
     }
 
-    private FileDialogService CreateSut() => new(
-        _dialogs.Object, _search.Object, _actions.Object, _popups.Object, _windows.Object, _guard.Object, _session.Object)
+    private FileDialogService CreateSut(IWindowService? windowService = null) => new(
+        _dialogs.Object, _search.Object, _actions.Object, _popups.Object, _windows.Object, _guard.Object, _session.Object, windowService)
     {
         PollInterval = TimeSpan.FromMilliseconds(5)
     };
@@ -115,9 +116,14 @@ public sealed class FileDialogServiceTests : IDisposable
         TimeSpan? timeout = null) =>
         CreateSut().CompleteAsync(new FileDialogRequest(0, path, action, overwrite, Timeout: timeout ?? TimeSpan.FromSeconds(5)));
 
-    /// <summary>The press waits for the replace prompt it opened (a Win32 button's Invoke).</summary>
-    private void PressOpensThePrompt() => _press = request =>
+    /// <summary>The press waits for the replace prompt it opened (a Win32 button's Invoke); the file may appear meanwhile.</summary>
+    private void PressOpensThePrompt(bool fileAppears = false) => _press = request =>
     {
+        if (fileAppears)
+        {
+            File.WriteAllText(NewFile, "x");
+        }
+
         _open.Add(Prompt);
         return new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.InvokedPendingModal,
             ElementActionMethod.Invoke, OpenedPopup: new OpenedWindow((long)Prompt, "Speichern unter bestätigen", "#32770", 4242, "notepad"));
@@ -132,30 +138,31 @@ public sealed class FileDialogServiceTests : IDisposable
         (result.Action, result.Completed, result.FinalPath, result.PromptHandled).Should().Be(("save", true, NewFile, false));
         result.DialogHandle.Should().Be((long)Dialog);
         _acted.Select(a => (a.Ref, a.Action, a.Value)).Should().Equal(
-            ("w2e1", ElementActionKind.SetValue, NewFile), ("w2e9", ElementActionKind.Invoke, null));
+            ("w2e5", ElementActionKind.SetValue, NewFile), ("w2e9", ElementActionKind.Invoke, null));
         _acted[0].Mode.Should().Be(ElementValueMode.Value);
         _acted[1].Timeout.Should().BeLessThanOrEqualTo(FileDialogService.PressTimeout);
         _queries.Should().OnlyContain(q => q.WindowHandle == Dialog);
+        _queries.Should().Contain(q => q.WithinRef == "w2e4");
         _queries.Should().Contain(q => q.AutomationId == "1" && q.ControlTypes!.Contains("Button"));
         _answers.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task TheFileNameEdit_InsideTheFileNameComboBox_IsUsedWhenNoEditHasTheId()
+    public async Task AnOpenDialogsEdit1148_IsUsed_WithoutItsComboBox()
     {
-        _edits = [Element("w2e2", "Search", "SearchEditBox", "Edit")];
-        _combos = [Element("w2e4", "File name:", "FileNameControlHost", "ComboBox")];
+        _combos = [];
+        _edits = [Element("w2e2", "Search", "SearchEditBox", "Edit"), Element("w2e1", "File name:", "1148", "Edit")];
 
         var result = await CompleteAsync(NewFile);
 
         result.Success.Should().BeTrue(result.Error);
-        _queries.Should().Contain(q => q.WithinRef == "w2e4");
-        _acted[0].Ref.Should().Be("w2e5");
+        _acted[0].Ref.Should().Be("w2e1");
     }
 
     [Fact]
     public async Task ADialogWithoutAFileNameBox_IsDialogNotFound_AndNothingIsTyped()
     {
+        _combos = [];
         _edits = [];
 
         var result = await CompleteAsync(NewFile);
@@ -163,6 +170,61 @@ public sealed class FileDialogServiceTests : IDisposable
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
         result.Error.Should().Contain("no file name box");
         _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnOrdinaryDialogWithAnEdit1001AndAnOkButton_IsNoFileDialog_AndNothingIsTyped()
+    {
+        // A rename or enter-a-value dialog: resource ids start at 1000, and its OK is id 1 as well
+        _combos = [];
+        _edits = [Element("w2e1", "New name:", "1001", "Edit")];
+
+        var result = await CompleteAsync(NewFile);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AFindDialogsEdit1152_IsNoFileDialog_ButAnOldStyleFileDialogsIs()
+    {
+        // The common Find dialog's Find What box is edt1 (1152) too; its IDOK is Find Next
+        _combos = [];
+        _edits = [Element("w2e1", "Find what:", "1152", "Edit")];
+
+        var find = await CompleteAsync(NewFile);
+
+        find.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotFound));
+        _acted.Should().BeEmpty();
+
+        // The old-style file dialog has it next to its drive ComboBox (cmb2 = 1137)
+        _combos = [Element("w2e7", "Drives:", "1137", "ComboBox")];
+
+        var old = await CompleteAsync(NewFile);
+
+        old.Success.Should().BeTrue(old.Error);
+        _acted[0].Ref.Should().Be("w2e1");
+    }
+
+    [Fact]
+    public async Task ADialogTheGuardRefuses_IsStillNotedForTheAuditLine()
+    {
+        var windowService = new Mock<IWindowService>();
+        _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "Denied.", target));
+
+        await CreateSut(windowService.Object).CompleteAsync(new FileDialogRequest(0, NewFile, FileDialogAction.Save, Timeout: TimeSpan.FromSeconds(5)));
+
+        windowService.Verify(w => w.GetWindowInfo(Dialog), Times.Once);
+    }
+
+    [Fact]
+    public async Task ASaveThatClosesTheDialog_WithNoFileAtThePath_Warns()
+    {
+        var result = await CompleteAsync(NewFile);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Warnings.Should().ContainSingle(w => w.Contains("no file is at finalPath"));
     }
 
     [Fact]
@@ -183,8 +245,8 @@ public sealed class FileDialogServiceTests : IDisposable
     [Fact]
     public async Task Save_WithoutOverwrite_AnswersAReplacePromptNo_AndReportsFileExists()
     {
-        // The server saw no file (the application adds the extension), but the application asks
-        PressOpensThePrompt();
+        // The server saw no file when it checked the path, but the file was written before the application asked
+        PressOpensThePrompt(fileAppears: true);
         _promptContent = PromptContent(Yes, No);
 
         var result = await CompleteAsync(NewFile);
@@ -203,6 +265,41 @@ public sealed class FileDialogServiceTests : IDisposable
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.FileExists));
         _dialogs.Verify(d => d.Locate(It.IsAny<nint>()), Times.Never);
         _acted.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AYesNoPrompt_WhileNoFileIsAtThePath_IsNoReplacePrompt_AndIsHandedBackUnanswered(bool overwrite)
+    {
+        // "You don't have permission to save in this location. Save in the Pictures folder instead?"
+        PressOpensThePrompt();
+        _promptContent = PromptContent(Yes, No);
+
+        var result = await CompleteAsync(NewFile, overwrite: overwrite);
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.DialogNotCompleted));
+        result.Prompt.Should().Be(_promptContent);
+        result.PromptHandled.Should().BeFalse();
+        _answers.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task APromptTheGuardRefuses_IsNeitherReadNorAnswered()
+    {
+        // A credential prompt of another process, on the user's deny list
+        PressOpensThePrompt();
+        _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) => target.WindowHandle == Prompt
+            ? InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "The user's policy denies CredentialUIBroker.", target)
+            : InputGuardResult.Allow(target, target.WindowHandle ?? 0, null, target.WindowHandle ?? 0));
+
+        var result = await CompleteAsync(NewFile);
+
+        result.ErrorCode.Should().Be(nameof(InputErrorCode.TargetDeniedByPolicy));
+        result.Error.Should().Contain("neither read nor answered");
+        result.Prompt.Should().BeNull();
+        _dialogs.Verify(d => d.ReadAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _answers.Should().BeEmpty();
     }
 
     [Fact]

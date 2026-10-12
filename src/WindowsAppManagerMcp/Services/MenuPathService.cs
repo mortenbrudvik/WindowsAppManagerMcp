@@ -62,6 +62,15 @@ public sealed class MenuPathService : IMenuPathService
 {
     private static readonly string[] MenuItemType = ["MenuItem"];
 
+    /// <summary>The bound of each search and action when the request names none (element_action's default).</summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>The longest a whole path may take: its timeout times its items, at most this.</summary>
+    public static readonly TimeSpan MaxTotalTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>The longest element name quoted in a message (the names are the application's text).</summary>
+    private const int MaxQuotedName = 100;
+
     private readonly IElementSearchService _search;
     private readonly IElementActionService _actions;
     private readonly IPopupService _popups;
@@ -94,11 +103,15 @@ public sealed class MenuPathService : IMenuPathService
                 $"menu_path needs 1 to {MenuPaths.MaxItems} items, such as 'File>Save As'. Nothing was done.");
         }
 
-        var wait = request.Timeout is { } timeout && timeout < SubmenuWait ? timeout : SubmenuWait;
         ElementActionResult? last = null;
         for (var index = 0; index < request.Items.Count; index++)
         {
             var item = request.Items[index];
+            if (run.OutOfTime)
+            {
+                return run.TimedOut(index);
+            }
+
             var found = await FindItemAsync(run, index, cancellationToken).ConfigureAwait(false);
             if (found.Failure != null)
             {
@@ -108,8 +121,17 @@ public sealed class MenuPathService : IMenuPathService
             if (index < request.Items.Count - 1)
             {
                 var before = _popups.GetPopups(request.Window).Select(p => p.Handle).ToHashSet();
-                var expanded = await ActAsync(run, found.Ref!, ElementActionKind.Expand, ElementActionKind.Invoke, cancellationToken)
-                    .ConfigureAwait(false);
+                var expanded = await _actions.ActAsync(run.Action(found.Ref!, ElementActionKind.Expand), cancellationToken).ConfigureAwait(false);
+                if (expanded.ErrorCode == nameof(UIElementErrorCode.PatternNotSupported))
+                {
+                    // An item without ExpandCollapse has no submenu: it is a command, and invoking it on the way to the next
+                    // item would run it (a wrong path such as 'Edit>Delete>All' would delete)
+                    return run.Fail(nameof(UIElementErrorCode.PatternNotSupported),
+                        $"Menu item '{item}' (item {index + 1} of {request.Items.Count}) has no submenu to open (no ExpandCollapse " +
+                        "pattern): it is a command, and only the last item of a path is invoked, so it was not. Check the path " +
+                        "(find_ui_elements controlType MenuItem, get_active_popups), or invoke the item with element_action.");
+                }
+
                 if (!expanded.Success)
                 {
                     return run.Fail(expanded, item);
@@ -118,8 +140,8 @@ public sealed class MenuPathService : IMenuPathService
                 var submenu = expanded.OpenedPopup is { } popup ? (nint)popup.Handle : nint.Zero;
                 if (submenu == nint.Zero)
                 {
-                    submenu = (await _popups.WaitForNewPopupAsync(request.Window, before, wait, cancellationToken).ConfigureAwait(false))?.Handle
-                              ?? nint.Zero;
+                    submenu = (await _popups.WaitForNewPopupAsync(request.Window, before, run.Bound(SubmenuWait), cancellationToken)
+                        .ConfigureAwait(false))?.Handle ?? nint.Zero;
                 }
 
                 run.Opened(new MenuPathStep(item, expanded.Ref ?? found.Ref, expanded.Method, submenu == nint.Zero ? null : (long)submenu),
@@ -127,7 +149,13 @@ public sealed class MenuPathService : IMenuPathService
                 continue;
             }
 
-            last = await ActAsync(run, found.Ref!, ElementActionKind.Invoke, ElementActionKind.Click, cancellationToken).ConfigureAwait(false);
+            last = await _actions.ActAsync(run.Action(found.Ref!, ElementActionKind.Invoke), cancellationToken).ConfigureAwait(false);
+            if (last.ErrorCode == nameof(UIElementErrorCode.PatternNotSupported))
+            {
+                // A checkable item without Invoke: element_action's click goes through its pattern (Toggle)
+                last = await _actions.ActAsync(run.Action(found.Ref!, ElementActionKind.Click), cancellationToken).ConfigureAwait(false);
+            }
+
             if (!last.Success)
             {
                 return run.Fail(last, item);
@@ -139,17 +167,6 @@ public sealed class MenuPathService : IMenuPathService
         }
 
         return run.Succeed(last!);
-    }
-
-    /// <summary>The action, or <paramref name="instead"/> when the item does not support it (PatternNotSupported).</summary>
-    private async Task<ElementActionResult> ActAsync(
-        MenuRun run, string itemRef, ElementActionKind action, ElementActionKind instead, CancellationToken cancellationToken)
-    {
-        var request = new ElementActionRequest(itemRef, action, AllowHostTarget: run.Request.AllowHostTarget, Timeout: run.Request.Timeout);
-        var result = await _actions.ActAsync(request, cancellationToken).ConfigureAwait(false);
-        return result.ErrorCode == nameof(UIElementErrorCode.PatternNotSupported)
-            ? await _actions.ActAsync(request with { Action = instead }, cancellationToken).ConfigureAwait(false)
-            : result;
     }
 
     /// <summary>The one MenuItem named by the item at <paramref name="index"/>, searched where it can be (see the remarks).</summary>
@@ -164,19 +181,30 @@ public sealed class MenuPathService : IMenuPathService
         }
         else
         {
+            // The submenu the previous item opened, else below that item (WPF, WinForms); the whole window and its popups
+            // only when no submenu window was seen, so an item missing from the submenu never matches another menu
             if (run.Submenu != nint.Zero)
             {
                 places.Add((run.Submenu, null, ElementSearchScope.Window));
             }
 
             places.Add((run.PreviousWindow, run.PreviousRef, ElementSearchScope.Window));
-            places.Add((request.Window, null, ElementSearchScope.WindowAndPopups));
+            if (run.Submenu == nint.Zero)
+            {
+                places.Add((request.Window, null, ElementSearchScope.WindowAndPopups));
+            }
         }
 
         FindElementsResult? failed = null;
         var incomplete = false;
         foreach (var (window, within, scope) in places)
         {
+            if (run.OutOfTime)
+            {
+                incomplete = true;
+                break;
+            }
+
             FindElementsResult result;
             try
             {
@@ -190,7 +218,7 @@ public sealed class MenuPathService : IMenuPathService
                     EnabledOnly: false,
                     MaxResults: 2,
                     Detail: ElementDetail.Minimal,
-                    Timeout: request.Timeout,
+                    Timeout: run.StepTimeout,
                     Scope: scope), cancellationToken).ConfigureAwait(false);
             }
             catch (RegexMatchTimeoutException)
@@ -207,7 +235,7 @@ public sealed class MenuPathService : IMenuPathService
 
             if (result.MatchCount > 1 && result.Elements is { } several)
             {
-                var refs = string.Join(", ", several.Select(e => $"{e.Ref} '{e.Name}'"));
+                var refs = string.Join(", ", several.Select(e => $"{e.Ref} '{Cut(e.Name)}'"));
                 return FoundItem.Failed(run.Fail(nameof(UIElementErrorCode.AmbiguousElement),
                     $"{result.MatchCount} menu items match '{item}' (item {index + 1} of {request.Items.Count}; first: {refs}), so none " +
                     "was opened. Name them one at a time with find_ui_elements and element_action."));
@@ -229,7 +257,9 @@ public sealed class MenuPathService : IMenuPathService
 
         var where = index == 0
             ? request.StartRef != null ? $"below {request.StartRef}" : "in the window (or its open popups)"
-            : $"in the menu '{request.Items[index - 1]}' opened";
+            : run.Submenu != nint.Zero
+                ? $"in the submenu '{request.Items[index - 1]}' opened (window {(long)run.Submenu}) or below that item"
+                : $"in the menu '{request.Items[index - 1]}' opened";
         return FoundItem.Failed(run.Fail(
             incomplete ? nameof(UIElementErrorCode.OperationTimedOut) : nameof(UIElementErrorCode.ElementNotFound),
             $"No visible menu item '{item}' (item {index + 1} of {request.Items.Count}) was found {where}" +
@@ -237,18 +267,69 @@ public sealed class MenuPathService : IMenuPathService
             ". Check the names with find_ui_elements (controlType MenuItem) or get_active_popups."));
     }
 
+    private static string? Cut(string? name) => name is { Length: > MaxQuotedName } ? name[..MaxQuotedName] : name;
+
     /// <summary>A found item: its ref and the top-level window it is registered under, or the failure.</summary>
     private sealed record FoundItem(string? Ref, nint Window, ElementActionResult? Failure)
     {
         public static FoundItem Failed(ElementActionResult failure) => new(null, nint.Zero, failure);
     }
 
-    /// <summary>One run of a path: what was opened so far.</summary>
+    /// <summary>One run of a path: what was opened so far, and its deadline.</summary>
     private sealed class MenuRun(MenuPathRequest request, Stopwatch stopwatch)
     {
-        private const string Action = "menu_path";
+        private const string ActionName = "menu_path";
+
+        private static readonly TimeSpan MinStep = TimeSpan.FromSeconds(1);
 
         public MenuPathRequest Request { get; } = request;
+
+        /// <summary>The bound of each search and action: the request's timeout.</summary>
+        public TimeSpan Timeout { get; } = request.Timeout ?? DefaultTimeout;
+
+        /// <summary>The bound of the whole path: <see cref="Timeout"/> per item, at most <see cref="MaxTotalTimeout"/>.</summary>
+        public TimeSpan Budget
+        {
+            get
+            {
+                var total = Timeout * Math.Max(1, Request.Items.Count);
+                return total < MaxTotalTimeout ? total : MaxTotalTimeout;
+            }
+        }
+
+        private TimeSpan Remaining => Budget - stopwatch.Elapsed;
+
+        public bool OutOfTime => Remaining <= TimeSpan.Zero;
+
+        /// <summary>
+        /// The bound of the next search or action: the timeout, or what is left of the path's time when less, but at least a
+        /// second (or the timeout when shorter), so a step begun just before the deadline is not cut off as it starts.
+        /// </summary>
+        public TimeSpan StepTimeout
+        {
+            get
+            {
+                var floor = Timeout < MinStep ? Timeout : MinStep;
+                var bound = Bound(Timeout);
+                return bound < floor ? floor : bound;
+            }
+        }
+
+        /// <summary><paramref name="wait"/>, or what is left of the path's time when less (never below zero).</summary>
+        public TimeSpan Bound(TimeSpan wait)
+        {
+            var remaining = Remaining;
+            return remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining < wait ? remaining : wait;
+        }
+
+        /// <summary>element_action's request for an item, within the path's time.</summary>
+        public ElementActionRequest Action(string itemRef, ElementActionKind action) =>
+            new(itemRef, action, AllowHostTarget: Request.AllowHostTarget, Timeout: StepTimeout);
+
+        /// <summary>The path ran out of its time before the item at <paramref name="index"/>.</summary>
+        public ElementActionResult TimedOut(int index) => Fail(nameof(UIElementErrorCode.OperationTimedOut),
+            $"The menu path ran out of its time ({Budget.TotalMilliseconds:0} ms: timeoutMs per item) before item {index + 1} of " +
+            $"{Request.Items.Count} ('{Request.Items[index]}'); nothing more was done.");
 
         public List<MenuPathStep> Steps { get; } = [];
 
@@ -271,7 +352,7 @@ public sealed class MenuPathService : IMenuPathService
         }
 
         public ElementActionResult Fail(string code, string error) => new(
-            false, Action, WindowHandle: (long)Request.Window, Error: error + StillOpen(), ErrorCode: code, ElapsedMilliseconds: Elapsed)
+            false, ActionName, WindowHandle: (long)Request.Window, Error: error + StillOpen(), ErrorCode: code, ElapsedMilliseconds: Elapsed)
         {
             Steps = Steps.Count == 0 ? null : [.. Steps]
         };
@@ -279,7 +360,7 @@ public sealed class MenuPathService : IMenuPathService
         /// <summary>The failure of an item's action, keeping what element_action reported.</summary>
         public ElementActionResult Fail(ElementActionResult failed, string item) => failed with
         {
-            Action = Action,
+            Action = ActionName,
             Error = $"Menu item '{item}' (item {Steps.Count + 1} of {Request.Items.Count}): {failed.Error}{StillOpen()}",
             Steps = Steps.Count == 0 ? null : [.. Steps],
             ElapsedMilliseconds = Elapsed
@@ -287,7 +368,7 @@ public sealed class MenuPathService : IMenuPathService
 
         public ElementActionResult Succeed(ElementActionResult last) => last with
         {
-            Action = Action,
+            Action = ActionName,
             Steps = [.. Steps],
             Warnings = Warnings.Count == 0 ? null : Warnings.Distinct().ToList(),
             ElapsedMilliseconds = Elapsed

@@ -116,13 +116,27 @@ public class MenuPathServiceTests
     }
 
     [Fact]
-    public async Task AnItemWithoutExpandCollapse_IsInvoked_AndALastItemWithoutInvoke_IsClicked()
+    public async Task AnItemBeforeTheLastWithoutExpandCollapse_StopsThePath_AndIsNotInvoked()
+    {
+        // 'Edit>Delete>All' where Delete is a command: invoking it on the way would delete
+        _act = request => request.Action == ElementActionKind.Expand
+            ? new ElementActionResult(false, "expand", request.Ref, Error: "No pattern.", ErrorCode: nameof(UIElementErrorCode.PatternNotSupported))
+            : Done(request, ElementActionMethod.Invoke);
+
+        var result = await RunAsync("File", "Save As");
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.PatternNotSupported));
+        result.Error.Should().Contain("'File' (item 1 of 2)").And.Contain("no submenu").And.Contain("was not");
+        _acted.Select(a => a.Action).Should().Equal(ElementActionKind.Expand);
+    }
+
+    [Fact]
+    public async Task ALastItemWithoutInvoke_IsClicked()
     {
         _act = request => request.Action switch
         {
-            ElementActionKind.Expand or ElementActionKind.Invoke when request.Ref == "w1e1" && request.Action == ElementActionKind.Expand =>
-                new ElementActionResult(false, "expand", request.Ref, Error: "No pattern.", ErrorCode: nameof(UIElementErrorCode.PatternNotSupported)),
-            ElementActionKind.Invoke when request.Ref == "w1e1" => Done(request, ElementActionMethod.Invoke,
+            ElementActionKind.Expand => Done(request, ElementActionMethod.ExpandCollapse,
                 new OpenedWindow((long)FileMenu, string.Empty, "#32768", 4242, "notepad")),
             ElementActionKind.Invoke => new ElementActionResult(false, "invoke", request.Ref, Error: "No pattern.",
                 ErrorCode: nameof(UIElementErrorCode.PatternNotSupported)),
@@ -132,9 +146,27 @@ public class MenuPathServiceTests
         var result = await RunAsync("File", "Save As");
 
         result.Success.Should().BeTrue(result.Error);
-        _acted.Select(a => a.Action).Should().Equal(
-            ElementActionKind.Expand, ElementActionKind.Invoke, ElementActionKind.Invoke, ElementActionKind.Click);
+        _acted.Select(a => a.Action).Should().Equal(ElementActionKind.Expand, ElementActionKind.Invoke, ElementActionKind.Click);
         result.Method.Should().Be(ElementActionMethod.Toggle);
+    }
+
+    [Fact]
+    public async Task ThePath_IsBoundedAsAWhole_ByItsTimeoutPerItem()
+    {
+        // Two items of 100 ms each: the expand of the first takes longer than the whole path may
+        _act = request =>
+        {
+            Thread.Sleep(250);
+            return Done(request, ElementActionMethod.ExpandCollapse, new OpenedWindow((long)FileMenu, string.Empty, "#32768", 4242, "notepad"));
+        };
+
+        var result = await CreateSut().RunAsync(new MenuPathRequest(Window, null, ["File", "Save As"], Timeout: TimeSpan.FromMilliseconds(100)));
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
+        result.Error.Should().Contain("ran out of its time").And.Contain("item 2 of 2");
+        result.Steps.Should().ContainSingle().Which.Item.Should().Be("File");
+        _acted.Should().ContainSingle();
+        _acted[0].Timeout.Should().BeLessThanOrEqualTo(TimeSpan.FromMilliseconds(100));
     }
 
     [Fact]
@@ -165,8 +197,23 @@ public class MenuPathServiceTests
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
         result.Error.Should().Contain("'Export' (item 2 of 2)").And.Contain("may still be open").And.Contain("w1e1");
         result.Steps.Should().ContainSingle().Which.Item.Should().Be("File");
-        _queries.Skip(1).Select(q => q.Scope).Should().Equal(ElementSearchScope.Window, ElementSearchScope.Window, ElementSearchScope.WindowAndPopups);
+
+        // The submenu File opened, and below File: not the window's other menus, where another 'Export' may be
+        _queries.Skip(1).Select(q => (q.WindowHandle, q.WithinRef, q.Scope)).Should().Equal(
+            (FileMenu, null, ElementSearchScope.Window), (Window, "w1e1", ElementSearchScope.Window));
         _acted.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task WithoutASubmenuWindow_AnItemIsAlsoSearchedInTheWindowAndItsPopups()
+    {
+        _act = request => Done(request, request.Action == ElementActionKind.Expand ? ElementActionMethod.ExpandCollapse : ElementActionMethod.Invoke);
+
+        var result = await RunAsync("File", "Export");
+
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
+        _queries.Skip(1).Select(q => (q.WithinRef, q.Scope)).Should().Equal(
+            ("w1e1", ElementSearchScope.Window), (null, ElementSearchScope.WindowAndPopups));
     }
 
     [Fact]

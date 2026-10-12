@@ -72,19 +72,28 @@ public class DialogServiceTests
             .Returns((InputTarget target) => InputGuardResult.Allow(target, target.WindowHandle ?? 0, null, target.WindowHandle ?? 0));
     }
 
-    private DialogService CreateSut() => new(_windows.Object, _popups.Object, _search.Object, _actions.Object, _guard.Object, _session.Object)
+    private DialogService CreateSut(IWindowService? windowService = null) =>
+        new(_windows.Object, _popups.Object, _search.Object, _actions.Object, _guard.Object, _session.Object, windowService)
     {
         CloseWait = TimeSpan.FromMilliseconds(200),
         PollInterval = TimeSpan.FromMilliseconds(5)
     };
 
-    private static FoundElement Element(string elementRef, string? name, string? automationId, string controlType, bool enabled = true) =>
-        new(elementRef, name, controlType, automationId, null, null, null, enabled, false, controlType == "Button" ? ["Invoke"] : []);
+    private static FoundElement Element(string elementRef, string? name, string? automationId, string controlType, bool enabled = true,
+        BoundsDto? bounds = null) =>
+        new(elementRef, name, controlType, automationId, null, bounds, null, enabled, false, controlType == "Button" ? ["Invoke"] : []);
+
+    /// <summary>A Win32 dialog's title bar (0,0 to 400,30) and its caption buttons, as the control view shows them.</summary>
+    private static FoundElement[] TitleBar(params string[] captionButtons) =>
+    [
+        Element("w1t0", null, "TitleBar", "TitleBar", bounds: new BoundsDto(0, 0, 400, 30)),
+        .. captionButtons.Select((name, i) => Element($"w1t{i + 1}", name, name, "Button", bounds: new BoundsDto(300 + 30 * i, 2, 28, 26)))
+    ];
 
     private static PopupWindow Popup(nint handle, PopupKind kind, nint owner, bool blocking = false, string? title = null) =>
         new(handle, kind, title, kind == PopupKind.Dialog ? "#32770" : "#32768", 4242, owner, PopupRelation.Owned, null, blocking);
 
-    private Task<DialogResponseResult> RespondAsync(string button, nint window = 0) =>
+    private Task<DialogResponseResult> RespondAsync(string? button, nint window = 0) =>
         CreateSut().RespondAsync(new DialogResponseRequest(window, button, Timeout: TimeSpan.FromSeconds(2)));
 
     #region Which dialog
@@ -153,7 +162,28 @@ public class DialogServiceTests
         content.Buttons.Select(b => (b.Ref, b.Name, b.Standard)).Should().Equal(
             ("w1e1", "Speichern", "yes"), ("w1e2", "Nicht speichern", "no"), ("w1e3", "Abbrechen", "cancel"));
         _queries.Should().HaveCount(2).And.OnlyContain(q =>
-            q.WindowHandle == Dialog && q.Scope == ElementSearchScope.Window && q.VisibleOnly && q.MaxResults <= 20);
+            q.WindowHandle == Dialog && q.Scope == ElementSearchScope.Window && q.VisibleOnly && q.MaxResults <= 26);
+        _queries[0].ControlTypes.Should().Contain("TitleBar", "the title bar is read to leave its caption buttons out");
+    }
+
+    [Fact]
+    public async Task Read_LeavesTheTitleBarsCaptionButtonsOut()
+    {
+        _buttons = [.. TitleBar("Help", "Close"), Element("w1e1", "OK", "1", "Button", bounds: new BoundsDto(150, 100, 80, 25))];
+
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+
+        content.Buttons.Select(b => b.Name).Should().Equal("OK");
+    }
+
+    [Fact]
+    public async Task Read_CutsLongButtonNames()
+    {
+        _buttons = [Element("w1e1", new string('x', 500), "1", "Button")];
+
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+
+        content.Buttons.Single().Name.Should().HaveLength(DialogService.MaxButtonNameLength);
     }
 
     [Fact]
@@ -294,6 +324,89 @@ public class DialogServiceTests
         result.DialogClosed.Should().BeFalse();
         result.NextDialog!.Handle.Should().Be((long)Prompt);
         result.Warnings.Should().ContainSingle(w => w.Contains("still open"));
+    }
+
+    [Fact]
+    public async Task Respond_Ok_ToAMessageBoxWhoseOnlyButtonIsCancel_PressesIt_NotTheTitleBarsClose()
+    {
+        // A localized MB_OK box: its lone button carries IDCANCEL so that Esc closes it; the title bar has its own Close
+        _buttons = [.. TitleBar("Close"), Element("w1e1", "Aceptar", "2", "Button", bounds: new BoundsDto(150, 100, 80, 25))];
+
+        var result = await RespondAsync("ok");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.Invoked!.Ref.Should().Be("w1e1");
+        result.Buttons.Should().ContainSingle();
+        result.Warnings.Should().ContainSingle(w => w.Contains("only button"));
+    }
+
+    [Fact]
+    public async Task Respond_Close_PressesTheDialogsCloseButton_NotTheTitleBars()
+    {
+        _buttons = [.. TitleBar("Close"), Element("w1e1", "Close", "2", "Button", bounds: new BoundsDto(150, 100, 80, 25))];
+
+        var result = await RespondAsync("Close");
+
+        result.Success.Should().BeTrue(result.Error);
+        _acted.Should().ContainSingle().Which.Ref.Should().Be("w1e1");
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_OnlyReadsTheDialog_EvenWhilePaused()
+    {
+        _session.Setup(s => s.IsPaused).Returns(true);
+
+        var result = await RespondAsync(null);
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)Dialog);
+        result.Text.Should().Equal("Möchten Sie die Änderungen speichern?");
+        result.Buttons.Should().HaveCount(3);
+        (result.Invoked, result.DialogClosed).Should().Be((null, null));
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_WithoutAButton_ToADialogTheGuardRefuses_ReadsNothing()
+    {
+        _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "The user's policy denies KeePass.", target));
+
+        var result = await RespondAsync(null);
+
+        result.ErrorCode.Should().Be(nameof(InputErrorCode.TargetDeniedByPolicy));
+        _search.Verify(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Respond_ToADialogTheGuardRefuses_NotesTheDialogForTheAuditLine()
+    {
+        var windowService = new Mock<IWindowService>();
+        _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy, "The user's policy denies KeePass.", target));
+
+        await CreateSut(windowService.Object).RespondAsync(new DialogResponseRequest(0, "ok", Timeout: TimeSpan.FromSeconds(1)));
+
+        windowService.Verify(w => w.GetWindowInfo(Dialog), Times.Once);
+    }
+
+    [Fact]
+    public async Task Respond_WhosePressHadNotReturned_CountsAsSent_AndReportsWhetherTheDialogClosed()
+    {
+        _act = request =>
+        {
+            _shown.Remove(Dialog);
+            return new ElementActionResult(false, "invoke", request.Ref, (long)Dialog, Error: "Invoke had not returned; it may still take effect.",
+                ErrorCode: nameof(UIElementErrorCode.ActionTimedOut));
+        };
+
+        var result = await RespondAsync("yes");
+
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogClosed.Should().BeTrue();
+        result.Invoked!.Ref.Should().Be("w1e1");
+        result.Warnings.Should().ContainSingle(w => w.Contains("was sent but had not returned"));
+        result.Error.Should().BeNull();
     }
 
     [Fact]

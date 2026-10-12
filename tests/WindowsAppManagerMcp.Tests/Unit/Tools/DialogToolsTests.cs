@@ -50,6 +50,14 @@ public class DialogToolsTests
     }
 
     [Fact]
+    public async Task RespondToDialog_WithoutAButton_AsksOnlyToReadTheDialog()
+    {
+        await CreateSut().RespondToDialog(handle: 0x5000);
+
+        _respond.Should().Be(new DialogResponseRequest(0x5000, null, false, TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
     public async Task RespondToDialog_WithAnEmptyButton_IsRefused()
     {
         var error = await RefusedAsync(() => CreateSut().RespondToDialog(" "));

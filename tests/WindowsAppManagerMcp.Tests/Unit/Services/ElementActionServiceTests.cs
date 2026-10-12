@@ -1202,6 +1202,11 @@ public sealed class ElementActionServiceTests : IDisposable
             .Should().Contain("fallback mouse");
         ElementActionService.ArgumentError(new ElementActionRequest("w1e1", ElementActionKind.Click, Fallback: ElementActionFallback.Mouse))
             .Should().BeNull();
+
+        // menu_path's items are expanded and invoked through their patterns only: a mouse fallback is refused, not ignored
+        ElementActionService.ArgumentError(new ElementActionRequest("w1e1", ElementActionKind.MenuPath, "File>Save As",
+                Fallback: ElementActionFallback.Mouse))
+            .Should().Contain("fallback mouse");
     }
 
     [Fact]

@@ -12,7 +12,8 @@ namespace WindowsAppManagerMcp.Services;
 /// it checks the name, open an SMB or WebDAV connection, which can leak the user's NTLM hash; a device path (\\?\, \\.\)
 /// reaches raw devices. A drive letter the user mapped to a share is accepted, as for outputPath.</para>
 /// <para>No wildcards, quotes or the other characters a file name cannot hold: a dialog takes "*.txt" as a filter and
-/// "a" "b" as several files. No alternate data stream (a colon in the file name).</para>
+/// "a" "b" as several files. No alternate data stream (a colon in the file name). No environment variable (%NAME%) that
+/// expands: the dialog expands it, so the checks here would be of another path.</para>
 /// <para>Open may name any existing file or folder (a folder makes the dialog show it, which a folder picker takes as the
 /// answer): the server only types the path into the user's own dialog, which the application then reads with the user's
 /// rights, as type_text into that box would. Save needs the folder to exist and the path not to be a folder; an existing
@@ -43,6 +44,13 @@ public static class FileDialogPaths
         {
             return Invalid("path holds a character a file name cannot have (* ? \" < > | or a control character); a dialog takes " +
                            "wildcards as a filter. Name one file.");
+        }
+
+        if (!string.Equals(Environment.ExpandEnvironmentVariables(given), given, StringComparison.Ordinal))
+        {
+            // The dialog expands %NAME% itself, so the path checked here would not be the one opened or saved (and an
+            // existing file could pass the overwrite check under another name)
+            return Invalid("path holds an environment variable (%NAME%) that the dialog would expand. Pass the expanded path.");
         }
 
         string full;

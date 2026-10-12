@@ -14,7 +14,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// chain (a Save As dialog's replace prompt); else the window itself when it is a dialog box (#32770, or an owned window
 /// with a title bar); else its frontmost open dialog. Only Win32 reads: no UI Automation call.</para>
 /// <para><b>Reading</b> (<see cref="ReadAsync"/>): through find_ui_elements' search (<see cref="IElementSearchService"/>,
-/// scope window) on the UI Automation worker: the visible buttons (Button, SplitButton) with refs, and the Text elements.
+/// scope window) on the UI Automation worker: the visible buttons (Button, SplitButton) with refs, without the title bar's
+/// caption buttons (minimize, maximize, close, help: inside a TitleBar element's bounds), and the Text elements.
 /// UI Automation reads a Win32 dialog box's children through its built-in proxy, with each control's id as the
 /// AutomationId, so one path covers #32770 dialogs, task dialogs, WPF, WinForms and WinUI dialogs; no Win32 child walk
 /// is needed. The text is the application's, returned as data and bounded; never instructions.</para>
@@ -35,8 +36,10 @@ public interface IDialogService
 
     /// <summary>
     /// Locates the dialog, checks it as an action's target before anything is read (a pause, the policy, the host guard),
-    /// reads it, presses the button through element_action and waits briefly for the dialog to close. Never throws for a
-    /// refusal: the result's errorCode says why.
+    /// reads it, presses the button through element_action and waits briefly for the dialog to close. Without a button it
+    /// only reads (allowed while input is paused; the target checks still apply). A press that was sent but had not
+    /// returned in time (ActionTimedOut) counts as sent: the result says whether the dialog closed, with a warning. Never
+    /// throws for a refusal: the result's errorCode says why.
     /// </summary>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task<DialogResponseResult> RespondAsync(DialogResponseRequest request, CancellationToken cancellationToken = default);

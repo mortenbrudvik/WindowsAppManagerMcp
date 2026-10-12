@@ -12,12 +12,15 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// element (a menu bar, an open menu) or in the window and, by the scope, its open popups. Each further item is searched in
 /// the submenu window the previous item opened (element_action's openedPopup, else
 /// <see cref="IPopupService.WaitForNewPopupAsync"/>), then below the previous item (WPF and WinForms show a submenu's items
-/// under their item), then in the window and all its open popups.</para>
-/// <para>Every item but the last is expanded (ExpandCollapse; Invoke when it has no such pattern); the last is invoked (or
+/// under their item); only when no submenu window was seen, also in the window and all its open popups, so an item missing
+/// from the submenu never matches the same name in another menu.</para>
+/// <para>Every item but the last is expanded (ExpandCollapse); an item before the last without that pattern has no submenu
+/// (it is a command), so the path stops with PatternNotSupported and the item is not invoked. The last is invoked (or
 /// clicked through its pattern, a checkable item's Toggle, when it has no Invoke). At most
-/// <see cref="Services.MenuPaths.MaxItems"/> items; each search and action is bounded by the request's timeout. A failure
-/// stops the path; menus the earlier items opened stay open (the result says so), since closing them would be one more
-/// action after a refusal.</para>
+/// <see cref="Services.MenuPaths.MaxItems"/> items; each search and action is bounded by the request's timeout, and the
+/// whole path by that timeout per item (at most <see cref="Services.MenuPathService.MaxTotalTimeout"/>; OperationTimedOut
+/// with the steps done). A failure stops the path; menus the earlier items opened stay open (the result says so), since
+/// closing them would be one more action after a refusal.</para>
 /// </remarks>
 public interface IMenuPathService
 {

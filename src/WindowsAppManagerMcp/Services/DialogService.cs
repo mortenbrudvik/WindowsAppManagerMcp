@@ -27,10 +27,20 @@ public sealed class DialogService : IDialogService
     /// <summary>The longest title kept.</summary>
     public const int MaxTitleLength = 200;
 
+    /// <summary>The longest button name kept (in the result and in messages).</summary>
+    public const int MaxButtonNameLength = 100;
+
+    /// <summary>
+    /// How many more elements the button search may return than <see cref="MaxButtons"/>: the title bar and its caption
+    /// buttons (minimize, maximize, close, help), which are left out of the dialog's buttons.
+    /// </summary>
+    private const int TitleBarAllowance = 6;
+
     /// <summary>How many modal dialogs of a dialog are followed to the front one.</summary>
     private const int MaxDialogDepth = 4;
 
-    private static readonly string[] ButtonTypes = ["Button", "SplitButton"];
+    private const string TitleBarType = "TitleBar";
+    private static readonly string[] ButtonTypes = ["Button", "SplitButton", TitleBarType];
     private static readonly string[] TextTypes = ["Text"];
 
     private readonly INativeWindowWrapper _windows;
@@ -119,8 +129,10 @@ public sealed class DialogService : IDialogService
         var title = _windows.GetWindowText(current);
         return DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
             $"Window {(long)current}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')")} is no " +
-            $"dialog box and has no open dialog{(window == nint.Zero ? " (it is the window in front)" : string.Empty)}. Nothing was " +
-            "done. Wait for the dialog (wait_for_window), or list the app's popups with get_active_popups.");
+            $"dialog box and has no open dialog{(window == nint.Zero ? " (it is the window in front)" : string.Empty)}. A dialog is " +
+            "a #32770 dialog box or a captioned window owned by another; a window without an owner is no dialog. Nothing was " +
+            "done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a button of " +
+            "another window with element_action.");
     }
 
     /// <summary>A dialog box (#32770), or an owned window with a title bar that is no tool window (a WPF or WinForms dialog).</summary>
@@ -141,7 +153,7 @@ public sealed class DialogService : IDialogService
     /// <inheritdoc />
     public async Task<DialogRead> ReadAsync(nint dialog, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        var buttons = await FindAsync(dialog, ButtonTypes, MaxButtons, timeout, cancellationToken).ConfigureAwait(false);
+        var buttons = await FindAsync(dialog, ButtonTypes, MaxButtons + TitleBarAllowance, timeout, cancellationToken).ConfigureAwait(false);
         if (!buttons.Success)
         {
             return DialogRead.Failed(buttons.ErrorCode.ToString(), $"The dialog could not be read: {buttons.Error}");
@@ -154,8 +166,10 @@ public sealed class DialogService : IDialogService
             warnings.Add($"The dialog's text could not be read ({texts.ErrorCode}): {texts.Error}");
         }
 
-        var buttonList = (buttons.Elements ?? []).Select(e => new DialogButton(
-            e.Ref, EmptyToNull(e.Name), EmptyToNull(e.AutomationId), DialogButtons.StandardOf(e.AutomationId), e.IsEnabled)).ToList();
+        var dialogButtons = WithoutTitleBar(buttons.Elements ?? []);
+        var buttonList = dialogButtons.Take(MaxButtons).Select(e => new DialogButton(
+            e.Ref, EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)), EmptyToNull(e.AutomationId),
+            DialogButtons.StandardOf(e.AutomationId), e.IsEnabled)).ToList();
         var (text, textCut) = Text(texts.Success ? texts.Elements ?? [] : [], buttonList);
         var title = EmptyToNull(_windows.GetWindowText(dialog));
         var content = new DialogContent(
@@ -165,9 +179,23 @@ public sealed class DialogService : IDialogService
             text,
             buttonList,
             TextTruncated: textCut || (texts.Success && texts.Truncated) ? true : null,
-            ButtonsTruncated: buttons.Truncated ? true : null);
+            ButtonsTruncated: buttons.Truncated || dialogButtons.Count > MaxButtons ? true : null);
         return new DialogRead(content, warnings.Count == 0 ? null : warnings);
     }
+
+    /// <summary>
+    /// The buttons without the title bar's caption buttons (minimize, maximize, close, the context help '?'): they are the
+    /// window's, not answers of the dialog, as <see cref="WindowCloseVerifier"/> reads a prompt. A button lies in the title
+    /// bar when its bounds are inside a TitleBar element's bounds.
+    /// </summary>
+    internal static IReadOnlyList<FoundElement> WithoutTitleBar(IReadOnlyList<FoundElement> elements)
+    {
+        var titleBars = elements.Where(e => e.ControlType == TitleBarType).Select(e => e.Bounds).OfType<BoundsDto>().ToList();
+        return elements.Where(e => e.ControlType != TitleBarType && !(e.Bounds is { } b && titleBars.Any(t => Inside(b, t)))).ToList();
+    }
+
+    private static bool Inside(BoundsDto inner, BoundsDto outer) =>
+        inner.X >= outer.X && inner.Y >= outer.Y && inner.X + inner.Width <= outer.X + outer.Width && inner.Y + inner.Height <= outer.Y + outer.Height;
 
     private Task<FindElementsResult> FindAsync(nint dialog, string[] controlTypes, int maxResults, TimeSpan timeout, CancellationToken cancellationToken) =>
         _search.FindAsync(new ElementQuery(
@@ -229,23 +257,28 @@ public sealed class DialogService : IDialogService
         ArgumentNullException.ThrowIfNull(request);
         var stopwatch = Stopwatch.StartNew();
         var timeout = request.Timeout ?? DefaultTimeout;
+        var readOnly = request.Button == null;
         DialogResponseResult Fail(string code, string error, nint dialog = 0, DialogContent? content = null, IReadOnlyList<string>? warnings = null) =>
             With(new DialogResponseResult(false, (long)dialog, Error: error, ErrorCode: code, Warnings: warnings), content, stopwatch);
 
-        if (string.IsNullOrWhiteSpace(request.Button))
+        if (request.Button is { } asked && string.IsNullOrWhiteSpace(asked))
         {
             return Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
                 $"button names the button to press: a standard name ({string.Join(", ", DialogButtons.StandardNames)}), a control id " +
-                "such as \"6\", an AutomationId, or its visible text. Nothing was done.");
+                "such as \"6\", an AutomationId, or its visible text; leave it out to only read the dialog. Nothing was done.");
         }
 
-        try
+        if (!readOnly)
         {
-            InputGateToolFilter.ThrowIfPaused(_session);
-        }
-        catch (ToolErrorException ex)
-        {
-            return Fail(ex.ErrorCode, ex.Message);
+            // Reading alone is no action: it is allowed while input is paused, as find_ui_elements is
+            try
+            {
+                InputGateToolFilter.ThrowIfPaused(_session);
+            }
+            catch (ToolErrorException ex)
+            {
+                return Fail(ex.ErrorCode, ex.Message);
+            }
         }
 
         var location = Locate(request.Window);
@@ -255,6 +288,7 @@ public sealed class DialogService : IDialogService
         }
 
         var dialog = location.Dialog;
+        NoteWindow(dialog);
 
         // Checked as an action's target before anything is read: the dialog of an app the user's policy denies (a password
         // manager, a credential prompt) or of the agent's own host is neither read nor answered
@@ -271,12 +305,19 @@ public sealed class DialogService : IDialogService
         }
 
         var warnings = new List<string>(read.Warnings ?? []);
-        var match = DialogButtons.Match(content.Buttons, request.Button);
+        if (request.Button is not { } buttonAsked)
+        {
+            // Read only: the agent decides on the text, then answers this dialog by its handle
+            return With(new DialogResponseResult(true, (long)dialog, Warnings: warnings.Count == 0 ? null : warnings), content, stopwatch);
+        }
+
+        var shown = Cut(buttonAsked.Trim(), 100);
+        var match = DialogButtons.Match(content.Buttons, buttonAsked);
         if (match.Buttons.Count == 0)
         {
             return Fail(nameof(UIElementErrorCode.ElementNotFound),
-                $"No button of the dialog is '{Cut(request.Button.Trim(), 100)}' (by standard name or id, AutomationId or text). " +
-                $"Nothing was pressed. Its buttons: {Describe(content.Buttons)}" +
+                $"No button of the dialog is '{shown}' (by standard name or id, AutomationId or text). " +
+                $"Nothing was pressed. Its buttons (the application's text): {Describe(content.Buttons)}" +
                 (content.ButtonsTruncated == true ? $" (only the first {MaxButtons} were read: press another with element_action)." : "."),
                 dialog, content, warnings);
         }
@@ -284,7 +325,7 @@ public sealed class DialogService : IDialogService
         if (match.Single is not { } button)
         {
             return Fail(nameof(UIElementErrorCode.AmbiguousElement),
-                $"{match.Buttons.Count} buttons of the dialog match '{Cut(request.Button.Trim(), 100)}' (by {match.By}): " +
+                $"{match.Buttons.Count} buttons of the dialog match '{shown}' (by {match.By}): " +
                 $"{Describe(match.Buttons)}. Nothing was pressed. Name one by its automationId or ref (element_action).",
                 dialog, content, warnings);
         }
@@ -300,11 +341,11 @@ public sealed class DialogService : IDialogService
             warnings.Add($"No button carries the id of OK; the dialog's only button ('{button.Name}') was pressed.");
         }
 
-        NoteWindow(dialog);
         var before = _popups.GetPopups(dialog).Select(p => p.Handle).ToHashSet();
         var pressed = await _actions.ActAsync(new ElementActionRequest(
             buttonRef, ElementActionKind.Invoke, AllowHostTarget: request.AllowHostTarget, Timeout: timeout), cancellationToken).ConfigureAwait(false);
-        if (!pressed.Success)
+        var sentNotReturned = !pressed.Success && pressed.ErrorCode == nameof(UIElementErrorCode.ActionTimedOut);
+        if (!pressed.Success && !sentNotReturned)
         {
             return Fail(pressed.ErrorCode ?? nameof(UIElementErrorCode.ActionFailed),
                 $"The button '{button.Name ?? button.AutomationId}' was not pressed: {pressed.Error}", dialog, content,
@@ -312,6 +353,14 @@ public sealed class DialogService : IDialogService
         }
 
         warnings.AddRange(pressed.Warnings ?? []);
+        if (sentNotReturned)
+        {
+            // The press was sent; its handler had not returned (a busy application): whether it took effect is seen below
+            warnings.Add($"The press of '{button.Name ?? button.AutomationId}' was sent but had not returned after " +
+                         $"{timeout.TotalMilliseconds:0} ms; dialogClosed says whether the dialog closed. Do not press it again " +
+                         "without reading the dialog.");
+        }
+
         bool closed;
         var next = pressed.OpenedPopup;
         if (pressed.Status == ElementActionStatus.InvokedPendingModal)
@@ -326,8 +375,9 @@ public sealed class DialogService : IDialogService
             {
                 next ??= NewDialogOf(dialog, before);
                 warnings.Add(next != null
-                    ? $"The dialog is still open: the press opened another dialog ('{next.Title}', handle {next.Handle}). Answer it next."
-                    : "The dialog is still open after the press (a button such as Help or Apply, or input the dialog refused). Read it again.");
+                    ? $"The dialog is still open: the press opened another dialog ('{Cut(next.Title, MaxTitleLength)}', handle {next.Handle}). Answer it next."
+                    : "The dialog is still open after the press (a button such as Help or Apply, input the dialog refused, or a busy " +
+                      "application). Read it again.");
             }
         }
 
