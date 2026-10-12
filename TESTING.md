@@ -2268,8 +2268,9 @@ The largest typical results, measured in October 2026:
 Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
 `Contract/ElementReadContractTests` also bounds the largest result read_element_text and read_table can return
-(a million-character document, a 1000 x 100 grid of long or empty cells, read end to end through the real read
-service over a fake tree) at 16,000 tokens.
+(a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
+cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:
+the reads bound a page in bytes of JSON, not only in characters.
 
 ### Protocol revisions, progress and cancellation
 
