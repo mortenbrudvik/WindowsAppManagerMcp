@@ -2219,7 +2219,7 @@ Tools for reading UI elements through Windows UI Automation: one observation of 
 | `documentChildCount` | The elements directly in the page's document at the last check; absent when no document was found |
 | `warning` | What to do, when `status` is not `Ready`: read again in a moment; for a Chromium or Electron app that stays empty, relaunch it with launch_application `forceAccessibility: true` |
 
-A window that got its page is remembered (until it closes), so later reads do not wait and carry no `accessibilityWarmup`; a window that stayed empty is waited for again, at most three times, and after that only checked. Only the window being read is asked: nothing global is changed, and no other application is touched. A window without a page (any native app, or a menu of the browser frame) is read as before.
+A page that was warmed up is remembered while it is shown, so later reads do not wait and carry no `accessibilityWarmup`. A page shown since (a tab you switched to, or back to) is checked on the next read and waited for while its elements arrive, because Chromium builds a hidden page's tree only once it is shown; finding the shown pages reads only the window's child windows, not UI Automation. A page that stayed empty is waited for again, at most three times, and after that only checked. Only the window being read is asked: nothing global is changed, and no other application is touched. A window without a page (any native app, or a menu of the browser frame) is read as before.
 
 **UI frameworks.** Elements say which UI framework provides them (`frameworkId`: `Win32`, `WPF`, `XAML`, `WinForm`, `DirectUI`, `Chrome` for web content, ...). get_focused_element, get_element_at_point and its `ancestors` name it on every element (find_ui_elements with `detail: "full"`); get_ui_elements names the window's at the top (`frameworkId`) and an element's only where it differs from the element it is inside, so a web page in a native frame shows where it starts (`Document 'Inbox' fw=Chrome` in the text format) without repeating it on every element.
 
@@ -5799,13 +5799,13 @@ Since 1.14.0 (roadmap M3):
   and every call on a client with elicitation (the user is asked, as in 1.14.0), are unchanged. close_application has
   no `force`, so it is unchanged.
 - **Web content accessibility (roadmap M3.3, after 1.14.0).** get_ui_elements, capture_with_elements,
-  get_focused_element and get_element_at_point now wait up to 1.5 s (at most a third of `timeoutMs`) the first time
-  they read a window with a Chromium, Electron or WebView2 page, so such a first call can take that much longer, and
-  their results carry `accessibilityWarmup` when they waited (see [Web content](#ui-automation)). Elements carry
-  `frameworkId`: get_ui_elements reports it at the top and on an element only where it changes (`fw=` in the text
-  format), and get_element_at_point's `ancestors` have it too. launch_application takes `forceAccessibility` and then
-  returns `forceAccessibilityApplied` (see [Web content accessibility](#web-content-accessibility)). All of these are
-  new fields; a call without `forceAccessibility` launches as before.
+  get_focused_element and get_element_at_point now wait up to 1.5 s (at most a third of `timeoutMs`) the first time they
+  read a window with a Chromium, Electron or WebView2 page (and a tab shown since), so such a first call can take that
+  much longer, and their results carry `accessibilityWarmup` when they waited (see [Web content](#ui-automation)).
+  Elements carry `frameworkId`: get_ui_elements reports it at the top and on an element only where it changes (`fw=` in
+  the text format), and get_element_at_point's `ancestors` have it too. launch_application takes `forceAccessibility`
+  and then returns `forceAccessibilityApplied` (see [Web content accessibility](#web-content-accessibility)). All of
+  these are new fields; a call without `forceAccessibility` launches as before.
 - **Element refs and find_ui_elements (roadmap M3.4).** Every element of get_ui_elements (all formats),
   get_focused_element, get_element_at_point and capture_with_elements gains `ref` (for example `w4120035e17`), the first
   field of the element; `format: "text"` puts it at the start of each line, before the control type, so a client that

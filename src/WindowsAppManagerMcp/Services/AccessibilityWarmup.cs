@@ -20,10 +20,12 @@ namespace WindowsAppManagerMcp.Services;
 /// counts the Document's children. When there are none it checks again every 200-500 ms, until the count is above zero
 /// and stopped changing, or the budget (at most <see cref="MaxWait"/>) or the caller's deadline ends the wait.</item>
 /// <item>Only the window being read is touched: nothing global is set, and no other application is asked anything.</item>
-/// <item>A window that got web content is remembered (at most <see cref="CacheCapacity"/>, a dead window or one whose
-/// handle now belongs to another process is forgotten), so later reads do not wait. A window that stayed empty is waited
-/// for again, at most <see cref="MaxWaitingAttempts"/> times; after that it is only checked, so a page that is really
-/// empty does not cost every read a wait.</item>
+/// <item>A window whose pages got web content is remembered with the render widgets it showed (at most
+/// <see cref="CacheCapacity"/> windows, a dead window or one whose handle now belongs to another process is forgotten), so
+/// later reads do not wait. A later read still lists the window's shown render widgets (Win32 only): one that was not
+/// warmed up, such as a tab shown since, is warmed up then, because Chromium builds a hidden page's tree only once it is
+/// shown. A page that stayed empty is waited for again, at most <see cref="MaxWaitingAttempts"/> times; after that it is
+/// only checked, so a page that is really empty does not cost every read a wait.</item>
 /// </list>
 /// </remarks>
 public sealed class AccessibilityWarmup : IAccessibilityWarmup
@@ -58,6 +60,8 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(400),
         TimeSpan.FromMilliseconds(500)
     ];
+
+    private static readonly IReadOnlySet<nint> NoWidgets = new HashSet<nint>();
 
     private static readonly HashSet<string> Containers = new(StringComparer.OrdinalIgnoreCase) { "Pane", "Group", "Custom", "Window" };
 
@@ -139,23 +143,27 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             }
         }
 
-        if (known is { Warmed: true })
-        {
-            return null;
-        }
-
         if (FindRenderWidgets(window) is not { Count: > 0 } widgets)
         {
             return null;
         }
 
-        var host = IsWebView2(widgets[0]) ? WebContentHost.WebView2 : WebContentHost.Chromium;
+        // A page that was warmed up is remembered with its render widget. Chromium builds a hidden page's tree only once it
+        // is shown, so a tab shown since (a widget not warmed up yet) is warmed up like a window read for the first time
+        var warmed = known?.Warmed ?? NoWidgets;
+        var pending = widgets.Where(widget => !warmed.Contains(widget)).ToList();
+        if (pending.Count == 0)
+        {
+            return null;
+        }
+
+        var host = IsWebView2(pending[0]) ? WebContentHost.WebView2 : WebContentHost.Chromium;
         var attempts = (known?.Attempts ?? 0) + 1;
         var waitFor = attempts > MaxWaitingAttempts
             ? TimeSpan.Zero
             : budget < TimeSpan.Zero ? TimeSpan.Zero : budget > MaxWait ? MaxWait : budget;
 
-        var info = Poll(widgets, host, waitFor, cancellationToken);
+        var info = Poll(pending, host, waitFor, cancellationToken);
         if (info.Status == AccessibilityWarmupStatus.NotReady && attempts > MaxWaitingAttempts)
         {
             info = info with
@@ -164,7 +172,12 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
             };
         }
 
-        Remember(window, processId, warmed: info.Status != AccessibilityWarmupStatus.NotReady, attempts);
+        // Only the widgets shown now are kept: a page shown again later is checked again, at the cost of one read when its
+        // tree is still there
+        var ready = info.Status != AccessibilityWarmupStatus.NotReady;
+        Remember(window, processId,
+            ready ? widgets.ToHashSet() : widgets.Where(warmed.Contains).ToHashSet(),
+            ready ? 0 : attempts);
         return info;
     }
 
@@ -379,7 +392,7 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
     private static bool IsDocument(string controlType) => string.Equals(controlType, "Document", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Remembers a window's warm-up, forgetting dead windows first and then the oldest when the cache is full.</summary>
-    private void Remember(nint window, uint processId, bool warmed, int attempts)
+    private void Remember(nint window, uint processId, IReadOnlySet<nint> warmed, int attempts)
     {
         lock (_gate)
         {
@@ -409,6 +422,9 @@ public sealed class AccessibilityWarmup : IAccessibilityWarmup
         }
     }
 
-    /// <summary>A remembered window: its process (a reused handle belongs to another), and whether it got web content.</summary>
-    private sealed record Remembered(uint ProcessId, bool Warmed, int Attempts, long Sequence);
+    /// <summary>
+    /// A remembered window: its process (a reused handle belongs to another), its shown render widgets whose pages got web
+    /// content (at most <see cref="MaxRenderWidgets"/>), and how many warm-ups waited for a page that stayed empty since.
+    /// </summary>
+    private sealed record Remembered(uint ProcessId, IReadOnlySet<nint> Warmed, int Attempts, long Sequence);
 }
