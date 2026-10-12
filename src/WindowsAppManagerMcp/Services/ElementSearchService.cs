@@ -13,9 +13,11 @@ namespace WindowsAppManagerMcp.Services;
 /// (WindowNotFound), the warm-up of a window that shows web content (Chromium, Electron, WebView2: see
 /// <see cref="IAccessibilityWarmup"/>, roadmap M3.3) within a third of the timeout, withinRef resolved through the
 /// registry (its own codes: ElementStale, AmbiguousElement), the search
-/// (<see cref="ElementSearch"/>, keeping the first maxResults matches and counting the rest), then for each kept match its
-/// ref, its click point (UI Automation's clickable point, else the centre of its bounds; none for an offscreen element) and,
-/// for detail standard or full, its state, each one call per property group.</para>
+/// (<see cref="ElementSearch"/>, keeping the first maxResults matches and counting the rest), then for each kept match the
+/// list row it is in (<see cref="ElementRows"/>: up to 8 ancestors, each read once for all the matches), its ref, its click
+/// point (UI Automation's clickable point, else the centre of its bounds; none for an offscreen element) and, for detail
+/// standard or full, its state, each one call per property group. A withinRef moved to a re-created element
+/// (<see cref="ResolvedElement.Moved"/>) is searched below, and the result says so (refMoved, warning).</para>
 /// <para>Each match is registered with the search's identity criteria as its selector and whether they fit only it in the
 /// window (<see cref="ElementOrigin.Unique"/>), which decides whether a resolution may later move its ref to the element
 /// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or
