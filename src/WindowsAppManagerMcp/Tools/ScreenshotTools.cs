@@ -394,6 +394,10 @@ public class ScreenshotTools
                 return AnnotatedFailure(reported, windowTitle, unavailable.Code.ToString(), unavailable.Message);
             }
 
+            // Where the window is while its elements are read: the capture compares it with where the window is when its
+            // pixels are read, and gives no captureId when it moved meanwhile
+            var walkedWindow = _screenshotService.ReadCapturedWindow(windowHandle, includeFrame);
+
             // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync).
             // Without controlTypes only the elements an agent can act on are marked (roadmap M3.11)
             var types = UIElementTools.ParseControlTypes(controlTypes);
@@ -420,7 +424,8 @@ public class ScreenshotTools
                 walked ? elementsResult.Elements! : [],
                 includeFrame,
                 new ElementOverlayOptions(Draw: drawOverlays, Labels: labels, HighlightInteractable: highlightInteractable),
-                options);
+                options,
+                walkedWindow);
 
             if (capture.Metadata.Success)
             {

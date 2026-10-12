@@ -336,7 +336,7 @@ public class ScreenshotToolsTests
         walkStopped.Should().BeTrue("the request's token is linked with the walk's timeout");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(),
-            It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
     }
 
     [Fact]
@@ -428,7 +428,7 @@ public class ScreenshotToolsTests
         // Assert - the title then comes from the UI Automation walk
         result.IsError.Should().BeFalse();
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, ElementOverlayOptions.Default, Defaults), Times.Once);
+            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, ElementOverlayOptions.Default, Defaults, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
@@ -462,7 +462,7 @@ public class ScreenshotToolsTests
         json.GetProperty("windowTitle").GetString().Should().Be("Test Window");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             new nint(12345), It.IsAny<string?>(), It.Is<IReadOnlyList<UIElementInfo>>(e => e.Count == 0),
-            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Theory]
@@ -577,7 +577,7 @@ public class ScreenshotToolsTests
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             true, // default includeFrame
             ElementOverlayOptions.Default, // default: drawn, labelled, disabled dimmed
-            Defaults), Times.Once);
+            Defaults, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
@@ -598,7 +598,7 @@ public class ScreenshotToolsTests
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             It.IsAny<bool>(),
             new ElementOverlayOptions(true, true, false),
-            expected), Times.Once);
+            expected, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
@@ -636,7 +636,7 @@ public class ScreenshotToolsTests
             Times.Never);
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
     }
 
     private static JsonElement Metadata(CallToolResult result) =>

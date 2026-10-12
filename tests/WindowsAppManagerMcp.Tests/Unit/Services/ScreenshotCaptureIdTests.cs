@@ -98,6 +98,42 @@ public class ScreenshotCaptureIdTests
     }
 
     [Fact]
+    public void ReadCapturedWindow_IsTheWindowAsACaptureRegistersIt()
+    {
+        CreateSut().ReadCapturedWindow(Window, includeFrame: true).Should()
+            .Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), true));
+    }
+
+    [Fact]
+    public void CaptureWithElements_OfAWindowThatMovedSinceItsElementsWereRead_HasNoCaptureId_AndSaysWhy()
+    {
+        // Arrange - the elements were read while the window was 100 pixels further left
+        var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(0, 200, 816, 839), false);
+
+        // Act
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default,
+            Defaults, walked).Metadata;
+
+        // Assert
+        metadata.Success.Should().BeTrue(metadata.Error);
+        metadata.CaptureId.Should().BeNull("the marks are offset from what the image shows");
+        metadata.Warnings.Should().ContainSingle(w => w.StartsWith(CaptureWarnings.WindowMoved + ":"))
+            .Which.Should().Contain("Capture it again");
+    }
+
+    [Fact]
+    public void CaptureWithElements_OfAWindowThatStayedWithinTheTolerance_IsRegistered()
+    {
+        var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(101, 199, 917, 840), false);
+
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default,
+            Defaults, walked).Metadata;
+
+        metadata.CaptureId.Should().NotBeNull();
+        (metadata.Warnings ?? []).Should().NotContain(w => w.StartsWith(CaptureWarnings.WindowMoved));
+    }
+
+    [Fact]
     public void AWindowWhoseRectangleCannotBeRead_IsCapturedWithoutACaptureId()
     {
         // Without the rectangle a later click could not tell whether the window moved

@@ -304,7 +304,8 @@ public class ScreenshotService : IScreenshotService
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
         ElementOverlayOptions overlays,
-        CaptureOptions options)
+        CaptureOptions options,
+        CapturedWindow? walkedWindow = null)
     {
         ArgumentNullException.ThrowIfNull(overlays);
         try
@@ -318,6 +319,18 @@ public class ScreenshotService : IScreenshotService
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
             window = WithClientArea(window, capture);
+
+            // The elements were read before the pixels: a window that moved or resized meanwhile shows them elsewhere than
+            // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11)
+            if (walkedWindow != null && window != null &&
+                (walkedWindow.ProcessId != window.ProcessId || !CoordinateSpaceResolver.WithinTolerance(walkedWindow.WindowRect, window.WindowRect)))
+            {
+                warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowMoved,
+                    $"the window moved or resized while its elements were read (its rectangle was {Describe(walkedWindow.WindowRect)}, " +
+                    $"then {Describe(window.WindowRect)}), so the marks and the legend are offset from the controls in the image, and " +
+                    "the capture has no captureId. Capture it again, or act by ref with element_action."));
+                window = null;
+            }
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
             AddBlankWarning(capture, warnings);
@@ -747,7 +760,7 @@ public class ScreenshotService : IScreenshotService
     /// origin then: its process and rectangle. Null when the rectangle cannot be read; the capture then gets no
     /// captureId, because a click could not tell whether the window moved since.
     /// </summary>
-    private CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
+    public CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
     {
         if (_captureRegistry == null || _windows.GetWindowRect(windowHandle) is not { } rect)
         {
@@ -838,6 +851,8 @@ public class ScreenshotService : IScreenshotService
             isScaled,
             filePath);
     }
+
+    private static string Describe(WindowRect rect) => $"({rect.X}, {rect.Y}, {rect.Width}x{rect.Height})";
 
     private static CapturedRegion CapturedRegionOf(CaptureResult capture) =>
         new(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height);

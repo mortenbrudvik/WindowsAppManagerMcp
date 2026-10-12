@@ -67,13 +67,27 @@ public interface IScreenshotService
     /// <param name="includeFrame">Whether to include the window frame/decoration</param>
     /// <param name="overlays">Whether to draw the marks, their tags, and dimmed boxes for disabled elements.</param>
     /// <param name="options">Format, size limit, output mode and file options. ImageBounds follow the output image.</param>
+    /// <param name="walkedWindow">
+    /// The window as <see cref="ReadCapturedWindow"/> read it before <paramref name="elements"/> were read, or null. When the
+    /// window has moved or resized since, the elements' screen bounds are no longer where the image shows them: the
+    /// capture then has no captureId (a click at a mark would land beside its element) and a WindowMoved warning.
+    /// </param>
     ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
         nint windowHandle,
         string? windowTitle,
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
         ElementOverlayOptions overlays,
-        CaptureOptions options);
+        CaptureOptions options,
+        CapturedWindow? walkedWindow = null);
+
+    /// <summary>
+    /// The window's process and rectangle now, as a capture of it registers them (roadmap M3.11); null when the rectangle
+    /// cannot be read, or when captures are not registered. capture_with_elements reads it before the UI element walk.
+    /// </summary>
+    /// <param name="windowHandle">Handle to the window.</param>
+    /// <param name="includeFrame">Whether the capture includes the frame.</param>
+    CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame);
 
     /// <summary>
     /// Why the window cannot be captured right now, or null when it can: the handle is not a window

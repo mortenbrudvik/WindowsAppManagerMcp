@@ -151,7 +151,7 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
         }
 
         var current = WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
-        if (!Close(current, window.WindowRect))
+        if (!WithinTolerance(current, window.WindowRect))
         {
             return $"{of} moved or resized since the capture (its rectangle was {Describe(window.WindowRect)}, now " +
                    $"{Describe(current)}), so the image no longer shows what is at its points. {again}";
@@ -162,7 +162,7 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
             // The client area as captured: a ref crop's region is only part of it
             var region = geometry.CapturedRegion;
             var captured = window.ClientArea ?? new WindowRect(region.X, region.Y, region.Width, region.Height);
-            if (_hitTest.GetClientAreaOnScreen(handle) is not { } client || !Close(client, captured))
+            if (_hitTest.GetClientAreaOnScreen(handle) is not { } client || !WithinTolerance(client, captured))
             {
                 return $"{of} has its client area somewhere else than at the capture (it was {Describe(captured)}, now " +
                        $"{(_hitTest.GetClientAreaOnScreen(handle) is { } area ? Describe(area) : "unreadable")}; a menu bar or " +
@@ -174,7 +174,7 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
     }
 
     /// <summary>True when no edge of the two rectangles is more than <see cref="Tolerance"/> pixels apart.</summary>
-    private static bool Close(WindowRect a, WindowRect b) =>
+    internal static bool WithinTolerance(WindowRect a, WindowRect b) =>
         Math.Abs(a.Left - b.Left) <= Tolerance && Math.Abs(a.Top - b.Top) <= Tolerance &&
         Math.Abs(a.Right - b.Right) <= Tolerance && Math.Abs(a.Bottom - b.Bottom) <= Tolerance;
 

@@ -182,6 +182,37 @@ public class CaptureCoordinateContractTests
     }
 
     [Fact]
+    public async Task AWindowThatMovedWhileItsElementsWereRead_IsCapturedWithAWarning_AndNoCaptureIdToClickWith()
+    {
+        // Arrange - Notepad moves 100 pixels right after the walk read its Save button at (380, 290): the marks drawn from
+        // the walk would sit 100 pixels left of the button the image shows, and a legend click would hit its neighbour
+        var originX = 0;
+        _capture.Setup(c => c.CaptureWindow(Notepad, It.IsAny<bool>()))
+            .Returns(() => new CaptureResult(new byte[1600 * 900 * 4], 1600, 900, originX, 100, "PrintWindow"));
+        UIElementInfo save = new("Save", "Button", "btnSave", new BoundsDto(380, 290, 40, 20), IsEnabled: true,
+            IsOffscreen: false, Ref: "w1000001e7");
+        _uiElements.Setup(u => u.GetUIElementsAsync(Notepad, It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                _notepadRect = (100, 100, 1700, 1000);
+                originX = 100;
+            })
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(windowHandle: Notepad, elements: [save]));
+        _windowService.Setup(s => s.IsValidWindow(Notepad)).Returns(true);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var capture = Payload(await server.CallToolAsync("capture_with_elements", new Dictionary<string, object?> { ["handle"] = (long)Notepad }));
+
+        // Assert - the image comes back, but nothing points into it
+        capture.GetProperty("success").GetBoolean().Should().BeTrue(capture.ToString());
+        capture.TryGetProperty("captureId", out _).Should().BeFalse(capture.ToString());
+        capture.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).Should()
+            .Contain(w => w!.StartsWith(CaptureWarnings.WindowMoved + ":", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ARefCrop_ThenAClickAtItsMiddle_ClicksTheElement()
     {
         // Arrange - Notepad's Save button at (380, 290, 40, 20), named by its ref; the crop keeps 8 pixels around it

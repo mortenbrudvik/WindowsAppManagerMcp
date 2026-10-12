@@ -113,14 +113,14 @@ public class CaptureMarksToolTests
 
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(),
             It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), new ElementOverlayOptions(false, false, false),
-            It.IsAny<CaptureOptions>()), Times.Once);
+            It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
     public async Task CaptureWithElements_ThatFound_NoElements_HasNoLegend()
     {
         _screenshots.Setup(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-                It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>()))
+                It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()))
             .Returns(new ScreenCapture<AnnotatedScreenshotResult>(
                 TestDataFactory.CreateAnnotatedScreenshotResult(elements: [], elementCount: 0), TestDataFactory.CreateEncodedImage()));
 
