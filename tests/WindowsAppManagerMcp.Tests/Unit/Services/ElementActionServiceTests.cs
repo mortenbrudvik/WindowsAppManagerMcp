@@ -1328,6 +1328,64 @@ public sealed class ElementActionServiceTests : IDisposable
         _input.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(WindowErrorCode.Cloaked, "TargetNotForeground")]      // as the input tools report it
+    [InlineData(WindowErrorCode.WindowHidden, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.FocusFailed, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.None, "TargetNotForeground")]
+    [InlineData(WindowErrorCode.InvalidHandle, "InvalidHandle")]
+    [InlineData(WindowErrorCode.NotResponding, "NotResponding")]
+    [InlineData(WindowErrorCode.PausedByUser, "PausedByUser")]
+    [InlineData(WindowErrorCode.TargetDeniedByPolicy, "TargetDeniedByPolicy")]
+    public async Task AnActivationThatFails_IsReportedWithTheCodesTheInputPathUses(WindowErrorCode activation, string expected)
+    {
+        // Arrange
+        var target = RefOf(Button("Save"));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>())).Returns(new FocusOutcome
+        {
+            Target = Handle, IsForeground = false, ErrorCode = activation, Error = "It did not come to the front."
+        });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be(expected);
+        result.Error.Should().Contain("It did not come to the front.");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AMenuThatStaysOpen_IsTargetInMenuMode_ForAClick_WordedForTheClick()
+    {
+        // Arrange - activation could not close the menu (it ignores Esc)
+        var target = RefOf(Button("Save"));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>()))
+            .Returns(new FocusOutcome { Target = Handle, IsForeground = true, InMenuMode = true });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("TargetInMenuMode");
+        result.Error.Should().Contain("Nothing was clicked").And.NotContain("keys would");
+        _input.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task AMenuThatStaysOpen_IsTargetInMenuMode_ForKeys()
+    {
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>()))
+            .Returns(new FocusOutcome { Target = Handle, IsForeground = true, InMenuMode = true });
+
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        result.ErrorCode.Should().Be("TargetInMenuMode");
+        result.Error.Should().Contain("keys would select menu items");
+        _input.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task SetValue_ModeType_FocusesTheElement_SelectsAll_AndTypes_ThroughTheGuardedInput()
     {

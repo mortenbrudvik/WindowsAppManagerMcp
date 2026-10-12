@@ -392,22 +392,31 @@ public sealed partial class ElementActionService : IElementActionService
         };
     }
 
-    /// <summary>Verified activation of the element's window, inside the gate; the failure, or null when it is in front.</summary>
-    private ElementActionResult? Activate(ActionCall call)
+    /// <summary>
+    /// Verified activation of the element's window, inside the gate; the failure, or null when it is in front. The codes are
+    /// the input path's (as the input guard maps its own activation): a window that is gone, does not respond, is denied or
+    /// paused keeps its code, and any other window that did not come to the front (hidden, cloaked, refused by the
+    /// foreground lock) is TargetNotForeground. A menu that activation could not close is TargetInMenuMode.
+    /// </summary>
+    /// <param name="click">The mouse path: a click, not keys, would go to the open menu.</param>
+    private ElementActionResult? Activate(ActionCall call, bool click = false)
     {
         var outcome = _foreground.EnsureForeground(call.Window);
         if (outcome.IsForeground)
         {
-            return outcome.InMenuMode
-                ? call.Fail(nameof(InputErrorCode.TargetInMenuMode),
-                    "A menu is active in the element's window, so keys would select menu items. Nothing was done. Close the menu " +
-                    "first (send_keys {ESC} with windowHandle), then try again.")
-                : null;
+            return !outcome.InMenuMode
+                ? null
+                : call.Fail(nameof(InputErrorCode.TargetInMenuMode), click
+                    ? "A menu is open in the element's window and could not be closed, so a click would only close it or choose " +
+                      "one of its items. Nothing was clicked. Close the menu first (send_keys {ESC} with windowHandle), then try again."
+                    : "A menu is active in the element's window, so keys would select menu items. Nothing was done. Close the menu " +
+                      "first (send_keys {ESC} with windowHandle), then try again.");
         }
 
-        var code = outcome.ErrorCode is WindowErrorCode.None or WindowErrorCode.FocusFailed
-            ? nameof(InputErrorCode.TargetNotForeground)
-            : outcome.ErrorCode.ToString();
+        var code = outcome.ErrorCode is WindowErrorCode.InvalidHandle or WindowErrorCode.NotResponding or WindowErrorCode.PausedByUser
+            or WindowErrorCode.TargetDeniedByPolicy
+            ? outcome.ErrorCode.ToString()
+            : nameof(InputErrorCode.TargetNotForeground);
         return call.Fail(code,
             $"The element's window could not be brought to the front ({outcome.ErrorCode}), so nothing was done. {outcome.Error} " +
             "Call focus_window for details, or ask the user to bring the window to the front.");
@@ -420,7 +429,7 @@ public sealed partial class ElementActionService : IElementActionService
     private async Task<InputStep> ClickAsync(
         ActionCall call, PreparedElement element, Plan plan, IDisposable gate, int targetProcess, CancellationToken cancellationToken)
     {
-        if (Activate(call) is { } notInFront)
+        if (Activate(call, click: true) is { } notInFront)
         {
             return InputStep.Failed(notInFront);
         }
