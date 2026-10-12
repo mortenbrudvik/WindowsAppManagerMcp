@@ -80,6 +80,15 @@ public partial class ServerInstructionsTests
     }
 
     [Fact]
+    public void TheActRule_AllowsAnImagePointWithItsCaptureId_AsTheCoordinatesRuleTeaches()
+    {
+        // M3 review: 'not image points' forbade what the coordinates line prescribes
+        var act = Lines.Single(line => line.StartsWith("- Act:", StringComparison.Ordinal));
+
+        act.Should().Contain("captureId").And.NotContain("not image points");
+    }
+
+    [Fact]
     public void TheInstructions_DoNotTeachTheAltF4Chord()
     {
         ServerIdentity.Instructions.Should().NotContainAny("{F4}", "Alt+F4");
