@@ -55,7 +55,7 @@ public class InputSimulationTools
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
         "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
-        " Take coordinates from get_ui_elements bounds or capture_with_elements screenBounds; for a point you see on a capture, pass its captureId with the image point instead of converting it yourself." +
+        " To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it)." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
         " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
         "MouseInUse also when the capture cannot be read (a window just closed): retry." +
@@ -94,7 +94,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "click", Title = "Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a left mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." + ClickTargetNote +
+    [Description("Perform a left mouse click at the specified screen coordinates, or at a point of a capture's image (space)." + ClickTargetNote +
                  " Mouse results also report actualX and actualY, the cursor position afterwards.")]
     public ClickResult Click(
         [Description(XDescription)]
@@ -125,7 +125,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "right_click", Title = "Right-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a right mouse click at the specified screen coordinates. To click an element, take its bounds from get_ui_elements and click the center point." +
+    [Description("Perform a right mouse click at the specified screen coordinates, or at a point of a capture's image (space)." +
                  " In a terminal (console, Windows Terminal, PuTTY, and anywhere in VS Code) a right click pastes the clipboard, so there it follows send_keys' paste rule (PasteNotAllowed)." + ClickTargetNote)]
     public ClickResult RightClick(
         [Description(XDescription)]
@@ -156,7 +156,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "double_click", Title = "Double-Click", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
+    [Description("Perform a double left click at the specified screen coordinates, or at a point of a capture's image (space). Useful for opening files, selecting words, or other double-click actions." + ClickTargetNote)]
     public ClickResult DoubleClick(
         [Description(XDescription)]
         int x,
@@ -189,7 +189,7 @@ public class InputSimulationTools
     }
 
     [McpServerTool(Name = "mouse_move", Title = "Move Mouse Pointer", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
+    [Description("Move the mouse cursor to the specified screen coordinates, or to a point of a capture's image with its captureId, without clicking. Useful for hovering over elements to trigger tooltips or hover states." +
                  " Pass windowHandle with the window you mean; the same checks as for click apply (TargetOccluded, BlockedByModal, TargetIsAgentHost, CursorNotAtPoint, MouseInUse)." + GuardNote)]
     public MouseMoveResult MouseMove(
         [Description(XDescription)]

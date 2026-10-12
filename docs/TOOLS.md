@@ -3737,7 +3737,7 @@ Every input result reports:
 
 ### click
 
-Perform a left mouse click at the specified screen coordinates. Pass `windowHandle`: the click is sent only if the point is on that window or a popup of it ([Input guard](#input-guard)).
+Perform a left mouse click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). To act on an element, [element_action](#element_action) with its ref needs no point. Pass `windowHandle`: the click is sent only if the point is on that window or a popup of it ([Input guard](#input-guard)).
 
 <!-- tools:begin params:click -->
 **Parameters:**
@@ -3827,7 +3827,7 @@ Coordinates outside every monitor return `CoordinatesOutOfBounds` without `recei
 
 ### right_click
 
-Perform a right mouse click at the specified screen coordinates.
+Perform a right mouse click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)).
 
 <!-- tools:begin params:right_click -->
 **Parameters:**
@@ -3863,7 +3863,7 @@ Perform a right mouse click at the specified screen coordinates.
 
 ### double_click
 
-Perform a double left click at the specified screen coordinates. Useful for opening files, selecting words, or other double-click actions.
+Perform a double left click at the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)). Useful for opening files, selecting words, or other double-click actions.
 
 <!-- tools:begin params:double_click -->
 **Parameters:**
@@ -3915,7 +3915,7 @@ Perform a double left click at the specified screen coordinates. Useful for open
 
 ### mouse_move
 
-Move the mouse cursor to the specified screen coordinates without clicking. Useful for hovering over elements to trigger tooltips or hover states.
+Move the mouse cursor to the specified screen coordinates, or at a point of a capture's image ([Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)), without clicking. Useful for hovering over elements to trigger tooltips or hover states.
 
 <!-- tools:begin params:mouse_move -->
 **Parameters:**
