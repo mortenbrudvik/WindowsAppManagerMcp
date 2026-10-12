@@ -353,17 +353,24 @@ public sealed partial class WindowWaitService
                     break;
 
                 case WindowWaitCondition.Visible when _matches.Count > 0:
+                    // A window on screen at the end came there less than stableMs before it
                     (window, others) = OneOrSeveral(_matches);
-                    error = $"No window matching {what} came on screen {waited}: " +
-                            string.Join("; ", _matches.Take(WindowResolution.MaxCandidates).Select(w => $"'{w.Title}' is {OffScreenReason(w)}")) + ".";
+                    error = (_matches.Any(IsOnScreen)
+                                ? $"No window matching {what} stayed on screen for {_stableMs} ms {waited}: "
+                                : $"No window matching {what} came on screen {waited}: ") +
+                            string.Join("; ", _matches.Take(WindowResolution.MaxCandidates).Select(w =>
+                                $"'{w.Title}' is {(IsOnScreen(w) ? $"on screen, but for less than {_stableMs} ms" : OffScreenReason(w))}")) + ".";
                     break;
 
                 case WindowWaitCondition.Foreground when _matches.Count > 0:
                     (window, others) = OneOrSeveral(_matches);
                     var front = _service._windows.GetForegroundWindow();
-                    error = $"No window matching {what} came to the front {waited}; the window in front is " +
-                            $"{(front == null ? "none" : $"'{front.Title}' ({front.ProcessName}, PID {front.ProcessId})")}. " +
-                            "Bring it there with focus_window if that is what you want.";
+                    error = front != null && _matches.Any(w => w.Handle == front.Handle)
+                        ? $"No window matching {what} stayed in front for {_stableMs} ms {waited}: '{front.Title}' ({front.ProcessName}, " +
+                          $"PID {front.ProcessId}) came to the front less than {_stableMs} ms before the timeout."
+                        : $"No window matching {what} came to the front {waited}; the window in front is " +
+                          $"{(front == null ? "none" : $"'{front.Title}' ({front.ProcessName}, PID {front.ProcessId})")}. " +
+                          "Bring it there with focus_window if that is what you want.";
                     break;
 
                 case WindowWaitCondition.InputIdle when _lastSeen != null:

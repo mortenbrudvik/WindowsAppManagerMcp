@@ -420,6 +420,43 @@ public class WindowConditionWaitTests
         result.Error.Should().Contain("minimized");
     }
 
+    [Fact]
+    public async Task Visible_TimesOut_SayingAWindowThatCameOnScreenTooLateIsOnScreen_NotHidden()
+    {
+        // Arrange - restored 100 ms before the timeout: on screen, but not for stableMs
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetMinimized(notepad, true);
+        At(900, () => _desktop.SetMinimized(notepad, false));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Visible, timeoutMs: 1000);
+
+        // Assert
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Error.Should().NotContain("hidden").And.NotContain("minimized")
+            .And.Contain("'notes.txt - Notepad' is on screen, but for less than 300 ms");
+    }
+
+    [Fact]
+    public async Task Foreground_TimesOut_SayingAWindowThatCameToTheFrontTooLateDid()
+    {
+        // Arrange - brought to the front 100 ms before the timeout
+        var terminal = _desktop.Add("Terminal", "CASCADIA_HOSTING_WINDOW_CLASS", processName: "WindowsTerminal");
+        var notepad = _desktop.Add("notes.txt - Notepad", "Notepad", processName: "notepad");
+        _desktop.SetForeground(terminal);
+        At(900, () => _desktop.SetForeground(notepad));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "notepad" }, WindowWaitCondition.Foreground, timeoutMs: 1000);
+
+        // Assert - not "none came to the front" while naming that very window as the one in front
+        result.TimedOut.Should().BeTrue();
+        result.Window!.Handle.Should().Be(notepad);
+        result.Error.Should().NotContain("came to the front within")
+            .And.Contain("'notes.txt - Notepad'").And.Contain("less than 300 ms before the timeout");
+    }
+
     #endregion
 
     #region title_changed
