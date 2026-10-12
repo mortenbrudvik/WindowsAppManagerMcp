@@ -421,4 +421,56 @@ public class ElementReadServiceTextTests
     }
 
     #endregion
+
+    #region Target policy
+
+    /// <summary>The service with the default target policy, in a window of the password manager KeePass.</summary>
+    private ElementReadService CreateSutInADeniedApp()
+    {
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("KeePass");
+        var policy = new TargetPolicy(TargetPolicySettings.Default);
+        return new ElementReadService(_tree, _worker, _registry,
+            new ElementSearchService(_tree, _worker, _registry, _windows.Object, _warmup.Object, policy: policy), _windows.Object,
+            _warmup.Object, policy);
+    }
+
+    [Fact]
+    public async Task ReadText_OfARefInAWindowOfADeniedApp_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange - a ref an earlier read returned, to the notes of a password entry
+        var elementRef = Add(Document("Recovery code 4829-1337"));
+        var sut = CreateSutInADeniedApp();
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var result = await sut.ReadTextAsync(new ElementTextRequest(elementRef, null, 0, 20_000, Timeout));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass");
+        result.Text.Should().BeNull();
+        _tree.Reads.Should().HaveCount(readsBefore, "no UI Automation call reaches the window");
+        _worker.Calls.Should().Be(0);
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ReadText_ByCriteria_InAWindowOfADeniedApp_IsRefused_BeforeTheSearch()
+    {
+        // Arrange
+        _window.With(Document("Recovery code 4829-1337"));
+        var sut = CreateSutInADeniedApp();
+
+        // Act
+        var result = await sut.ReadTextAsync(new ElementTextRequest(null, Query(name: "Body"), 0, 20_000, Timeout));
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Text.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    #endregion
 }

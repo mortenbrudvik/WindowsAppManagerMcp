@@ -407,7 +407,8 @@ public sealed class PopupService : IPopupService
     public async Task<ActivePopupsResult> GetActivePopupsAsync(nint window, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        if (window == nint.Zero)
+        var named = window != nint.Zero;
+        if (!named)
         {
             // The app in front: the window that owns the window in front, so a dialog in front lists as the app's popup
             var foreground = _windows.GetForegroundWindow();
@@ -426,6 +427,13 @@ public sealed class PopupService : IPopupService
             return new ActivePopupsResult(false, (long)window, null, false, null, Elapsed(stopwatch),
                 Error: "Invalid window handle: it is no window (it closed). Find the window again with find_windows.",
                 ErrorCode: UIElementErrorCode.InvalidHandle);
+        }
+
+        // A window named of an app the user denies: none of its popups is listed or read
+        if (named && UiaTargets.PolicyRefusal(_windows, _policy, window) is { } denied)
+        {
+            return new ActivePopupsResult(false, (long)window, null, false, null, Elapsed(stopwatch), Error: denied,
+                ErrorCode: UIElementErrorCode.TargetDeniedByPolicy);
         }
 
         var title = EmptyToNull(_windows.GetWindowText(window));

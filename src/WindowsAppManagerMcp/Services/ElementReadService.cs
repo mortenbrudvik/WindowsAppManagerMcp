@@ -6,9 +6,11 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>read_element_text and read_table (roadmap M3.9); see <see cref="IElementReadService"/>.</summary>
 /// <remarks>
-/// <para>Order of work, in one read on the worker thread: the ref's window from the registry (no UI Automation), the
-/// hung-window check (NotResponding), the warm-up of a window with web content within a third of the timeout (roadmap
-/// M3.3), the ref resolved (<see cref="IElementRegistry.Resolve"/>: ElementStale, AmbiguousElement), then the read.</para>
+/// <para>Order of work: the ref's window from the registry (no UI Automation) and the target policy's check of it
+/// (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>; read_element_text's criteria are checked by the search, which
+/// refuses the window the same way), then in one read on the worker thread the hung-window check (NotResponding), the
+/// warm-up of a window with web content within a third of the timeout (roadmap M3.3), the ref resolved
+/// (<see cref="IElementRegistry.Resolve"/>: ElementStale, AmbiguousElement), then the read.</para>
 /// <para><b>Text.</b> The password flag is read first; a password field, or one whose flag cannot be read, is never read.
 /// Then the sources in this order: the Text pattern's document, paged by
 /// the provider (<see cref="IUiaTextPattern.GetTextPage"/>, so a page costs its own length and not the document's), the
@@ -69,6 +71,7 @@ public sealed partial class ElementReadService : IElementReadService
     private readonly IElementSearchService _search;
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs each read under its deadline.</param>
@@ -78,13 +81,16 @@ public sealed partial class ElementReadService : IElementReadService
     /// is done.</param>
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows (roadmap M3.3). The server always
     /// passes it.</param>
+    /// <param name="policy">The user's target policy, which refuses reads of a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
     public ElementReadService(
         IUiaTree tree,
         IUiaWorker worker,
         IElementRegistry registry,
         IElementSearchService search,
         INativeWindowWrapper? windows = null,
-        IAccessibilityWarmup? warmup = null)
+        IAccessibilityWarmup? warmup = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
@@ -92,6 +98,7 @@ public sealed partial class ElementReadService : IElementReadService
         _search = search;
         _windows = windows;
         _warmup = warmup;
+        _policy = policy;
     }
 
     #region Text
@@ -134,6 +141,11 @@ public sealed partial class ElementReadService : IElementReadService
         }
 
         var handle = lookup.WindowHandle;
+        if (UiaTargets.PolicyRefusal(_windows, _policy, handle) is { } denied)
+        {
+            return TextFailure((long)handle, lookup.Ref, denied, UIElementErrorCode.TargetDeniedByPolicy, stopwatch, searchWarmup);
+        }
+
         var warmup = new WarmupSlot(searchWarmup);
         try
         {

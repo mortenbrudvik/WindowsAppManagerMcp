@@ -61,10 +61,11 @@ public interface IPopupService
     /// <summary>
     /// The windows a desktop-scope search covers: the visible, uncloaked top-level windows with a size, front first, at most
     /// <paramref name="limit"/>. <paramref name="first"/> (the window the caller named, or zero) comes first and is never
-    /// excluded. The others are left out when the target policy denies their process (its deny list, or an allow list
-    /// without it) or when they are the agent's own host windows (its terminal or editor, and the popups they own), the
-    /// rule the read tools keep for a window nobody named: reading a named window stays allowed, as find_ui_elements on a
-    /// handle always was. The server's own windows and the input helper windows are never searched.
+    /// excluded: the search refuses a named window the target policy denies before it asks for the windows, and a named host
+    /// window is read as find_ui_elements on a handle reads it. The others are left out when the target policy denies their
+    /// process (its deny list, or an allow list without it) or when they are the agent's own host windows (its terminal or
+    /// editor, and the popups they own), the rule the read tools keep for a window nobody named. The server's own windows and
+    /// the input helper windows are never searched.
     /// </summary>
     DesktopWindowSet GetDesktopWindows(nint first, int limit);
 

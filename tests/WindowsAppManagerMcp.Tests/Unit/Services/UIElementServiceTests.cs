@@ -1559,6 +1559,54 @@ public class UIElementServiceTests
 
     #endregion
 
+    #region Target policy
+
+    [Fact]
+    public async Task GetUIElements_OfAWindowOfADeniedApp_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange - a password manager's window, named by its handle
+        BuildToolbarWindow();
+        var windows = RespondingWindow();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(3001u);
+        windows.Setup(w => w.GetProcessName(3001u)).Returns("KeePass");
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var sut = new UIElementService(_tree, _worker, windows.Object, warmup.Object,
+            policy: new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var result = await sut.GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass").And.Contain("Nothing was read");
+        result.Elements.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+        warmup.VerifyNoOtherCalls();
+        windows.Verify(w => w.RespondsWithin(It.IsAny<nint>(), It.IsAny<uint>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAWindowOfAnAllowedApp_IsRead()
+    {
+        // Arrange
+        BuildToolbarWindow();
+        var windows = RespondingWindow();
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(2001u);
+        windows.Setup(w => w.GetProcessName(2001u)).Returns("notepad");
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object, policy: new TargetPolicy(TargetPolicySettings.Default))
+            .GetUIElementsAsync(Handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.TotalElementCount.Should().Be(8);
+    }
+
+    #endregion
+
     #region Web content warm-up and frameworks (roadmap M3.3)
 
     private static readonly AccessibilityWarmupInfo NotReady =

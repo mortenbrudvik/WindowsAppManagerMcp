@@ -703,4 +703,101 @@ public class ElementInspectionServiceTests
     }
 
     #endregion
+
+    #region Target policy
+
+    private static readonly nint Prompt = 0x6000;
+
+    private ElementInspectionService CreateSutWithPolicy() =>
+        new(_tree, _worker, _hitTest.Object, _windows.Object, _monitors.Object, _warmup.Object,
+            policy: new TargetPolicy(TargetPolicySettings.Default));
+
+    /// <summary>Makes <paramref name="window"/> a window of process <paramref name="processId"/> named <paramref name="processName"/>.</summary>
+    private void WindowOf(nint window, uint processId, string processName)
+    {
+        _windows.Setup(w => w.IsWindow(window)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(window)).Returns(processId);
+        _windows.Setup(w => w.GetProcessName(processId)).Returns(processName);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WithADeniedAppInFront_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange - a password manager is in front, with its master password box focused
+        _tree.Focused = BuildForm();
+        WindowOf(TopLevel, 3001, "KeePass");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_InAPromptOfADeniedAppOverAnAllowedWindow_IsNotReturned_NorItsValueRead()
+    {
+        // Arrange - the app in front is allowed, but the focus is in a credential prompt of another process
+        var field = new FakeUiaNode("Edit", "User name") { ProcessId = 900, ActionPatterns = ["Value"], Value = "j.smith" };
+        new FakeUiaNode("Window", "Windows Security") { NativeWindowHandle = Prompt, ProcessId = 900 }.With(field);
+        _tree.Focused = field;
+        WindowOf(TopLevel, 4242, "app");
+        WindowOf(Prompt, 900, "CredentialUIBroker");
+        _hitTest.Setup(h => h.GetRootWindow(Prompt)).Returns(Prompt);
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("CredentialUIBroker");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Read:User name"),
+            "nothing of the element is read once its window is known to be denied");
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_InAnAllowedApp_IsRead()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Element!.Value.Should().Be("user@example.com");
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_OverAWindowOfADeniedApp_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange
+        BuildForm();
+        WindowOf(TopLevel, 3001, "1Password");
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetElementAtPointAsync(150, 210, 2, Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("1Password");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    #endregion
 }

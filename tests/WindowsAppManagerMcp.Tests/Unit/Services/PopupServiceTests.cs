@@ -518,6 +518,28 @@ public class PopupServiceTests
     }
 
     [Fact]
+    public async Task GetActivePopups_OfANamedWindowOfADeniedApp_IsRefused_WithNothingListedOrRead()
+    {
+        // Arrange - a password manager's main window and its entry dialog
+        var main = AddMain("Vault", processName: "KeePass");
+        var dialog = AddPopup("Edit Entry", "#32770", processName: "KeePass", style: WsCaption, owner: main);
+        _tree.WithWindow(dialog, new FakeUiaNode("Window", "Edit Entry"));
+        _policy.Setup(p => p.Evaluate(It.Is<IReadOnlyCollection<string?>>(names => names.Contains("KeePass"))))
+            .Returns(TargetPolicyVerdict.Deny("KeePass", "'KeePass' is on the server's default deny list"));
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(main, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass");
+        result.Popups.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+    }
+
+    [Fact]
     public async Task GetActivePopups_WithNoPopup_ReadsNoUiAutomation()
     {
         var main = AddMain("Editor");

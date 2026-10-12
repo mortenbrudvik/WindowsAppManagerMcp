@@ -761,4 +761,61 @@ public class ElementWaitServiceTests
     }
 
     #endregion
+
+    #region Target policy
+
+    /// <summary>The service with the default target policy, where the window belongs to the password manager 1Password.</summary>
+    private ElementWaitService CreateSutInADeniedApp()
+    {
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("1Password");
+        var policy = new TargetPolicy(TargetPolicySettings.Default);
+        var search = new ElementSearchService(_tree, _worker, _registry, _windows.Object, _warmup.Object, policy: policy);
+        return new ElementWaitService(search, _registry, _windowWait.Object, _tree, _worker, _windows.Object, _clock, DelayAsync, policy);
+    }
+
+    [Theory]
+    [InlineData(ElementWaitCondition.Exists)]
+    [InlineData(ElementWaitCondition.Gone)]
+    public async Task Criteria_InAWindowOfADeniedApp_EndTheWaitAtOnce_WithNothingRead(ElementWaitCondition condition)
+    {
+        // Arrange - the window the selector names belongs to a password manager
+        BuildWindow(Button("OK"));
+        var sut = CreateSutInADeniedApp();
+
+        // Act
+        var result = await sut.WaitAsync(new ElementWaitRequest
+        {
+            Window = Editor, Criteria = Criteria(name: "OK"), Condition = condition, TimeoutMs = 5000
+        });
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Satisfied.Should().BeFalse();
+        result.TimedOut.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.TargetDeniedByPolicy));
+        result.Error.Should().Contain("1Password");
+        result.Polls.Should().Be(0);
+        _tree.Reads.Should().BeEmpty();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Ref_InAWindowOfADeniedApp_EndsTheWaitAtOnce_WithNothingRead()
+    {
+        // Arrange
+        BuildWindow(Button("OK"));
+        var okRef = await RefOf("OKBtn");
+        var sut = CreateSutInADeniedApp();
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var result = await sut.WaitAsync(new ElementWaitRequest { Ref = okRef, Condition = ElementWaitCondition.Enabled, TimeoutMs = 5000 });
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(UIElementErrorCode.TargetDeniedByPolicy));
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().HaveCount(readsBefore);
+    }
+
+    #endregion
 }

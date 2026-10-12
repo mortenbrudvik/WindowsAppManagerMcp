@@ -24,7 +24,8 @@ public enum ElementSearchScope
 
     /// <summary>
     /// Every visible top-level window on the desktop, in z-order, at most <see cref="Services.PopupService.DesktopWindowLimit"/>,
-    /// without the windows the target policy denies and the agent's own host windows (unless named as the window).
+    /// without the windows the target policy denies (a named one is refused) and the agent's own host windows (unless named
+    /// as the window).
     /// </summary>
     [JsonStringEnumMemberName("desktop")]
     Desktop

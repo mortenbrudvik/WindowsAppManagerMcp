@@ -11,7 +11,8 @@ namespace WindowsAppManagerMcp.Services;
 /// timeout, so a wait right after a launch covers a window that is still opening. The selector must end up naming one
 /// window (AmbiguousWindow with candidates otherwise). A gone wait does not wait for the window: when no window matches
 /// at the start, none of its elements is there either (satisfied, with a warning). A ref and withinRef name their window
-/// through the element registry, with no wait.</para>
+/// through the element registry, with no wait. A window of an app the user's target policy denies ends the wait before the
+/// first check (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>): nothing of it is read.</para>
 /// <para><b>Each check.</b> Criteria run find_ui_elements' search (<see cref="IElementSearchService"/>: the provider
 /// evaluates them under a cache request, the window's hung check comes first) with visibleOnly and enabledOnly off, since
 /// the condition decides what counts, and at most <see cref="CandidateLimit"/> matches described (detail standard only for
@@ -68,6 +69,7 @@ public sealed class ElementWaitService : IElementWaitService
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
     private readonly INativeWindowWrapper? _windows;
+    private readonly ITargetPolicy? _policy;
     private readonly TimeProvider _time;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
@@ -81,6 +83,8 @@ public sealed class ElementWaitService : IElementWaitService
     /// <param name="time">The clock; default the system clock.</param>
     /// <param name="delay">Waits between two checks; default Task.Delay on <paramref name="time"/>. Tests pass one that moves
     /// a manual clock.</param>
+    /// <param name="policy">The user's target policy, which refuses a wait on a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
     public ElementWaitService(
         IElementSearchService search,
         IElementRegistry registry,
@@ -89,7 +93,8 @@ public sealed class ElementWaitService : IElementWaitService
         IUiaWorker worker,
         INativeWindowWrapper? windows = null,
         TimeProvider? time = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        ITargetPolicy? policy = null)
     {
         _search = search;
         _registry = registry;
@@ -97,6 +102,7 @@ public sealed class ElementWaitService : IElementWaitService
         _tree = tree;
         _worker = worker;
         _windows = windows;
+        _policy = policy;
         _time = time ?? TimeProvider.System;
         _delay = delay ?? ((wait, token) => Task.Delay(wait, _time, token));
     }
@@ -191,6 +197,12 @@ public sealed class ElementWaitService : IElementWaitService
             if (await FindWindowAsync(progress, cancellationToken).ConfigureAwait(false) is { } early)
             {
                 return early;
+            }
+
+            // Nothing of a window of an app the user denies is read, so nothing of it can be waited for
+            if (UiaTargets.PolicyRefusal(service._windows, service._policy, _window) is { } denied)
+            {
+                return Ended(nameof(UIElementErrorCode.TargetDeniedByPolicy), denied);
             }
 
             long lastProgress = 0;
@@ -431,7 +443,7 @@ public sealed class ElementWaitService : IElementWaitService
                         $"{ConditionName(_condition)}. Find the window that replaced it with find_windows."));
 
                 case UIElementErrorCode.InvalidControlType or UIElementErrorCode.AutomationUnavailable or
-                    UIElementErrorCode.ElementStale or UIElementErrorCode.AmbiguousElement:
+                    UIElementErrorCode.ElementStale or UIElementErrorCode.AmbiguousElement or UIElementErrorCode.TargetDeniedByPolicy:
                     return Check.End(Ended(code.ToString(), found.Error ?? code.ToString()));
 
                 default:

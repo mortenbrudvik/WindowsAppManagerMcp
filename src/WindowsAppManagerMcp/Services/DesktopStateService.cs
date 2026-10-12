@@ -48,7 +48,7 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <param name="elements">get_ui_elements' walk (refs, hung-window precheck, warm-up).</param>
     /// <param name="popups">The target's popups and find_ui_elements' default scope.</param>
     /// <param name="screenshots">capture_window's capture (captureId).</param>
-    /// <param name="policy">The user's target policy: never a capture of a denied window, never an unasked read of one.</param>
+    /// <param name="policy">The user's target policy: never a read or a capture of a denied window, named or not.</param>
     /// <param name="toolsets">The tools the server serves; the capture follows capture_window. Null: every tool.</param>
     public DesktopStateService(
         IWindowService windows,
@@ -115,11 +115,12 @@ public sealed class DesktopStateService : IDesktopStateService
             errors.Add(refusal);
         }
 
-        // Keyboard focus is in the window in front: when that window is not read unasked, neither is its focus
+        // Keyboard focus is in the window in front: when that window is not read (the agent's host unless it was named, an app
+        // the user's policy denies), neither is its focus. Checked before the read, so neither is warmed up or read at all
         var readFocus = include.Contains(DesktopStateSection.Focus);
-        if (readFocus && target.Refusal is { ErrorCode: nameof(InputErrorCode.TargetIsAgentHost) or nameof(InputErrorCode.TargetDeniedByPolicy) } skipped)
+        if (readFocus && ForegroundRefusal(foreground, request.Window) is { } skipped)
         {
-            errors.Add(FocusError(skipped.ErrorCode, "the window in front"));
+            errors.Add(FocusError(skipped, "the window in front"));
             readFocus = false;
         }
 
@@ -229,14 +230,29 @@ public sealed class DesktopStateService : IDesktopStateService
         return new DesktopStateSnapshot(state, image);
     }
 
-    /// <summary>The window to read: the one named, else the window in front unless it is the agent's host or a denied app.</summary>
+    /// <summary>
+    /// The window to read: the one named unless the user's policy denies it, else the window in front unless it is the agent's
+    /// host or a denied app.
+    /// </summary>
     private Target ChooseTarget(nint? named, WindowInfo? foreground)
     {
         if (named is { } window)
         {
-            return _windows.IsValidWindow(window)
-                ? new Target(window, Read(() => _windows.GetWindowInfo(window))?.Title, null)
-                : new Target(window, null, null, Invalid: true);
+            if (!_windows.IsValidWindow(window))
+            {
+                return new Target(window, null, null, Invalid: true);
+            }
+
+            // Named or not, a window of an app the user denies is not read, as get_ui_elements and capture_window refuse it
+            var info = Read(() => _windows.GetWindowInfo(window));
+            if (info != null && _policy.Evaluate(info) is { Allowed: false } denied)
+            {
+                return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetDeniedByPolicy),
+                    $"The window named ('{info.Title}', {info.ProcessName}) is refused by the user's target policy: {denied.Reason}. " +
+                    "Its elements, popups and capture were not read; no argument changes that."));
+            }
+
+            return new Target(window, info?.Title, null);
         }
 
         if (foreground is null)
@@ -265,6 +281,26 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     private static DesktopStateError TargetError(string code, string message) => new("target", code, message);
+
+    /// <summary>
+    /// Why the window in front, and so the keyboard focus in it, is not read: TargetIsAgentHost for the agent's host unless it
+    /// is the window named, TargetDeniedByPolicy for an app the user's policy denies. Null when it is read, and when nothing
+    /// is in front (the focus read then says where the focus is, and <see cref="FocusRefusal"/> checks that window).
+    /// </summary>
+    private string? ForegroundRefusal(WindowInfo? foreground, nint? named)
+    {
+        if (foreground is null)
+        {
+            return null;
+        }
+
+        if (foreground.IsAgentHost && foreground.Handle != named)
+        {
+            return nameof(InputErrorCode.TargetIsAgentHost);
+        }
+
+        return _policy.Evaluate(foreground) is { Allowed: false } ? nameof(InputErrorCode.TargetDeniedByPolicy) : null;
+    }
 
     /// <summary>Why the capture is not made: captures are turned off, or the policy denies the window (as capture_window).</summary>
     private DesktopStateError? CaptureRefusal(nint handle)
@@ -441,27 +477,27 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     /// <summary>
-    /// Why the focused element is left out: its window (the window in front when the read does not say) was not named and is
-    /// the agent's host or a window the policy denies, or it cannot be checked. A window that was named is read, as its
+    /// Why the focused element is left out, checked again after the read (the focus can move, or be in a window other than the
+    /// one in front): its window (the window in front when the read does not say) is a window the policy denies, named or
+    /// not; it was not named and is the agent's host, or cannot be checked. The agent's host that was named is read, as its
     /// elements are.
     /// </summary>
     private DesktopStateError? FocusRefusal(FocusedElementResult focused, nint? named, WindowInfo? foreground)
     {
         var window = focused.WindowHandle is { } known and not 0 ? (nint)known : foreground?.Handle ?? nint.Zero;
-        if (window != nint.Zero && window == named)
-        {
-            return null;
-        }
-
+        var isNamed = window != nint.Zero && window == named;
         var info = window == nint.Zero ? null : window == foreground?.Handle ? foreground : Read(() => _windows.GetWindowInfo(window));
         if (info is null)
         {
-            return new DesktopStateError("focus", nameof(UIElementErrorCode.OperationException),
-                "The window that holds the keyboard focus could not be read, so it could not be checked against the user's " +
-                "target policy, and the focused element was left out. Read it with get_focused_element.");
+            // The window named was checked against the policy before anything was read
+            return isNamed
+                ? null
+                : new DesktopStateError("focus", nameof(UIElementErrorCode.OperationException),
+                    "The window that holds the keyboard focus could not be read, so it could not be checked against the user's " +
+                    "target policy, and the focused element was left out. Read it with get_focused_element.");
         }
 
-        if (info.IsAgentHost)
+        if (info.IsAgentHost && !isNamed)
         {
             return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})");
         }

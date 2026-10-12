@@ -348,5 +348,27 @@ public class ElementReadServiceTableTests
         result.ErrorCode.Should().Be(UIElementErrorCode.NotResponding);
     }
 
+    [Fact]
+    public async Task ReadTable_OfARefInAWindowOfADeniedApp_IsRefused_BeforeAnyCellIsRead()
+    {
+        // Arrange - a password manager's entry list, with its passwords shown
+        var elementRef = Add(Grid(Cells(3, 2), "Title", "Password"));
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("KeePass");
+        var policy = new TargetPolicy(TargetPolicySettings.Default);
+        var sut = new ElementReadService(_tree, _worker, _registry,
+            new ElementSearchService(_tree, _worker, _registry, _windows.Object, policy: policy), _windows.Object, policy: policy);
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var result = await sut.ReadTableAsync(new ElementTableRequest(elementRef, 0, 50, 20, Timeout));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Rows.Should().BeNull();
+        _tree.Reads.Should().HaveCount(readsBefore, "no cell, header or pattern is read");
+        _worker.Calls.Should().Be(0);
+    }
+
     #endregion
 }

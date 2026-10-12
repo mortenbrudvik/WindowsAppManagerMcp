@@ -90,6 +90,29 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void EveryUiAutomationRead_GetsTheTargetPolicy()
+    {
+        // The user's target policy refuses the reads of a window of an app it denies: a read service built without it would
+        // read every window
+        var policy = _serviceProvider.GetRequiredService<ITargetPolicy>();
+
+        foreach (var service in new object[]
+                 {
+                     _serviceProvider.GetRequiredService<IUIElementService>(),
+                     _serviceProvider.GetRequiredService<IElementInspectionService>(),
+                     _serviceProvider.GetRequiredService<IElementSearchService>(),
+                     _serviceProvider.GetRequiredService<IElementReadService>(),
+                     _serviceProvider.GetRequiredService<IElementWaitService>(),
+                     _serviceProvider.GetRequiredService<IPopupService>(),
+                     _serviceProvider.GetRequiredService<IDesktopStateService>()
+                 })
+        {
+            service.GetType().GetField("_policy", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service)
+                .Should().BeSameAs(policy, "{0} reads UI Automation", service.GetType().Name);
+        }
+    }
+
+    [Fact]
     public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
     {
         // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's

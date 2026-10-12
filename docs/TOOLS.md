@@ -59,9 +59,10 @@ The policy applies to:
 - [close_window](#close_window) and [close_windows_batch](#close_windows_batch) (per window), even with `force: true`, and [close_application](#close_application) (the whole application, refused before anything is sent);
 - [focus_window](#focus_window), the other [Window Control](#window-control) tools, the [Batch Operations](#batch-operations) (per window) and [apply_layout](#apply_layout): these tools do not move, resize, restore, maximize, minimize, raise or activate a denied window, and focus_window neither activates a denied app's modal dialog for its owner nor restores a minimized window that owns a denied app's window (the restore would show it again);
 - [kill_process](#kill_process), even with `forceKill: true`; a forced kill ends the whole process tree, so every process in the tree must pass the policy;
-- [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read.
+- [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements), before any pixel or element is read;
+- the UI Automation reads, named or not, before any warm-up or read: [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements) (the window named or withinRef's window; a `desktop` search leaves the denied windows it was not named out), [get_focused_element](#get_focused_element) and [get_element_at_point](#get_element_at_point) (the window in front or at the point, and the element's own window), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element), [get_active_popups](#get_active_popups) and [get_desktop_state](#get_desktop_state) (the window it reads, and the focus). A window whose process name cannot be read is refused as well while the policy denies anything. [find_windows](#find_windows) and the other window lists still list a denied app's windows with their titles.
 
-[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area. Keeping such a window minimized limits what the agent can see, but it is not a guarantee: the window tools above do not restore or raise it, yet input still can (a click on its taskbar button, Alt+Tab), and so can the app itself (for example when it is started again with [launch_application](#launch_application)). Restoring an allowed window with the other window tools (for example set_window_state `restore`) can also show a denied app's dialog that the window owns; focus_window checks those windows first. So close such apps, or keep them on another virtual desktop, while the agent works. The UI Automation and browser reading tools are not covered yet for a window they are given; only [find_ui_elements](#find_ui_elements) with `scope: "desktop"` leaves out the denied windows it was not named (roadmap M3.5).
+[take_screenshot](#take_screenshot) and [capture_region](#capture_region) are not refused, and they do not black out a denied window that is visible in the captured area. Keeping such a window minimized limits what the agent can see, but it is not a guarantee: the window tools above do not restore or raise it, yet input still can (a click on its taskbar button, Alt+Tab), and so can the app itself (for example when it is started again with [launch_application](#launch_application)). Restoring an allowed window with the other window tools (for example set_window_state `restore`) can also show a denied app's dialog that the window owns; focus_window checks those windows first. So close such apps, or keep them on another virtual desktop, while the agent works. The [browser reading](#browser-reading) tools are not covered.
 
 A window is matched by its process's image name; a UWP app's window by its own process and by its frame host (ApplicationFrameHost). A refused call returns `TargetDeniedByPolicy` and nothing is done: ask the user to do the step. A password manager that runs as a browser extension is part of the browser process and cannot be told apart. Neither can a security prompt that runs inside a shared process (for example Explorer's "Open File - Security Warning"), so keep the agent away from such prompts.
 
@@ -2222,6 +2223,8 @@ Tools for reading UI elements through Windows UI Automation: one observation of 
 
 A window that got its page is remembered (until it closes), so later reads do not wait and carry no `accessibilityWarmup`; a window that stayed empty is waited for again, at most three times, and after that only checked. Only the window being read is asked: nothing global is changed, and no other application is touched. A window without a page (any native app, or a menu of the browser frame) is read as before.
 
+**Target policy.** A window of an app the user's [target policy](#target-policy) denies (password managers and credential prompts by default) is not read, whether it is named or not: these tools fail with `TargetDeniedByPolicy` before they warm it up or make any UI Automation call to it, as the captures do. Ask the user to do the step.
+
 **UI frameworks.** Elements say which UI framework provides them (`frameworkId`: `Win32`, `WPF`, `XAML`, `WinForm`, `DirectUI`, `Chrome` for web content, ...). get_focused_element, get_element_at_point and its `ancestors` name it on every element (find_ui_elements with `detail: "full"`); get_ui_elements names the window's at the top (`frameworkId`) and an element's only where it differs from the element it is inside, so a web page in a native frame shows where it starts (`Document 'Inbox' fw=Chrome` in the text format) without repeating it on every element.
 
 ### get_desktop_state
@@ -2248,12 +2251,12 @@ One compact observation of the desktop, and the recommended first call: what the
 | Section | Field | What it is |
 |---------|-------|------------|
 | `windows` | `windows`, `windowCount` | The user-facing windows front first, as [get_all_windows](#get_all_windows) lists them (no cloaked, tool, untitled or shell windows), at most `maxWindows`, each a compact row: `handle`, `title`, `process`, `state` (`normal`, `minimized`, `maximized`), `monitor` (its index) and `isAgentHost: true` for your own terminal or editor. `windowCount` is how many there are. Windows of apps the target policy denies are listed like any other, as find_windows lists them, but no tool acts on them |
-| `focus` | `focus` | The element with keyboard focus: `ref`, `controlType`, `name`, `automationId`, `bounds`, `windowHandle`, `processName`, `isPassword: true` for a password field. Its value is never returned here ([get_focused_element](#get_focused_element) reads it, never for a password field). Left out, with a `focus` error, when the focus is in a window that is not read unasked: your own host window (`TargetIsAgentHost`) or an app the policy denies (`TargetDeniedByPolicy`), unless that window is the one named |
+| `focus` | `focus` | The element with keyboard focus: `ref`, `controlType`, `name`, `automationId`, `bounds`, `windowHandle`, `processName`, `isPassword: true` for a password field. Its value is never returned here ([get_focused_element](#get_focused_element) reads it, never for a password field). Left out, with a `focus` error, when the focus is in a window that is not read: your own host window unless it is the one named (`TargetIsAgentHost`), or an app the policy denies, named or not (`TargetDeniedByPolicy`). The window in front is checked before the focus is read, so neither is read at all |
 | `popups` | `popups` | The target window's open menus, dropdowns, flyouts and dialogs, front first, as [get_active_popups](#get_active_popups) returns them (`ref`, `handle`, `kind`, `title`, `isBlocking`, ...) |
 | `elements` | `elements` | The target window's elements as [get_ui_elements](#get_ui_elements)' text format, one line per element with its ref first (`text`), with `count`, `truncated`, `truncationReason`, `scope` and `accessibilityWarmup` (see below) |
 | `screenshot` | `screenshot` and an image | A capture of the target window as [capture_window](#capture_window) makes it (the visible frame, JPEG or PNG, `screenshotMaxLongEdge` on the long edge), as image content before the JSON; `screenshot` has its metadata: `captureId` (for the mouse tools' image space), `imageToScreen`, `width`, `height`, `warnings`. Off by default |
 
-**The target window.** The elements, popups and screenshot are of the window named by `handle` or `window`, or else the window in front. The window in front is not read when it is your own host window (your terminal, editor or chat app: it holds the conversation, not the app you mean; error `TargetIsAgentHost`) or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`), or when no window is in front (`NoForegroundWindow`); the rest is still returned, and the `windows` rows give you a handle to name. Its keyboard focus is not read either (see `focus`). A named window is read as get_ui_elements reads it. The screenshot follows capture_window: never of a window the policy denies (`TargetDeniedByPolicy`, named or not), and refused before anything is read (`InvalidArguments`) when capture_window is not served (the `capture` toolset turned off, the tool excluded, or read-only mode). A minimized window is not captured (`WindowMinimized` in `errors`), and its elements are offscreen.
+**The target window.** The elements, popups and screenshot are of the window named by `handle` or `window`, or else the window in front. The window in front is not read when it is your own host window (your terminal, editor or chat app: it holds the conversation, not the app you mean; error `TargetIsAgentHost`) or an app the user's [target policy](#target-policy) denies (`TargetDeniedByPolicy`), or when no window is in front (`NoForegroundWindow`); the rest is still returned, and the `windows` rows give you a handle to name. Its keyboard focus is not read either (see `focus`). A named window is read as get_ui_elements reads it, unless the policy denies it: then its elements, popups and capture are left out with a `target` error (`TargetDeniedByPolicy`). The screenshot follows capture_window: never of a window the policy denies (`TargetDeniedByPolicy`, named or not), and refused before anything is read (`InvalidArguments`) when capture_window is not served (the `capture` toolset turned off, the tool excluded, or read-only mode). A minimized window is not captured (`WindowMinimized` in `errors`), and its elements are offscreen.
 
 **Elements.** The walk is get_ui_elements' (the hung-window check, `NotResponding`; the web-content warm-up; every element gets its ref), with `interactableOnly` (default true: enabled elements that are keyboard-focusable or have an action pattern), on-screen elements only, up to 10 levels deep and at most `maxElements` lines (default 80), breadth first. `scope` is find_ui_elements' [scope](#find_ui_elements) and has the same default: while the window (or one of its popups) is in front, its open popups (not tooltips) are walked first, front first, within half of `maxElements`, and then the window with what is left; each window's lines then follow a header line that starts with `#`:
 
@@ -2459,6 +2462,7 @@ w4120035e2 Edit 'Text Editor' aid=15 @100,160 1200x740
 | `OperationTimedOut` | The timeout passed before any element matching the filters was found (`error` says how many elements were read), or UI Automation stopped answering before one was (the application may be hung). While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error while reading the window; see `error` |
 | `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read. Wait, then try again |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was read. Ask the user |
 
 ---
 
@@ -2497,7 +2501,7 @@ Find elements in a window by name, automation id, control type and class, in one
 **Popups and scope (roadmap M3.5):** a context menu (`#32768`), a combo box's list (`ComboLBox`), a WPF popup, a WinUI flyout, a menu a WebView2 page draws and most dialogs are top-level windows of their own, outside the window's element tree, so a search of the window alone cannot find "Delete" in its context menu. `scope` says which windows are searched:
 - `window`: the window alone (the only scope with `withinRef`).
 - `windowAndPopups`: the window and its open popups, the windows [get_active_popups](#get_active_popups) lists (owned windows, popup, tool and dialog windows of its process that no other main window of the process owns, popups of a WebView2 child process), front first: the popups before the window, since they are in front of it. With more than 16 popups open, the ones furthest back are not searched (`truncationReason: "WindowLimit"`).
-- `desktop`: every visible window, front first, at most 40 (the named window first, when one is given; without `handle`, `window` or `withinRef` the desktop alone). Windows whose process the [target policy](#target-policy) denies, and the agent's own host windows (its terminal or editor and their popups), are left out and counted in `windowsExcluded`, unless named: a window nobody named is not read for the agent, while reading a named window stays allowed, as it always was for find_ui_elements and get_ui_elements. Windows beyond 40 are not searched (`truncationReason: "WindowLimit"`).
+- `desktop`: every visible window, front first, at most 40 (the named window first, when one is given; without `handle`, `window` or `withinRef` the desktop alone). Windows whose process the [target policy](#target-policy) denies are left out and counted in `windowsExcluded` (a named one fails the call with `TargetDeniedByPolicy`, as every read of it does), and so are the agent's own host windows (its terminal or editor and their popups) unless named: a host window nobody named is not read for the agent, while a named one is read, as it always was for find_ui_elements and get_ui_elements. Windows beyond 40 are not searched (`truncationReason: "WindowLimit"`).
 - Left out, the scope is `windowAndPopups` when the window, a window it owns or another window of its process is in front (an open menu belongs to the app in front: it closes when the app loses the foreground), else `window`. The result's `scope` says which one ran.
 
 The tools that name one element by these criteria, [read_element_text](#read_element_text), [wait_for_element](#wait_for_element) and [element_action](#element_action), take the same `scope` (not with `ref`) and search the same way, so their criteria can name an item of an open menu or a button of a dialog.
@@ -2576,6 +2580,7 @@ Every window is searched under the one `timeoutMs`, the one `maxResults` and the
 | `OperationTimedOut` | The timeout passed before any element matched, or UI Automation stopped answering before one did. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 | `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read. Wait, then try again |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the window's app; nothing was read. Ask the user |
 
 ---
 
@@ -2897,6 +2902,7 @@ Get the UI element that has keyboard focus, with the top-level window and proces
 | `ElementNotFound` | No element has keyboard focus |
 | `ElementAccessFailed` | The focused element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the window in front, or of the window the focused element is in; nothing of the element is returned. Ask the user |
 | `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application that has focus may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
@@ -2981,6 +2987,7 @@ The coordinates are screen pixels, not image pixels; see [Coordinate space](#coo
 | `ElementNotFound` | UI Automation found no element at the point |
 | `ElementAccessFailed` | The element disappeared while it was read |
 | `AutomationUnavailable` | UI Automation not available |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the window at the point, or of the element's own window; nothing of the element is returned. Ask the user |
 | `OperationTimedOut` | UI Automation did not answer within `timeoutMs`; the application at the point may be hung. While earlier reads of that application are still stuck, the call fails at once without waiting |
 | `OperationException` | Unexpected UI Automation error; see `error` |
 
@@ -3052,6 +3059,7 @@ Without `handle` or `window` it lists the popups of the app in front: the window
 | Code | Description |
 |------|-------------|
 | `InvalidHandle` | The window handle is no window (it closed) |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the window named; none of its popups was listed or read. Ask the user |
 | `WindowNotFound` | No window is in front (the desktop or the lock screen has focus) and none was named, or a `window` selector named no window (a tool error) |
 
 ---
@@ -3133,6 +3141,7 @@ A password field (`isPassword`) is never read, through any source: the call succ
 | `ElementNotFound` | The criteria found no element among the visible ones |
 | `ElementAccessFailed` | The element disappeared while it was read, its password flag could not be read, or the search skipped parts of the window |
 | `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the ref's window (or of the window the criteria search); nothing was read. Ask the user |
 | `OperationTimedOut` | UI Automation did not answer within `timeoutMs`, or the criteria's search did not finish; while earlier reads of that application are still stuck, the call fails at once |
 | `WindowNotFound`, `AmbiguousWindow`, `InvalidControlType` | The `window` selector or a `controlType` name of the criteria, as in [find_ui_elements](#find_ui_elements) |
 | `AutomationUnavailable` | UI Automation not available |
@@ -3210,6 +3219,7 @@ A cell's text is its name, else its value (never a password field's: such a cell
 | `ElementStale`, `AmbiguousElement` | The ref no longer names an element, or several now fit it (see [Element refs](#ui-automation)); nothing was read |
 | `ElementAccessFailed` | The table disappeared while it was read; a row or cell that disappears is read as far as it still can be (a cell that is gone is `null`) |
 | `NotResponding` | The window does not respond (Windows reports it hung, or it did not answer a message within 500 ms); nothing was read |
+| `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the ref's window (or of the window the criteria search); nothing was read. Ask the user |
 | `OperationTimedOut` | UI Automation did not answer before any row was read; while earlier reads of that application are still stuck, the call fails at once |
 | `AutomationUnavailable` | UI Automation not available |
 | `OperationException` | Unexpected UI Automation error; see `error` |
@@ -3265,6 +3275,7 @@ Wait on the server until a UI element condition holds (roadmap M3.8), instead of
 | Timed out | `WaitTimedOut` | `timedOut` `true`, `lastObservedState` (for example `Button 'OK' (w4120035e9) is disabled`, or `no element matches name 'OK'`), `element` as last seen, `matchCount`; `error` says what did not happen. Also when the window never appeared (no `windowHandle`, `polls` 0) |
 | The window closed | `WindowNotFound` | The window closed (or can no longer be read) during the wait, for any condition but `gone`. Ends at once, `timedOut` `false` |
 | A stale ref | `ElementStale`, `AmbiguousElement` | `ref` (or `withinRef`, with an `error` that starts with `withinRef:`) no longer names an element, for any condition but `gone`. Ends at once: find the element again, never act on a look-alike |
+| A denied app | `TargetDeniedByPolicy` | The user's [target policy](#target-policy) denies the app of the window (the selector's once it is there, or the ref's), for any condition, `gone` included. Ends before the first check, with nothing read (`polls` 0): ask the user |
 | Several windows | `AmbiguousWindow` | `window` names several windows: `candidates`. Ends at once |
 | A window selector that ends wait_for_window | its code (`InvalidHandle`, `InvalidArguments`) | A `window.handle` that is no window, or a selector that cannot be used |
 | An argument that cannot be used | `InvalidArguments` (tool error), `InvalidControlType` | Not exactly one of `ref` and the criteria, criteria without `window` or `withinRef` (or with both), `window` with `ref`, something that is no ref, an invalid regex, `expected` missing or not allowed, a toggle state other than on, off or indeterminate, or `timeoutMs` outside 0-60000; nothing was waited for. During the wait: `value_equals` when only password fields match, or a regex that runs longer than 100 ms on a name |
@@ -5888,6 +5899,18 @@ Since 1.14.0 (roadmap M3):
   `"File>Save As"`, with `handle` or `window` alone allowed), and its result a `steps` field for it. New UI element
   errorCodes `DialogNotFound` (21), `DialogNotCompleted` (22) and `FileExists` (23, the same name as the captures'
   code).
+- **Target policy (M3 review).** The default deny list adds `CredDialogHost` (a Windows credential prompt), `CHXSmartScreen`
+  and `smartscreen` (the SmartScreen prompt "Windows protected your PC") and `SecHealthUI` (the Windows Security app), so
+  input, window changes, closes, kills and captures of them now return `TargetDeniedByPolicy`; a `WAM_DENY_PROCESSES`
+  value without `default` is unchanged. The policy now also covers the UI Automation reads of a window, named or not:
+  [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element),
+  [get_element_at_point](#get_element_at_point), [read_element_text](#read_element_text), [read_table](#read_table),
+  [wait_for_element](#wait_for_element) and [get_active_popups](#get_active_popups) of a window of a denied app (password
+  managers and credential prompts by default) fail with `TargetDeniedByPolicy` (the new UI element errorCode 24) before any
+  warm-up or read, where they used to read a window they were given; capture_window and capture_with_elements already
+  refused it. [get_desktop_state](#get_desktop_state) no longer reads a denied window that is named (a `target` error),
+  and checks the window in front before it reads the focus, so the focus of the agent's own host or of a denied app in
+  front is no longer read at all. The window lists ([find_windows](#find_windows), get_desktop_state's rows) are unchanged.
 - **Audit log lines of the dialogs and element names (M3 review).** The [audit log](#audit-log) line of
   respond_to_dialog and file_dialog names the dialog they answered as its `target` (handle, title and process), also
   when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the
@@ -6096,7 +6119,7 @@ table, it gives more detail.
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
 | `StillOpen` | [close_window](#close_window), close_windows_batch (per window), [close_application](#close_application) | The close message was sent, but the window was still open and visible when the wait (`waitMs`, `timeoutMs`) ended, without a prompt: the app is busy or slow, or ignores the request. Check it, wait longer, or end the app with kill_process |
 | `StorageUnavailable` | [Layout Presets](#layout-presets) tools (tool error from get_layout and list_layouts) | The layouts folder cannot be created or used |
-| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
+| `TargetDeniedByPolicy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [Window Control](#window-control) tools ([focus_window](#focus_window), [close_window](#close_window), ...), [Batch Operations](#batch-operations) (per window), [close_application](#close_application), [apply_layout](#apply_layout), [kill_process](#kill_process), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [UI Automation](#ui-automation) reads ([get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element), [get_element_at_point](#get_element_at_point), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text), [read_table](#read_table), [wait_for_element](#wait_for_element); [get_desktop_state](#get_desktop_state) in `errors`) | The server's [target policy](#target-policy) (`WAM_DENY_PROCESSES`, `WAM_ALLOW_PROCESSES`) refuses the window's or the process's app; no tool argument (`force`, `forceKill`) changes it, so ask the user. Nothing was done or read, except when a denied dialog of a minimized window appears only after focus_window restored the window (`error` says so) |
 | `TargetElevated` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The window the input would reach runs at a higher integrity level than the server (for example as administrator), so Windows would drop the input; nothing was sent |
 | `TargetInMenuMode` | [type_text](#type_text) | A menu is active in the receiving window, so letters would select menu items; nothing was typed |
 | `TargetIsAgentHost` | [Input Simulation](#input-simulation) tools, [element_action](#element_action) | The input would reach the agent's own terminal, editor or chat app, which only `windowHandle` naming it with `allowHostTarget: true` allows; nothing was sent |

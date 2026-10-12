@@ -23,6 +23,11 @@ public sealed partial class ElementReadService
         }
 
         var handle = lookup.WindowHandle;
+        if (UiaTargets.PolicyRefusal(_windows, _policy, handle) is { } denied)
+        {
+            return TableFailure((long)handle, lookup.Ref, startRow, denied, UIElementErrorCode.TargetDeniedByPolicy, stopwatch, null);
+        }
+
         var progress = new TableProgress(startRow, maxColumns);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(request.Timeout);

@@ -514,6 +514,67 @@ public class ElementSearchServiceTests
 
     #endregion
 
+    #region Target policy
+
+    [Fact]
+    public async Task Find_InAWindowOfADeniedApp_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange - the window named belongs to a password manager
+        BuildEditor();
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("Bitwarden");
+        var warmup = new Mock<IAccessibilityWarmup>();
+        var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object, warmup.Object,
+            policy: new TargetPolicy(TargetPolicySettings.Default));
+
+        // Act
+        var result = await sut.FindAsync(Query(name: "Search", detail: ElementDetail.Standard));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("Bitwarden");
+        result.Elements.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+        warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Find_BelowARefOfAWindowOfADeniedApp_IsRefused()
+    {
+        // Arrange - a ref an earlier read returned; the user has denied the app since (the policy is read at start, so in
+        // practice the ref came from an earlier session's server, or the app was not denied then)
+        var (_, _, options) = BuildEditor();
+        var withinRef = _registry.Register(Handle, _tree.ReadElement(options), new ElementOrigin(_registry.NextGeneration()))!;
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("Bitwarden");
+        var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object,
+            policy: new TargetPolicy(TargetPolicySettings.Default));
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var result = await sut.FindAsync(Query(name: "Search", withinRef: withinRef));
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        _tree.Reads.Should().HaveCount(readsBefore);
+    }
+
+    [Fact]
+    public async Task Find_InAWindowOfAnAllowedApp_Searches()
+    {
+        BuildEditor();
+        _windows.Setup(w => w.GetProcessName(300u)).Returns("notepad");
+        var sut = new ElementSearchService(_tree, _worker, _registry, _windows.Object,
+            policy: new TargetPolicy(TargetPolicySettings.Default));
+
+        var result = await sut.FindAsync(Query(name: "Save"));
+
+        result.Success.Should().BeTrue();
+        result.MatchCount.Should().Be(1);
+    }
+
+    #endregion
+
     #region Web content warm-up (roadmap M3.3)
 
     private static readonly AccessibilityWarmupInfo Warmed =

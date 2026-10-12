@@ -7,7 +7,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>find_ui_elements (roadmap M3.4); see <see cref="IElementSearchService"/>.</summary>
 /// <remarks>
-/// <para>Order of work, all in one read on the worker thread: the hung-window check (NotResponding), the window's node
+/// <para>Order of work: the target policy's check of the named window (TargetDeniedByPolicy, before the worker, see
+/// <see cref="UiaTargets.ReadVerdict"/>; a withinRef search names withinRef's window), then all in one read on the worker
+/// thread: the hung-window check (NotResponding), the window's node
 /// (WindowNotFound), the warm-up of a window that shows web content (Chromium, Electron, WebView2: see
 /// <see cref="IAccessibilityWarmup"/>, roadmap M3.3) within a third of the timeout, withinRef resolved through the
 /// registry (its own codes: ElementStale, AmbiguousElement), the search
@@ -77,6 +79,7 @@ public sealed partial class ElementSearchService : IElementSearchService
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
     private readonly IPopupService? _popups;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the search under a deadline.</param>
@@ -87,13 +90,16 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
     /// <param name="popups">The windows of the windowAndPopups and desktop scopes (roadmap M3.5). The server always passes
     /// it; without it every search covers the window alone.</param>
+    /// <param name="policy">The user's target policy, which refuses a search of a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no named window is refused.</param>
     public ElementSearchService(
         IUiaTree tree,
         IUiaWorker worker,
         IElementRegistry registry,
         INativeWindowWrapper? windows = null,
         IAccessibilityWarmup? warmup = null,
-        IPopupService? popups = null)
+        IPopupService? popups = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
@@ -101,6 +107,7 @@ public sealed partial class ElementSearchService : IElementSearchService
         _windows = windows;
         _warmup = warmup;
         _popups = popups;
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -149,6 +156,12 @@ public sealed partial class ElementSearchService : IElementSearchService
             EnabledOnly: query.EnabledOnly);
         var maxResults = Math.Clamp(query.MaxResults, 1, MaxResultsLimit);
         var timeout = query.Timeout ?? DefaultTimeout;
+
+        // Before the worker: no warm-up and no UI Automation call reaches a window of an app the user denies, named or not
+        if (UiaTargets.PolicyRefusal(_windows, _policy, handle) is { } denied)
+        {
+            return Failure(denied, UIElementErrorCode.TargetDeniedByPolicy);
+        }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
