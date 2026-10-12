@@ -22,9 +22,10 @@ None of the M3 behaviour has run against a real desktop: every new UI Automation
    characters), the roadmap As-shipped notes and defect register, BACKLOG.md. Delete this file.
 3. Mark the PR ready and merge it with a merge commit (no squash) after green CI.
 4. Release 1.15.0 (steps in .claude/commands/commit.md). **Release blocker:** the default UI Automation engine is now
-   uia3. Before the release the user runs the gated no-input UI Automation scenarios on a real desktop with both
-   engines (FixtureUiaEngineTests, FixtureUiElementsTests, with WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1; run by the user,
-   never by an agent). If uia3 and uia2 differ, set UiaEngineOptions.Default to uia2 for the release.
+   uia3. Before the release the user runs the whole gated no-input tier twice on a real desktop, with WAM_UIA_ENGINE
+   unset (uia3) and with WAM_UIA_ENGINE=uia2 (the commands and what to compare are in TESTING.md, "Release gate: the
+   UI Automation engines"; run by the user, never by an agent). If uia3 and uia2 differ, set UiaEngineOptions.Default
+   to uia2 for the release.
 
 ## Open items from the waves
 
