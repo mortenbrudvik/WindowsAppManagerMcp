@@ -80,7 +80,7 @@ public sealed partial class ElementActionService
             var properties = element.Properties;
             if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
             {
-                return Failed(call, nameof(ElementActionErrorCode.ElementNotEnabled),
+                return Failed(call, nameof(UIElementErrorCode.ElementNotEnabled),
                     $"{Name(element)} is disabled: it takes no input until the application enables it. Nothing was done. Check " +
                     "what it waits for (another field, a selection) and read it again.");
             }
@@ -88,7 +88,7 @@ public sealed partial class ElementActionService
             if (NeedsUsableElement(request.Action) && properties.IsOffscreen)
             {
                 // Every element of a minimized window is offscreen, and scrolling cannot help there
-                return Failed(call, nameof(ElementActionErrorCode.ElementOffscreen), _windows.IsIconic(call.Window)
+                return Failed(call, nameof(UIElementErrorCode.ElementOffscreen), _windows.IsIconic(call.Window)
                     ? $"{Name(element)} is offscreen because its window {(long)call.Window} is minimized. Nothing was done. Restore " +
                       "the window first (set_window_state with state normal), then try again."
                     : $"{Name(element)} is offscreen (scrolled out of view, or in a collapsed or hidden part). Nothing was done. Use " +
@@ -292,7 +292,7 @@ public sealed partial class ElementActionService
                 var state = range.State;
                 if (state.IsReadOnly)
                 {
-                    return Refuse(call, nameof(ElementActionErrorCode.ElementReadOnly), $"{Name(element.Element)} is read-only. Nothing was done.");
+                    return Refuse(call, nameof(UIElementErrorCode.ElementReadOnly), $"{Name(element.Element)} is read-only. Nothing was done.");
                 }
 
                 TryParseNumber(request.Value, out var number);
@@ -332,7 +332,7 @@ public sealed partial class ElementActionService
         var value = Pattern<IUiaValuePattern>(element, UiaPatterns.Value);
         if (value != null && value.IsReadOnly)
         {
-            return Refuse(call, nameof(ElementActionErrorCode.ElementReadOnly),
+            return Refuse(call, nameof(UIElementErrorCode.ElementReadOnly),
                 $"{Name(element.Element)} is read-only (its Value pattern says so). Nothing was done.");
         }
 
@@ -822,7 +822,7 @@ public sealed partial class ElementActionService
     private static ElementActionResult NotSupported(ActionCall call, PreparedElement element, string what, string? hint)
     {
         var patterns = UiaPatternNames.All(element.Element.Patterns);
-        return call.Fail(nameof(ElementActionErrorCode.PatternNotSupported),
+        return call.Fail(nameof(UIElementErrorCode.PatternNotSupported),
             $"{what}, and {Name(element.Element)} supports {(patterns.Count == 0 ? "no pattern" : string.Join(", ", patterns))}. " +
             $"Nothing was done.{(hint == null ? string.Empty : " " + hint)}");
     }

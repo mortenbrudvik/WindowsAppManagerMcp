@@ -134,7 +134,10 @@ public enum UIElementErrorCode
     /// <summary>A controlTypes entry is not a known control type name.</summary>
     InvalidControlType = 7,
 
-    /// <summary>No element has keyboard focus, or there is no element at the point.</summary>
+    /// <summary>
+    /// No element has keyboard focus, there is no element at the point, or the element criteria of read_element_text or
+    /// element_action (roadmap M3.9, M3.6) matched no element of the window.
+    /// </summary>
     ElementNotFound = 8,
 
     /// <summary>The point is not on any monitor.</summary>
@@ -160,10 +163,50 @@ public enum UIElementErrorCode
     AmbiguousElement = 12,
 
     /// <summary>
-    /// The element supports none of the UI Automation patterns (or the structure) the call needs, for example read_table on
-    /// an element that is neither a grid nor a list of rows (roadmap M3.9). Nothing was read.
+    /// The element supports none of the UI Automation patterns (or the structure) the call needs: read_table on an element
+    /// that is neither a grid nor a list of rows (roadmap M3.9; nothing was read), or element_action on an element without
+    /// the patterns the action needs and no mouse fallback allowed or possible (roadmap M3.6; nothing was done, the message
+    /// lists the patterns it has).
     /// </summary>
-    PatternNotSupported = 13
+    PatternNotSupported = 13,
+
+    // element_action (roadmap M3.6). The tool also returns the codes of the parts it reuses, under their own names: the
+    // element ref's (ElementStale, AmbiguousElement, NotResponding, OperationTimedOut), the input guard's for the element's
+    // window (TargetDeniedByPolicy, TargetIsAgentHost, TargetElevated, BlockedByModal, SessionLocked, DesktopUnavailable),
+    // the pause and the gate (PausedByUser, InputBusy), activation's, and the input tools' for a mouse or keyboard path.
+
+    /// <summary>element_action: the element is disabled. Nothing was done.</summary>
+    ElementNotEnabled = 14,
+
+    /// <summary>element_action: the element is offscreen (scrolled out of view, in a collapsed or hidden part). Nothing was done.</summary>
+    ElementOffscreen = 15,
+
+    /// <summary>element_action: set_value, append_text or set_range_value on a read-only element. Nothing was done.</summary>
+    ElementReadOnly = 16,
+
+    /// <summary>
+    /// element_action's keyboard path (set_value mode type or paste): after focusing the element, keyboard focus was not on
+    /// it, so no key was sent (select-all would have reached another control).
+    /// </summary>
+    FocusNotOnElement = 17,
+
+    /// <summary>
+    /// element_action: the application reported an error for the action (the element refused it, or it is not available in
+    /// its current state). Whether anything changed is in before/after.
+    /// </summary>
+    ActionFailed = 18,
+
+    /// <summary>
+    /// element_action: the action was sent but had not returned when the timeout passed, and no new window of the
+    /// application appeared. It may still take effect: read the element's state before you repeat it.
+    /// </summary>
+    ActionTimedOut = 19,
+
+    /// <summary>
+    /// element_action: earlier actions on the application are still blocked (a dialog they opened is still open), so this
+    /// one was not started. Deal with the dialog first.
+    /// </summary>
+    ActionsPending = 20
 }
 
 /// <summary>

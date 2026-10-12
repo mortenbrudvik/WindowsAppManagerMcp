@@ -334,7 +334,7 @@ public sealed partial class ElementActionService : IElementActionService
         switch (outcome.Status)
         {
             case UiaActionStatus.Refused:
-                return call.Fail(nameof(ElementActionErrorCode.ActionsPending), outcome.Message!);
+                return call.Fail(nameof(UIElementErrorCode.ActionsPending), outcome.Message!);
             case UiaActionStatus.Pending:
                 return Pending(call, windowsBefore, method, "had not returned");
         }
@@ -347,9 +347,9 @@ public sealed partial class ElementActionService : IElementActionService
             UiaElementUnavailableException => call.Fail(nameof(UIElementErrorCode.ElementStale),
                 $"The element disappeared while it was acted on ({outcome.Error.Message}). Whether the action took effect is " +
                 "unknown: read the window again before you repeat it."),
-            NotSupportedException => call.Fail(nameof(ElementActionErrorCode.PatternNotSupported),
+            NotSupportedException => call.Fail(nameof(UIElementErrorCode.PatternNotSupported),
                 $"The application does not support {method} on this element ({outcome.Error.Message})."),
-            _ => call.Fail(nameof(ElementActionErrorCode.ActionFailed),
+            _ => call.Fail(nameof(UIElementErrorCode.ActionFailed),
                 $"The application refused {method}: {outcome.Error.Message}. The element may not allow it in its current state; " +
                 "read it again (find_ui_elements with detail standard) before you retry.")
         };
@@ -361,7 +361,7 @@ public sealed partial class ElementActionService : IElementActionService
         var opened = _probe.OpenedSince(windowsBefore);
         if (opened.Count == 0)
         {
-            return call.Fail(nameof(ElementActionErrorCode.ActionTimedOut),
+            return call.Fail(nameof(UIElementErrorCode.ActionTimedOut),
                 $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms and no new window of the application " +
                 "appeared: it may be busy. The action was sent and may still take effect, so do not repeat it blindly: read the " +
                 "element again (find_ui_elements with detail standard), or wait_for_window for a dialog.") with { Method = method };
@@ -418,7 +418,7 @@ public sealed partial class ElementActionService : IElementActionService
 
         if (point.Element is not { } at)
         {
-            return InputStep.Failed(call.Fail(nameof(ElementActionErrorCode.ElementOffscreen),
+            return InputStep.Failed(call.Fail(nameof(UIElementErrorCode.ElementOffscreen),
                 "The element has no point on screen to click (it is offscreen or has no bounds). Nothing was clicked. Use " +
                 "scroll_into_view first."));
         }
@@ -559,7 +559,7 @@ public sealed partial class ElementActionService : IElementActionService
 
         return focus.Element == true
             ? null
-            : call.Fail(nameof(ElementActionErrorCode.FocusNotOnElement),
+            : call.Fail(nameof(UIElementErrorCode.FocusNotOnElement),
                 $"Keyboard focus is not on the element after focusing it, so the keys would reach another control. {done} " +
                 "The element may not take focus this way: click it first (action click with fallback mouse), or use mode value.");
     }
@@ -622,7 +622,7 @@ public sealed partial class ElementActionService : IElementActionService
         // A toggle asked for a state it did not reach did not do what was asked
         if (request.Action == ElementActionKind.Toggle && request.Value != null && verified == false)
         {
-            return call.Fail(nameof(ElementActionErrorCode.ActionFailed),
+            return call.Fail(nameof(UIElementErrorCode.ActionFailed),
                 $"The element did not reach toggle state {ParseToggleState(request.Value)} after {element.Plan.Toggles} toggles " +
                 $"(it is {after.State?.ToggleState?.ToString() ?? "unknown"}). It may cycle through other states or refuse this one.") with
             {

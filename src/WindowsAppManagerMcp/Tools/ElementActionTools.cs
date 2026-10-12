@@ -201,7 +201,7 @@ public class ElementActionTools
 
         if (result.MatchCount == 0 || result.Elements is not { Count: > 0 } elements)
         {
-            return (null, Fail(nameof(ElementActionErrorCode.ElementNotFound),
+            return (null, Fail(nameof(UIElementErrorCode.ElementNotFound),
                 "No element of the window matches the criteria (offscreen and disabled elements included). Nothing was done. " +
                 "Check them with find_ui_elements, or get_ui_elements format text."));
         }
