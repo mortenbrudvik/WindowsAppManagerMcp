@@ -445,6 +445,11 @@ public class ModelTests
         ((int)UIElementErrorCode.ActionTimedOut).Should().Be(19);
         ((int)UIElementErrorCode.ActionsPending).Should().Be(20);
 
+        // respond_to_dialog and file_dialog (roadmap M3.5, M3.14)
+        ((int)UIElementErrorCode.DialogNotFound).Should().Be(21);
+        ((int)UIElementErrorCode.DialogNotCompleted).Should().Be(22);
+        ((int)UIElementErrorCode.FileExists).Should().Be(23);
+
         Enum.GetValues<UIElementErrorCode>().Select(code => (int)code).Should().OnlyHaveUniqueItems();
         typeof(UIElementErrorCode).Assembly.GetTypes().Where(t => t.IsEnum && t.Name.EndsWith("ErrorCode", StringComparison.Ordinal))
             .Where(t => t != typeof(UIElementErrorCode))

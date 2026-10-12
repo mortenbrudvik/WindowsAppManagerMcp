@@ -107,6 +107,11 @@ public static class ServiceRegistration
             sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IInputSession>(), sp.GetRequiredService<INativeInputWrapper>(),
             sp.GetRequiredService<IElementInspectionService>(), sp.GetRequiredService<IUIElementService>(), sp.GetRequiredService<IPopupService>(),
             sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
+        // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): searches and popups to find the elements, and
+        // every action through element_action's service above, so its guards apply to each step
+        services.AddSingleton<IMenuPathService, MenuPathService>();
+        services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IFileDialogService, FileDialogService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -202,6 +207,7 @@ public static class ServiceRegistration
         services.AddSingleton<ElementWaitTools>();
         services.AddSingleton<ElementActionTools>();
         services.AddSingleton<DesktopStateTools>();
+        services.AddSingleton<DialogTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -276,6 +282,7 @@ public static class ServiceRegistration
             .WithServerTools<ElementWaitTools>()
             .WithServerTools<ElementActionTools>()
             .WithServerTools<DesktopStateTools>()
+            .WithServerTools<DialogTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

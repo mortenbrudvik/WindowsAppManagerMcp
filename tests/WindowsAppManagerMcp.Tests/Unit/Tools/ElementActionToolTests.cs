@@ -31,7 +31,17 @@ public class ElementActionToolTests
         _registry.Setup(r => r.Lookup(It.IsAny<string>())).Returns((string r) => new ElementLookup(r, Handle, null, 1));
     }
 
-    private ElementActionTools CreateSut() => new(_actions.Object, _search.Object, _registry.Object);
+    private readonly Mock<IMenuPathService> _menuPaths = new();
+    private readonly Mock<IWindowService> _windowService = new();
+    private MenuPathRequest? _menuRequest;
+
+    private ElementActionTools CreateSut() =>
+        new(_actions.Object, _search.Object, _registry.Object, _windowService.Object, menuPaths: _menuPaths.Object);
+
+    private void SetUpMenuPaths() =>
+        _menuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((MenuPathRequest request, CancellationToken _) => _menuRequest = request)
+            .ReturnsAsync(new ElementActionResult(true, "menu_path", "w2e1", Handle, ElementActionStatus.Done, ElementActionMethod.Invoke));
 
     private static FoundElement Element(string elementRef, string name = "Save") =>
         new(elementRef, name, "Button", "SaveBtn", "Button", null, null, true, false, ["Invoke"]);
@@ -223,7 +233,8 @@ public class ElementActionToolTests
                 new DesktopState(true, request.Window ?? 0x77, "after", null, null, null, new DesktopInputState(false), null, null, null,
                     null, null, null, 9),
                 request.Include.Contains(DesktopStateSection.Screenshot) ? new EncodedImage([1, 2, 3], "image/png") : null));
-        return new ElementActionTools(_actions.Object, _search.Object, _registry.Object, _windows.Object, _desktopState.Object);
+        return new ElementActionTools(_actions.Object, _search.Object, _registry.Object, _windows.Object, _desktopState.Object,
+            _menuPaths.Object);
     }
 
     [Fact]
@@ -338,4 +349,101 @@ public class ElementActionToolTests
     }
 
     #endregion
+
+    [Fact]
+    public async Task MenuPath_FromAWindowAlone_StartsInTheWindow_WithTheScope()
+    {
+        SetUpMenuPaths();
+
+        var result = await CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, value: "File > Save As",
+            scope: ElementSearchScope.WindowAndPopups, timeoutMs: 3000).Payload<ElementActionResult>();
+
+        result.Success.Should().BeTrue();
+        _menuRequest.Should().BeEquivalentTo(new MenuPathRequest(Handle, null, ["File", "Save As"], ElementSearchScope.WindowAndPopups,
+            false, TimeSpan.FromSeconds(3)));
+        _search.VerifyNoOtherCalls();
+        _actions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_FromARef_StartsBelowItsElement_InItsWindow()
+    {
+        SetUpMenuPaths();
+
+        await CreateSut().ElementAction(ElementActionKind.MenuPath, @ref: "w1e30", value: "File>Save As");
+
+        (_menuRequest!.Window, _menuRequest.StartRef).Should().Be((Handle, "w1e30"));
+    }
+
+    [Fact]
+    public async Task MenuPath_FromAStaleRef_ReportsTheRegistrysError_AndOpensNothing()
+    {
+        SetUpMenuPaths();
+        _registry.Setup(r => r.Lookup("w1e30")).Returns(new ElementLookup("w1e30", 0, null, 0, UIElementErrorCode.ElementStale, "Its window closed."));
+
+        var result = await CreateSut().ElementAction(ElementActionKind.MenuPath, @ref: "w1e30", value: "File>Save As").Payload<ElementActionResult>();
+
+        (result.Success, result.Action, result.ErrorCode).Should().Be((false, "menu_path", "ElementStale"));
+        _menuPaths.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_FromCriteria_StartsBelowTheElementTheyFind()
+    {
+        SetUpMenuPaths();
+
+        await CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, controlType: "MenuBar", value: "File>Save As");
+
+        _query!.ControlTypes.Should().Equal("MenuBar");
+        _menuRequest!.StartRef.Should().Be("w1e7");
+        _actions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_WithoutAPath_IsRefusedBeforeAnythingIsSearched()
+    {
+        SetUpMenuPaths();
+
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle));
+
+        error.Message.Should().Contain("menu_path needs value");
+        _menuPaths.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_WithFallbackMouse_IsRefused_NotIgnored()
+    {
+        SetUpMenuPaths();
+
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, value: "File>Save As",
+            fallback: ElementActionFallback.Mouse));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("fallback mouse");
+        _menuPaths.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_WithObserveState_IsObserved_AfterThePathRan()
+    {
+        // Arrange - observe (roadmap M3.12) wraps menu_path (roadmap M3.5) as it wraps every other action
+        var order = new List<string>();
+        _menuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => order.Add("menu"))
+            .ReturnsAsync(new ElementActionResult(true, "menu_path", "w2e1", Handle, ElementActionStatus.Done, ElementActionMethod.Invoke));
+        var sut = CreateObservingSut();
+        _desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window}"))
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "after", null, null, null, new DesktopInputState(false),
+                null, null, null, null, null, null, 9), null));
+
+        // Act
+        var result = await sut.ElementAction(ElementActionKind.MenuPath, handle: Handle, value: "File>Save As", observe: ObserveMode.State);
+
+        // Assert
+        order.Should().Equal("menu", $"observe {Handle}");
+        var payload = result.Payload<ElementActionResult>();
+        (payload.Success, payload.Action).Should().Be((true, "menu_path"));
+        payload.Observed!.WindowHandle.Should().Be(Handle);
+    }
 }

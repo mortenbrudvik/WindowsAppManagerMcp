@@ -86,7 +86,14 @@ public enum ElementActionKind
 
     /// <summary>Window pattern: maximizes a window inside an application (not a top-level window: set_window_state).</summary>
     [JsonStringEnumMemberName("window_maximize")]
-    WindowMaximize
+    WindowMaximize,
+
+    /// <summary>
+    /// A path of menu items in value, such as "File>Save As" (roadmap M3.5): each item but the last is expanded, the last is
+    /// invoked, each through this tool's own action with its guards, through the submenu windows the items open.
+    /// </summary>
+    [JsonStringEnumMemberName("menu_path")]
+    MenuPath
 }
 
 /// <summary>What element_action may do when no pattern carries out the action (roadmap M3.6).</summary>
@@ -240,6 +247,8 @@ public sealed record OpenedWindow(long Handle, string Title, string? ClassName, 
 /// <param name="OpenedPopup">A new top-level window of the element's application that appeared during the action (a dialog,
 /// menu or dropdown), the topmost one when several did.</param>
 /// <param name="ReceivingWindow">The window the mouse or keyboard input went to, for a Mouse or Keyboard method.</param>
+/// <param name="Steps">menu_path: the items opened, in order, with their refs and the submenu windows they opened (also on a
+/// failure: the items done before it).</param>
 /// <param name="Observed">With observe 'state' or 'screenshot' (roadmap M3.12): get_desktop_state's observation of the
 /// element's window after the action; serialized last.</param>
 public sealed record ElementActionResult(
@@ -259,12 +268,13 @@ public sealed record ElementActionResult(
     string? Error = null,
     string? ErrorCode = null,
     double ElapsedMilliseconds = 0,
+    IReadOnlyList<MenuPathStep>? Steps = null,
     DesktopState? Observed = null);
 
 /// <summary>What element_action is asked to do (roadmap M3.6); the tool builds it from its arguments.</summary>
 /// <param name="Ref">The element, as a ref (the tool resolves element criteria to one first).</param>
 /// <param name="Value">set_value and append_text: the text; set_range_value: the number; toggle: on, off or indeterminate (or
-/// null: toggle once).</param>
+/// null: toggle once); menu_path: the path ("File>Save As"), which the tool carries out item by item.</param>
 /// <param name="AllowHostTarget">Lifts the host guard for the element's window (the tool allows it only for a window named by
 /// handle or ref).</param>
 /// <param name="Timeout">How long the action may block (a dialog it opened), and the bound of each read.</param>

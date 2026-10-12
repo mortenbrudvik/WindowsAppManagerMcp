@@ -54,7 +54,7 @@ public class AuditLogContractTests
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
             "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
-            "element_action", "close_window", "close_windows_batch", "close_application", "kill_process",
+            "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
     }
@@ -181,6 +181,33 @@ public class AuditLogContractTests
         var line = lines.Single();
         line.GetProperty("args").GetProperty("observe").GetString().Should().Be("state");
         line.GetRawText().Should().NotContain("Problems").And.NotContain("Google Chrome", "the observed elements and windows are never logged");
+    }
+
+    [Fact]
+    public async Task RespondToDialog_RecordsTheButton_AndWhetherTheDialogClosed()
+    {
+        var (_, lines) = await CallAsync("respond_to_dialog", EveryToolContractTests.ArgumentsFor("respond_to_dialog"));
+
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("button").GetString().Should().Be("no");
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("result").GetProperty("dialogClosed").GetBoolean().Should().BeTrue();
+        line.GetRawText().Should().NotContain("save changes", "the dialog's text is never logged");
+    }
+
+    [Fact]
+    public async Task FileDialog_RecordsThePathsLengthOnly_AndWhetherItCompleted()
+    {
+        var (_, lines) = await CallAsync("file_dialog", EveryToolContractTests.ArgumentsFor("file_dialog"));
+
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("meeting-notes", "a file name can say what the user works on");
+        var args = line.GetProperty("args");
+        args.GetProperty("pathLength").GetInt32().Should().Be(TypicalDesktop.SavePath.Length);
+        args.GetProperty("action").GetString().Should().Be("save");
+        args.GetProperty("overwrite").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("completed").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("promptHandled").GetBoolean().Should().BeTrue();
     }
 
     [Fact]

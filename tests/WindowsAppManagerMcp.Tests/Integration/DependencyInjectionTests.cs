@@ -90,6 +90,30 @@ public class DependencyInjectionTests : IDisposable
     }
 
     [Fact]
+    public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
+    {
+        // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's
+        // service, so its guards apply; resolving starts no UI Automation client
+        var actions = _serviceProvider.GetRequiredService<IElementActionService>();
+        var dialogs = _serviceProvider.GetRequiredService<IDialogService>();
+        var fileDialogs = _serviceProvider.GetRequiredService<IFileDialogService>();
+        var menuPaths = _serviceProvider.GetRequiredService<IMenuPathService>();
+
+        foreach (var service in new object[] { dialogs, fileDialogs, menuPaths })
+        {
+            service.GetType().GetField("_actions", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service)
+                .Should().BeSameAs(actions, "{0} acts only through element_action's service", service.GetType().Name);
+        }
+
+        typeof(FileDialogService).GetField("_dialogs", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(fileDialogs)
+            .Should().BeSameAs(dialogs, "the replace prompt is answered as respond_to_dialog answers it");
+        _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.DialogTools>().Should().NotBeNull();
+        var tools = _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.ElementActionTools>();
+        typeof(WindowsAppManagerMcp.Tools.ElementActionTools).GetField("_menuPaths", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(tools).Should().BeSameAs(menuPaths, "element_action's menu_path needs it");
+    }
+
+    [Fact]
     public void TheElementReads_AreASingleton_AndTheirToolsResolve()
     {
         // read_element_text and read_table (roadmap M3.9); resolving starts no UI Automation client

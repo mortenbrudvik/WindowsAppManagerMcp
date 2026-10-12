@@ -188,6 +188,56 @@ public static class TypicalDesktop
         OutcomeVerified: true,
         ElapsedMilliseconds: 48.5);
 
+    /// <summary>
+    /// What element_action's menu_path returns for File>Save As in Notepad (roadmap M3.5): File expanded, its submenu window,
+    /// Save As invoked, and the Save As dialog the press waits for.
+    /// </summary>
+    public static ElementActionResult MenuPathDone { get; } = new(
+        Success: true,
+        Action: "menu_path",
+        Ref: "w4120037e4",
+        WindowHandle: 0x1A0C40,
+        Status: ElementActionStatus.InvokedPendingModal,
+        Method: ElementActionMethod.Invoke,
+        Before: new ElementState("Save As...", IsEnabled: true, IsOffscreen: false),
+        OpenedPopup: new OpenedWindow(0x1A0C00, "Save As", "#32770", 10_244, "notepad"),
+        ElapsedMilliseconds: 5_310.5,
+        Steps:
+        [
+            new MenuPathStep("File", "w4120035e3", ElementActionMethod.ExpandCollapse, 0x1A0C40),
+            new MenuPathStep("Save As", "w4120037e4", ElementActionMethod.Invoke, 0x1A0C00)
+        ]);
+
+    /// <summary>What respond_to_dialog returns for Notepad's save prompt answered "no" (roadmap M3.5).</summary>
+    public static DialogResponseResult SavePromptAnswered { get; } = new(
+        Success: true,
+        DialogHandle: 0x1A0C10,
+        Title: "Notepad",
+        Text: ["Do you want to save changes to Untitled?"],
+        Buttons:
+        [
+            new DialogButton("w4120036e1", "Save", "6", "yes", true),
+            new DialogButton("w4120036e2", "Don't Save", "7", "no", true),
+            new DialogButton("w4120036e3", "Cancel", "2", "cancel", true)
+        ],
+        Invoked: new DialogButton("w4120036e2", "Don't Save", "7", "no", true),
+        Method: ElementActionMethod.Invoke,
+        DialogClosed: true,
+        ElapsedMilliseconds: 186.5);
+
+    /// <summary>A file the contract run's file_dialog saves: in the temporary folder, which exists on every machine.</summary>
+    public static string SavePath { get; } = Path.Combine(Path.GetTempPath(), "meeting-notes.txt");
+
+    /// <summary>What file_dialog returns for Notepad's Save As dialog completed with a path (roadmap M3.14).</summary>
+    public static FileDialogResult FileSaved(FileDialogRequest request) => new(
+        Success: true,
+        Action: "save",
+        DialogHandle: 0x1A0C00,
+        Completed: true,
+        FinalPath: Path.GetFullPath(request.Path),
+        PromptHandled: request.Overwrite,
+        ElapsedMilliseconds: 742.5);
+
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
 

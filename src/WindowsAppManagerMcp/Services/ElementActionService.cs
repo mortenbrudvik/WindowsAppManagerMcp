@@ -124,12 +124,14 @@ public sealed partial class ElementActionService : IElementActionService
                 return $"toggle's value is the state to reach: on, off or indeterminate (got {Describe(request.Value)}); leave it out to toggle once.";
             case ElementActionKind.Scroll when request.Direction == null:
                 return "scroll needs direction: up, down, left or right (amount: page or line).";
+            case ElementActionKind.MenuPath when MenuPaths.Parse(request.Value, out var pathError) == null:
+                return pathError;
         }
 
         if (request.Value != null && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText
-                or ElementActionKind.SetRangeValue or ElementActionKind.Toggle))
+                or ElementActionKind.SetRangeValue or ElementActionKind.Toggle or ElementActionKind.MenuPath))
         {
-            return $"value is for set_value, append_text, set_range_value and toggle, not {action}.";
+            return $"value is for set_value, append_text, set_range_value, toggle and menu_path, not {action}.";
         }
 
         if (request.Mode != ElementValueMode.Value && request.Action is not (ElementActionKind.SetValue or ElementActionKind.AppendText))
@@ -165,6 +167,13 @@ public sealed partial class ElementActionService : IElementActionService
         if (PasteRefusal(request) is { } pasteError)
         {
             return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode, pasteError + " Nothing was done.");
+        }
+
+        if (request.Action == ElementActionKind.MenuPath)
+        {
+            // Several elements: the tool carries the path out item by item through IMenuPathService, each item through here
+            return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "menu_path names several menu items, not one element: it is carried out item by item (IMenuPathService). Nothing was done.");
         }
 
         var lookup = _registry.Lookup(request.Ref);
