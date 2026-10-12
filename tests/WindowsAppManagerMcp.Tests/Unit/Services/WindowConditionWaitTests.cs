@@ -203,6 +203,24 @@ public class WindowConditionWaitTests
     }
 
     [Fact]
+    public async Task Exists_AWindowThatHasNotHeldForStableMs_DoesNotCount_BesideOneThatHas()
+    {
+        // Arrange - window A is open from the start; window B opens 250 ms in, so at 300 ms only A has held for stableMs
+        var first = _desktop.Add("A", processName: "app");
+        At(250, () => _desktop.Add("B", processName: "app"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "app" });
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(first);
+        result.MatchCount.Should().Be(1);
+        result.Candidates.Should().BeEmpty();
+        result.ElapsedMs.Should().Be(300);
+    }
+
+    [Fact]
     public async Task Exists_Index_PicksOneOfTheWindowsThatCount()
     {
         _desktop.Add("Inbox - Google Chrome", "Chrome_WidgetWin_1", processName: "chrome");
@@ -551,6 +569,22 @@ public class WindowConditionWaitTests
         result.ErrorCode.Should().Be(nameof(WindowErrorCode.AmbiguousWindow));
         result.Candidates.Should().HaveCount(2);
         _processes.Verify(p => p.WaitForInputIdle(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InputIdle_AWindowThatHasNotHeldForStableMs_DoesNotMakeItAmbiguous()
+    {
+        // Arrange - a second window of the app shows 250 ms in, too late to have held at 300 ms
+        var app = _desktop.Add("App", "MainWindow", processId: 4100, processName: "app");
+        At(250, () => _desktop.Add("Tip", "TipWindow", processId: 4100, processName: "app"));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "app" }, WindowWaitCondition.InputIdle);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(app);
+        result.ElapsedMs.Should().Be(300);
     }
 
     #endregion

@@ -178,19 +178,20 @@ public sealed partial class WindowWaitService
             foreach (var window in satisfying)
                 _since.TryAdd(window.Handle, now);
 
+            // Only the windows that have held for stableMs satisfy it: one that just appeared beside them does not count yet
             var stable = satisfying.Where(w => now - _since[w.Handle] >= _stableMs).ToList();
             if (stable.Count == 0)
                 return null;
 
             if (_request.Condition != WindowWaitCondition.InputIdle)
-                return Satisfied(satisfying);
+                return Satisfied(stable);
 
-            if (satisfying.Count > 1)
+            if (stable.Count > 1)
             {
                 return Ended(nameof(WindowErrorCode.AmbiguousWindow),
-                    $"{satisfying.Count} windows match {_selector.Describe()}, so input_idle cannot tell whose process to wait for; " +
+                    $"{stable.Count} windows match {_selector.Describe()}, so input_idle cannot tell whose process to wait for; " +
                     "candidates lists them, front to back. Wait again with the one you mean as window {handle, processId}, or narrow " +
-                    "the selector.", elapsed(), satisfying, satisfying.Count);
+                    "the selector.", elapsed(), stable, stable.Count);
             }
 
             return CheckInputIdle(stable[0], elapsed);
