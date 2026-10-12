@@ -447,6 +447,103 @@ public class ElementSearchServiceTests
     }
 
     [Fact]
+    public async Task Find_AListItemNamedByItsText_IsNotProvenUnique_WhenTheListHasAnUnrealizedTwin()
+    {
+        // Arrange - 50 files, 10 realized; items 0 and 40 are both report.docx (Explorer search results far apart)
+        var list = new FakeVirtualList(50, realized: 10, i => i is 0 or 40 ? "report.docx" : $"file{i}");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Search results").With(list.List));
+        var found = await Find(Query(name: "report.docx", controlTypes: ["ListItem"]));
+        var reportRef = found.Elements!.Single().Ref!;
+
+        // Act - the realized report.docx is gone (deleted), and the other is realized as the list scrolls
+        list.Items[0].Vanish();
+        list.VirtualizedOf(40).Realize();
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert - the list was asked, so the ref is never moved to the other file
+        found.MatchCount.Should().Be(1);
+        list.Probes.Should().Equal("Name=report.docx after start", "Name=report.docx after report.docx");
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_AListItemNamedByItsText_IsProvenUnique_WhenTheListHasNoOtherItemOfThatName()
+    {
+        // Arrange - the only report.docx, realized; the list is re-created with it (a refresh)
+        var list = new FakeVirtualList(50, realized: 10, i => i == 3 ? "report.docx" : $"file{i}");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Search results").With(list.List));
+        var reportRef = (await Find(Query(name: "report.docx", controlTypes: ["ListItem"]))).Elements!.Single().Ref!;
+        list.Items[3].Vanish();
+        list.List.With(new FakeUiaNode("ListItem", "report.docx"));
+
+        // Act
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert - followed to the re-created item, and reported as moved
+        resolution.Success.Should().BeTrue(resolution.Error);
+        resolution.Element!.Via.Should().Be(ElementResolutionPath.Selector);
+        resolution.Element.Moved.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Find_AVirtualizedItemWhoseListCannotBeAsked_IsNotProvenUnique()
+    {
+        // Arrange - an item that supports VirtualizedItem in a list without ItemContainer: its unrealized rows are not known
+        var item = new FakeUiaNode("ListItem", "report.docx") { OtherPatterns = UiaPatterns.VirtualizedItem };
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Files").With(new FakeUiaNode("List", "Items").With(item)));
+        var reportRef = (await Find(Query(name: "report.docx", controlTypes: ["ListItem"]))).Elements!.Single().Ref!;
+        item.Vanish();
+        ((FakeUiaNode)_tree.FromHandle(Handle)!).Children[0].With(new FakeUiaNode("ListItem", "report.docx"));
+
+        // Act
+        var resolution = _registry.Resolve(reportRef, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_AControlInOneRowOnly_IsNeverMovedToTheSameControlInAnotherRow()
+    {
+        // Arrange - only the selected row shows a Details button, so it is unique among the realized rows
+        var details = new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" };
+        var invoice1041 = new FakeUiaNode("ListItem", "Invoice 1041").With(details);
+        var invoice1077 = new FakeUiaNode("ListItem", "Invoice 1077");
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(new FakeUiaNode("List", "Rows").With(invoice1041, invoice1077)));
+        var detailsRef = (await Find(Query(automationId: "DetailsBtn"))).Elements!.Single().Ref!;
+
+        // Act - the selection moved to Invoice 1077, whose row now shows its own Details button
+        details.Vanish();
+        invoice1077.With(new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" });
+        var resolution = _registry.Resolve(detailsRef, CancellationToken.None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("not in its row");
+    }
+
+    [Fact]
+    public async Task Find_AControlOfARowThatIsReCreated_FollowsItIntoTheSameRow()
+    {
+        // Arrange - the row is re-rendered: a new row element with the same name, and a new Details button
+        var details = new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" };
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(details);
+        var list = new FakeUiaNode("List", "Rows").With(row);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(list));
+        var detailsRef = (await Find(Query(automationId: "DetailsBtn"))).Elements!.Single().Ref!;
+        row.Vanish();
+        details.Vanish();
+        list.With(new FakeUiaNode("ListItem", "Invoice 1041").With(new FakeUiaNode("Button", "Details") { AutomationId = "DetailsBtn" }));
+
+        // Act
+        var resolution = _registry.Resolve(detailsRef, CancellationToken.None);
+
+        // Assert
+        resolution.Success.Should().BeTrue(resolution.Error);
+        resolution.Element!.Moved.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Find_WithinARefFoundAgainUnderItsOwnRef_ReportsTheRefItHasNow()
     {
         // Arrange - the Options group was re-created and the new one already has a ref of its own

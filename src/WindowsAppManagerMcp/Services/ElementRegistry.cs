@@ -422,7 +422,7 @@ public sealed class ElementRegistry : IElementRegistry
         switch (found.MatchCount)
         {
             case 1 when found.Complete:
-                return Rebind(entry, found.Matches[0]);
+                return MovedToAnotherRow(entry, found.Matches[0].Node, row, fingerprint, cancellationToken) ?? Rebind(entry, found.Matches[0]);
             case > 1:
                 return ElementResolution.Failed(UIElementErrorCode.AmbiguousElement,
                     $"Element ref '{entry.Ref}' is ambiguous: its element ({Describe(fingerprint)}) is gone, and " +
@@ -475,6 +475,38 @@ public sealed class ElementRegistry : IElementRegistry
             : ElementResolution.Failed(UIElementErrorCode.ElementStale,
                 $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is in a list row, and {change} (a list " +
                 "reuses a row's elements for another item when it scrolls or its data changes). Find the element again with " +
+                "find_ui_elements.");
+    }
+
+    /// <summary>
+    /// ElementStale when the one element that fits a re-created element's description is not in the element's row (the item
+    /// that many levels up has another name or automation id), or null when the element has no row or it is the same row,
+    /// re-created too. A control that exists in one row only (the selected row's details) proves unique among the realized
+    /// rows, and a list re-creates it in whichever row is selected next: the ref must not move there.
+    /// </summary>
+    private ElementResolution? MovedToAnotherRow(
+        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken)
+    {
+        if (row == null)
+        {
+            return null;
+        }
+
+        string? change;
+        try
+        {
+            change = ElementRows.Changed(_tree, node, row, reCreated: true, cancellationToken);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            change = $"its row ({ElementRows.Describe(row)}) is gone";
+        }
+
+        return change == null
+            ? null
+            : ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is gone, and the one element that fits " +
+                $"its description is not in its row: {change}. The ref is not moved to it. Find the element again with " +
                 "find_ui_elements.");
     }
 

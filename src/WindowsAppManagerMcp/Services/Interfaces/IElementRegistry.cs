@@ -38,7 +38,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// that row (its runtime id, and its name when it has no automation id): one call per level and one read, else
 /// ElementStale ("its row now shows another item"). (3) Only with a stored selector: the selector run again and each result checked against the
 /// fingerprint (with the name too when there is no automation id): one result is the element, re-created, and the ref
-/// moves to it (<see cref="ResolvedElement.Moved"/>, until a read returns the element again); several are
+/// moves to it (an element with a recorded row only when that result is in the same row: the item that many levels up has
+/// the row's name and automation id; otherwise ElementStale) (<see cref="ResolvedElement.Moved"/>, until a read returns the element again); several are
 /// <see cref="UIElementErrorCode.AmbiguousElement"/>, none <see cref="UIElementErrorCode.ElementStale"/>. Without a selector a gone element is ElementStale: a look-alike may be a
 /// sibling (another row's Delete button). A ref never silently resolves to a different element it can tell apart. Both
 /// searches are <see cref="Services.ElementSearch"/>es of the window's own tree (not the windows it owns, see

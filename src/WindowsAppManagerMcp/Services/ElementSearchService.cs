@@ -21,7 +21,11 @@ namespace WindowsAppManagerMcp.Services;
 /// re-created. Proven only by a complete search of the whole window (not below withinRef): without visibleOnly or
 /// enabledOnly, when every match was kept, each one whose fingerprint no other match shares; with them, which can hide an
 /// offscreen or disabled twin, a single match is checked by one more search of the window for its identity alone, limited
-/// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique.</para>
+/// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique. A tree search cannot see the
+/// rows a virtualizing list has not realized, so a ListItem, TreeItem or DataItem named by its text (no automation id)
+/// that the tree proved alone is also checked with its list (the nearest ancestor with the ItemContainer pattern, at most 3
+/// levels up): two FindItemByProperty calls by its name, which see realized and unrealized items alike; another item of
+/// that name makes it not unique, and a virtualized item whose list cannot be asked is not proven (in the same budget).</para>
 /// <para><b>Scope</b> (roadmap M3.5): <see cref="ElementSearchScope.WindowAndPopups"/> also searches the window's popups
 /// (<see cref="IPopupService.GetPopupList"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
 /// own), front first and before the window, since an open popup is in front of it, but not a popup of an app the target
@@ -74,6 +78,9 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// the deadline).
     /// </summary>
     public static readonly TimeSpan UniquenessBudget = TimeSpan.FromSeconds(1);
+
+    /// <summary>How many levels above a list item its list (the ItemContainer pattern) is looked for when proving it alone.</summary>
+    private const int MaxItemContainerLevels = 3;
 
     /// <summary>How long to keep waiting after the timeout for the search to stop and hand back what it found.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
@@ -581,7 +588,77 @@ public sealed partial class ElementSearchService : IElementSearchService
             verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window, budget.Token);
         }
 
+        // A list item named by its text (no automation id): its look-alikes may be rows the list has not realized, which no
+        // tree search sees, so the list itself is asked
+        foreach (var match in verdicts.Where(v => v.Value == true).Select(v => v.Key).ToList())
+        {
+            if (ElementRegistry.NameIsIdentity(ElementRegistry.Fingerprint(match, null)))
+            {
+                verdicts[match] = ProveAmongItems(match, budget.Token);
+            }
+        }
+
         return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
+    }
+
+    /// <summary>
+    /// For a list, tree or grid item named by its text that the tree proved alone: whether its list (the nearest ancestor with
+    /// the ItemContainer pattern, at most <see cref="MaxItemContainerLevels"/> up) holds no other item of that name, realized
+    /// or not (two FindItemByProperty calls). Null when that cannot be told: no such list while the item is virtualized (a
+    /// list that does not realize all its rows and cannot be asked), a provider that fails, or the budget. An item of a list
+    /// that does not virtualize keeps the tree's proof.
+    /// </summary>
+    private bool? ProveAmongItems(UiaElement item, CancellationToken budget)
+    {
+        try
+        {
+            var current = item.Node;
+            for (var level = 0; level < MaxItemContainerLevels; level++)
+            {
+                budget.ThrowIfCancellationRequested();
+                if (_tree.GetParent(current) is not { } parent)
+                {
+                    break;
+                }
+
+                var read = _tree.ReadElement(parent);
+                if ((read.Patterns & UiaPatterns.ItemContainer) != 0)
+                {
+                    if (_tree.GetPattern<IUiaItemContainerPattern>(parent) is not { } list)
+                    {
+                        return null;
+                    }
+
+                    var name = item.Properties.Name ?? string.Empty;
+                    if (list.FindItemByProperty(null, UiaProperty.Name, name) is not { } first)
+                    {
+                        return null;
+                    }
+
+                    budget.ThrowIfCancellationRequested();
+                    if (list.FindItemByProperty(first, UiaProperty.Name, name) != null)
+                    {
+                        return false;
+                    }
+
+                    return _tree.AreSameElement(first, item.Node) ? true : null;
+                }
+
+                if (ElementRows.EndsTheSearch(read.Properties.ControlType))
+                {
+                    break;
+                }
+
+                current = parent;
+            }
+
+            return (item.Patterns & UiaPatterns.VirtualizedItem) != 0 ? null : true;
+        }
+        catch (Exception)
+        {
+            // Best effort: not proven (the budget, an item that is gone, a provider failure)
+            return null;
+        }
     }
 
     /// <summary>
