@@ -43,15 +43,20 @@ public sealed record TargetPolicySettings(
     private const string NoneToken = "none";
 
     /// <summary>
-    /// The default deny list: common password managers, whose windows show and type secrets, and the
-    /// Windows credential and elevation prompts (CredentialUIBroker.exe, consent.exe on a desktop without
-    /// the secure desktop). A browser extension password manager runs inside the browser and cannot be
-    /// told apart by process.
+    /// The default deny list: common password managers, whose windows show and type secrets; the Windows
+    /// credential and elevation prompts (CredentialUIBroker.exe and CredDialogHost.exe, consent.exe on a
+    /// desktop without the secure desktop); the SmartScreen prompt "Windows protected your PC"
+    /// (CHXSmartScreen.exe, a UWP app, and smartscreen.exe, the reputation broker that starts it); and the
+    /// Windows Security app (SecHealthUI.exe). The UWP ones are matched through the app that their
+    /// ApplicationFrameHost frame hosts. A browser extension password manager runs inside the browser and
+    /// cannot be told apart by process, and neither can a security prompt that runs inside a shared process
+    /// (such as Explorer's "Open File - Security Warning").
     /// </summary>
     public static IReadOnlyList<string> DefaultDeniedProcesses { get; } =
     [
         "1Password", "Bitwarden", "KeePass", "KeePassXC", "LastPass", "Dashlane", "Keeper", "KeeperPasswordManager",
-        "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "consent"
+        "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "CredDialogHost",
+        "consent", "CHXSmartScreen", "smartscreen", "SecHealthUI"
     ];
 
     /// <summary>
