@@ -371,21 +371,26 @@ public class ProcessServiceTests
     [Fact]
     public async Task LaunchApplication_CancelledWhileWaitingForTheWindow_StopsWaitingAndThrows()
     {
-        // Arrange - the wait runs until the call is cancelled
+        // Arrange - the wait runs until the call is cancelled. The call is cancelled once it waits, not by a timer, so a slow
+        // start cannot cancel it before the program is started
+        using var call = new CancellationTokenSource();
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockWindowWait.Setup(w => w.WaitForNewWindowAsync(It.IsAny<WindowBaseline>(), It.IsAny<Func<WindowCandidate, bool>>(),
                 It.IsAny<WindowWaitOptions>(), It.IsAny<CancellationToken>()))
             .Returns<WindowBaseline, Func<WindowCandidate, bool>, WindowWaitOptions, CancellationToken>(async (_, _, _, token) =>
             {
+                waiting.TrySetResult();
                 await Task.Delay(Timeout.Infinite, token);
                 return new WindowWaitResult(WindowWaitOutcome.TimedOut, null, 0);
             });
-        using var call = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
         // Act
-        var act = () => CreateSut().LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 30000, cancellationToken: call.Token);
+        var launch = CreateSut().LaunchApplicationAsync("notepad.exe", waitForWindow: true, waitTimeoutMs: 30000, cancellationToken: call.Token);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        call.Cancel();
 
         // Assert - the cancellation is reported as such, not as a LaunchException result; the program was started
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await FluentActions.Awaiting(() => launch).Should().ThrowAsync<OperationCanceledException>();
         _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
         _mockLaunchedProcess.Verify(p => p.Dispose(), Times.Once);
     }

@@ -103,16 +103,24 @@ public class UiaActionRunnerTests
     [Fact]
     public async Task ACancelledRequest_StopsWaiting_AndLeavesTheActionCounted()
     {
-        // Arrange
+        // Arrange - the request is cancelled once the action runs, not by a timer, so a slow start cannot cancel it before
+        // the action is started
         var sut = new UiaActionRunner();
         using var release = new ManualResetEventSlim();
-        using var cancellation = new CancellationTokenSource(Short);
+        using var started = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
 
         // Act
-        var act = () => sut.RunAsync(App, () => release.Wait(Long), Long, cancellation.Token);
+        var run = sut.RunAsync(App, () =>
+        {
+            started.Set();
+            release.Wait(Long);
+        }, Long, cancellation.Token);
+        started.Wait(Long).Should().BeTrue();
+        cancellation.Cancel();
 
         // Assert
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await FluentActions.Awaiting(() => run).Should().ThrowAsync<OperationCanceledException>();
         sut.Pending.Should().Be(1);
         release.Set();
         await WaitUntil(() => sut.Pending == 0);
