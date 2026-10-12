@@ -71,7 +71,7 @@ public sealed partial class WindowWaitService
         }
 
         var watch = new ConditionWatch(this, request, timeoutMs, initial,
-            request.NewOnly ? new HashSet<nint>(EnumerateTopLevelWindows()) : null);
+            request.NewOnly ? ShownWindows(request.Window.IncludeCloaked) : null);
         long lastProgress = 0;
 
         while (true)
@@ -96,6 +96,14 @@ public sealed partial class WindowWaitService
             await _delay(TimeSpan.FromMilliseconds(Math.Min(interval, remaining)), cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// newOnly's baseline: the top-level windows open when the wait starts, by the listing's rules: visible, and not cloaked
+    /// unless the selector takes cloaked windows. A window that was hidden then (a tray app's main window, a dialog an app
+    /// keeps hidden for reuse) and is shown during the wait is new.
+    /// </summary>
+    private HashSet<nint> ShownWindows(bool includeCloaked) =>
+        EnumerateTopLevelWindows().Where(h => _native.IsWindowVisible(h) && (includeCloaked || !_native.IsCloaked(h))).ToHashSet();
 
     /// <summary>The condition as wait_for_window names it.</summary>
     internal static string ConditionName(WindowWaitCondition condition) => condition switch

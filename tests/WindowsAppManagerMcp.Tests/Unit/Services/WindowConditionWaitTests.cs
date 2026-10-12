@@ -186,6 +186,33 @@ public class WindowConditionWaitTests
     }
 
     [Fact]
+    public async Task Exists_NewOnly_CountsAWindowThatWasHiddenAtTheStart_OnceItIsShown()
+    {
+        // Arrange - a tray app's main window is hidden (not open, by the listing's rules) and shown 200 ms into the wait
+        var slack = _desktop.Add("Slack", processName: "slack", visible: false);
+        At(200, () => _desktop.SetVisible(slack, true));
+
+        // Act
+        var result = await WaitAsync(new WindowSelector { ProcessName = "slack" }, newOnly: true, timeoutMs: 2000);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Window!.Handle.Should().Be(slack);
+        result.ElapsedMs.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task Exists_NewOnly_DoesNotCountACloakedWindowThatWasThere_WhenTheSelectorIncludesCloakedWindows()
+    {
+        // A window on another virtual desktop is open for a selector with includeCloaked
+        _desktop.Add("Slack", processName: "slack", cloaked: true);
+
+        var result = await WaitAsync(new WindowSelector { ProcessName = "slack", IncludeCloaked = true }, newOnly: true, timeoutMs: 500);
+
+        result.TimedOut.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Exists_SeveralMatches_IsSatisfied_WithTheCandidatesAndNoWindow()
     {
         // Arrange - two Chrome windows: something exists, but not one window to act on

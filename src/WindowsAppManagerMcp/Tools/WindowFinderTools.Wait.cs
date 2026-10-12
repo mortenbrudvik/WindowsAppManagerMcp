@@ -39,8 +39,8 @@ public partial class WindowFinderTools
         WindowSelector window,
         [Description("What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle'")]
         WindowWaitCondition condition = WindowWaitCondition.Exists,
-        [Description("Only count windows that open after this call starts (default: false). A window your last action already opened " +
-                     "is missed; prefer excludeHandles. Not with gone, title_changed or window.handle")]
+        [Description("Only count windows that open, or are shown, after this call starts (default: false). A window your last action " +
+                     "already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle")]
         bool newOnly = false,
         [Description("Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle " +
                      "itself). Not with title_changed")]
