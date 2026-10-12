@@ -156,6 +156,27 @@ public sealed class FakeGridPattern(IReadOnlyList<IReadOnlyList<FakeUiaNode?>> c
     }
 }
 
+/// <summary>A GridItem pattern: where a cell sits in its grid (read_table, roadmap M3.9). Every read is counted.</summary>
+public sealed class FakeGridItemPattern(int row, int column, int rowSpan = 1, int columnSpan = 1) : IUiaGridItemPattern
+{
+    /// <summary>How many of the four properties were read.</summary>
+    public int Reads { get; private set; }
+
+    public int Row => Read(row);
+
+    public int Column => Read(column);
+
+    public int RowSpan => Read(rowSpan);
+
+    public int ColumnSpan => Read(columnSpan);
+
+    private int Read(int value)
+    {
+        Reads++;
+        return value;
+    }
+}
+
 /// <summary>A Table pattern with column headers (roadmap M3.9).</summary>
 public sealed class FakeTablePattern(params FakeUiaNode[] columnHeaders) : IUiaTablePattern
 {

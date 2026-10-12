@@ -418,6 +418,239 @@ public class ElementReadServiceTableTests
 
     #endregion
 
+    #region Grids whose GetItem scrolls: read through the tree
+
+    /// <summary>
+    /// A virtualized grid of <paramref name="rowCount"/> rows of <paramref name="columns"/> columns, as WPF's DataGrid exposes it:
+    /// the Grid and Table patterns, a Header child, and a DataItem child only for each realized row, whose cells
+    /// ("r{row}c{column}") carry their GridItem row and column. GetItem would scroll it, so the test checks it is never called.
+    /// </summary>
+    private static (FakeUiaNode Grid, FakeGridPattern Pattern) VirtualizedGrid(
+        string? framework, int rowCount, int columns, IEnumerable<int> realized, bool rowHeaders = false)
+    {
+        var pattern = new FakeGridPattern(Enumerable.Repeat<IReadOnlyList<FakeUiaNode?>>([], rowCount).ToList(), columns);
+        var headers = Enumerable.Range(0, columns).Select(c => new FakeUiaNode("HeaderItem", $"Column {c}")).ToArray();
+        var grid = new FakeUiaNode("DataGrid", "People") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = framework }
+            .WithPattern<IUiaGridPattern>(pattern)
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern(headers))
+            .With(new FakeUiaNode("Header").With(headers));
+        foreach (var row in realized)
+        {
+            var item = new FakeUiaNode("DataItem", "Contoso.Person");
+            if (rowHeaders)
+            {
+                item.With(new FakeUiaNode("HeaderItem"));
+            }
+
+            item.With(Enumerable.Range(0, columns)
+                .Select(c => new FakeUiaNode("Custom", $"r{row}c{c}").WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(row, c)))
+                .ToArray());
+            grid.With(item);
+        }
+
+        return (grid, pattern);
+    }
+
+    [Theory]
+    [InlineData("WPF")] // DataGrid scrolls the cell into view, GridView the row
+    [InlineData("XAML")] // the Windows Community Toolkit DataGrid scrolls too
+    [InlineData("DirectUI")] // not checked: an unknown GetItem may scroll
+    [InlineData(null)]
+    public async Task ReadTable_OfAGridWhoseGetItemMayScroll_ReadsItsRealizedRowsThroughTheTree_AndNeverCallsGetItem(string? framework)
+    {
+        // Arrange - 1000 rows, of which the grid has realized the first 20
+        var (grid, pattern) = VirtualizedGrid(framework, 1000, 8, Enumerable.Range(0, 20));
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, maxRows: 50);
+
+        // Assert - the realized rows, then the page ends where the rows not realized start
+        pattern.Items.Should().BeEmpty("GetItem would scroll the grid");
+        result.Success.Should().BeTrue();
+        result.Source.Should().Be(ElementTableSource.Grid);
+        result.Headers.Should().HaveCount(8).And.StartWith("Column 0");
+        result.Rows.Should().HaveCount(20);
+        result.Rows![0].Should().Equal(Enumerable.Range(0, 8).Select(c => $"r0c{c}"));
+        result.Rows[19][7].Should().Be("r19c7");
+        result.TotalRows.Should().Be(1000);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementTableTruncation.NotRealized);
+        result.NextStartRow.Should().Be(20);
+        result.Warning.Should().Contain("element_action").And.Contain("scroll").And.Contain("startRow 20");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWpfGrid_PastItsRealizedRows_ReadsNothing_AndSaysWhereToScroll()
+    {
+        var (grid, pattern) = VirtualizedGrid("WPF", 1000, 8, Enumerable.Range(0, 20));
+        var elementRef = Add(grid);
+
+        var result = await Read(elementRef, startRow: 500);
+
+        pattern.Items.Should().BeEmpty();
+        result.Success.Should().BeTrue();
+        result.Rows.Should().BeEmpty();
+        result.TruncationReason.Should().Be(ElementTableTruncation.NotRealized);
+        result.NextStartRow.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAScrolledWpfGrid_PlacesTheRealizedRowsByTheirCellsGridRow()
+    {
+        // Arrange - scrolled down: the first realized row is row 495, not row 0, and row headers come first in each row
+        var (grid, pattern) = VirtualizedGrid("WPF", 1000, 3, Enumerable.Range(495, 36), rowHeaders: true);
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef, startRow: 500, maxRows: 10);
+
+        // Assert
+        pattern.Items.Should().BeEmpty();
+        result.StartRow.Should().Be(500);
+        result.Rows.Should().HaveCount(10);
+        result.Rows![0].Should().Equal("r500c0", "r500c1", "r500c2");
+        result.Rows[9][0].Should().Be("r509c0");
+        result.TruncationReason.Should().Be(ElementTableTruncation.MaxRows);
+        result.NextStartRow.Should().Be(510);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfAWpfGrid_StopsAtAGapInItsRealizedRows()
+    {
+        // Arrange - rows 0-9 realized, and row 30 (a row WPF keeps realized, such as the focused one)
+        var (grid, _) = VirtualizedGrid("WPF", 100, 2, Enumerable.Range(0, 10).Append(30));
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert - the page never skips a row: it ends before the first missing one
+        result.Rows.Should().HaveCount(10);
+        result.TruncationReason.Should().Be(ElementTableTruncation.NotRealized);
+        result.NextStartRow.Should().Be(10);
+    }
+
+    [Theory]
+    [InlineData("Win32")]
+    [InlineData("WinForm")]
+    [InlineData("Chrome")]
+    public async Task ReadTable_OfAGridWhoseGetItemOnlyLooksUp_AsksForEachCell_RealizedOrNot(string framework)
+    {
+        // Arrange - the same grid as above, but of a framework whose GetItem was checked not to scroll
+        var cells = Cells(30, 2);
+        var grid = new FakeGridPattern(cells);
+        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid, FrameworkId = framework }
+            .WithPattern<IUiaGridPattern>(grid));
+
+        // Act
+        var result = await Read(elementRef, startRow: 25);
+
+        // Assert
+        grid.Items.Should().NotBeEmpty();
+        result.Rows.Should().HaveCount(5);
+        result.Rows![0].Should().Equal("r25c0", "r25c1");
+        result.TruncationReason.Should().BeNull();
+    }
+
+    #endregion
+
+    #region Header rows and multi-row headers
+
+    [Fact]
+    public async Task ReadTable_OfAnHtmlTable_DoesNotReturnItsHeaderRowAsARow()
+    {
+        // Arrange - Chromium: the header cells are grid row 0, and GetColumnHeaders returns the same elements
+        var name = new FakeUiaNode("DataItem", "Name");
+        var age = new FakeUiaNode("DataItem", "Age");
+        var cells = new List<IReadOnlyList<FakeUiaNode?>> { new List<FakeUiaNode?> { name, age } };
+        cells.AddRange(Cells(10, 2));
+        var grid = new FakeUiaNode("Table", "People") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "Chrome" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells))
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern(name, age));
+        var elementRef = Add(grid);
+
+        // Act
+        var first = await Read(elementRef, maxRows: 3);
+        var last = await Read(elementRef, startRow: 9);
+
+        // Assert - startRow does not count the header row, as documented
+        first.Headers.Should().Equal("Name", "Age");
+        first.Rows![0].Should().Equal("r0c0", "r0c1");
+        first.Rows.Should().NotContain(row => row.Contains("Name"));
+        first.TotalRows.Should().Be(10);
+        first.NextStartRow.Should().Be(3);
+        last.Rows.Should().ContainSingle().Which.Should().Equal("r9c0", "r9c1");
+        last.Truncated.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadTable_PairsMultiRowHeadersWithTheirColumns_ByWhereEachHeaderSits()
+    {
+        // Arrange - Q1 and Q2 each span two columns over Revenue and Cost; Chromium lists a column's headers from the top,
+        // and a spanning header once per column it spans
+        static FakeUiaNode Header(string name, int row, int column, int columnSpan = 1) =>
+            new FakeUiaNode("DataItem", name).WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(row, column, 1, columnSpan));
+        var q1 = Header("Q1", 0, 0, 2);
+        var q2 = Header("Q2", 0, 2, 2);
+        var revenue1 = Header("Revenue", 1, 0);
+        var cost1 = Header("Cost", 1, 1);
+        var revenue2 = Header("Revenue", 1, 2);
+        var cost2 = Header("Cost", 1, 3);
+        var cells = new List<IReadOnlyList<FakeUiaNode?>>
+        {
+            new List<FakeUiaNode?> { q1, q1, q2, q2 },
+            new List<FakeUiaNode?> { revenue1, cost1, revenue2, cost2 }
+        };
+        cells.AddRange(Cells(5, 4));
+        var grid = new FakeUiaNode("Table", "Results") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "Chrome" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells))
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern(q1, revenue1, q1, cost1, q2, revenue2, q2, cost2));
+        var elementRef = Add(grid);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Headers.Should().Equal("Q1 / Revenue", "Q1 / Cost", "Q2 / Revenue", "Q2 / Cost");
+        result.Rows![0].Should().Equal("r0c0", "r0c1", "r0c2", "r0c3");
+        result.TotalRows.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task ReadTable_OfATableReadThroughTheTree_SkipsItsHeaderRow_AndCountsRowsWithoutIt()
+    {
+        // Arrange - an HTML table of a browser whose GetItem is not known to only read: its header row is a row child, and its
+        // header cells sit in grid row 0
+        var headers = new[] { "Item", "Price" }
+            .Select((h, c) => new FakeUiaNode("HeaderItem", h).WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(0, c)))
+            .ToArray();
+        var table = new FakeUiaNode("Table", "Prices") { OtherPatterns = UiaPatterns.Grid | UiaPatterns.Table, FrameworkId = "Gecko" }
+            .WithPattern<IUiaGridPattern>(new FakeGridPattern(Enumerable.Repeat<IReadOnlyList<FakeUiaNode?>>([], 3).ToList(), 2))
+            .WithPattern<IUiaTablePattern>(new FakeTablePattern(headers))
+            .With(new FakeUiaNode("DataItem").With(headers));
+        foreach (var (item, row) in new[] { ("Tea", 1), ("Coffee", 2) })
+        {
+            table.With(new FakeUiaNode("DataItem").With(
+                new FakeUiaNode("DataItem", item).WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(row, 0)),
+                new FakeUiaNode("DataItem", "3").WithPattern<IUiaGridItemPattern>(new FakeGridItemPattern(row, 1))));
+        }
+
+        var elementRef = Add(table);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Headers.Should().Equal("Item", "Price");
+        result.Rows.Should().HaveCount(2);
+        result.Rows![0].Should().Equal("Tea", "3");
+        result.TotalRows.Should().Be(2);
+        result.Truncated.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Rows walk
 
     [Fact]

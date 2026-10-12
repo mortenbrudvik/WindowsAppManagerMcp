@@ -15,16 +15,22 @@ namespace WindowsAppManagerMcp.Services;
 /// <para><b>Text.</b> The password flag is read first; a password field, or one whose flag cannot be read, is never read.
 /// Then the sources in this order: the Text pattern's document, paged by
 /// the provider (<see cref="IUiaTextPattern.GetTextPage"/>, so a page costs its own length and not the document's), the
-/// Value pattern's value (read in full, then cut), and the name. An empty document falls through to the value and a failing
+/// Value pattern's value (read in full, then cut), and the name. A page holds at most maxLength characters and
+/// <see cref="MaxTextBytes"/> bytes of JSON: a document page that does not fit is read again over fewer characters, so its
+/// nextOffset skips nothing. An empty document falls through to the value and a failing
 /// pattern to the next source, but an element with either pattern is never read by its name: an empty edit box is empty, not
 /// its label. The Text pattern comes before the Value pattern (the
 /// design had them the other way round) because a browser document's value is its URL, and because only the Text pattern
 /// can page a long document without reading all of it for every page; where an edit has both, they hold the same text.</para>
-/// <para><b>Tables.</b> Through the Grid pattern when the element has it: GetItem per cell of the page, the headers from the
-/// Table pattern's column headers, else from a Header among the grid's first children. Otherwise a walk of the element's
-/// children: DataItem, ListItem and TreeItem children are the rows (read in one cached call when there are at most
-/// <see cref="CachedRowsLimit"/> children), a Header child or a first row of HeaderItems gives the headers, and a row's
-/// children are its cells (a row without children is one cell, its own text). A cell's text is its value when it has the
+/// <para><b>Tables.</b> Only reads: never scrolls, realizes or acts. Through the Grid pattern when the element has it: its row
+/// and column counts, the headers from the Table pattern's column headers (paired with their columns by where they sit when
+/// they are grid items, and their rows then left out of the data rows), else from a Header among the grid's first children.
+/// The page's cells come through GetItem for the frameworks whose GetItem only looks the cell up
+/// (<see cref="GetItemFrameworks"/>), else from the grid's realized rows, placed by their cells' GridItem row: a row that is
+/// not realized ends the page (NotRealized). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
+/// children are the rows (read in one cached call when there are at most <see cref="CachedRowsLimit"/> children), a Header
+/// child or a first row of HeaderItems gives the headers, and a row's children but nested tree items are its cells (a row
+/// without cells is one cell, its own text). A cell's text is its value when it has the
 /// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
 /// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
 /// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself
@@ -72,6 +78,21 @@ public sealed partial class ElementReadService : IElementReadService
 
     /// <summary>How many times a text page that does not fit one result is read again over fewer characters before it is cut.</summary>
     private const int TextPageFits = 3;
+
+    /// <summary>The most rows a grid's column headers are taken to fill (a header row over a header row, as Q1 over Revenue).</summary>
+    private const int MaxHeaderRows = 4;
+
+    /// <summary>How many of a realized row's first cells are asked for their GridItem row before the row is placed by its position.</summary>
+    private const int RowIndexCells = 3;
+
+    /// <summary>
+    /// The UI frameworks (FrameworkId) whose GridPattern.GetItem only looks the cell up, checked against their sources: the
+    /// Win32 list view, the WinForms DataGridView (Rows[row].Cells[column]) and Chromium (its table's cell ids). Elsewhere
+    /// GetItem can scroll: WPF's DataGrid scrolls the cell into view and realizes its row (ScrollIntoView, then UpdateLayout),
+    /// WPF's GridView brings the row into view, and the Windows Community Toolkit DataGrid (XAML) scrolls too. A read never
+    /// scrolls, so every other grid, one of an unknown framework included, is read through its realized rows.
+    /// </summary>
+    private static readonly HashSet<string> GetItemFrameworks = new(StringComparer.OrdinalIgnoreCase) { "Win32", "WinForm", "Chrome" };
 
     /// <summary>How long to keep waiting after the timeout for a table read to stop and hand back its rows.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);

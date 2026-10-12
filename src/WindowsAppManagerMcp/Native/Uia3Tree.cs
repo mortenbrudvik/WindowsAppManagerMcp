@@ -554,6 +554,7 @@ public sealed class Uia3Tree : IUiaTree
         _ when type == typeof(IUiaWindowPattern) => pattern is IUIAutomationWindowPattern p ? new WindowPattern(p) : null,
         _ when type == typeof(IUiaTextPattern) => pattern is IUIAutomationTextPattern p ? new TextPattern(p) : null,
         _ when type == typeof(IUiaGridPattern) => pattern is IUIAutomationGridPattern p ? new GridPattern(p) : null,
+        _ when type == typeof(IUiaGridItemPattern) => pattern is IUIAutomationGridItemPattern p ? new GridItemPattern(p) : null,
         _ when type == typeof(IUiaTablePattern) => pattern is IUIAutomationTablePattern p ? new TablePattern(p) : null,
         _ when type == typeof(IUiaItemContainerPattern) =>
             pattern is IUIAutomationItemContainerPattern p ? new ItemContainerPattern(p) : null,
@@ -788,6 +789,17 @@ public sealed class Uia3Tree : IUiaTree
         public int ColumnCount => UiaComErrors.Run(() => pattern.CurrentColumnCount);
 
         public IUiaNode? GetItem(int row, int column) => UiaComErrors.Run(() => Wrap(pattern.GetItem(row, column)));
+    }
+
+    private sealed class GridItemPattern(IUIAutomationGridItemPattern pattern) : IUiaGridItemPattern
+    {
+        public int Row => UiaComErrors.Run(() => pattern.CurrentRow);
+
+        public int Column => UiaComErrors.Run(() => pattern.CurrentColumn);
+
+        public int RowSpan => UiaComErrors.Run(() => pattern.CurrentRowSpan);
+
+        public int ColumnSpan => UiaComErrors.Run(() => pattern.CurrentColumnSpan);
     }
 
     private sealed class TablePattern(IUIAutomationTablePattern pattern) : IUiaTablePattern

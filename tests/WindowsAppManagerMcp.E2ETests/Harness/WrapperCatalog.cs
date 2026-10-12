@@ -361,7 +361,18 @@ public static class WrapperCatalog
             {
                 ["get_" + nameof(IUiaGridPattern.RowCount)] = WrapperMember.Read,
                 ["get_" + nameof(IUiaGridPattern.ColumnCount)] = WrapperMember.Read,
-                [nameof(IUiaGridPattern.GetItem)] = WrapperMember.Read
+                // The provider may bring the cell into view first: WPF's DataGrid and GridView and the Toolkit DataGrid scroll
+                // to it (and realize its row), so it changes what the user sees. read_table calls it only for Win32, WinForms and
+                // Chromium grids, whose GetItem only looks the cell up
+                [nameof(IUiaGridPattern.GetItem)] = WrapperMember.UiaAction
+            },
+            [typeof(IUiaGridItemPattern)] = new Dictionary<string, WrapperMember>
+            {
+                // Where a cell sits: property reads (a WPF DataGrid cell's row is its item's index)
+                ["get_" + nameof(IUiaGridItemPattern.Row)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaGridItemPattern.Column)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaGridItemPattern.RowSpan)] = WrapperMember.Read,
+                ["get_" + nameof(IUiaGridItemPattern.ColumnSpan)] = WrapperMember.Read
             },
             [typeof(IUiaTablePattern)] = new Dictionary<string, WrapperMember>
             {

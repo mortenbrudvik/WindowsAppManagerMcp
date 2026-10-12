@@ -19,7 +19,10 @@ public enum ElementTextSource
 /// <summary>Where read_table got a table's cells (roadmap M3.9).</summary>
 public enum ElementTableSource
 {
-    /// <summary>The Grid pattern (GetItem per cell); headers from the Table pattern or the grid's header row.</summary>
+    /// <summary>
+    /// The Grid pattern: its row and column counts, and each cell of the page by GetItem where that only reads (Win32, WinForms,
+    /// Chromium), else the grid's realized rows; headers from the Table pattern or the grid's header row.
+    /// </summary>
     Grid,
 
     /// <summary>The element's row children (DataItem, ListItem, TreeItem) and their children as cells.</summary>
@@ -45,7 +48,14 @@ public enum ElementTableTruncation
     /// The table disappeared while the page was read (its window closed, or the application replaced it); the rows read until
     /// then are returned. Its ref is stale: find the table again before reading on.
     /// </summary>
-    Disappeared = 5
+    Disappeared = 5,
+
+    /// <summary>
+    /// The next row of the page is not realized: the grid creates the elements of its rows only around what it shows, and
+    /// read_table never scrolls (its GetItem would scroll the grid). The realized rows before it are returned; scroll the
+    /// grid with element_action (or realize a row) and read again from <c>nextStartRow</c>.
+    /// </summary>
+    NotRealized = 6
 }
 
 /// <summary>
@@ -118,16 +128,17 @@ public sealed record ElementTextResult(
 /// <param name="Ref">The table read: the ref asked for, or the ref it has now when it was found again under a ref of its own.</param>
 /// <param name="Source">Grid (the Grid pattern) or Rows (a walk of its row children).</param>
 /// <param name="Headers">The column headers (the first maxColumns), or null when the table has none.</param>
-/// <param name="Rows">The rows read, each with its first maxColumns cells; a cell is null when the table has no element there
-/// (for example a row not realized yet).</param>
+/// <param name="Rows">The rows read, each with its first maxColumns cells; a cell is null when the table has no element there,
+/// when it disappeared while it was read, or when it is a password field.</param>
 /// <param name="StartRow">The index of the first row returned.</param>
-/// <param name="TotalRows">How many rows the table has, when known (the Grid pattern's row count, or every row child read).</param>
+/// <param name="TotalRows">How many rows the table has, when known (the Grid pattern's row count without its header rows, or
+/// every row child read).</param>
 /// <param name="TotalColumns">How many columns the table has: the Grid pattern's column count, or the most cells or headers seen.</param>
 /// <param name="Truncated">True when the result does not hold every row from <paramref name="StartRow"/> on, or every column.</param>
 /// <param name="NextStartRow">The startRow of the next page, when rows were left out.</param>
 /// <param name="CellsTruncated">True when a header or cell was cut to the cell length limit; left out otherwise.</param>
-/// <param name="Warning">What the agent should know about a page that is not the whole rest of the table and what to do
-/// (the table disappeared); left out otherwise.</param>
+/// <param name="Warning">Why the page ended early and what to do (NotRealized: scroll the grid with element_action and read
+/// on; Disappeared: find the table again); left out otherwise.</param>
 public sealed record ElementTableResult(
     bool Success,
     string? Ref,

@@ -144,8 +144,32 @@ public interface IUiaGridPattern : IUiaPattern
 
     int ColumnCount { get; }
 
-    /// <summary>The cell at a row and column (both zero-based), or null when there is none.</summary>
+    /// <summary>
+    /// The cell at a row and column (both zero-based), or null when there is none. Not a pure read: the provider may bring
+    /// the cell into view first. WPF's DataGrid scrolls to it and realizes its row (ScrollIntoView, then UpdateLayout), WPF's
+    /// GridView brings the row into view, and the Windows Community Toolkit DataGrid scrolls too; read_table calls it only for
+    /// the frameworks whose GetItem only looks the cell up (ElementReadService), and the E2E guard counts it as an action.
+    /// </summary>
     IUiaNode? GetItem(int row, int column);
+}
+
+/// <summary>
+/// GridItemPattern: a cell of a grid, and where it sits. Its properties only read (a WPF DataGrid cell's row is its item's
+/// index in the grid's items), so read_table places the rows it reads through the tree by them.
+/// </summary>
+public interface IUiaGridItemPattern : IUiaPattern
+{
+    /// <summary>The zero-based row of the cell (the first, when it spans several).</summary>
+    int Row { get; }
+
+    /// <summary>The zero-based column of the cell (the first, when it spans several).</summary>
+    int Column { get; }
+
+    /// <summary>How many rows the cell spans (1 for most cells).</summary>
+    int RowSpan { get; }
+
+    /// <summary>How many columns the cell spans (1 for most cells).</summary>
+    int ColumnSpan { get; }
 }
 
 /// <summary>TablePattern: a grid with headers.</summary>

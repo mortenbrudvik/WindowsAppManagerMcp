@@ -373,6 +373,7 @@ public sealed class UiaTree : IUiaTree
             nameof(IUiaWindowPattern) => System.Windows.Automation.WindowPattern.Pattern,
             nameof(IUiaTextPattern) => System.Windows.Automation.TextPattern.Pattern,
             nameof(IUiaGridPattern) => System.Windows.Automation.GridPattern.Pattern,
+            nameof(IUiaGridItemPattern) => System.Windows.Automation.GridItemPattern.Pattern,
             nameof(IUiaTablePattern) => System.Windows.Automation.TablePattern.Pattern,
             nameof(IUiaItemContainerPattern) => System.Windows.Automation.ItemContainerPattern.Pattern,
             nameof(IUiaVirtualizedItemPattern) => System.Windows.Automation.VirtualizedItemPattern.Pattern,
@@ -528,6 +529,7 @@ public sealed class UiaTree : IUiaTree
         nameof(IUiaWindowPattern) => new WindowPatternAdapter((System.Windows.Automation.WindowPattern)pattern),
         nameof(IUiaTextPattern) => new TextPatternAdapter((System.Windows.Automation.TextPattern)pattern),
         nameof(IUiaGridPattern) => new GridPatternAdapter((System.Windows.Automation.GridPattern)pattern),
+        nameof(IUiaGridItemPattern) => new GridItemPatternAdapter((System.Windows.Automation.GridItemPattern)pattern),
         nameof(IUiaTablePattern) => new TablePatternAdapter((System.Windows.Automation.TablePattern)pattern),
         nameof(IUiaItemContainerPattern) => new ItemContainerPatternAdapter((System.Windows.Automation.ItemContainerPattern)pattern),
         nameof(IUiaVirtualizedItemPattern) => new VirtualizedItemPatternAdapter((System.Windows.Automation.VirtualizedItemPattern)pattern),
@@ -727,6 +729,17 @@ public sealed class UiaTree : IUiaTree
         public int ColumnCount => Translate(() => pattern.Current.ColumnCount);
 
         public IUiaNode? GetItem(int row, int column) => Translate(() => (IUiaNode?)Wrap(pattern.GetItem(row, column)));
+    }
+
+    private sealed class GridItemPatternAdapter(System.Windows.Automation.GridItemPattern pattern) : IUiaGridItemPattern
+    {
+        public int Row => Translate(() => pattern.Current.Row);
+
+        public int Column => Translate(() => pattern.Current.Column);
+
+        public int RowSpan => Translate(() => pattern.Current.RowSpan);
+
+        public int ColumnSpan => Translate(() => pattern.Current.ColumnSpan);
     }
 
     private sealed class TablePatternAdapter(System.Windows.Automation.TablePattern pattern) : IUiaTablePattern

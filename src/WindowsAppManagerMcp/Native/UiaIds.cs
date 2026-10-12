@@ -51,6 +51,7 @@ public static class UiaIds
     public const int ScrollPattern = 10004;
     public const int ExpandCollapsePattern = 10005;
     public const int GridPattern = 10006;
+    public const int GridItemPattern = 10007;
     public const int WindowPattern = 10009;
     public const int SelectionItemPattern = 10010;
     public const int TablePattern = 10012;
@@ -95,6 +96,7 @@ public static class UiaIds
         nameof(IUiaWindowPattern) => WindowPattern,
         nameof(IUiaTextPattern) => TextPattern,
         nameof(IUiaGridPattern) => GridPattern,
+        nameof(IUiaGridItemPattern) => GridItemPattern,
         nameof(IUiaTablePattern) => TablePattern,
         nameof(IUiaItemContainerPattern) => ItemContainerPattern,
         nameof(IUiaVirtualizedItemPattern) => VirtualizedItemPattern,
