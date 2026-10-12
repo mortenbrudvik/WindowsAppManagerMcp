@@ -840,6 +840,131 @@ public sealed class ElementActionServiceTests : IDisposable
 
     #endregion
 
+    #region realize (roadmap M3.10)
+
+    /// <summary>A 10,000-item virtual list in the window, its first 30 items realized, and the ref of an item it has not realized.</summary>
+    private (FakeVirtualList List, string ItemRef) VirtualList(int index)
+    {
+        var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", Pid);
+        _window.With(list.List);
+        var itemRef = _registry.Register(Handle, _tree.ReadElement(list.Items[index]), new ElementOrigin(_registry.NextGeneration()))!;
+        return (list, itemRef);
+    }
+
+    [Fact]
+    public async Task Realize_OfAnItemTheListHasNotRealized_RealizesIt_ThenScrollsItIntoView_OnTheActionRunner()
+    {
+        // Arrange
+        var (list, item) = VirtualList(5000);
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.VirtualizedItem);
+        result.Before!.IsOffscreen.Should().BeTrue();
+        result.After!.IsOffscreen.Should().BeFalse();
+        result.OutcomeVerified.Should().BeTrue();
+        list.VirtualizedOf(5000).Realizes.Should().Be(1);
+        list.ScrollItemOf(5000).Calls.Should().Be(1, "the fake's Realize leaves the item offscreen, as a provider that does not scroll");
+        list.IsRealized(5000).Should().BeTrue();
+        _runner.Runs.Should().Be(1, "Realize and ScrollIntoView are one pattern action, on the action runner");
+    }
+
+    [Fact]
+    public async Task Realize_ThatBringsTheItemIntoViewItself_IsNotScrolledAgain()
+    {
+        // Arrange - WPF's Realize scrolls the item into view
+        var (list, item) = VirtualList(5000);
+        var node = list.Items[5000];
+        list.VirtualizedOf(5000).OnRealize = () =>
+        {
+            list.List.With(node);
+            node.IsOffscreen = false;
+        };
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert
+        result.OutcomeVerified.Should().BeTrue();
+        list.ScrollItemOf(5000).Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Realize_ThatLeavesTheItemOffscreen_IsNotVerified()
+    {
+        var (list, item) = VirtualList(5000);
+        list.ScrollItemOf(5000).OnScrollIntoView = null;
+
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        result.Success.Should().BeTrue();
+        result.OutcomeVerified.Should().BeFalse();
+        result.Warnings.Should().Contain(w => w.Contains("does not show its effect"));
+    }
+
+    [Fact]
+    public async Task Realize_OfAnOffscreenItemThatIsNotVirtualized_ScrollsItIntoView()
+    {
+        var scrollItem = new FakeScrollItemPattern();
+        var node = new FakeUiaNode("ListItem", "Row 80") { IsOffscreen = true, OtherPatterns = UiaPatterns.ScrollItem };
+        scrollItem.OnScrollIntoView = () => node.IsOffscreen = false;
+        var item = RefOf(node.WithPattern<IUiaScrollItemPattern>(scrollItem));
+
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        result.Method.Should().Be(ElementActionMethod.ScrollItem);
+        result.OutcomeVerified.Should().BeTrue();
+        result.Warnings.Should().Contain(w => w.Contains("only scrolled into view"));
+    }
+
+    [Fact]
+    public async Task Realize_IsRefused_WhenTheTargetChecksRefuse_OrInputIsPaused_AndNothingIsRealized()
+    {
+        // Arrange
+        var (list, item) = VirtualList(5000);
+        _guard.Setup(g => g.CheckTarget(It.IsAny<InputTarget>())).Returns((InputTarget target) =>
+            InputGuardResult.Refuse(InputErrorCode.TargetIsAgentHost, "The agent's own window.", target));
+
+        // Act
+        var refused = await ActAsync(item, ElementActionKind.Realize);
+        _session.Pause(InputControlSources.Hotkey);
+        var paused = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert
+        refused.ErrorCode.Should().Be("TargetIsAgentHost");
+        paused.ErrorCode.Should().Be("PausedByUser");
+        list.VirtualizedOf(5000).Realizes.Should().Be(0);
+        list.ScrollItemOf(5000).Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SearchVirtualized_ThenRealize_PutsTheItemInTheTreeAndInView_WhereAPlainSearchFindsIt()
+    {
+        // Arrange - find_ui_elements' search with the same tree and registry
+        var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", Pid);
+        _window.With(list.List);
+        var search = new ElementSearchService(_tree, _worker, _registry, _windows.Object);
+        var query = new ElementQuery(Handle, Name: "Item 07500", Timeout: TimeSpan.FromSeconds(5));
+        (await search.FindAsync(query)).MatchCount.Should().Be(0);
+        var found = await search.FindAsync(query with { SearchVirtualized = true });
+        var item = found.Elements.Should().ContainSingle().Subject;
+        item.Virtualized.Should().BeTrue();
+
+        // Act
+        var result = await ActAsync(item.Ref!, ElementActionKind.Realize);
+
+        // Assert - realized and on screen: the plain search (visible elements only) finds it, under the same ref
+        result.Success.Should().BeTrue(result.Error);
+        result.OutcomeVerified.Should().BeTrue();
+        var after = await search.FindAsync(query);
+        after.Elements.Should().ContainSingle().Which.Ref.Should().Be(item.Ref);
+    }
+
+    #endregion
+
     #region Blocking actions
 
     [Fact]

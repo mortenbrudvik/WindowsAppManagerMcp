@@ -10,7 +10,7 @@ namespace WindowsAppManagerMcp.Tools;
 
 /// <summary>element_action (roadmap M3.6): pattern-first actions on a UI element, with its state before and after.</summary>
 [McpServerToolType]
-public class ElementActionTools
+public partial class ElementActionTools
 {
     private const int MinTimeoutMs = 1000;
     private const int MaxTimeoutMs = 30000;
@@ -46,7 +46,9 @@ public class ElementActionTools
                  "state, name, enabled), outcomeVerified and openedPopup (a window of the app that appeared). A disabled or " +
                  "offscreen element is refused (ElementNotEnabled, ElementOffscreen: use scroll_into_view); an element without the " +
                  "pattern is PatternNotSupported unless fallback mouse allows a guarded click. An action that waits for a dialog it " +
-                 "opened returns status InvokedPendingModal with openedPopup: answer the dialog. A password field's value is never " +
+                 "opened returns status InvokedPendingModal with openedPopup: answer the dialog. realize makes an item of a virtualized " +
+                 "list real and scrolls it into view; by criteria it also finds items the list has not realized (maxScrolls: by " +
+                 "scrolling the list). A password field's value is never " +
                  "read or returned. Refused, with nothing done, for apps the user's policy denies (TargetDeniedByPolicy), the " +
                  "agent's own host window (TargetIsAgentHost), elevated apps (TargetElevated), a window a modal dialog blocks " +
                  "(BlockedByModal), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume).")]
@@ -95,8 +97,10 @@ public class ElementActionTools
         [Description("Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or " +
                      "handle (or window.handle); set it only when the user explicitly asked for it. Default: false")]
         bool allowHostTarget = false,
+        [Description(MaxScrollsDescription)]
+        int maxScrolls = 0,
         [Description("How long the action may block, for example on a dialog it opened, and the bound of each read, in " +
-                     "milliseconds (default: 5000, min: 1000, max: 30000).")]
+                     "milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.")]
         int timeoutMs = DefaultTimeoutMs,
         CancellationToken cancellationToken = default)
     {
@@ -105,6 +109,13 @@ public class ElementActionTools
         if (ElementActionService.ArgumentError(request) is { } argumentError)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, argumentError + " Nothing was done.");
+        }
+
+        if (maxScrolls != 0 && (action != ElementActionKind.Realize || @ref != null))
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "maxScrolls is for realize with element criteria (it scrolls the list to find the item), not for " +
+                $"{(@ref != null ? "a ref, which names its element already" : ToolEnum<ElementActionKind>.Name(action))}. Nothing was done.");
         }
 
         var controlTypes = UIElementTools.ParseControlTypes(controlType);
@@ -152,7 +163,7 @@ public class ElementActionTools
         }
 
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
-        var found = await FindOneAsync(new ElementQuery(
+        var query = new ElementQuery(
             WindowHandle: windowHandle,
             Name: name,
             NameMatch: nameMatch,
@@ -165,7 +176,20 @@ public class ElementActionTools
             MaxResults: 2,
             Detail: ElementDetail.Minimal,
             Timeout: timeout,
-            Scope: scope), action, cancellationToken).ConfigureAwait(false);
+            Scope: scope)
+        {
+            // realize (roadmap M3.10): items the list has not realized are found too, through its ItemContainer pattern
+            SearchVirtualized = action == ElementActionKind.Realize && FitsVirtualizedSearch(name, nameMatch, automationId)
+        };
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var found = await FindOneAsync(query, action, cancellationToken).ConfigureAwait(false);
+        if (found.Failure is { ErrorCode: nameof(UIElementErrorCode.ElementNotFound) } && action == ElementActionKind.Realize && maxScrolls > 0)
+        {
+            NoteWindow(windowHandle);
+            return await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), stopwatch, found.Failure, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         if (found.Failure is { } failure)
         {
             return failure;
