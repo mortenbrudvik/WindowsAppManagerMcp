@@ -910,7 +910,26 @@ public sealed class ElementActionServiceTests : IDisposable
         var result = await ActAsync(item, ElementActionKind.Realize);
 
         result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeTrue("it is on screen");
         result.Warnings.Should().Contain(w => w.Contains("not a virtualized item"));
+    }
+
+    [Fact]
+    public async Task Realize_OfAnOffscreenItemThatCanNeitherBeRealizedNorScrolled_IsNotVerified()
+    {
+        // Arrange - no VirtualizedItem and no ScrollItem pattern: nothing can bring it on screen
+        var item = RefOf(new FakeUiaNode("ListItem", "Row 80") { IsOffscreen = true });
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeFalse("realize's outcome is that the item is on screen, and it is not");
+        result.After!.IsOffscreen.Should().BeTrue();
+        result.Warnings.Should().Contain(w => w.Contains("cannot be scrolled into view"))
+            .And.NotContain(w => w.Contains("does not show its effect"), "nothing was done that could still take effect");
     }
 
     #endregion

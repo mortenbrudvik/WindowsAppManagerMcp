@@ -614,11 +614,17 @@ public sealed partial class ElementActionService : IElementActionService
     {
         var request = call.Request;
         after ??= new AfterRead(element.Before, element.FullValue, element.ScrollBefore, Gone: false, Warning: null);
-        var verified = method == ElementActionMethod.None ? true : Verify(request, element, after);
+
+        // Nothing done means the state asked for was there already; except for realize, which can find nothing to do for an
+        // item that is still offscreen (no VirtualizedItem or ScrollItem pattern): its outcome, on screen, is checked
+        var verified = method == ElementActionMethod.None && request.Action != ElementActionKind.Realize
+            ? true
+            : Verify(request, element, after);
         var opened = _probe.OpenedSince(windowsBefore);
         var warnings = new List<string?> { after.Warning };
-        if (verified == false)
+        if (verified == false && method != ElementActionMethod.None)
         {
+            // Without an action there is nothing that could still take effect: the plan's own warning says why
             warnings.Add(UnverifiedWarning(request, element));
         }
 
