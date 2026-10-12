@@ -104,6 +104,15 @@ public sealed partial class ElementActionService : IElementActionService
     /// <summary>How often the toggle state is read while <see cref="ToggleStateWait"/> runs.</summary>
     public TimeSpan ToggleStatePoll { get; init; } = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>The clock <see cref="ToggleStateWait"/> is measured on; the system clock by default.</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// How the toggle wait pauses between its reads, on the action's thread (<see cref="Thread.Sleep(TimeSpan)"/> by default);
+    /// a test moves its <see cref="Clock"/> here instead.
+    /// </summary>
+    public Action<TimeSpan> Sleep { get; init; } = Thread.Sleep;
+
     /// <summary>
     /// Why the request's arguments do not fit its action (a missing or invalid value, a direction for another action), or
     /// null. The tool checks this before it searches for the element, so a wrong call costs no search.

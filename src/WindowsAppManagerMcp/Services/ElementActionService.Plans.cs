@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -608,16 +607,16 @@ public sealed partial class ElementActionService
 
     /// <summary>
     /// The toggle state once it differs from <paramref name="previous"/>, read every <paramref name="poll"/> for up to
-    /// <paramref name="wait"/>; null when it did not change, or it (or the state before) cannot be read.
+    /// <paramref name="wait"/> of <see cref="Clock"/>; null when it did not change, or it (or the state before) cannot be read.
     /// </summary>
-    private static UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
+    private UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
     {
         if (previous == null)
         {
             return null;
         }
 
-        var clock = Stopwatch.StartNew();
+        var started = Clock.GetTimestamp();
         while (true)
         {
             UiaToggleState now;
@@ -635,12 +634,12 @@ public sealed partial class ElementActionService
                 return now;
             }
 
-            if (clock.Elapsed >= wait)
+            if (Clock.GetElapsedTime(started) >= wait)
             {
                 return null;
             }
 
-            Thread.Sleep(poll);
+            Sleep(poll);
         }
     }
 

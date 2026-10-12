@@ -51,17 +51,24 @@ public sealed class ElementActionServiceTests : IDisposable
 
     public void Dispose() => _session.Dispose();
 
-    /// <param name="toggleStateWait">How long a toggle waits for the state to change (30 ms by default, so a box that never
-    /// changes fails fast); a test that needs several polls to pass must allow for the system timer, whose sleeps last up to
-    /// about 16 ms.</param>
-    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStateWait = null) => new(
+    /// <summary>
+    /// The toggle wait's clock: its sleeps move it by exactly the poll interval, so how many reads a toggle waits for never
+    /// depends on the system timer or on the load of the test run.
+    /// </summary>
+    private readonly ManualClock _clock = new();
+
+    /// <param name="toggleStatePoll">How often a toggle reads the state while it waits for it to change (1 ms by default);
+    /// it waits 30 ms of <see cref="_clock"/> at most, so a box that never changes fails fast.</param>
+    private ElementActionService CreateSut(ToolsetSelection? toolsets = null, TimeSpan? toggleStatePoll = null) => new(
         _tree, _worker, _registry, _guard.Object, _session, _runner, _probe.Object, _input.Object, _foreground.Object,
         _windows.Object, _clipboard.Object, toolsets)
     {
         SettleDelay = TimeSpan.Zero,
         GateTimeout = TimeSpan.FromSeconds(10),
-        ToggleStateWait = toggleStateWait ?? TimeSpan.FromMilliseconds(30),
-        ToggleStatePoll = TimeSpan.FromMilliseconds(1)
+        ToggleStateWait = TimeSpan.FromMilliseconds(30),
+        ToggleStatePoll = toggleStatePoll ?? TimeSpan.FromMilliseconds(1),
+        Clock = _clock,
+        Sleep = _clock.Advance
     };
 
     /// <summary>Puts <paramref name="node"/> in the window and gives it a ref, as a read tool would.</summary>
@@ -506,16 +513,38 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OutcomeVerified.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(16)] // the system timer's resolution
+    [InlineData(35)] // a poll longer than the whole wait
+    public async Task Toggle_ToAState_WaitsNoLongerThanToggleStateWait_ForAStateThatDoesNotUpdate(int pollMs)
+    {
+        // Arrange - the old state is reported for longer than the wait: there is no second toggle
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off) { StaleReads = 1000 };
+        var box = RefOf(CheckBox(toggle));
+        var start = _clock.GetTimestamp();
+
+        // Act
+        var result = await CreateSut(toggleStatePoll: TimeSpan.FromMilliseconds(pollMs))
+            .ActAsync(new ElementActionRequest(box, ElementActionKind.Toggle, "on"));
+
+        // Assert - the wait is measured on the clock, whatever the reads cost: it ends at the first read at or after 30 ms
+        result.ErrorCode.Should().Be("ActionFailed");
+        toggle.Toggles.Should().Be(1);
+        _clock.GetElapsedTime(start).Should().Be(TimeSpan.FromMilliseconds(Math.Ceiling(30.0 / pollMs) * pollMs));
+    }
+
     [Fact]
     public async Task Toggle_OfAThreeStateBox_WaitsForEachChange_AndReachesTheState()
     {
+        // Arrange - each toggle's new state shows only after three stale reads
         var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off, threeState: true) { StaleReads = 3 };
         var box = RefOf(CheckBox(toggle));
 
-        // The second toggle waits out three stale reads, 1 ms polls apart: up to about 50 ms with the system timer
-        var result = await CreateSut(toggleStateWait: TimeSpan.FromMilliseconds(500))
-            .ActAsync(new ElementActionRequest(box, ElementActionKind.Toggle, "indeterminate"));
+        // Act
+        var result = await ActAsync(box, ElementActionKind.Toggle, "indeterminate");
 
+        // Assert
         result.Success.Should().BeTrue(result.Error);
         toggle.Toggles.Should().Be(2);
         result.After!.ToggleState.Should().Be(UiaToggleState.Indeterminate);
