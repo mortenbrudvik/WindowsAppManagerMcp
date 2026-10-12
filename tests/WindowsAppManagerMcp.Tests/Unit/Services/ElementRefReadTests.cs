@@ -92,6 +92,32 @@ public class ElementRefReadTests
     }
 
     [Fact]
+    public async Task TheDesktopStateWalk_AndTheMarksWalk_GiveAnElementTheSameRef_InEitherOrder()
+    {
+        // Arrange - get_desktop_state's elements (roadmap M3.12: interactableOnly, visibleOnly) and capture_with_elements'
+        // marks (roadmap M3.11: actionableOnly, at most 80) are two filters over one walk and one registry
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Main").With(
+            new FakeUiaNode("Pane", "Body").With(
+                new FakeUiaNode("Text", "Label"),
+                new FakeUiaNode("Button", "Save") { IsKeyboardFocusable = true, ActionPatterns = ["Invoke"] },
+                new FakeUiaNode("Edit", "Name") { IsKeyboardFocusable = true, ActionPatterns = ["Value"] }),
+            new FakeUiaNode("CheckBox", "Wrap") { IsKeyboardFocusable = true, ActionPatterns = ["Toggle"] }));
+        var desktopState = new UIElementFilter(InteractableOnly: true, VisibleOnly: true, MaxElements: 120);
+        var marks = new UIElementFilter(ActionableOnly: true, VisibleOnly: true, MaxElements: 80);
+
+        // Act - marks first, then the observation, then marks again
+        var marked = Flatten((await Walk().GetUIElementsAsync(Handle, filter: marks)).Elements!).ToList();
+        var observed = Flatten((await Walk().GetUIElementsAsync(Handle, filter: desktopState)).Elements!).ToList();
+        var markedAgain = Flatten((await Walk().GetUIElementsAsync(Handle, filter: marks)).Elements!).ToList();
+
+        // Assert
+        marked.Select(e => e.Name).Should().BeEquivalentTo("Save", "Name", "Wrap");
+        observed.Where(e => e.Ref != null).Select(e => $"{e.Name}={e.Ref}").Should()
+            .Contain(marked.Select(e => $"{e.Name}={e.Ref}"), "an element observed by get_desktop_state carries the ref its mark shows");
+        markedAgain.Select(e => e.Ref).Should().Equal(marked.Select(e => e.Ref));
+    }
+
+    [Fact]
     public async Task Walk_WithoutARegistry_GivesNoRefs()
     {
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "Main").With(new FakeUiaNode("Button", "Save")));

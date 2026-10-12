@@ -249,4 +249,30 @@ public class ElementActionRealizeToolTests
         _requests.Skip(1).Should().OnlyContain(r => r.Timeout <= TimeSpan.FromSeconds(3.5));
         _queries.Where(q => q.WithinRef == "w1e2").Should().OnlyContain(q => q.Timeout <= TimeSpan.FromSeconds(3.5));
     }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_AndObserveState_IsObservedOnce_AfterTheItemIsRealized()
+    {
+        // Arrange - observe (roadmap M3.12) wraps the whole scroll search (roadmap M3.10), not each page
+        var order = new List<string>();
+        var desktopState = new Mock<IDesktopStateService>();
+        var windows = new Mock<IWindowService>();
+        windows.Setup(w => w.IsValidWindow(Handle)).Returns(true);
+        desktopState.Setup(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DesktopStateRequest request, CancellationToken _) => order.Add($"observe {request.Window} after {_requests.Count} actions"))
+            .ReturnsAsync(new DesktopStateSnapshot(new DesktopState(true, Handle, "Chat", null, null, null, new DesktopInputState(false),
+                null, null, null, null, null, null, 9), null));
+        var sut = new ElementActionTools(_actions.Object, _search.Object, _registry.Object, windows.Object, desktopState.Object);
+
+        // Act
+        var result = await sut.ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            observe: ObserveMode.State);
+
+        // Assert - three pages scrolled and the item realized, then one observation of the list's window
+        var payload = result.Payload<ElementActionResult>();
+        payload.Success.Should().BeTrue(payload.Error);
+        (payload.Action, payload.Ref).Should().Be(("realize", "w1e9"));
+        order.Should().Equal($"observe {Handle} after 4 actions");
+        payload.Observed!.WindowHandle.Should().Be(Handle);
+    }
 }
