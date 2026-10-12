@@ -120,7 +120,7 @@ public sealed class ServerHarness : IDisposable
         if (uiaEngine is { } engine)
         {
             // The server builds its IUiaTree from these options, so the engine's tree sits behind the guard as usual
-            services.Replace(ServiceDescriptor.Singleton(new UiaEngineOptions(engine, "E2E")));
+            services.Replace(ServiceDescriptor.Singleton(new UiaEngineOptions(engine, "chosen by the test")));
         }
 
         if (wrapperSubstitute != null)

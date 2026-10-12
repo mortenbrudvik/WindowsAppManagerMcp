@@ -337,7 +337,8 @@ public class NativeCallGuardTests
     /// <summary>
     /// The types that may call UI Automation actions: the browser wrapper, and the two engine adapters behind IUiaTree,
     /// whose pattern objects (IUiaPattern) the action tools of roadmap M3.6 use. Tests replace all three with mocks or
-    /// FakeUiaTree, and the E2E guard classifies every pattern member (WrapperCatalog: UiaAction, refused in every tier).
+    /// FakeUiaTree, and the E2E guard classifies every pattern member (WrapperCatalog: UiaAction, refused in the no-input
+    /// tier, and allowed only on elements of the fixture process in the input tier).
     /// </summary>
     private static readonly Type[] UiAutomationActionOwners = [typeof(UIAutomationWrapper), typeof(UiaTree), typeof(Uia3Tree)];
 

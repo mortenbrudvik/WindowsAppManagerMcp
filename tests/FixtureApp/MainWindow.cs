@@ -11,10 +11,10 @@ using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
-/// The fixture's main window: an edit box, a check box, a combo box, a button that opens a modal dialog,
-/// a button that opens a document with unsaved changes, a context menu, solid color swatches and a
+/// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal
+/// dialog, a button that opens a document with unsaved changes, a context menu, solid color swatches and a
 /// virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
-/// AutomationId (<see cref="Ids"/>), and every change is written to the event log.
+/// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// </summary>
 internal sealed class MainWindow : Window
 {
@@ -58,6 +58,12 @@ internal sealed class MainWindow : Window
         left.Children.Add(new TextBlock { Text = "Edit box" });
         _editBox.TextChanged += (_, _) => Log(Events.TextChanged, ("id", Ids.EditBox), ("text", _editBox.Text));
         left.Children.Add(Report(Ids.EditBox, _editBox, "Edit box"));
+
+        // UI Automation reports it as a password field (IsPassword), whose value the server never reads. Its content is
+        // not logged.
+        left.Children.Add(new TextBlock { Text = "Password box" });
+        var passwordBox = new PasswordBox { Width = 320, Margin = new Thickness(0, 4, 0, 12) };
+        left.Children.Add(Report(Ids.PasswordBox, passwordBox, "Password box"));
 
         var checkBox = new CheckBox { Content = "Check box", Margin = new Thickness(0, 0, 0, 12) };
         checkBox.Checked += (_, _) => Log(Events.CheckedChanged, ("id", Ids.CheckBox), ("isChecked", true));

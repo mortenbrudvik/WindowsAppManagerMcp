@@ -1960,7 +1960,8 @@ Rules for new tests:
 owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
 mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
 
-**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a check box, a
+**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a password box
+(UI Automation reports it as a password field, whose value the server never reads), a check box, a
 combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
 button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
 unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
@@ -1988,18 +1989,26 @@ themselves: `ServerHarness` registers them, so the container passes the guarded 
 test (`ServerHarnessTests`) resolves every service and fails if any of them holds a native wrapper
 outside the guard. A process handle returned by `OpenProcess` is guarded as well. The guard does not
 decide from member names: `WrapperCatalog` classifies every wrapper member explicitly (read, window
-action, input, process action, process start, thread-input attach or global hotkey). A member it does not list is refused in every tier,
-and `WrapperCatalogTests` fails until a new wrapper or member is classified. When you merge a change
-that adds wrapper members, classify them there.
+action, input, process action, process start, thread-input attach, global hotkey, clipboard or UI Automation
+action). A member it does not list is refused in every tier, and `WrapperCatalogTests` fails until a new wrapper or
+member is classified. When you merge a change that adds wrapper members, classify them there (`TestingGuideTests`
+fails until a new kind is named in this list).
 
-- In the no-input tier the server can only read. Input, window changes, process closes and kills
-  throw `E2EGuardException` before they reach the wrapper.
+- In the no-input tier the server can only read. Input, window changes, UI Automation actions, and
+  process closes and kills throw `E2EGuardException` before they reach the wrapper.
 - In the input tier the server can act only on the fixture process:
   - keyboard input goes out only while a fixture window is in front;
   - mouse input goes out only while the cursor is over a fixture window, and a batch that moves the
     pointer (a click carries an absolute move to its point) only when the move ends over a fixture window;
+  - a mouse wheel batch goes out only while a fixture window is also in front, because Windows can send the
+    wheel to the focus window instead of the one under the cursor;
   - window calls go through only when every window they name is a fixture window;
-  - closes and kills apply only to the fixture process, checked by id and process name.
+  - closes and kills apply only to the fixture process, checked by id and process name;
+  - UI Automation actions (a pattern's `Invoke`, `Toggle`, `SetValue` and the other actions, and
+    `IUiaTree.SetFocus`, roadmap M3.6) go through only on an element of the fixture process. The guard reads the
+    element's process with `ReadIdentity`, through the tree that handed out the pattern (or that `SetFocus` was
+    called on), and refuses the call when it cannot read it. Unlike input, a UI Automation action gets no
+    foreground or hit-test check: a pattern acts on its element wherever the element is.
 
   Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
   moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server may
@@ -2010,17 +2019,21 @@ that adds wrapper members, classify them there.
   the typing. It is a second, independent layer under the server's own input guard (roadmap M1.1 and
   M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
-- In both tiers, starting a process (including `where.exe`) is refused. CDP (`ICdpService`) refuses
-  every call, because it talks to a browser's debug port over the network, outside the native
-  wrappers, and no fixture has one yet.
+- In both tiers, starting a process (including `where.exe`), registering a global hotkey and reading
+  or writing the clipboard's content are refused. CDP (`ICdpService`) refuses every call, because it
+  talks to a browser's debug port over the network, outside the native wrappers, and no fixture has one yet.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
 pattern objects `IUiaTree.GetPattern` hands out are guarded in turn: their actions (`UiaAction` in
-`WrapperCatalog`) are refused in both tiers until the action tools bring a fixture rule. A scenario can choose the
-engine with `E2ESession.Start(..., uiaEngine: UiaEngine.Uia2)` (or `ServerHarness.Create(tier, pid, engine)`);
-`FixtureUiaEngineTests` reads the fixture with both and compares the trees. The Uia3Tree unit tests never create the
-COM client: they run over Moq mocks of its interfaces. The harness finds the fixture exe from a
+`WrapperCatalog`) are refused in the no-input tier and allowed in the input tier only on elements of the fixture
+process, as above. A scenario can choose the engine with `E2ESession.Start(..., uiaEngine: UiaEngine.Uia2)` (or
+`ServerHarness.Create(tier, pid, engine)`); without it the server reads with the engine `WAM_UIA_ENGINE` chooses in
+the test process (by default uia3), and `E2ESession.Start` writes the engine and where it came from to the test output
+(`UI Automation engine: Uia3 (default)`). `FixtureUiaEngineTests` and `FixtureUiElementsTests` read the fixture with
+both engines in every run (see
+[Release gate: the UI Automation engines](#release-gate-the-ui-automation-engines)). The Uia3Tree unit tests never
+create the COM client: they run over Moq mocks of its interfaces. The harness finds the fixture exe from a
 path the build records in the test assembly; set `WAM_FIXTURE_APP_PATH` to use another build of
 `WamFixtureApp.exe` (for example in Windows Sandbox). The harness refuses any exe with another name.
 
@@ -2051,6 +2064,76 @@ runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and 
 checks that the runner has an interactive desktop and otherwise ends with a notice instead of
 running anything; use a self-hosted runner in a logged-on desktop session then. It fails when no
 test ran, so an opt-in that did not reach the tests cannot pass as green.
+
+### Release gate: the UI Automation engines
+
+The server reads UI Automation with the UIA3 COM client by default, and with the managed UIA2 client
+(System.Windows.Automation) when `WAM_UIA_ENGINE=uia2` (roadmap M3.2). Before a release that ships
+uia3 as the default, the repository owner runs the whole no-input tier twice on a real desktop: once
+with `WAM_UIA_ENGINE` unset (uia3) and once with `WAM_UIA_ENGINE=uia2`. If the engines differ, the
+release ships with uia2 as the default (`UiaEngineOptions.Default`). The owner runs it, never an
+agent. The tier only starts the fixture and reads it, but the fixture's windows appear on the screen:
+leave the desktop alone during the runs, because a window opened over the fixture can fail a capture
+scenario.
+
+Run both from the repository root. The trx logger keeps every test's output, so the two runs can be
+compared afterwards (`TestResults/` is not committed):
+
+```bash
+# Git Bash
+# Run 1: the default engine (uia3)
+env -u WAM_UIA_ENGINE WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1   dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
+# Run 2: uia2
+WAM_UIA_ENGINE=uia2 WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1   dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
+```
+
+```powershell
+# PowerShell
+# Run 1: the default engine (uia3)
+Remove-Item Env:WAM_UIA_ENGINE -ErrorAction SilentlyContinue
+$env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = "1"
+dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
+
+# Run 2: uia2
+$env:WAM_UIA_ENGINE = "uia2"
+dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
+
+Remove-Item Env:WAM_UIA_ENGINE
+Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
+```
+
+What the runs cover:
+
+- Every scenario that leaves the engine to the server (find_ui_elements and refs, read_element_text and
+  read_table, wait_for_element, Set-of-Marks, get_desktop_state, the virtualized list search) reads with
+  the engine of the run. Each test's output names the engine and where it came from:
+  `UI Automation engine: Uia3 (default)` in the first run, `UI Automation engine: Uia2 (WAM_UIA_ENGINE)`
+  in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
+  falling back to uia3, so a mistyped second run cannot pass as a uia2 run.
+- `FixtureUiaEngineTests` and `FixtureUiElementsTests` choose the engine themselves, so they give the
+  same results in both runs (`UiaEngineScenarioTests` keeps it so). Each of their theories runs once
+  per engine (`engine: Uia3` and `engine: Uia2`). Among them, the find_ui_elements theory checks with
+  each engine that every element found at detail full is the fixture's (its process id), has a click
+  point in its bounds and a ref that resolves to the live element, and that the password box alone is a
+  password field, whose text neither find_ui_elements nor read_element_text reads. The `BothEngines_*`
+  facts start a server per engine against one fixture and compare what the two read: the
+  get_ui_elements tree (control types, names, automation ids, states, frameworks, a ref for every
+  element, bounds), and the elements find_ui_elements finds at detail full, by control types and by an
+  automation id in other letter case (identity: process, window handle and password flag; patterns;
+  toggle, expand/collapse and selection state; value; focus; description; bounds). Patterns are
+  compared by name without LegacyIAccessible, which uia3 reports on nearly every element and uia2
+  never does.
+
+What to compare:
+
+1. Both runs pass, with the same counts: the engines agree. Keep uia3 as the default.
+2. A test that fails in one run only, a theory that fails for one `engine` only, or a `BothEngines_*`
+   fact that fails: the engines differ. The failure message names the test's engine, or, for a
+   `BothEngines_*` fact, the first element that differs. The release defaults to uia2; record the
+   failing tests and their messages for the follow-up.
+3. A test that fails in both runs and, for a theory, with both engines, is a problem of the test or
+   the fixture, not an engine difference. Fix it and run the gate again. A `BothEngines_*` fact is the
+   exception: it compares the engines, so it fails in both runs when they differ (point 2).
 
 ### Tool surface snapshot
 
