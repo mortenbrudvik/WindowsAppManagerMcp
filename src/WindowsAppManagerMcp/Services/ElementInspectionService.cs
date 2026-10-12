@@ -310,7 +310,8 @@ public class ElementInspectionService : IElementInspectionService
 
     /// <summary>
     /// Why the element read is not returned: its window, unless that is <paramref name="checkedWindow"/> (checked before the
-    /// read), or its own process belongs to an app the user's target policy denies. Null when it is allowed.
+    /// read), or its own process belongs to an app the user's target policy denies, or cannot be named while the policy denies
+    /// anything (as <see cref="UiaTargets.ReadVerdict"/> refuses a window). Null when it is allowed.
     /// </summary>
     private string? ElementRefusal(nint window, nint checkedWindow, string? processName)
     {
@@ -324,7 +325,7 @@ public class ElementInspectionService : IElementInspectionService
             return denied;
         }
 
-        return processName != null && _policy.Evaluate([processName]) is { Allowed: false } verdict
+        return _policy.EvaluateFailClosed([processName]) is { Allowed: false } verdict
             ? UiaTargets.PolicyRefusalMessage(window != nint.Zero ? window : checkedWindow, verdict)
             : null;
     }

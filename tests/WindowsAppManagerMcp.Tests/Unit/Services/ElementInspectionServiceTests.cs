@@ -708,9 +708,9 @@ public class ElementInspectionServiceTests
 
     private static readonly nint Prompt = 0x6000;
 
-    private ElementInspectionService CreateSutWithPolicy() =>
+    private ElementInspectionService CreateSutWithPolicy(TargetPolicySettings? policy = null) =>
         new(_tree, _worker, _hitTest.Object, _windows.Object, _monitors.Object, _warmup.Object,
-            policy: new TargetPolicy(TargetPolicySettings.Default));
+            policy: new TargetPolicy(policy ?? TargetPolicySettings.Default));
 
     /// <summary>Makes <paramref name="window"/> a window of process <paramref name="processId"/> named <paramref name="processName"/>.</summary>
     private void WindowOf(nint window, uint processId, string processName)
@@ -762,6 +762,45 @@ public class ElementInspectionServiceTests
         result.Element.Should().BeNull();
         _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Read:User name"),
             "nothing of the element is read once its window is known to be denied");
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_OfAProcessThatCannotBeNamed_IsNotReturned_NorItsValueRead_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the app in front is allowed, but the focused element has no window above it, and the server cannot name
+        // its own process (it may run elevated), so it cannot be checked against the policy
+        _tree.Focused = new FakeUiaNode("Edit", "Master password") { ProcessId = 901, ActionPatterns = ["Value"], Value = "hunter2" };
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _windows.Setup(w => w.GetProcessName(901u)).Returns((string?)null);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("cannot be read");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Read:Master password"));
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_OfAProcessThatCannotBeNamed_IsReturned_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        _tree.Focused = new FakeUiaNode("Edit", "Master password") { ProcessId = 901, ActionPatterns = ["Value"], Value = "hunter2" };
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _windows.Setup(w => w.GetProcessName(901u)).Returns((string?)null);
+
+        // Act
+        var result = await CreateSutWithPolicy(
+            TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null)).GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().Be(901);
+        result.ProcessName.Should().BeNull();
     }
 
     [Fact]
