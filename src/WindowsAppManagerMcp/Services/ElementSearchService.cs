@@ -633,22 +633,42 @@ public sealed partial class ElementSearchService : IElementSearchService
     }
 
     /// <summary>
-    /// The kept matches as find_ui_elements returns them, each registered under the window it was found in. With
+    /// The kept matches as find_ui_elements returns them, each registered under the window it was found in, with the list
+    /// row it is in (<see cref="ElementRows"/>: read up its ancestors, each ancestor once for all the matches). With
     /// <paramref name="mayRead"/> false (an abandoned search, read on the caller's thread) nothing is read: every field
-    /// comes from what the search read.
+    /// comes from what the search read, and no row is recorded.
     /// </summary>
     private List<FoundElement> Describe(
         ElementQuery query, ElementCriteria criteria, IReadOnlyList<(nint Window, UiaElement Element)> matches, long generation,
         bool mayRead, Func<UiaElement, bool?> unique, CancellationToken token)
     {
         var found = new List<FoundElement>(matches.Count);
+        var rows = ElementRows.For(_tree);
         foreach (var (window, match) in matches)
         {
+            ElementRow? row = null;
+            if (mayRead && !token.IsCancellationRequested)
+            {
+                try
+                {
+                    row = rows.Of(match, token);
+                }
+                catch (TimeoutException)
+                {
+                    // A provider that does not answer: describe the rest from what the search read
+                    mayRead = false;
+                }
+                catch (Exception)
+                {
+                    // An ancestor that is gone or failed, or the deadline: registered without its row
+                }
+            }
+
             string? elementRef = null;
             try
             {
                 elementRef = _registry.Register(
-                    window, match, new ElementOrigin(generation, criteria.Identity, Unique: unique(match)));
+                    window, match, new ElementOrigin(generation, criteria.Identity, Unique: unique(match), Row: row));
             }
             catch (Exception)
             {

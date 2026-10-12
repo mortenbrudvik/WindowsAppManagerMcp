@@ -614,6 +614,52 @@ public class ElementRegistryTests
     }
 
     [Fact]
+    public void Resolve_AnElementFoundByItsRuntimeIdInARowThatShowsAnotherItem_IsStale()
+    {
+        // Arrange - the row's Delete button was read in Invoice 1041; its proxy no longer answers, and a new proxy of the same
+        // element is in the row, which now shows Invoice 1077
+        var sut = CreateSut();
+        var id = FakeUiaNode.NewRuntimeId();
+        var stored = Button("Delete", "DeleteButton", id);
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(stored);
+        Window(Handle, new FakeUiaNode("List", "Invoices").With(row));
+        var deleteRef = sut.Register(Handle, _tree.ReadElement(stored),
+            new ElementOrigin(1, Row: new ElementRow(row.RuntimeId!, "Invoice 1041", null, 1)));
+        stored.Vanish();
+        row.With(Button("Delete", "DeleteButton", id));
+        row.Name = "Invoice 1077";
+
+        // Act
+        var resolution = sut.Resolve(deleteRef!, None);
+
+        // Assert
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("its row now shows another item");
+    }
+
+    [Fact]
+    public void Register_TheSameElementSeenInAnotherRow_GetsANewRef_AndTheOldRefIsDropped()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var delete = Button("Delete", "DeleteButton");
+        var row = new FakeUiaNode("ListItem", "Invoice 1041").With(delete);
+        Window(Handle, new FakeUiaNode("List", "Invoices").With(row));
+        var first = sut.Register(Handle, _tree.ReadElement(delete),
+            new ElementOrigin(1, Row: new ElementRow(row.RuntimeId!, "Invoice 1041", null, 1)));
+
+        // Act - the same row element, now showing another invoice; then a read that does not know the row
+        var second = sut.Register(Handle, _tree.ReadElement(delete),
+            new ElementOrigin(2, Row: new ElementRow(row.RuntimeId!, "Invoice 1077", null, 1)));
+        var third = sut.Register(Handle, _tree.ReadElement(delete), new ElementOrigin(3));
+
+        // Assert
+        second.Should().NotBe(first);
+        sut.Lookup(first!).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        third.Should().Be(second, "a read that does not know the row says nothing against it");
+    }
+
+    [Fact]
     public void Resolve_WhenTheLiveReadHasNoRuntimeId_DoesNotAcceptItAsLive()
     {
         // Arrange - the stored node now reads without a runtime id: nothing says which element answered

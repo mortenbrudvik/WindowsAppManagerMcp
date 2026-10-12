@@ -690,9 +690,15 @@ public class UIElementService : IUIElementService
                 return;
             }
 
+            // The list row the element is in (the walk knows its ancestors), and the row of the elements below it
+            var row = ElementRows.IsItem(properties.ControlType) ? null : ElementRows.Below(parent.Row);
+            var rowBelow = ElementRows.IsItem(properties.ControlType)
+                ? ElementRows.OfItem(RuntimeIdOf(candidate), properties)
+                : ElementRows.EndsTheSearch(properties.ControlType) ? null : row;
+
             // Registered outside the walk's lock: the registry has its own, and makes no UI Automation call
-            var elementRef = included ? refs?.Register(tree, candidate, properties, indexPath) : null;
-            var node = new WalkNode(properties, included, elementRef, indexPath);
+            var elementRef = included ? refs?.Register(tree, candidate, properties, indexPath, row) : null;
+            var node = new WalkNode(properties, included, elementRef, indexPath) { Row = rowBelow };
             lock (_gate)
             {
                 parent.Children.Add(node);
@@ -709,6 +715,22 @@ public class UIElementService : IUIElementService
                 {
                     _pending.Enqueue((node, candidate.Node, level + 1));
                 }
+            }
+        }
+
+        /// <summary>
+        /// An item's runtime id, for the row of the elements below it: from its level's read, else as the engine knows it
+        /// (no further call for an element it found); null when it cannot be read.
+        /// </summary>
+        private IReadOnlyList<int>? RuntimeIdOf(Candidate candidate)
+        {
+            try
+            {
+                return candidate.Cached?.RuntimeId ?? tree.GetRuntimeId(candidate.Node);
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 
@@ -892,6 +914,12 @@ public class UIElementService : IUIElementService
         private sealed record WalkNode(UiaNodeProperties? Properties, bool Included, string? Ref, int[] IndexPath)
         {
             public List<WalkNode> Children { get; } = [];
+
+            /// <summary>
+            /// The list row of the elements below this one (<see cref="ElementRows"/>), its levels counted from this element
+            /// (0 when it is the item itself), or null when they are in none.
+            /// </summary>
+            public ElementRow? Row { get; init; }
         }
     }
 
@@ -905,14 +933,14 @@ public class UIElementService : IUIElementService
     /// </summary>
     private sealed class WalkRefs(IElementRegistry registry, nint windowHandle, long generation)
     {
-        public string? Register(IUiaTree tree, Candidate candidate, UiaNodeProperties properties, int[] indexPath)
+        public string? Register(IUiaTree tree, Candidate candidate, UiaNodeProperties properties, int[] indexPath, ElementRow? row)
         {
             try
             {
                 var element = candidate.Cached ?? new UiaElement(
                     candidate.Node, properties, ClassName: null, IsKeyboardFocusable: false, UiaPatterns.None,
                     tree.GetRuntimeId(candidate.Node), ControlTypeId: null);
-                return registry.Register(windowHandle, element, new ElementOrigin(generation, IndexPath: indexPath));
+                return registry.Register(windowHandle, element, new ElementOrigin(generation, IndexPath: indexPath, Row: row));
             }
             catch (Exception)
             {

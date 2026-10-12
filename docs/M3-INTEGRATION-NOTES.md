@@ -93,7 +93,7 @@ wave; check the code before acting.
 #### m3-element-refs
 
 - Run the gated FixtureElementRefsTests on a real desktop (no-input opt-in, run by the user). None of the split search, clickable points, uniqueness proof or live resolution has run against a live desktop.
-- M3.6 element_action: an element inside a recycled list item whose own identity does not change (a row's check box) still resolves Live, so read the containing item's name, or what you act on, before a destructive action. Treat ElementStale and AmbiguousElement as stop signals, never as hints to retry on a look-alike.
+- M3.6 element_action: an element inside a recycled list item whose own identity does not change (a row's check box) is checked against its row since the M3 review (ElementRows): once the row shows another item, its ref is ElementStale. Treat ElementStale and AmbiguousElement as stop signals, never as hints to retry on a look-alike.
 - Optional: a window thread-id check for handle reuse within the same process and class. It needs a new INativeWindowWrapper member plus NativeCallGuard and WrapperCatalog entries; not done because handle values come back only after a slot's 16-bit reuse counter wraps.
 - Optional: provider-side nameMatch contains via PropertyConditionFlags_MatchSubstring (UIA3, Windows 10 1809+), unverified.
 - M3.5 can add an optional scope parameter to find_ui_elements; omitting it should keep today's window-only search. A scoped search should pass Unique=null, as withinRef does.
@@ -146,7 +146,7 @@ wave; check the code before acting.
 - Server instructions are at 2992 of 3000 characters; a sibling that adds to them (wait_for_element) must trim elsewhere.
 - The keyboard path is not atomic: the gate is released between the focus check and the keys sent through the input service. Focus is checked again after Ctrl+A, and the input guard re-checks the foreground window, but not the focused element, before every batch.
 - element_action has no releaseHeldModifiers parameter: ModifiersHeld from its mouse or keyboard paths cannot be overridden from the tool.
-- An element inside a recycled list row can still resolve after the row changed (M3.4 caveat); this is documented.
+- An element inside a recycled list row used to resolve after the row changed (M3.4 caveat); since the M3 review its ref is ElementStale once the row shows another item (ElementRows).
 - An element of another process whose nearest window handle belongs to a third process (a windowless fragment hosted across processes) is refused (fails closed); check on a real desktop that WebView2 and XAML-island content still pass.
 - Wave D: the menu_path action, respond_to_dialog and the file dialog helper (not built).
 - open review minor: window_* top-level check lets the action through when the element's window handle is unknown (src/WindowsAppManagerMcp/Services/ElementActionService.Plans.cs)

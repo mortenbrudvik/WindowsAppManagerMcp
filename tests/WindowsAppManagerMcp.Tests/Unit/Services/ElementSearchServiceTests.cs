@@ -331,6 +331,121 @@ public class ElementSearchServiceTests
         resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
     }
 
+    /// <summary>
+    /// Window "Invoices" > DataGrid "Rows" > DataItem "Invoice 1041" (no automation id) > Button "Delete": a grid that
+    /// recycles its rows. Returns the row, its button and the button's ref from a search below the row.
+    /// </summary>
+    private async Task<(FakeUiaNode Grid, FakeUiaNode Row, FakeUiaNode Delete, string DeleteRef)> BuildRecyclingGrid()
+    {
+        var delete = new FakeUiaNode("Button", "Delete") { AutomationId = "DeleteButton" };
+        var row = new FakeUiaNode("DataItem", "Invoice 1041").With(delete);
+        var grid = new FakeUiaNode("DataGrid", "Rows").With(row);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Invoices").With(grid));
+        var rowRef = _registry.Register(Handle, _tree.ReadElement(row), new ElementOrigin(1));
+        var deleteRef = (await Find(Query(name: "Delete", withinRef: rowRef))).Elements!.Single().Ref!;
+        return (grid, row, delete, deleteRef);
+    }
+
+    [Fact]
+    public async Task Find_ARecycledRowsButton_IsStale_OnceItsRowShowsAnotherItem()
+    {
+        // Arrange - the grid scrolled and reused the row for another invoice: the row and its button keep their runtime ids,
+        // their types, automation ids and classes; only the row's name tells
+        var (_, row, _, deleteRef) = await BuildRecyclingGrid();
+        row.Name = "Invoice 1077";
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - never Invoice 1077's Delete button
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        resolution.Error.Should().Contain("another item").And.Contain("Invoice 1077");
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonMovedToAnotherRowElement_IsStale()
+    {
+        // Arrange - the button's container now belongs to another row element (another runtime id), as WPF's item peers do
+        var (grid, _, delete, deleteRef) = await BuildRecyclingGrid();
+        var other = new FakeUiaNode("DataItem", "Invoice 1041");
+        grid.With(other);
+        other.With(delete);
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - the same name, but not the same row
+        resolution.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonInTheSameRow_ResolvesLive_ReadingOnlyTheButtonAndItsRow()
+    {
+        // Arrange
+        var (_, _, _, deleteRef) = await BuildRecyclingGrid();
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var resolution = _registry.Resolve(deleteRef, CancellationToken.None);
+
+        // Assert - one read of the element, one of its row (and one parent call)
+        resolution.Element!.Via.Should().Be(ElementResolutionPath.Live);
+        _tree.Reads.Skip(readsBefore).Should().Equal("Element:Delete", "Element:Invoice 1041");
+    }
+
+    [Fact]
+    public async Task Find_ARowsButtonFoundAgainInAnotherItem_GetsANewRef_AndTheOldOneIsDropped()
+    {
+        // Arrange
+        var (_, row, _, deleteRef) = await BuildRecyclingGrid();
+        row.Name = "Invoice 1077";
+
+        // Act
+        var again = (await Find(Query(name: "Delete"))).Elements!.Single().Ref;
+
+        // Assert - the ref of Invoice 1041's button never names Invoice 1077's
+        again.Should().NotBe(deleteRef);
+        _registry.Lookup(deleteRef).ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+        _registry.Resolve(again!, CancellationToken.None).Element!.Via.Should().Be(ElementResolutionPath.Live);
+    }
+
+    [Fact]
+    public async Task Find_ReadsEachAncestorOnce_ForTheRowsOfAllItsMatches()
+    {
+        // Arrange - three buttons in one toolbar, in a pane: no row above them
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(new FakeUiaNode("Pane", "Body").With(
+            new FakeUiaNode("ToolBar", "Tools").With(
+                new FakeUiaNode("Button", "Cut"), new FakeUiaNode("Button", "Copy"), new FakeUiaNode("Button", "Paste")))));
+
+        // Act
+        var result = await Find(Query(controlTypes: ["Button"]));
+
+        // Assert - the toolbar, the pane and the window once each, up to the window (where no row can be above)
+        result.MatchCount.Should().Be(3);
+        _tree.Reads.Where(r => r.StartsWith("Element:", StringComparison.Ordinal)).Should().Equal(
+            "Element:Tools", "Element:Body", "Element:Editor");
+    }
+
+    [Fact]
+    public async Task Find_LooksForAMatchsRowAtMostEightLevelsUp()
+    {
+        // Arrange - a button ten levels below a list item
+        FakeUiaNode inner = new FakeUiaNode("Button", "Deep");
+        for (var i = 0; i < 9; i++)
+        {
+            inner = new FakeUiaNode("Group", $"G{i}").With(inner);
+        }
+
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "W").With(new FakeUiaNode("List", "L").With(
+            new FakeUiaNode("ListItem", "Item").With(inner))));
+
+        // Act
+        await Find(Query(name: "Deep"));
+
+        // Assert
+        _tree.Reads.Count(r => r.StartsWith("Element:", StringComparison.Ordinal)).Should().Be(ElementRows.MaxLevels);
+    }
+
     [Fact]
     public async Task Find_WithinARefFoundAgainUnderItsOwnRef_ReportsTheRefItHasNow()
     {
@@ -384,14 +499,15 @@ public class ElementSearchServiceTests
     }
 
     [Fact]
-    public async Task Find_DetailMinimal_MakesNoReadButTheClickPoint()
+    public async Task Find_DetailMinimal_MakesNoReadButTheClickPoint_AndTheRowLookup()
     {
         BuildEditor();
 
         await Find(Query(name: "Save"));
 
+        // The ancestors up to the window, read for the list row the button could be in (it is in none)
         _tree.Reads.Where(r => !r.StartsWith("Read:", StringComparison.Ordinal))
-            .Should().Equal("Clickable:Save");
+            .Should().Equal("Element:Standard", "Element:Editor", "Clickable:Save");
     }
 
     #endregion

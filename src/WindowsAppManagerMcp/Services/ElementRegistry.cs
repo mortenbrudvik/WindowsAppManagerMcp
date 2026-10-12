@@ -162,7 +162,7 @@ public sealed class ElementRegistry : IElementRegistry
             var record = WindowRecordFor(windowHandle, identity.Value);
             if (record.Entries.TryGetValue(key, out var existing))
             {
-                if (SameIdentity(existing.Fingerprint, fingerprint))
+                if (SameIdentity(existing.Fingerprint, fingerprint) && !ElementRows.AreDifferent(existing.Row, origin.Row))
                 {
                     existing.Node = element.Node;
                     existing.Fingerprint = Merge(existing.Fingerprint, fingerprint);
@@ -172,13 +172,14 @@ public sealed class ElementRegistry : IElementRegistry
                         false => null,
                         _ => existing.Selector
                     };
+                    existing.Row = origin.Row ?? existing.Row;
                     existing.Generation = Math.Max(existing.Generation, origin.Generation);
                     Touch(existing);
                     return existing.Ref;
                 }
 
-                // Another element has the runtime id of one that is gone (or a recycled list item shows another row): the
-                // old ref must not name it
+                // Another element has the runtime id of one that is gone, a recycled list item shows another row, or a
+                // control of a recycled row is in another item now: the old ref must not name it
                 Remove(existing);
             }
 
@@ -186,6 +187,7 @@ public sealed class ElementRegistry : IElementRegistry
                 ElementRefs.Format(record.Seq, ++record.LastElement), record, key, runtimeId.ToArray(), element.Node, fingerprint)
             {
                 Selector = origin.Unique == true ? origin.Selector : null,
+                Row = origin.Row,
                 Generation = origin.Generation
             };
             record.Entries[key] = entry;
@@ -311,23 +313,26 @@ public sealed class ElementRegistry : IElementRegistry
         IUiaNode node;
         ElementFingerprint fingerprint;
         ElementCriteria? selector;
+        ElementRow? row;
         lock (_gate)
         {
             node = entry.Node;
             fingerprint = entry.Fingerprint;
             selector = entry.Selector;
+            row = entry.Row;
         }
 
         // 1. The stored element, if it is still there: a live read asks the provider (a runtime id alone is answered from
         //    memory). Accepted only with the stored runtime id and identity: a proxy that now answers for another element,
-        //    a recycled list item that shows another row, or a read without a runtime id proves nothing
+        //    a recycled list item that shows another row, or a read without a runtime id proves nothing. An element of a
+        //    list row is accepted only while that row shows the same item
         try
         {
             var live = _tree.ReadElement(node);
             if (live.RuntimeId is { Count: > 0 } liveId && liveId.SequenceEqual(entry.RuntimeId) &&
                 SameIdentity(fingerprint, Fingerprint(live, null)))
             {
-                return Resolved(entry, node, live, ElementResolutionPath.Live);
+                return RowChanged(entry, node, row, fingerprint, cancellationToken) ?? Resolved(entry, node, live, ElementResolutionPath.Live);
             }
         }
         catch (UiaElementUnavailableException)
@@ -353,7 +358,8 @@ public sealed class ElementRegistry : IElementRegistry
             cancellationToken);
         if (byId.MatchCount == 1)
         {
-            return Resolved(entry, byId.Matches[0].Node, byId.Matches[0], ElementResolutionPath.RuntimeId);
+            return RowChanged(entry, byId.Matches[0].Node, row, fingerprint, cancellationToken) ??
+                   Resolved(entry, byId.Matches[0].Node, byId.Matches[0], ElementResolutionPath.RuntimeId);
         }
 
         // 3. Re-created: the stored selector, each result checked against the fingerprint. Only a selector the issuing read
@@ -405,6 +411,37 @@ public sealed class ElementRegistry : IElementRegistry
                     (found.Complete ? "" : " (the search of the window did not finish)") +
                     ". Find the element again with find_ui_elements.");
         }
+    }
+
+    /// <summary>
+    /// ElementStale when the element found is in a list row that now shows another item (or is gone), or null when it has
+    /// no row or the row is the same (see <see cref="ElementRows"/>): a control of a recycled row keeps its runtime id and
+    /// identity. The ref is kept, so it resolves again once the row shows its item again.
+    /// </summary>
+    private ElementResolution? RowChanged(
+        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken)
+    {
+        if (row == null)
+        {
+            return null;
+        }
+
+        string? change;
+        try
+        {
+            change = ElementRows.Changed(_tree, node, row, reCreated: false, cancellationToken);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            change = $"its row ({ElementRows.Describe(row)}) is gone";
+        }
+
+        return change == null
+            ? null
+            : ElementResolution.Failed(UIElementErrorCode.ElementStale,
+                $"Element ref '{entry.Ref}' is stale: its element ({Describe(fingerprint)}) is in a list row, and {change} (a list " +
+                "reuses a row's elements for another item when it scrolls or its data changes). Find the element again with " +
+                "find_ui_elements.");
     }
 
     /// <summary>
@@ -693,6 +730,10 @@ public sealed class ElementRegistry : IElementRegistry
         public IUiaNode Node { get; set; } = node;
         public ElementFingerprint Fingerprint { get; set; } = fingerprint;
         public ElementCriteria? Selector { get; set; }
+
+        /// <summary>The list row the element was last read in, or null when it is in none or the read did not know.</summary>
+        public ElementRow? Row { get; set; }
+
         public long Generation { get; set; }
         public DateTimeOffset LastUsed { get; set; }
         public LinkedListNode<Entry>? LruNode { get; set; }
