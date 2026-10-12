@@ -193,8 +193,11 @@ public sealed class DialogService : IDialogService
         var dialogButtons = WithoutTitleBar(buttons.Elements ?? []);
         // A web page's HTML id is an AutomationId too (an Electron dialog): it is cut as a name is
         var buttonList = dialogButtons.Take(MaxButtons).Select(e => new DialogButton(
-            e.Ref, EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)), EmptyToNull(Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
-            DialogButtons.StandardOf(e.AutomationId), e.IsEnabled)).ToList();
+            e.Ref,
+            EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)),
+            EmptyToNull(Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
+            DialogButtons.StandardOf(e.AutomationId),
+            e.IsEnabled)).ToList();
         var (text, textCut) = Text(texts.Success ? texts.Elements ?? [] : [], buttonList);
         var title = EmptyToNull(_windows.GetWindowText(dialog));
         var content = new DialogContent(
