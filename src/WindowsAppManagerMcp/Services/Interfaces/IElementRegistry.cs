@@ -154,13 +154,17 @@ public sealed record ElementResolution(
 /// <param name="WindowHandle">Its window, or 0 when the ref is unusable.</param>
 /// <param name="Fingerprint">Its element as last read, or null when the ref is unusable.</param>
 /// <param name="ErrorCode">None, or ElementStale with <paramref name="Error"/>.</param>
+/// <param name="NotIssued">True when this server session never issued the ref (one from before a server restart, a made-up
+/// one, or no ref at all): it then says nothing about any element. False for a ref that was issued, also one that is stale
+/// because its window closed or it was dropped (its element gone, or the ref expired).</param>
 public sealed record ElementLookup(
     string Ref,
     nint WindowHandle,
     ElementFingerprint? Fingerprint,
     long Generation,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
-    string? Error = null)
+    string? Error = null,
+    bool NotIssued = false)
 {
     public bool Success => ErrorCode == UIElementErrorCode.None;
 }

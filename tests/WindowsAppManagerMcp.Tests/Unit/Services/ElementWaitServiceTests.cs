@@ -73,6 +73,13 @@ public class ElementWaitServiceTests
     private static ElementQuery Criteria(string? name = null, string? automationId = null, string[]? controlTypes = null, string? withinRef = null) =>
         new(nint.Zero, withinRef, name, AutomationId: automationId, ControlTypes: controlTypes);
 
+    /// <summary>A request for criteria in <paramref name="window"/> (default: the editor's selector).</summary>
+    private static ElementWaitRequest Request(
+        ElementQuery criteria, ElementWaitCondition condition, int timeoutMs = 5000, WindowSelector? window = null) => new()
+    {
+        Window = window ?? Editor, Criteria = criteria, Condition = condition, TimeoutMs = timeoutMs
+    };
+
     /// <summary>Lets the time pass and applies the changes due by then.</summary>
     private Task DelayAsync(TimeSpan wait, CancellationToken cancellationToken)
     {
@@ -178,6 +185,52 @@ public class ElementWaitServiceTests
         result.Success.Should().BeTrue();
         result.Satisfied.Should().BeTrue();
         result.Warning.Should().Contain("No window matching processName 'editor' is open");
+    }
+
+    [Fact]
+    public async Task Gone_ByAHandleThatHadAlreadyClosed_IsSatisfied_WithAWarning()
+    {
+        // Arrange - the window wait ends with InvalidHandle, and Win32 confirms that handle 42 is no window
+        WindowWaitReturns(new WindowConditionResult
+        {
+            ErrorCode = "InvalidHandle", Error = "window.handle 42 is no window (it closed), so it cannot become exists."
+        });
+
+        // Act
+        var result = await CreateSut().WaitAsync(Request(Criteria(name: "Loading"), ElementWaitCondition.Gone, window: new WindowSelector { Handle = 42 }));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Satisfied.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.Polls.Should().Be(0);
+        result.Warning.Should().Contain("Window 42 had already closed when the wait started").And.NotContain("exists");
+    }
+
+    [Fact]
+    public async Task Gone_ByAHandleThatWin32StillKnows_IsNotTakenAsClosed()
+    {
+        // The window wait's InvalidHandle is checked against IsWindow before it counts as a closed window
+        _windows.Setup(w => w.IsWindow(42)).Returns(true);
+        WindowWaitReturns(new WindowConditionResult { ErrorCode = "InvalidHandle", Error = "window.handle 42 is no window" });
+
+        var result = await CreateSut().WaitAsync(Request(Criteria(name: "Loading"), ElementWaitCondition.Gone, window: new WindowSelector { Handle = 42 }));
+
+        result.Satisfied.Should().BeFalse();
+        result.ErrorCode.Should().Be("InvalidHandle");
+    }
+
+    [Fact]
+    public async Task Gone_ByAHandleThatNoLongerMatchesItsFilters_IsSatisfied_WithAWarningAboutThatWindow()
+    {
+        // The handle names a window that does not match the filters: the window wait times out at once
+        WindowWaitReturns(new WindowConditionResult { TimedOut = true, ErrorCode = "WaitTimedOut" });
+
+        var result = await CreateSut().WaitAsync(Request(Criteria(name: "Loading"), ElementWaitCondition.Gone,
+            window: new WindowSelector { Handle = 42, TitleContains = "Exporting" }));
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("Window 42").And.Contain("get_window_info").And.NotContain("includeUntitled");
     }
 
     #endregion
@@ -295,11 +348,50 @@ public class ElementWaitServiceTests
         result.LastObservedState.Should().Contain("did not cover the whole window");
     }
 
+    /// <summary>The window closes: UI Automation can no longer open it, and Win32 no longer knows its handle.</summary>
+    private void CloseWindow()
+    {
+        _tree.FromHandleException = FakeUiaTree.Vanished("window");
+        _windows.Setup(w => w.IsWindow(Handle)).Returns(false);
+    }
+
     [Fact]
     public async Task Gone_AWindowThatCloses_SatisfiesIt_WithAWarning()
     {
         BuildWindow(new FakeUiaNode("ProgressBar", "Loading"));
+        At(300, CloseWindow);
+
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("closed");
+    }
+
+    [Fact]
+    public async Task Gone_AWindowUIAutomationCannotOpen_ThatWin32StillKnows_IsNotGone()
+    {
+        // Arrange - UI Automation fails to open the window (a provider that restarts disconnects), but it is still there
+        BuildWindow(new FakeUiaNode("ProgressBar", "Loading"));
         At(300, () => _tree.FromHandleException = FakeUiaTree.Vanished("window"));
+
+        // Act
+        var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone, timeoutMs: 800);
+
+        // Assert
+        result.Satisfied.Should().BeFalse();
+        result.TimedOut.Should().BeTrue();
+        result.LastObservedState.Should().StartWith("UI Automation could not read the window");
+    }
+
+    [Fact]
+    public async Task Gone_AWindowWhoseHandleNowNamesAWindowOfAnotherProcess_HasClosed()
+    {
+        BuildWindow(new FakeUiaNode("ProgressBar", "Loading"));
+        At(300, () =>
+        {
+            _tree.FromHandleException = FakeUiaTree.Vanished("window");
+            _windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(999u);
+        });
 
         var result = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone);
 
@@ -311,7 +403,7 @@ public class ElementWaitServiceTests
     public async Task AWindowThatCloses_EndsAnyOtherCondition_WithWindowNotFound_NotATimeout()
     {
         BuildWindow(Button("OK", enabled: false));
-        At(300, () => _tree.FromHandleException = FakeUiaTree.Vanished("window"));
+        At(300, CloseWindow);
 
         var result = await WaitAsync(condition: ElementWaitCondition.Enabled);
 
@@ -320,6 +412,87 @@ public class ElementWaitServiceTests
         result.ErrorCode.Should().Be("WindowNotFound");
         result.Error.Should().Contain("closed");
         result.ElapsedMs.Should().BeLessThan(1000);
+    }
+
+    [Fact]
+    public async Task AWindowUIAutomationCannotOpen_ThatWin32StillKnows_DoesNotEndAnyOtherCondition()
+    {
+        BuildWindow(Button("OK", enabled: false));
+        At(300, () => _tree.FromHandleException = FakeUiaTree.Vanished("window"));
+
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, timeoutMs: 800);
+
+        result.TimedOut.Should().BeTrue();
+        result.ErrorCode.Should().Be("WaitTimedOut");
+        result.LastObservedState.Should().StartWith("UI Automation could not read the window");
+    }
+
+    private static readonly nint Popup = 0x7300;
+
+    /// <summary>
+    /// The service over a search that covers the window's popups: the editor's process has an unowned 'Exporting' dialog,
+    /// a window of its own (outside the editor's UI Automation tree) with a Cancel button.
+    /// </summary>
+    private ElementWaitService CreateSutWithADialog(Mock<IPopupService> popups, bool deniedByPolicy = false)
+    {
+        _windows.Setup(w => w.IsWindow(Popup)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(Popup)).Returns(300u);
+        _windows.Setup(w => w.RespondsWithin(Popup, It.IsAny<uint>())).Returns(true);
+        _tree.WithWindow(Popup, new FakeUiaNode("Window", "Exporting").With(Button("Cancel")));
+        popups.Setup(p => p.GetPopupList(Handle)).Returns(new PopupList(
+            [new PopupWindow(Popup, PopupKind.Dialog, "Exporting", "#32770", 300, nint.Zero, PopupRelation.SameProcess, null, false,
+                IsDeniedByPolicy: deniedByPolicy)],
+            false));
+        var search = new ElementSearchService(_tree, _worker, _registry, _windows.Object, _warmup.Object, popups.Object);
+        return new ElementWaitService(search, _registry, _windowWait.Object, _tree, _worker, _windows.Object, _clock, DelayAsync);
+    }
+
+    [Fact]
+    public async Task Gone_SearchesTheWindowsPopupsOnEveryCheck_AlsoOnceTheAppIsNoLongerInFront()
+    {
+        // Arrange - the app loses the foreground 300 ms into the wait, while its dialog stays open
+        BuildWindow();
+        var popups = new Mock<IPopupService>();
+        popups.Setup(p => p.IsInForeground(Handle)).Returns(true);
+        var sut = CreateSutWithADialog(popups);
+        At(300, () => popups.Setup(p => p.IsInForeground(Handle)).Returns(false));
+
+        // Act
+        var result = await sut.WaitAsync(Request(Criteria(name: "Cancel"), ElementWaitCondition.Gone, timeoutMs: 1000));
+
+        // Assert - a search of the window alone would not have found the dialog's Cancel button
+        result.Satisfied.Should().BeFalse();
+        result.TimedOut.Should().BeTrue();
+        result.LastObservedState.Should().Contain("Cancel");
+    }
+
+    [Fact]
+    public async Task Gone_IsNotSatisfiedByASearchThatLeftAPopupOut()
+    {
+        // Arrange - the dialog belongs to an app the target policy denies, so the search leaves it out unread
+        BuildWindow();
+        var sut = CreateSutWithADialog(new Mock<IPopupService>(), deniedByPolicy: true);
+
+        // Act
+        var result = await sut.WaitAsync(Request(Criteria(name: "Cancel"), ElementWaitCondition.Gone, timeoutMs: 600));
+
+        // Assert
+        result.Satisfied.Should().BeFalse();
+        result.TimedOut.Should().BeTrue();
+        result.LastObservedState.Should().Contain("left out");
+        _tree.Reads.Should().NotContain(r => r.Contains("Exporting"), "a popup of a denied app is never read");
+    }
+
+    [Fact]
+    public async Task Gone_WithScopeWindow_SearchesTheWindowAlone_AsAsked()
+    {
+        BuildWindow();
+        var sut = CreateSutWithADialog(new Mock<IPopupService>());
+
+        var result = await sut.WaitAsync(Request(Criteria(name: "Cancel") with { Scope = ElementSearchScope.Window }, ElementWaitCondition.Gone));
+
+        result.Satisfied.Should().BeTrue();
+        result.Polls.Should().Be(1);
     }
 
     #endregion
@@ -567,8 +740,9 @@ public class ElementWaitServiceTests
     }
 
     [Fact]
-    public async Task Ref_UnknownAtTheStart_IsElementStale_OrForGoneSatisfiedWithAWarning()
+    public async Task Ref_NeverIssued_IsElementStale_ForGoneToo()
     {
+        // A ref this server session never issued (one from before a restart, or a made-up one) says nothing about any element
         BuildWindow();
 
         var enabled = await WaitAsync(condition: ElementWaitCondition.Enabled, elementRef: "w1e99");
@@ -576,8 +750,25 @@ public class ElementWaitServiceTests
 
         enabled.ErrorCode.Should().Be("ElementStale");
         enabled.Polls.Should().Be(0);
-        gone.Satisfied.Should().BeTrue();
-        gone.Warning.Should().Contain("already gone when the wait started");
+        gone.Success.Should().BeFalse();
+        gone.Satisfied.Should().BeFalse();
+        gone.ErrorCode.Should().Be("ElementStale");
+        gone.Polls.Should().Be(0);
+        gone.Error.Should().Contain("not issued");
+    }
+
+    [Fact]
+    public async Task Ref_WhoseWindowHadClosed_SatisfiesGoneAtTheStart_WithAWarning()
+    {
+        BuildWindow(Button("Busy"));
+        var busyRef = await RefOf("BusyBtn");
+        _windows.Setup(w => w.IsWindow(Handle)).Returns(false);
+
+        var result = await WaitAsync(condition: ElementWaitCondition.Gone, elementRef: busyRef);
+
+        result.Satisfied.Should().BeTrue();
+        result.Polls.Should().Be(0);
+        result.Warning.Should().Contain("already gone when the wait started");
     }
 
     [Fact]
@@ -656,6 +847,51 @@ public class ElementWaitServiceTests
         result.Error.Should().StartWith("withinRef:");
     }
 
+    [Fact]
+    public async Task Gone_BelowAWithinRefThatWasNeverIssued_IsElementStale()
+    {
+        BuildWindow();
+
+        var result = await WaitAsync(Criteria(name: "report.txt", withinRef: "w1e77"), ElementWaitCondition.Gone);
+
+        result.Satisfied.Should().BeFalse();
+        result.ErrorCode.Should().Be("ElementStale");
+        result.Error.Should().StartWith("withinRef:").And.Contain("not issued");
+    }
+
+    [Fact]
+    public async Task Gone_BelowAWithinRefWhoseWindowHadClosed_IsSatisfiedAtTheStart_WithAWarning()
+    {
+        BuildWindow(new FakeUiaNode("List", "Files") { AutomationId = "Files" });
+        var listRef = await RefOf("Files");
+        _windows.Setup(w => w.IsWindow(Handle)).Returns(false);
+
+        var result = await WaitAsync(Criteria(name: "report.txt", withinRef: listRef), ElementWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Polls.Should().Be(0);
+        result.Warning.Should().Contain("withinRef").And.Contain("already gone when the wait started");
+    }
+
+    [Fact]
+    public async Task Gone_BelowAWithinRefWhoseElementGoes_IsSatisfied_WithAWarning()
+    {
+        // Arrange - the list itself goes away, taking its items with it, while the window stays
+        var list = new FakeUiaNode("List", "Files") { AutomationId = "Files" }.With(new FakeUiaNode("ListItem", "report.txt"));
+        BuildWindow(list);
+        var listRef = await RefOf("Files");
+        At(300, list.Vanish);
+
+        // Act
+        var result = await WaitAsync(Criteria(name: "report.txt", withinRef: listRef), ElementWaitCondition.Gone);
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.ElapsedMs.Should().BeGreaterThanOrEqualTo(300);
+        result.Warning.Should().Contain("withinRef");
+    }
+
     #endregion
 
     #region Timing, warm-up, failures, progress
@@ -697,6 +933,48 @@ public class ElementWaitServiceTests
         result.Polls.Should().BeGreaterThan(3);
         result.AccessibilityWarmup.Should().Be(info);
         _warmup.Verify(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TheWarmUp_RunsOnTheNextCheck_WhenTheFirstStoppedBeforeIt()
+    {
+        // Arrange - the window does not respond at the first check, which so ends before the warm-up
+        var info = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 300, 2, 5, null);
+        _warmup.Setup(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(info);
+        BuildWindow(Button("OK"));
+        _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(true);
+        At(200, () => _windows.Setup(w => w.IsHungAppWindow(Handle)).Returns(false));
+
+        // Act
+        var result = await WaitAsync();
+
+        // Assert
+        result.Satisfied.Should().BeTrue();
+        result.Polls.Should().BeGreaterThan(1);
+        result.AccessibilityWarmup.Should().Be(info);
+        _warmup.Verify(w => w.WarmUp(Handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ValueEquals_DoesNotReadLongValuesInFull_OnceTheCheckHasUsedItsTime()
+    {
+        // Arrange - two long values that start like the expected one, in a pane wide enough to be searched by one FindAll,
+        // which takes longer than the check's second: the timeout has passed when the search returns
+        var start = new string('a', 230);
+        BuildWindow(Enumerable.Range(1, 60).Select(i => new FakeUiaNode("Text", $"Line {i}"))
+            .Append(new FakeUiaNode("Edit", "Notes") { AutomationId = "First", ActionPatterns = ["Value"], Value = start + "1" })
+            .Append(new FakeUiaNode("Edit", "Notes") { AutomationId = "Second", ActionPatterns = ["Value"], Value = start + "2" })
+            .ToArray());
+        _tree.OnFindAll = (_, _) => _clock.Advance(TimeSpan.FromMilliseconds(1100));
+
+        // Act
+        var result = await WaitAsync(Criteria(name: "Notes"), ElementWaitCondition.ValueEquals, start + "3", timeoutMs: 500);
+
+        // Assert - one worker read, the search's: no value was read in full after the check's time ran out
+        result.TimedOut.Should().BeTrue();
+        result.Polls.Should().Be(1);
+        _worker.Calls.Should().Be(1);
+        result.LastObservedState.Should().Contain("before it could be read in full");
     }
 
     [Fact]

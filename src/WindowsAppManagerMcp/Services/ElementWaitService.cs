@@ -10,23 +10,30 @@ namespace WindowsAppManagerMcp.Services;
 /// machinery (<see cref="IWindowWaitService.WaitForConditionAsync"/>, condition exists, stableMs 0), within the same
 /// timeout, so a wait right after a launch covers a window that is still opening. The selector must end up naming one
 /// window (AmbiguousWindow with candidates otherwise). A gone wait does not wait for the window: when no window matches
-/// at the start, none of its elements is there either (satisfied, with a warning). A ref and withinRef name their window
-/// through the element registry, with no wait. A window of an app the user's target policy denies ends the wait before the
-/// first check (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>): nothing of it is read.</para>
+/// at the start, or a window.handle had closed (IsWindow confirms it), none of its elements is there either (satisfied, with
+/// a warning). A ref and withinRef name their window through the element registry, with no wait. A window of an app the
+/// user's target policy denies ends the wait before the first check (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>):
+/// nothing of it is read.</para>
 /// <para><b>Each check.</b> Criteria run find_ui_elements' search (<see cref="IElementSearchService"/>: the provider
 /// evaluates them under a cache request, the window's hung check comes first) with visibleOnly and enabledOnly off, since
 /// the condition decides what counts, and at most <see cref="CandidateLimit"/> matches described (detail standard only for
 /// focused, toggle_state and value_equals). The condition holds when any of them satisfies it (gone: when a complete search
-/// finds none); that element is returned with its ref. A ref is resolved through the registry (<see cref="IElementRegistry.Resolve"/>)
-/// on a worker thread, with the reads the condition needs. The web-content warm-up (roadmap M3.3) runs once, on the first
-/// check. Checks back off from <see cref="MinPollIntervalMs"/> to <see cref="MaxPollIntervalMs"/>; each one gets the time
-/// left, at least <see cref="MinCheckTimeoutMs"/> (so the last check is never cut short) and at most
-/// <see cref="MaxCheckTimeoutMs"/>, so a wait can end up to one second after its timeout.</para>
-/// <para><b>Ends.</b> A check that cannot tell (the window does not respond, UI Automation does not answer in time, the
-/// search did not cover the whole window, a provider error) is remembered as the last observed state and the wait goes on.
-/// A window that closes, a stale or ambiguous ref or withinRef, an unknown control type, a name pattern that runs too
-/// long, or UI Automation being unavailable end it at once; for gone, a window that closed or a ref whose element is gone
-/// satisfies it.</para>
+/// finds none); that element is returned with its ref. Without a scope, gone searches the window and its popups on every
+/// check, whatever is in front (find_ui_elements' default narrows to the window alone while the app is not in front), and a
+/// check that left one of the window's popups out unread (an app the target policy denies, the agent's host) cannot satisfy
+/// it. A ref is resolved through the registry (<see cref="IElementRegistry.Resolve"/>) on a worker thread, with the reads the
+/// condition needs. The web-content warm-up (roadmap M3.3) runs once, on the first check that reaches the window. Checks
+/// back off from <see cref="MinPollIntervalMs"/> to <see cref="MaxPollIntervalMs"/>; each one gets the time left, at least
+/// <see cref="MinCheckTimeoutMs"/> (so the last check is never cut short) and at most <see cref="MaxCheckTimeoutMs"/>, which
+/// the full reads of long values (value_equals) share with the search. The search may take up to 2 s more to stop and hand
+/// back what it found when a provider does not return from one call (ElementSearchService's grace, which find_ui_elements
+/// shares: a provider call cannot be interrupted), so a wait can end up to about 3 s after its timeout.</para>
+/// <para><b>Ends.</b> A check that cannot tell (the window does not respond, UI Automation does not answer in time or cannot
+/// open a window Win32 still knows, the search did not cover the whole window, a provider error) is remembered as the last
+/// observed state and the wait goes on. A window that closes (IsWindow is false, or its handle now names a window of another
+/// process or class), a stale or ambiguous ref or withinRef, a ref this server session never issued, an unknown control
+/// type, a name pattern that runs too long, or UI Automation being unavailable end it at once; for gone, a window that
+/// closed or a ref or withinRef whose element is gone satisfies it.</para>
 /// <para><b>Passwords.</b> A password field's value is never read, as in get_focused_element and find_ui_elements (and the
 /// IUiaTree.ReadValue contract): value_equals skips password fields, and ends with InvalidArguments when only password
 /// fields match. No value of a password field, and no expected text, appears in a result or a message.</para>
@@ -185,10 +192,12 @@ public sealed class ElementWaitService : IElementWaitService
         private readonly ElementWaitCondition _condition = request.Condition;
         private readonly UiaToggleState? _toggle = ParseToggleState(request.Expected);
         private nint _window;
+        private (uint ProcessId, string? ClassName)? _identity;
         private string? _ref = request.Ref;
         private int _polls;
         private int? _matchCount;
         private AccessibilityWarmupInfo? _warmup;
+        private bool _warmedUp;
         private FoundElement? _lastElement;
         private string _lastState = "nothing was checked yet";
 
@@ -205,6 +214,7 @@ public sealed class ElementWaitService : IElementWaitService
                 return Ended(nameof(UIElementErrorCode.TargetDeniedByPolicy), denied);
             }
 
+            _identity = ReadWindowIdentity();
             long lastProgress = 0;
             while (true)
             {
@@ -261,15 +271,19 @@ public sealed class ElementWaitService : IElementWaitService
                     return null;
                 }
 
-                // The ref's element (and its window) is gone before the wait started: gone holds, but say so, since an
-                // unknown ref is gone too
-                if (_ref != null && _condition == ElementWaitCondition.Gone)
+                // The element of a ref this session issued is gone before the wait started (its window closed, or the ref
+                // was dropped): gone holds, for the elements below withinRef's too, but say so. A ref this session never
+                // issued names no element, so it says nothing about one being gone: it ends the wait as for any condition
+                if (_condition == ElementWaitCondition.Gone && !lookup.NotIssued)
                 {
                     _lastState = lookup.Error ?? "the ref is stale";
                     return Result(true) with
                     {
-                        Warning = $"The element was already gone when the wait started: {lookup.Error} If you expected it to be " +
-                                  "there, check the ref."
+                        Warning = _ref != null
+                            ? $"The element was already gone when the wait started: {lookup.Error} If you expected it to be " +
+                              "there, check the ref."
+                            : $"withinRef's element was already gone when the wait started, and the elements below it with it: " +
+                              $"{lookup.Error} If you expected it to be there, check withinRef."
                     };
                 }
 
@@ -293,6 +307,19 @@ public sealed class ElementWaitService : IElementWaitService
                 return null;
             }
 
+            // A window.handle that is no window (the window wait's InvalidHandle, confirmed with IsWindow) had closed before
+            // the wait started: none of its elements is there
+            if (gone && selector.Handle is { } handle && outcome.ErrorCode == nameof(WindowErrorCode.InvalidHandle) &&
+                service._windows?.IsWindow((nint)handle) != true)
+            {
+                _lastState = $"window {handle} is closed";
+                return Result(true) with
+                {
+                    Warning = $"Window {handle} had already closed when the wait started, so none of its elements is there. If you " +
+                              "expected it to be open, find it again with find_windows."
+                };
+            }
+
             if (outcome.Satisfied)
             {
                 return Ended(nameof(WindowErrorCode.AmbiguousWindow),
@@ -309,8 +336,13 @@ public sealed class ElementWaitService : IElementWaitService
                 _lastState = $"no window matches {selector.Describe()}";
                 return Result(true) with
                 {
-                    Warning = $"No window matching {selector.Describe()} is open, so none of its elements is. If you expected it to " +
-                              "be open, check the selector with find_windows (untitled windows need includeUntitled or className)."
+                    // A handle is read whatever the listing's rules: it no longer matches its filters
+                    Warning = selector.Handle is { } namedHandle
+                        ? $"Window {namedHandle} does not match {selector.Describe()} (it changed, or its handle now names another " +
+                          "window), so none of the elements of the window meant is there. If you expected it to match, check it " +
+                          "with get_window_info."
+                        : $"No window matching {selector.Describe()} is open, so none of its elements is. If you expected it to " +
+                          "be open, check the selector with find_windows (untitled windows need includeUntitled or className)."
                 };
             }
 
@@ -338,6 +370,11 @@ public sealed class ElementWaitService : IElementWaitService
         {
             var criteria = request.Criteria!;
             var needs = NeedsFor(_condition);
+            var gone = _condition == ElementWaitCondition.Gone;
+
+            // The search and the full reads of long values share the check's time
+            var checkTimeout = CheckTimeout();
+            var checkEnds = elapsed() + (long)checkTimeout.TotalMilliseconds;
             var query = criteria with
             {
                 WindowHandle = _window,
@@ -345,8 +382,13 @@ public sealed class ElementWaitService : IElementWaitService
                 EnabledOnly = false,
                 MaxResults = _condition is ElementWaitCondition.Exists or ElementWaitCondition.Gone ? 1 : CandidateLimit,
                 Detail = needs == Needs.None ? ElementDetail.Minimal : ElementDetail.Standard,
-                Timeout = CheckTimeout(),
-                WarmUp = _polls == 1
+                Timeout = checkTimeout,
+                // gone searches the window's popups on every check, whatever is in front: the default scope covers them only
+                // while the app is in front, so a check run while another app is would miss a dialog that is a window of its
+                // own (an unowned one, one owned by a hidden window, a WebView2 popup) and find nothing
+                Scope = criteria.Scope ?? (gone && criteria.WithinRef == null ? ElementSearchScope.WindowAndPopups : null),
+                // Until a check has reached the window: one that stopped before it (not responding) did not warm it up
+                WarmUp = !_warmedUp
             };
 
             FindElementsResult found;
@@ -362,10 +404,8 @@ public sealed class ElementWaitService : IElementWaitService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (_polls == 1)
-            {
-                _warmup = found.AccessibilityWarmup;
-            }
+            _warmup ??= found.AccessibilityWarmup;
+            _warmedUp |= found.Success || found.AccessibilityWarmup != null;
 
             if (!found.Success)
             {
@@ -377,10 +417,16 @@ public sealed class ElementWaitService : IElementWaitService
             var elements = found.Elements ?? [];
             var what = Describe(criteria);
 
-            if (_condition == ElementWaitCondition.Gone)
+            if (gone)
             {
+                // A popup of the window left out unread (an app the target policy denies, the agent's host) may hold it
+                var popupsLeftOut = found.Scope == ElementSearchScope.WindowAndPopups ? found.WindowsExcluded ?? 0 : 0;
                 return found.MatchCount switch
                 {
+                    0 when complete && popupsLeftOut > 0 => Check.NotYet(
+                        $"no element matches {what} in the windows searched, but {popupsLeftOut} open popup" +
+                        $"{(popupsLeftOut == 1 ? " of the window was" : "s of the window were")} left out unread (an app the " +
+                        "target policy denies, or the agent's host), so it may still be there"),
                     0 when complete => Check.Met(null, $"no element matches {what}"),
                     0 => Check.NotYet($"no element matches {what} in the part searched, but the search did not cover the whole " +
                                       $"window ({found.TruncationReason})"),
@@ -400,7 +446,7 @@ public sealed class ElementWaitService : IElementWaitService
             var passwordFields = 0;
             foreach (var element in elements)
             {
-                var (met, state) = await EvaluateAsync(element, needs, cancellationToken).ConfigureAwait(false);
+                var (met, state) = await EvaluateAsync(element, needs, checkEnds, cancellationToken).ConfigureAwait(false);
                 if (met)
                 {
                     return Check.Met(element, state);
@@ -431,6 +477,13 @@ public sealed class ElementWaitService : IElementWaitService
             switch (code)
             {
                 case UIElementErrorCode.WindowNotFound or UIElementErrorCode.InvalidHandle:
+                    // UI Automation failing to open the window does not prove it closed (a provider that restarts disconnects
+                    // too): only Win32 does
+                    if (!WindowClosed())
+                    {
+                        return Check.NotYet($"UI Automation could not read the window ({found.Error})", _lastElement);
+                    }
+
                     if (_condition == ElementWaitCondition.Gone)
                     {
                         return Check.Met(null, "the window closed",
@@ -439,8 +492,16 @@ public sealed class ElementWaitService : IElementWaitService
                     }
 
                     return Check.End(Ended(nameof(UIElementErrorCode.WindowNotFound),
-                        $"Window {(long)_window} closed (or can no longer be read) during the wait, so the element cannot become " +
+                        $"Window {(long)_window} closed during the wait, so the element cannot become " +
                         $"{ConditionName(_condition)}. Find the window that replaced it with find_windows."));
+
+                case UIElementErrorCode.ElementStale or UIElementErrorCode.AmbiguousElement
+                    when _condition == ElementWaitCondition.Gone && request.Criteria?.WithinRef != null:
+                    // withinRef's element is gone, and the elements below it with it
+                    const string prefix = "withinRef: ";
+                    var why = found.Error is { } error && error.StartsWith(prefix, StringComparison.Ordinal) ? error[prefix.Length..] : found.Error;
+                    return Check.Met(null, "withinRef's element is gone",
+                        $"withinRef's element is gone, and the elements below it with it: {why}");
 
                 case UIElementErrorCode.InvalidControlType or UIElementErrorCode.AutomationUnavailable or
                     UIElementErrorCode.ElementStale or UIElementErrorCode.AmbiguousElement or UIElementErrorCode.TargetDeniedByPolicy:
@@ -449,6 +510,41 @@ public sealed class ElementWaitService : IElementWaitService
                 default:
                     // NotResponding, OperationTimedOut, ElementAccessFailed, OperationException: this check could not tell
                     return Check.NotYet($"the last check could not tell ({code}): {found.Error}", _lastElement);
+            }
+        }
+
+        /// <summary>The window's process and class when the wait picked it, or null without the window wrapper.</summary>
+        private (uint ProcessId, string? ClassName)? ReadWindowIdentity()
+        {
+            try
+            {
+                return service._windows is { } windows ? (windows.GetWindowThreadProcessId(_window), windows.GetClassName(_window)) : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Whether Win32 says the window closed: IsWindow is false, or the handle now names a window of another process or
+        /// class than the one the wait picked. Without the window wrapper, true: a failed lookup is taken as a closed window.
+        /// </summary>
+        private bool WindowClosed()
+        {
+            if (service._windows is not { } windows)
+            {
+                return true;
+            }
+
+            try
+            {
+                return !windows.IsWindow(_window) || (_identity is { } identity && ReadWindowIdentity() != identity);
+            }
+            catch (Exception)
+            {
+                // It cannot be told now; the next check asks again
+                return false;
             }
         }
 
@@ -495,9 +591,11 @@ public sealed class ElementWaitService : IElementWaitService
 
         /// <summary>
         /// The condition on one match of a search. A value cut to 200 characters that starts like the expected one is read
-        /// in full through the match's ref.
+        /// in full through the match's ref, within what is left of the check's time (until <paramref name="checkEnds"/>, in
+        /// milliseconds since the wait started).
         /// </summary>
-        private async Task<(bool Met, string State)> EvaluateAsync(FoundElement element, Needs needs, CancellationToken cancellationToken)
+        private async Task<(bool Met, string State)> EvaluateAsync(
+            FoundElement element, Needs needs, long checkEnds, CancellationToken cancellationToken)
         {
             if (_condition != ElementWaitCondition.ValueEquals || element.ValueTruncated != true || element.IsPassword == true)
             {
@@ -511,7 +609,18 @@ public sealed class ElementWaitService : IElementWaitService
                 return (false, $"{Name(element)}: its value is {Quote(element.Value)}, not the expected one");
             }
 
-            var read = element.Ref != null ? await ReadRefAsync(element.Ref, needs, cancellationToken).ConfigureAwait(false) : null;
+            // The full reads share what the search left of the check's time, so they never add to how long a check takes:
+            // none starts once it is used up
+            var left = checkEnds - elapsed();
+            if (left <= 0)
+            {
+                return (false, $"{Name(element)} has a value longer than {ElementInspectionService.MaxValueLength} characters that " +
+                               "starts like the expected one, and the check's time ran out before it could be read in full");
+            }
+
+            var read = element.Ref != null
+                ? await ReadRefAsync(element.Ref, needs, cancellationToken, TimeSpan.FromMilliseconds(left)).ConfigureAwait(false)
+                : null;
             return read is { Resolution.Success: true }
                 ? Evaluate(element, read.FullValue)
                 : (false, $"{Name(element)} has a value longer than {ElementInspectionService.MaxValueLength} characters that " +
@@ -590,13 +699,13 @@ public sealed class ElementWaitService : IElementWaitService
 
         /// <summary>
         /// A ref's element, resolved on a UI Automation worker thread after its window's hung check, with the reads
-        /// <paramref name="needs"/> asks for and its click point. Never throws for UI Automation: a read that ran out of time
-        /// is OperationTimedOut.
+        /// <paramref name="needs"/> asks for and its click point, within <paramref name="timeout"/> (default: the time a check
+        /// gets). Never throws for UI Automation: a read that ran out of time is OperationTimedOut.
         /// </summary>
-        private async Task<RefRead> ReadRefAsync(string elementRef, Needs needs, CancellationToken cancellationToken)
+        private async Task<RefRead> ReadRefAsync(string elementRef, Needs needs, CancellationToken cancellationToken, TimeSpan? timeout = null)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(CheckTimeout());
+            deadline.CancelAfter(timeout ?? CheckTimeout());
             try
             {
                 return await service._worker.RunAsync(

@@ -159,6 +159,31 @@ public class ElementRegistryTests
     }
 
     [Fact]
+    public void Lookup_TellsARefThisSessionNeverIssued_FromOneWhoseElementIsGone()
+    {
+        // Arrange - one ref of a window that closed, one that expired, one still there
+        var sut = CreateSut(capacity: 1);
+        var expired = Register(sut, Button("Save"));
+        var live = Register(sut, Button("Open"));
+
+        // Act
+        var neverIssued = sut.Lookup("w1e9");
+        var malformed = sut.Lookup("save");
+        var dropped = sut.Lookup(expired!);
+        var found = sut.Lookup(live!);
+        _processes.Remove(Handle);
+        var closed = sut.Lookup(live!);
+
+        // Assert - only a ref this session never issued says nothing about any element
+        neverIssued.NotIssued.Should().BeTrue();
+        malformed.NotIssued.Should().BeTrue();
+        dropped.NotIssued.Should().BeFalse();
+        found.NotIssued.Should().BeFalse();
+        closed.NotIssued.Should().BeFalse();
+        closed.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
     public void Lookup_OfARefOfAClosedWindow_SaysItIsStale_NotThatItWasNeverIssued()
     {
         var sut = CreateSut();
@@ -167,6 +192,7 @@ public class ElementRegistryTests
         sut.NextGeneration();
 
         sut.Lookup(save!).Error.Should().Contain("is stale").And.NotContain("not issued");
+        sut.Lookup(save!).NotIssued.Should().BeFalse();
     }
 
     [Fact]
