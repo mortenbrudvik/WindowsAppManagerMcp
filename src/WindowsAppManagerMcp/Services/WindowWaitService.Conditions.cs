@@ -158,6 +158,7 @@ public sealed partial class WindowWaitService
         private long? _goneSince;
         private (string Title, long Since)? _newTitle;
         private int? _matchesAtStart;
+        private bool _handleIsNoWindow;
         private IReadOnlyList<WindowInfo> _matches = [];
         private WindowInfo? _lastSeen;
         private string? _note;
@@ -290,15 +291,19 @@ public sealed partial class WindowWaitService
             if (now - _goneSince < _stableMs)
                 return null;
 
-            return new WindowConditionResult
-            {
-                Satisfied = true,
-                Warning = _matchesAtStart == 0
-                    ? $"No window matched {_selector.Describe()} when the wait started, so nothing had to close. If you expected one " +
-                      "to be open, check the selector with find_windows (untitled windows need includeUntitled or className)."
-                    : null
-            };
+            return new WindowConditionResult { Satisfied = true, Warning = _matchesAtStart == 0 ? NothingAtStartWarning() : null };
         }
+
+        /// <summary>The warning of a gone wait that had nothing to close: what the selector named at the start.</summary>
+        private string NothingAtStartWarning() => _selector.Handle switch
+        {
+            { } handle when _handleIsNoWindow => $"Window {handle} had already closed when the wait started.",
+            // A handle is read whatever the listing's rules, so only its filters can have left it out
+            { } handle => $"Window {handle} did not match {_selector.Describe()} when the wait started (it changed, or its handle " +
+                          "now names another window), so nothing had to close. If you expected it to match, check it with get_window_info.",
+            _ => $"No window matched {_selector.Describe()} when the wait started, so nothing had to close. If you expected one to be " +
+                 "open, check the selector with find_windows (untitled windows need includeUntitled or className)."
+        };
 
         /// <summary>title_changed: the window's title differs from the previous title, and the new title has held for stableMs.</summary>
         private WindowConditionResult? PollTitle(long now)
@@ -343,7 +348,8 @@ public sealed partial class WindowWaitService
                     if (resolution.ErrorCode == InvalidArgumentsCode)
                         return Ended(InvalidArgumentsCode, resolution.Error ?? "window cannot be used.", 0);
 
-                    if (handleClosedEnds && _selector.Handle is { } handle && resolution.ErrorCode == nameof(WindowErrorCode.InvalidHandle))
+                    _handleIsNoWindow = _selector.Handle.HasValue && resolution.ErrorCode == nameof(WindowErrorCode.InvalidHandle);
+                    if (handleClosedEnds && _selector.Handle is { } handle && _handleIsNoWindow)
                     {
                         return Ended(nameof(WindowErrorCode.InvalidHandle),
                             $"window.handle {handle} is no window (it closed), so it cannot become {ConditionName(_request.Condition)}. " +

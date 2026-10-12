@@ -375,6 +375,27 @@ public class WindowConditionWaitTests
     }
 
     [Fact]
+    public async Task Gone_ByAHandleThatWasNoWindowAtTheStart_SaysItHadAlreadyClosed()
+    {
+        var result = await WaitAsync(new WindowSelector { Handle = 0x7777 }, WindowWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain("Window 30583 had already closed when the wait started")
+            .And.NotContain("check the selector").And.NotContain("includeUntitled");
+    }
+
+    [Fact]
+    public async Task Gone_ByAHandleThatDidNotMatchItsFiltersAtTheStart_SaysSo()
+    {
+        var notepad = _desktop.Add("report.txt - Notepad", "Notepad", processName: "notepad");
+
+        var result = await WaitAsync(new WindowSelector { Handle = notepad, TitleContains = "Untitled" }, WindowWaitCondition.Gone);
+
+        result.Satisfied.Should().BeTrue();
+        result.Warning.Should().Contain($"Window {notepad} did not match").And.NotContain("includeUntitled");
+    }
+
+    [Fact]
     public async Task Gone_WhenNothingMatchedAtTheStart_IsSatisfied_ButSaysSo()
     {
         // A misspelled selector must not read as "the window closed"
