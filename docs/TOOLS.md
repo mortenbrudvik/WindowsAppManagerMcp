@@ -690,8 +690,8 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 |-----------|------|----------|---------|-------------|
 | window | object | Yes | - | The window(s) to wait for: a window selector with find_windows' filters (processName is the whole name; className or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus filters waits for that window to match them, e.g. {"handle": 1706796, "titleContains": "report.txt"}) |
 | condition | string (one of: `"exists"`, `"gone"`, `"foreground"`, `"visible"`, `"title_changed"`, `"input_idle"`) | No | "exists" | What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle' |
-| newOnly | boolean | No | false | Only count windows that open after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone or title_changed |
-| excludeHandles | integer[] | No | - | Handles of windows that never count: the matching windows you saw before you acted (at most 256). Not with title_changed |
+| newOnly | boolean | No | false | Only count windows that open after this call starts (default: false). A window your last action already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle |
+| excludeHandles | integer[] | No | - | Handles of windows that never count: the matching windows you saw before you acted (at most 256; not window.handle itself). Not with title_changed |
 | previousTitle | string | No | - | title_changed only: the title you read before acting (default: the title when the wait starts, which misses a change that already happened) |
 | timeoutMs | integer | No | 10000 | How long to wait, 0-60000 ms (default: 10000); 0 checks once |
 | stableMs | integer | No | 300 | How long the condition must hold before it counts, 0-10000 ms (default: 300; at most timeoutMs) |
@@ -723,7 +723,7 @@ Wait on the server until a window condition holds (roadmap M3.7), instead of sle
 | The named window closed | `InvalidHandle` | `window.handle` is no window, for any condition but `gone` (it can never match), or title_changed's window closed during the wait. Ends at once |
 | Several windows | `AmbiguousWindow` | title_changed's selector names several windows when the call starts, or input_idle finds several: `candidates`. Ends at once |
 | No window to follow | `WindowNotFound`, `HandleMismatch` | title_changed's selector names no window (or a reused handle) when the call starts |
-| An argument that cannot be used | `InvalidArguments` (tool error) | A selector that cannot be used, `timeoutMs` outside 0-60000, `stableMs` outside 0-10000, more than 256 `excludeHandles`, `newOnly` with `gone` or `title_changed`, `excludeHandles` with `title_changed`, or `previousTitle` without it. Nothing was waited for |
+| An argument that cannot be used | `InvalidArguments` (tool error) | A selector that cannot be used, `timeoutMs` outside 0-60000, `stableMs` outside 0-10000, more than 256 `excludeHandles`, `newOnly` with `gone`, `title_changed` or `window.handle` (a handle names a window that is already open), `excludeHandles` with `title_changed` or holding `window.handle`, or `previousTitle` without `title_changed`. Nothing was waited for |
 
 **Example:**
 > "Click Save As, then wait for the dialog."
