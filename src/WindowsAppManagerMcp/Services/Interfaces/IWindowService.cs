@@ -128,7 +128,9 @@ public interface IWindowService
     /// <summary>
     /// The server's target policy's verdict on the window (roadmap M1.12): it is matched by its process, and a
     /// UWP frame window also by the app it hosts, as the listings report them. The Window Control tools,
-    /// close_window and window activation refuse a window it denies. Allowed when the server has no policy.
+    /// close_window and window activation refuse a window it denies. Fails closed: while the policy denies
+    /// anything, a window whose process (or hosted app) cannot be named is refused
+    /// (<see cref="TargetPolicyVerdict.Unreadable"/>). Allowed when the server has no policy.
     /// </summary>
     TargetPolicyVerdict EvaluateTargetPolicy(nint handle);
 

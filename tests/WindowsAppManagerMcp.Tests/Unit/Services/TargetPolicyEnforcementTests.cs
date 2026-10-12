@@ -7,7 +7,8 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// <summary>
 /// The target policy (roadmap M1.12) outside the input path: close_window and close_windows_batch,
 /// kill_process, capture_window and capture_with_elements refuse a denied process with
-/// TargetDeniedByPolicy, and no tool argument (force, forceKill) overrides it. Windows, processes and
+/// TargetDeniedByPolicy, and no tool argument (force, forceKill) overrides it. A window whose process
+/// cannot be named is refused as well while the policy denies anything. Windows, processes and
 /// captures are mocks; nothing is closed, killed or captured.
 /// </summary>
 public class TargetPolicyEnforcementTests
@@ -35,6 +36,17 @@ public class TargetPolicyEnforcementTests
         _native.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(processId);
         _native.Setup(n => n.GetProcessName(processId)).Returns(processName);
         _native.Setup(n => n.PostMessage(handle, WmClose, nint.Zero, nint.Zero)).Returns(Win32CallResult.Ok);
+        return handle;
+    }
+
+    /// <summary>
+    /// A window whose process the server cannot name (it may run elevated): GetProcessName fails, so the window cannot be
+    /// checked against the policy.
+    /// </summary>
+    private nint AddUnnamedWindow(nint handle, uint processId)
+    {
+        AddWindow(handle, "VaultWindow", processId, "Vault");
+        _native.Setup(n => n.GetProcessName(processId)).Returns((string?)null);
         return handle;
     }
 
@@ -143,6 +155,94 @@ public class TargetPolicyEnforcementTests
         var keePass = AddWindow(0x300, "KeePassWindow", 3001, "KeePass");
 
         CreateWindowService(policy: null).CloseWindow(keePass, force: false).Success.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Bitwarden")]
+    public void EvaluateTargetPolicy_AWindowWhoseProcessCannotBeNamed_IsRefused_WhileThePolicyDeniesAnything(string? deny)
+    {
+        // Arrange - the server cannot tell whether the window belongs to a password manager on the deny list
+        var vault = AddUnnamedWindow(0x500, 5001);
+
+        // Act
+        var verdict = CreateWindowService(Policy(deny)).EvaluateTargetPolicy(vault);
+
+        // Assert - as the input guard, the captures and the UI Automation reads decide
+        verdict.Allowed.Should().BeFalse();
+        verdict.Reason.Should().Contain("cannot be read");
+    }
+
+    [Fact]
+    public void EvaluateTargetPolicy_AWindowWhoseProcessCannotBeNamed_IsAllowed_WhenThePolicyDeniesNothing()
+    {
+        var vault = AddUnnamedWindow(0x500, 5001);
+
+        CreateWindowService(Policy(deny: "none")).EvaluateTargetPolicy(vault).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateTargetPolicy_UwpFrameWhoseAppCannotBeNamed_IsRefused_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the frame host is named, but the app whose CoreWindow it hosts is not
+        var frame = AddWindow(0x400, "ApplicationFrameWindow", 500, "ApplicationFrameHost");
+        var coreWindow = new nint(0x401);
+        _native.Setup(n => n.EnumChildWindows(frame, It.IsAny<Func<nint, bool>>()))
+            .Callback((nint _, Func<nint, bool> callback) => callback(coreWindow));
+        _native.Setup(n => n.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        _native.Setup(n => n.GetWindowThreadProcessId(coreWindow)).Returns(600u);
+        _native.Setup(n => n.GetProcessName(600u)).Returns((string?)null);
+
+        // Act
+        var verdict = CreateWindowService(Policy()).EvaluateTargetPolicy(frame);
+
+        // Assert
+        verdict.Allowed.Should().BeFalse();
+        verdict.Reason.Should().Contain("cannot be read");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CloseWindow_AWindowWhoseProcessCannotBeNamed_IsRefused_EvenWithForce(bool force)
+    {
+        // Arrange
+        var vault = AddUnnamedWindow(0x500, 5001);
+
+        // Act
+        var result = CreateWindowService(Policy()).CloseWindow(vault, force);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("cannot be read").And.Contain("force does not override it");
+        _native.Verify(n => n.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CloseWindowsBatch_RefusesAWindowWhoseProcessCannotBeNamed_AndClosesTheOthers()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var vault = AddUnnamedWindow(0x500, 5001);
+
+        // Act
+        var results = await CreateWindowService(Policy()).CloseWindowsBatchAsync([notepad, vault], force: false, delayBetweenMs: 0);
+
+        // Assert
+        results[0].Success.Should().BeTrue();
+        results[1].ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        _native.Verify(n => n.PostMessage(notepad, WmClose, nint.Zero, nint.Zero), Times.Once);
+        _native.Verify(n => n.PostMessage(vault, It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
+    }
+
+    [Fact]
+    public void CloseWindow_AWindowWhoseProcessCannotBeNamed_IsClosed_WhenThePolicyDeniesNothing()
+    {
+        var vault = AddUnnamedWindow(0x500, 5001);
+
+        CreateWindowService(Policy(deny: "none")).CloseWindow(vault, force: false).Success.Should().BeTrue();
+        _native.Verify(n => n.PostMessage(vault, WmClose, nint.Zero, nint.Zero), Times.Once);
     }
 
     #endregion
@@ -260,6 +360,72 @@ public class TargetPolicyEnforcementTests
 
         _native.Verify(n => n.SetWindowPos(keePass, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
         _native.Verify(n => n.ShowWindow(keePass, It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_AWindowWhoseProcessCannotBeNamed_IsRefused_AndTheWindowIsNotTouched(string change)
+    {
+        // Arrange - a minimized window that cannot be checked against the policy: it may be a denied password manager
+        var vault = AddUnnamedWindow(0x500, 5001);
+        _native.Setup(n => n.IsIconic(vault)).Returns(true);
+        _native.Setup(n => n.GetWindowRect(vault)).Returns((0, 0, 800, 600));
+
+        // Act
+        var changed = Change(CreateWindowService(Policy()), vault, change);
+
+        // Assert
+        changed.Success.Should().BeFalse();
+        changed.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        changed.Error.Should().Contain("cannot be read");
+        VerifyWindowUntouched();
+    }
+
+    [Theory]
+    [MemberData(nameof(WindowChanges))]
+    public void WindowChange_AWindowWhoseProcessCannotBeNamed_IsDone_WhenThePolicyDeniesNothing(string change)
+    {
+        // Arrange
+        var vault = AddUnnamedWindow(0x500, 5001);
+        _native.Setup(n => n.GetWindowRect(vault)).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(vault, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, vault);
+
+        // Act & Assert
+        Change(CreateWindowService(Policy(deny: "none")), vault, change).Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WindowTools_AndTheirBatches_RefuseAWindowWhoseProcessCannotBeNamed()
+    {
+        // Arrange
+        var notepad = AddWindow(0x200, "Notepad", 2001, "notepad");
+        var vault = AddUnnamedWindow(0x500, 5001);
+        _native.Setup(n => n.GetWindowRect(It.IsAny<nint>())).Returns((0, 0, 800, 600));
+        _native.Setup(n => n.SetWindowPos(notepad, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>())).Returns(Win32CallResult.Ok);
+        TestDataFactory.SimulateShowStates(_native, notepad);
+        var tools = new WindowManagerTools(CreateWindowService(Policy()), Mock.Of<IForegroundService>());
+
+        // Act
+        var results = new[]
+        {
+            await tools.MoveWindow(10, 10, handle: vault),
+            await tools.ResizeWindow(400, 300, handle: vault),
+            await tools.SetWindowBounds(10, 10, 400, 300, handle: vault),
+            await tools.SetWindowState(WindowStateRequest.Restore, handle: vault),
+            await tools.SnapWindow(SnapPosition.LeftHalf, handle: vault),
+            await tools.MoveWindowToMonitor(0, handle: vault)
+        };
+        var batch = await tools.SetWindowsBoundsBatch(
+            [new WindowBoundsPlacement(0, 0, 400, 300, Handle: notepad), new WindowBoundsPlacement(0, 0, 400, 300, Handle: vault)], delayBetweenMs: 0);
+
+        // Assert
+        results.Should().OnlyContain(r => !r.Success && r.ErrorCode == nameof(WindowErrorCode.TargetDeniedByPolicy) &&
+                                          r.Error!.Contains("cannot be read"));
+        batch.Succeeded.Should().Be(1);
+        batch.Results.Single(r => r.Handle == vault).ErrorCode.Should().Be(nameof(WindowErrorCode.TargetDeniedByPolicy));
+        _native.Verify(n => n.SetWindowPos(vault, It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<uint>()), Times.Never);
+        _native.Verify(n => n.ShowWindow(vault, It.IsAny<int>()), Times.Never);
     }
 
     #endregion

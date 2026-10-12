@@ -1208,7 +1208,8 @@ public class WindowService : IWindowService
 
     /// <summary>
     /// Why the target policy refuses the window, or null when it allows it (or there is no policy). The
-    /// window is matched by its process, and a UWP frame also by the app it hosts, as the listings report it.
+    /// window is matched by its process, and a UWP frame also by the app it hosts, as the listings report it;
+    /// one whose process cannot be named is refused (<see cref="EvaluateTargetPolicy"/>).
     /// </summary>
     private string? FindPolicyRefusal(nint handle) =>
         EvaluateTargetPolicy(handle) is { Allowed: false } verdict
@@ -1225,8 +1226,11 @@ public class WindowService : IWindowService
         var className = _nativeWrapper.GetClassName(handle) ?? string.Empty;
         var title = _nativeWrapper.GetWindowText(handle) ?? string.Empty;
         var process = ResolveProcess(handle, className, title, _nativeWrapper.GetWindowThreadProcessId(handle), session);
-        return _targetPolicy.Evaluate(
-            [session.ProcessName(process.ProcessId), process.HostProcessId is { } hostId ? session.ProcessName(hostId) : null]);
+
+        // A process that cannot be named cannot be checked, so it is refused while the policy denies anything, as the input
+        // guard, the captures and the UI Automation reads refuse it
+        var name = session.ProcessName(process.ProcessId);
+        return _targetPolicy.EvaluateFailClosed(process.HostProcessId is { } hostId ? [name, session.ProcessName(hostId)] : [name]);
     }
 
     /// <summary>

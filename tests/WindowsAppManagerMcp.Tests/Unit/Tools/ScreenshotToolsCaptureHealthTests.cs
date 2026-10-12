@@ -21,8 +21,8 @@ public class ScreenshotToolsCaptureHealthTests
     private readonly Mock<IInputSession> _session = new();
     private readonly List<string> _events = [];
 
-    private ScreenshotTools CreateSut() =>
-        new(_screenshots.Object, _elements.Object, _windows.Object, new TargetPolicy(TargetPolicySettings.Default), _session.Object);
+    private ScreenshotTools CreateSut(TargetPolicySettings? policy = null) =>
+        new(_screenshots.Object, _elements.Object, _windows.Object, new TargetPolicy(policy ?? TargetPolicySettings.Default), _session.Object);
 
     #region capture_with_elements and the walk
 
@@ -264,6 +264,46 @@ public class ScreenshotToolsCaptureHealthTests
     }
 
     [Fact]
+    public async Task CaptureWindow_WithRestoreIfMinimized_WhenTheRestoreWouldShowAWindowWhoseProcessCannotBeNamed_RestoresNothing()
+    {
+        // Arrange - the minimized window owns a prompt of a process the server cannot name (it may run elevated), so the
+        // prompt cannot be checked against the policy
+        Minimized();
+        var prompt = new nint(0x6100);
+        _screenshots.Setup(s => s.WindowsShownByRestore(Window)).Returns([Window, prompt]);
+        ProcessCannotBeNamed(prompt, TargetPolicySettings.Default);
+
+        // Act
+        var result = await CreateSut().CaptureWindow(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Metadata(result).GetProperty("error").GetString().Should().Contain("cannot be read");
+        _events.Should().BeEmpty();
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_WithRestoreIfMinimized_WhenTheRestoreWouldShowAWindowWhoseProcessCannotBeNamed_RestoresIt_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        var none = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null);
+        Minimized();
+        var prompt = new nint(0x6100);
+        _screenshots.Setup(s => s.WindowsShownByRestore(Window)).Returns([Window, prompt]);
+        ProcessCannotBeNamed(prompt, none);
+
+        // Act
+        var result = await CreateSut(none).CaptureWindow(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeFalse();
+        _events.Should().Equal("restore", "minimize");
+        _screenshots.Verify(s => s.CaptureWindow(Window, true, It.IsAny<CaptureOptions>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CaptureWindow_WithRestoreIfMinimized_AndInvalidOptions_RestoresNothing()
     {
         // Arrange
@@ -359,6 +399,22 @@ public class ScreenshotToolsCaptureHealthTests
                 _events.Add("restore");
                 return Restored();
             });
+    }
+
+    /// <summary>
+    /// The window service's own target policy check (<see cref="WindowService.EvaluateTargetPolicy"/>), with
+    /// <paramref name="policy"/>, for <paramref name="window"/>: a window whose process the server cannot name.
+    /// </summary>
+    private void ProcessCannotBeNamed(nint window, TargetPolicySettings policy)
+    {
+        const uint processId = 6100;
+        var native = new Mock<INativeWindowWrapper>();
+        native.Setup(n => n.IsWindow(window)).Returns(true);
+        native.Setup(n => n.GetWindowThreadProcessId(window)).Returns(processId);
+        native.Setup(n => n.GetProcessName(processId)).Returns((string?)null);
+        var windowService = new WindowService(
+            TestDataFactory.CreateMockMonitorService().Object, native.Object, Mock.Of<IHostGuard>(), new TargetPolicy(policy));
+        _windows.Setup(w => w.EvaluateTargetPolicy(window)).Returns(() => windowService.EvaluateTargetPolicy(window));
     }
 
     private MinimizedWindowRestore Restored()

@@ -437,6 +437,43 @@ public class ForegroundServiceTests
     }
 
     [Fact]
+    public void EnsureForeground_WhenTheTargetIsMinimizedAndOwnsAWindowWhoseProcessCannotBeNamed_RestoresNothing()
+    {
+        // Arrange - the restore would show a dialog of a process the server cannot name (it may run elevated), so it cannot
+        // be checked against the policy
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        TopLevelWindows(Terminal, Target, Dialog);
+        PolicyOfTheWindowService(TargetPolicySettings.Default);
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.IsForeground.Should().BeFalse();
+        outcome.ErrorCode.Should().Be(WindowErrorCode.TargetDeniedByPolicy);
+        outcome.Error.Should().Contain("cannot be read").And.Contain("Nothing was restored or activated");
+        _calls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EnsureForeground_WhenTheTargetIsMinimizedAndOwnsAWindowWhoseProcessCannotBeNamed_RestoresIt_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        _windows.Setup(w => w.IsIconic(Target)).Returns(true);
+        TopLevelWindows(Terminal, Target, Dialog);
+        PolicyOfTheWindowService(TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null));
+        _lock = ForegroundLock.Open;
+
+        // Act
+        var outcome = CreateSut().EnsureForeground(Target, timeoutMs: 0);
+
+        // Assert
+        outcome.Method.Should().Be(FocusMethod.SetForeground);
+        _calls.Should().Equal($"ShowWindow(Target, {SW_RESTORE})", "SetForegroundWindow(Target) -> True");
+    }
+
+    [Fact]
     public void EnsureForeground_WhenADeniedDialogShowsUpOnlyAfterTheRestore_RefusesAndSaysTheWindowWasRestored()
     {
         // Arrange - nothing the minimized window owns is known before the restore; afterwards a modal dialog of a
@@ -1061,6 +1098,22 @@ public class ForegroundServiceTests
     private ForegroundService CreateSut(TimeSpan? stepSettle = null) =>
         new(_windows.Object, _threads.Object, _input.Object, _security.Object, _windowService.Object, _activationThread,
             Timing(stepSettle ?? TimeSpan.Zero));
+
+    /// <summary>
+    /// The window service's own target policy check (<see cref="WindowService.EvaluateTargetPolicy"/>) over the mocked
+    /// windows, with <paramref name="settings"/>: the target and the terminal are named, the dialog's process cannot be.
+    /// </summary>
+    private void PolicyOfTheWindowService(TargetPolicySettings settings)
+    {
+        const uint dialogPid = 4000;
+        _windows.Setup(w => w.GetWindowThreadProcessId(Dialog)).Returns(dialogPid);
+        _windows.Setup(w => w.GetProcessName((uint)TargetPid)).Returns("app");
+        _windows.Setup(w => w.GetProcessName((uint)TerminalPid)).Returns("WindowsTerminal");
+        _windows.Setup(w => w.GetProcessName(dialogPid)).Returns((string?)null);
+        var windowService = new WindowService(
+            TestDataFactory.CreateMockMonitorService().Object, _windows.Object, Mock.Of<IHostGuard>(), new TargetPolicy(settings));
+        _windowService.Setup(w => w.EvaluateTargetPolicy(It.IsAny<nint>())).Returns<nint>(windowService.EvaluateTargetPolicy);
+    }
 
     /// <summary>The top-level windows EnumWindows lists, in Z order.</summary>
     private void TopLevelWindows(params nint[] windows) =>
