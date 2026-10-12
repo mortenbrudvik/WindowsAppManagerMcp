@@ -182,8 +182,10 @@ public sealed partial class ElementReadService : IElementReadService
     }
 
     /// <summary>
-    /// The ref of the one element the criteria found, or null with why not: none (ElementNotFound), several
-    /// (AmbiguousElement), or a search that did not cover the whole window, so another match may exist.
+    /// The ref of the one element the criteria found, or null with why not, with element_action's codes: several
+    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), a search that did not
+    /// cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut), or none
+    /// (ElementNotFound).
     /// </summary>
     private static string? Unique(FindElementsResult found, ElementQuery query, out string? error, out UIElementErrorCode code)
     {
@@ -196,33 +198,35 @@ public sealed partial class ElementReadService : IElementReadService
             return null;
         }
 
+        var unfinished = found.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
+            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit;
+        if (found.MatchCount > 1)
+        {
+            error = $"{(unfinished ? "At least " : string.Empty)}{found.MatchCount} elements match the criteria, so none was read: " +
+                    "a read never picks one for you. Pass the ref of the one you mean (candidates lists them), or narrow the criteria.";
+            code = UIElementErrorCode.AmbiguousElement;
+            return null;
+        }
+
+        if (unfinished)
+        {
+            var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
+                ? "every window of its scope"
+                : "the whole window";
+            error = $"The search did not cover {covered} ({found.TruncationReason}), so " +
+                    (found.MatchCount == 0
+                        ? "the element may be in the part it did not search: it found none so far."
+                        : "the one element it found may not be the only match.") +
+                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
+            code = UIElementErrorCode.OperationTimedOut;
+            return null;
+        }
+
         if (found.MatchCount == 0)
         {
             error = "No element matches the criteria" + (query.VisibleOnly ? " among the visible elements" : string.Empty) +
                     ". Check them with find_ui_elements, or read an element by its ref.";
             code = UIElementErrorCode.ElementNotFound;
-            return null;
-        }
-
-        if (found.MatchCount > 1)
-        {
-            error = $"{found.MatchCount} elements match the criteria, so none was read: a read never picks one for you. Pass the " +
-                    "ref of the one you mean (candidates lists them), or narrow the criteria.";
-            code = UIElementErrorCode.AmbiguousElement;
-            return null;
-        }
-
-        if (found.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
-            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
-        {
-            var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
-                ? "every window of its scope"
-                : "the whole window";
-            error = $"The search did not cover {covered} ({found.TruncationReason}), so the one element it found may not " +
-                    "be the only match. Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
-            code = found.TruncationReason == ElementSearchTruncation.PartsSkipped
-                ? UIElementErrorCode.ElementAccessFailed
-                : UIElementErrorCode.OperationTimedOut;
             return null;
         }
 

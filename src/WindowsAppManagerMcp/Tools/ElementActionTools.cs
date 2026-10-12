@@ -338,8 +338,20 @@ public partial class ElementActionTools
             return (null, Fail(result.ErrorCode.ToString(), $"{result.Error} Nothing was done."));
         }
 
-        if (result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
-            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
+        // Several matches are ambiguous even when the search did not finish (more search cannot make them one), as for
+        // read_element_text; a search that did not finish proves neither one match nor none
+        var unfinished = result.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
+            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit;
+        if (result.MatchCount > 1 && result.Elements is { Count: > 0 } several)
+        {
+            var refs = string.Join(", ", several.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"));
+            return (null, Fail(nameof(UIElementErrorCode.AmbiguousElement),
+                $"{(unfinished ? "At least " : string.Empty)}{result.MatchCount} elements match the criteria (first: {refs}), so none " +
+                "was acted on. Narrow the criteria (automationId, controlType), or find them with find_ui_elements and pass the ref " +
+                "of the one you mean."));
+        }
+
+        if (unfinished)
         {
             return (null, Fail(nameof(UIElementErrorCode.OperationTimedOut),
                 $"The search for the element did not cover {Covered(result)} ({result.TruncationReason}), so it is not known that " +
@@ -352,14 +364,6 @@ public partial class ElementActionTools
             return (null, Fail(nameof(UIElementErrorCode.ElementNotFound),
                 $"No element of {Searched(result)} matches the criteria (offscreen and disabled elements included). Nothing was done. " +
                 "Check them with find_ui_elements, or get_ui_elements format text."));
-        }
-
-        if (result.MatchCount > 1)
-        {
-            var refs = string.Join(", ", elements.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"));
-            return (null, Fail(nameof(UIElementErrorCode.AmbiguousElement),
-                $"{result.MatchCount} elements match the criteria (first: {refs}), so none was acted on. Narrow the criteria " +
-                "(automationId, controlType), or find them with find_ui_elements and pass the ref of the one you mean."));
         }
 
         var element = elements[0];

@@ -119,6 +119,30 @@ public class ElementActionToolTests
     }
 
     [Fact]
+    public async Task ASearchThatDidNotCoverTheWindowAndFoundNothing_IsOperationTimedOut_NotElementNotFound()
+    {
+        _found = Found(0) with { Truncated = true, TruncationReason = ElementSearchTruncation.SearchLimit };
+
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Save").Payload<ElementActionResult>();
+
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("0 found so far");
+    }
+
+    [Fact]
+    public async Task ASearchThatDidNotCoverTheWindowButFoundSeveral_IsAmbiguous_AsReadElementTextReportsIt()
+    {
+        // More search cannot make two matches one
+        _found = Found(2, Element("w1e7"), Element("w1e8")) with { TruncationReason = ElementSearchTruncation.Timeout };
+
+        var result = await CreateSut().ElementAction(ElementActionKind.Invoke, handle: Handle, name: "Delete").Payload<ElementActionResult>();
+
+        result.ErrorCode.Should().Be("AmbiguousElement");
+        result.Error.Should().Contain("At least 2 elements").And.Contain("w1e7").And.Contain("w1e8");
+        _actions.Verify(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ASearchThatFails_ReportsItsCode()
     {
         _found = new FindElementsResult(false, Handle, null, 0, false, null, 1, Error: "The window is not responding.",

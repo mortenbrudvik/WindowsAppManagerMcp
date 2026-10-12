@@ -491,6 +491,66 @@ public class ElementReadServiceTextTests
         _tree.Reads.Should().NotContain(r => r.StartsWith("Value:"));
     }
 
+    /// <summary>The service over a search that returns <paramref name="found"/>.</summary>
+    private ElementReadService SutFinding(FindElementsResult found)
+    {
+        var search = new Mock<IElementSearchService>();
+        search.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>())).ReturnsAsync(found);
+        return new ElementReadService(_tree, _worker, _registry, search.Object, _windows.Object);
+    }
+
+    private static FoundElement Found(string elementRef, string name) =>
+        new(elementRef, name, "Edit", null, "Edit", null, null, true, false, ["Value"]);
+
+    [Theory]
+    [InlineData(ElementSearchTruncation.SearchLimit)]
+    [InlineData(ElementSearchTruncation.Timeout)]
+    [InlineData(ElementSearchTruncation.PartsSkipped)]
+    [InlineData(ElementSearchTruncation.WindowLimit)]
+    public async Task ReadText_ByCriteria_WhenTheSearchDidNotFinishAndFoundNothing_IsOperationTimedOut_NotElementNotFound(
+        ElementSearchTruncation reason)
+    {
+        // Arrange - a search cut short with no match so far: the element may be in the part it did not search
+        var sut = SutFinding(new FindElementsResult(true, Handle, "Notes", 0, true, [], 1, TruncationReason: reason));
+
+        // Act
+        var result = await sut.ReadTextAsync(new ElementTextRequest(null, Query(name: "Body"), 0, 100, Timeout));
+
+        // Assert - as element_action reports it
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain(reason.ToString()).And.Contain("found none");
+    }
+
+    [Fact]
+    public async Task ReadText_ByCriteria_WhenAPartWasSkippedAndOneElementFound_IsOperationTimedOut_AsForElementAction()
+    {
+        var sut = SutFinding(new FindElementsResult(true, Handle, "Notes", 1, true, [Found("w1e5", "Body")], 1,
+            TruncationReason: ElementSearchTruncation.PartsSkipped));
+
+        var result = await sut.ReadTextAsync(new ElementTextRequest(null, Query(name: "Body"), 0, 100, Timeout));
+
+        result.ErrorCode.Should().Be(UIElementErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("may not be the only match");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:"));
+    }
+
+    [Fact]
+    public async Task ReadText_ByCriteria_WhenTheSearchDidNotFinishButFoundSeveral_IsAmbiguous_WithTheCandidates()
+    {
+        // Arrange - more search cannot make two matches one
+        var sut = SutFinding(new FindElementsResult(true, Handle, "Notes", 2, true, [Found("w1e5", "Body"), Found("w1e6", "Body")], 1,
+            TruncationReason: ElementSearchTruncation.Timeout));
+
+        // Act
+        var result = await sut.ReadTextAsync(new ElementTextRequest(null, Query(name: "Body"), 0, 100, Timeout));
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.AmbiguousElement);
+        result.Candidates!.Select(c => c.Ref).Should().Equal("w1e5", "w1e6");
+        result.Error.Should().Contain("At least 2");
+    }
+
     [Fact]
     public async Task ReadText_ByCriteria_InAWindowThatDoesNotRespond_FailsWithItsCode()
     {
