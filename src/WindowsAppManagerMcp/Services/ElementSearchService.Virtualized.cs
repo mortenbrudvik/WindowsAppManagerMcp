@@ -50,10 +50,11 @@ public sealed partial class ElementSearchService
     /// The lists of <paramref name="root"/> and the items they found that the tree search did not, on the worker thread. Runs
     /// only after a tree search of the named window that finished and left room among maxResults.
     /// </summary>
+    /// <param name="window">The named window, whose root is <paramref name="root"/> unless <paramref name="rootIsWithin"/>.</param>
     /// <param name="rootIsWithin">The root is withinRef's element: it is the list itself when it is one.</param>
     /// <param name="total">What the tree search found: its kept matches are not reported again.</param>
     private VirtualizedLookup SearchVirtualized(
-        ElementCriteria criteria, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults, CancellationToken token)
+        ElementCriteria criteria, nint window, IUiaNode root, bool rootIsWithin, SearchTotal total, int maxResults, CancellationToken token)
     {
         if (total.Stop != ElementSearchStop.None)
         {
@@ -70,7 +71,7 @@ public sealed partial class ElementSearchService
         string? containersSkipped;
         try
         {
-            (containers, containersSkipped) = FindContainers(root, rootIsWithin, token);
+            (containers, containersSkipped) = FindContainers(window, root, rootIsWithin, token);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || token.IsCancellationRequested)
         {
@@ -257,9 +258,10 @@ public sealed partial class ElementSearchService
     /// <summary>
     /// The lists searchVirtualized searches: withinRef's element when it is a list (or supports ItemContainer), else the
     /// List, Tree, DataGrid and Table elements below the root, those with the ItemContainer pattern first, then those on
-    /// screen, at most <see cref="MaxVirtualizedContainers"/>; and why lists were left out, or null.
+    /// screen, at most <see cref="MaxVirtualizedContainers"/>; and why lists were left out, or null. The lists of the windows
+    /// the window owns (its dialogs) are not its own.
     /// </summary>
-    private (List<UiaElement> Containers, string? Skipped) FindContainers(IUiaNode root, bool rootIsWithin, CancellationToken token)
+    private (List<UiaElement> Containers, string? Skipped) FindContainers(nint window, IUiaNode root, bool rootIsWithin, CancellationToken token)
     {
         if (rootIsWithin)
         {
@@ -271,7 +273,8 @@ public sealed partial class ElementSearchService
         }
 
         var condition = UiaCondition.Or(ListControlTypes.Select(t => UiaCondition.PropertyEquals(UiaProperty.ControlType, t)).ToArray());
-        var outcome = new ElementSearch(_tree, condition, filter: null, keep: MaxVirtualizedContainers * 4, maxCandidates: 200).Run(root, token);
+        var outcome = new ElementSearch(_tree, condition, filter: null, keep: MaxVirtualizedContainers * 4, maxCandidates: 200,
+            leaveOut: rootIsWithin ? null : OwnedWindows.Below(_windows, window)).Run(root, token);
         var ordered = outcome.Matches
             .OrderBy(c => (c.Patterns & UiaPatterns.ItemContainer) != 0 ? 0 : 1)
             .ThenBy(c => c.Properties.IsOffscreen ? 1 : 0)

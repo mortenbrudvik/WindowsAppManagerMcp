@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using WindowsAppManagerMcp.Native;
 using WindowsAppManagerMcp.Services.Interfaces;
@@ -55,6 +56,14 @@ public sealed record ElementSearchOutcome(
 /// caller's worker deadline abandons it, and the stuck thread counts against the application until it returns. Searching
 /// a wide level child by child instead would turn one call into thousands.</para>
 /// <para>Order: the matches of the expanded levels first, nearest the root first, then those of each part in tree order.</para>
+/// <para>Owned windows: the root's children that <c>leaveOut</c> names (<see cref="OwnedWindows"/>: the dialogs and popups
+/// the HWND proxy lists under the top-level window that owns them) are left out with everything below them, so a search of
+/// a window covers its own tree only. When the root is split, they are not made parts. A root wider than
+/// <see cref="MaxExpandWidth"/> is searched whole, so its first children are read one at a time while they are owned
+/// windows (the HWND proxy lists them first, at most <see cref="MaxOwnedWindows"/>), each such window is searched for the
+/// condition, and its matches are not counted in the root's. A root that cannot be split otherwise (a condition the
+/// evaluator cannot test, a level that cannot be read) is searched whole, owned windows included; the callers that search
+/// several windows drop such duplicates by runtime id.</para>
 /// <para>A condition the evaluator cannot test on cached properties (FrameworkId, ProcessId) is not split: the root is
 /// searched in one call. A part that disappears or whose provider fails is skipped and counted; a timeout ends the search;
 /// a <see cref="NotSupportedException"/> (the managed client cannot search for AppBar or SemanticZoom) is thrown to the
@@ -83,13 +92,20 @@ public sealed class ElementSearch
     /// <summary>A node with more children than this is not expanded: one FindAll searches it.</summary>
     public const int MaxExpandWidth = 50;
 
+    /// <summary>A root searched whole has at most this many owned windows left out (the popups a window lists, at most).</summary>
+    public const int MaxOwnedWindows = PopupService.MaxPopups;
+
     private readonly object _gate = new();
     private readonly IUiaTree _tree;
     private readonly UiaCondition _condition;
     private readonly Func<UiaElement, bool>? _filter;
+    private readonly Func<UiaElement, bool>? _leaveOut;
     private readonly int _keep;
     private readonly int _maxCandidates;
     private readonly List<UiaElement> _matches = [];
+
+    // The matches inside the owned windows of a root searched whole, by runtime id: they are not the root's
+    private HashSet<string>? _leftOut;
     private int _matchCount;
     private int _candidates;
     private int _skippedParts;
@@ -103,13 +119,18 @@ public sealed class ElementSearch
     /// <param name="maxCandidates">The search stops once the provider has matched this many elements (at most
     /// <see cref="MaxCandidates"/>, the default): a search of several windows (roadmap M3.5) passes what is left of one
     /// limit for all of them.</param>
-    public ElementSearch(IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep, int maxCandidates = MaxCandidates)
+    /// <param name="leaveOut">The root's children to leave out with everything below them (see the remarks:
+    /// <see cref="OwnedWindows.Below"/> for a window's root), or null to search everything below the root.</param>
+    public ElementSearch(
+        IUiaTree tree, UiaCondition condition, Func<UiaElement, bool>? filter, int keep, int maxCandidates = MaxCandidates,
+        Func<UiaElement, bool>? leaveOut = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(keep, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxCandidates, 1);
         _tree = tree;
         _condition = condition;
         _filter = filter;
+        _leaveOut = leaveOut;
         _keep = keep;
         _maxCandidates = Math.Min(maxCandidates, MaxCandidates);
     }
@@ -221,6 +242,11 @@ public sealed class ElementSearch
 
                 if (listed.Count > MaxExpandWidth)
                 {
+                    if (isRoot && _leaveOut != null)
+                    {
+                        LeaveOutOwnedWindows(listed, cancellationToken);
+                    }
+
                     parts[index] = (node, depth, true);
                     continue;
                 }
@@ -240,6 +266,12 @@ public sealed class ElementSearch
                 continue;
             }
 
+            // A window the root's window owns is searched only as its own window
+            if (isRoot && _leaveOut != null)
+            {
+                children = children.Where(c => !_leaveOut(c)).ToList();
+            }
+
             // The children read here are tested here: the parts' FindAll calls search only below them
             foreach (var child in children.Where(c => UiaConditionEvaluator.Matches(_condition, c)))
             {
@@ -253,9 +285,64 @@ public sealed class ElementSearch
         return parts.Select(p => p.Node).ToList();
     }
 
+    /// <summary>
+    /// For a root searched whole: reads its first children one at a time while they are windows it owns, and notes the
+    /// elements in each that the condition matches, so the root's search does not count them. A child that cannot be read
+    /// ends the reads.
+    /// </summary>
+    private void LeaveOutOwnedWindows(IReadOnlyList<IUiaNode> children, CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < Math.Min(children.Count, MaxOwnedWindows); i++)
+        {
+            UiaElement child;
+            try
+            {
+                child = _tree.ReadElement(children[i]);
+            }
+            catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+            {
+                return;
+            }
+
+            if (!_leaveOut!(child))
+            {
+                return;
+            }
+
+            IReadOnlyList<UiaElement> inside;
+            try
+            {
+                inside = _tree.FindAll(children[i], UiaScope.Subtree, _condition, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not (NotSupportedException or TimeoutException or OperationCanceledException))
+            {
+                // The owned window closed meanwhile: nothing of it is in the root's search either
+                continue;
+            }
+
+            _leftOut ??= new HashSet<string>(StringComparer.Ordinal);
+            foreach (var element in inside)
+            {
+                if (element.RuntimeId is { Count: > 0 } id)
+                {
+                    _leftOut.Add(RuntimeKey(id));
+                }
+            }
+        }
+    }
+
+    private static string RuntimeKey(IReadOnlyList<int> runtimeId) =>
+        string.Join('.', runtimeId.Select(i => i.ToString(CultureInfo.InvariantCulture)));
+
     /// <summary>An element the condition matched: counted as a candidate, and kept or counted when it passes the filter.</summary>
     private void Consider(UiaElement element)
     {
+        if (_leftOut != null && element.RuntimeId is { Count: > 0 } id && _leftOut.Contains(RuntimeKey(id)))
+        {
+            // An element of a window the root's window owns
+            return;
+        }
+
         var passes = _filter == null || _filter(element);
         lock (_gate)
         {

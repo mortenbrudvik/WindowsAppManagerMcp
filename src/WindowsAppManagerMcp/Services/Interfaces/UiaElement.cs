@@ -18,6 +18,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="ControlTypeId">The raw control type id (50000-50040, UIA_*ControlTypeId), or null when the engine
 /// could not read it: the managed UI Automation client (UIA2) reads no id it has no name for, such as 50039
 /// SemanticZoom and 50040 AppBar.</param>
+/// <param name="NativeWindowHandle">The window the element is the UI Automation element of, or 0 for an element without a
+/// window of its own (most controls of WPF, WinUI and web pages). The HWND proxy lists the windows a top-level window owns
+/// (its dialogs and popups) among that window's children, with their own handles: see <see cref="Services.OwnedWindows"/>.</param>
 public sealed record UiaElement(
     IUiaNode Node,
     UiaNodeProperties Properties,
@@ -25,7 +28,8 @@ public sealed record UiaElement(
     bool IsKeyboardFocusable,
     UiaPatterns Patterns,
     IReadOnlyList<int>? RuntimeId,
-    int? ControlTypeId)
+    int? ControlTypeId,
+    nint NativeWindowHandle = 0)
 {
     /// <summary>
     /// Keyboard-focusable, or supports an action pattern (<see cref="UiaPatterns.Actions"/>): what interactableOnly

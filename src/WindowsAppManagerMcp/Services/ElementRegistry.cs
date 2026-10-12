@@ -345,6 +345,7 @@ public sealed class ElementRegistry : IElementRegistry
         // 2. The same runtime id in the window (an engine can hand out a new proxy for the same element), if it is still
         //    the same control
         var byId = Search(
+            entry.Window.Handle,
             window,
             new ElementCriteria(),
             UiaCondition.PropertyEquals(UiaProperty.RuntimeId, entry.RuntimeId),
@@ -375,7 +376,9 @@ public sealed class ElementRegistry : IElementRegistry
         }
 
         var (condition, filter) = selector.Compile();
-        var found = Search(window, selector, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e), cancellationToken);
+        var found = Search(
+            entry.Window.Handle, window, selector, condition, e => (filter == null || filter(e)) && SameElement(fingerprint, e),
+            cancellationToken);
         switch (found.MatchCount)
         {
             case 1 when found.Complete:
@@ -405,20 +408,24 @@ public sealed class ElementRegistry : IElementRegistry
     }
 
     /// <summary>
-    /// A search of the window during a resolution. A control type the engine cannot search for (the managed client and
-    /// AppBar or SemanticZoom) is tested on the server instead.
+    /// A search of the window during a resolution: its own tree, without the windows it owns (its dialogs are windows of
+    /// their own, whose elements have refs of their own: see <see cref="OwnedWindows"/>). A control type the engine cannot
+    /// search for (the managed client and AppBar or SemanticZoom) is tested on the server instead.
     /// </summary>
     private ElementSearchOutcome Search(
-        IUiaNode window, ElementCriteria criteria, UiaCondition condition, Func<UiaElement, bool> filter, CancellationToken cancellationToken)
+        nint handle, IUiaNode window, ElementCriteria criteria, UiaCondition condition, Func<UiaElement, bool> filter,
+        CancellationToken cancellationToken)
     {
+        var leaveOut = OwnedWindows.Below(_windows, handle);
         try
         {
-            return new ElementSearch(_tree, condition, filter, ResolutionKeep).Run(window, cancellationToken);
+            return new ElementSearch(_tree, condition, filter, ResolutionKeep, leaveOut: leaveOut).Run(window, cancellationToken);
         }
         catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 })
         {
             var (serverCondition, serverFilter) = criteria.Compile(controlTypesOnServer: true);
-            return new ElementSearch(_tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep)
+            return new ElementSearch(
+                    _tree, serverCondition, e => (serverFilter == null || serverFilter(e)) && filter(e), ResolutionKeep, leaveOut: leaveOut)
                 .Run(window, cancellationToken);
         }
     }

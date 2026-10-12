@@ -37,7 +37,10 @@ namespace WindowsAppManagerMcp.Services;
 /// (truncationReason PartsSkipped), and the search goes on with the next window. More popups than
 /// <see cref="PopupService.MaxPopups"/> is truncationReason WindowLimit. Uniqueness (below) is judged per window, and the
 /// extra searches that prove single visible matches unique share one <see cref="UniquenessBudget"/>, the named window's
-/// first.</para>
+/// first. Each window's search covers its own tree: UI Automation also lists the windows it owns (its dialogs) among its
+/// children, and they are left out (<see cref="OwnedWindows"/>), in every scope, so an owned dialog is searched only as
+/// its own window (a popup of windowAndPopups); an element that still comes from two windows of the scope (an owner whose
+/// tree could not be split) is kept once, from the first.</para>
 /// <para>The whole search is one worker read, counted against the named window's application (or the unknown-target
 /// bucket for a desktop search that names no window): a provider stuck in another window of the scope, such as a WebView2
 /// child process or one of the desktop's windows, counts against that application's stuck reads too. Windows that do not
@@ -363,12 +366,15 @@ public sealed partial class ElementSearchService : IElementSearchService
                 }
 
                 var keep = Math.Max(1, maxResults - started.Kept);
+
+                // A window's own tree: the windows it owns are searched as windows of their own (below withinRef there are none)
+                var leaveOut = isNamed && query.WithinRef != null ? null : OwnedWindows.Below(_windows, target);
                 ElementSearchOutcome outcome;
                 try
                 {
                     try
                     {
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                     catch (NotSupportedException) when (criteria.ControlTypes is { Count: > 0 } && !controlTypesOnServer)
                     {
@@ -376,7 +382,7 @@ public sealed partial class ElementSearchService : IElementSearchService
                         // window and the next ones
                         controlTypesOnServer = true;
                         compiled = criteria.Compile(controlTypesOnServer: true);
-                        outcome = Run(compiled, keep, candidatesLeft, target, node, started, token);
+                        outcome = Run(compiled, keep, candidatesLeft, target, node, leaveOut, started, token);
                     }
                 }
                 catch (Exception ex) when (!isNamed && !token.IsCancellationRequested &&
@@ -413,7 +419,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
             // searchVirtualized (roadmap M3.10): the named window's lists, asked for items they have not realized
             var virtualized = query.SearchVirtualized && root != null
-                ? SearchVirtualized(criteria, root, query.WithinRef != null, total, maxResults, token)
+                ? SearchVirtualized(criteria, handle, root, query.WithinRef != null, total, maxResults, token)
                 : null;
 
             // Items found through a list can be look-alikes of a tree match, and a lookup that stopped early may have missed
@@ -488,9 +494,9 @@ public sealed partial class ElementSearchService : IElementSearchService
 
     private ElementSearchOutcome Run(
         (UiaCondition Condition, Func<UiaElement, bool>? Filter) compiled, int keep, int maxCandidates, nint window, IUiaNode root,
-        SearchStarted started, CancellationToken token)
+        Func<UiaElement, bool>? leaveOut, SearchStarted started, CancellationToken token)
     {
-        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, keep, maxCandidates);
+        var search = new ElementSearch(_tree, compiled.Condition, compiled.Filter, keep, maxCandidates, leaveOut);
         started.Begin(window, search);
         return search.Run(root, token);
     }
@@ -562,7 +568,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
             // A single match in its window among the visible or enabled ones: an offscreen or disabled twin would not have
             // been found, so search the window for its identity alone
-            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window.Node, budget.Token);
+            verdicts[matches[0]] = ProveAlone(criteria.Identity, controlTypesOnServer, matches[0], window, budget.Token);
         }
 
         return m => verdicts.TryGetValue(m, out var verdict) ? verdict : null;
@@ -572,16 +578,19 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// True when one more search of the window finds no other element that the criteria and the match's fingerprint fit,
     /// false when it finds one, null when it could not tell.
     /// </summary>
+    /// <param name="window">The window searched: its own tree, without the windows it owns (as the search and the
+    /// registry's resolution search it).</param>
     /// <param name="budget">The deadline, or the end of <see cref="UniquenessBudget"/> when that comes first.</param>
-    private bool? ProveAlone(ElementCriteria identity, bool controlTypesOnServer, UiaElement match, IUiaNode window, CancellationToken budget)
+    private bool? ProveAlone(ElementCriteria identity, bool controlTypesOnServer, UiaElement match, SearchedWindow window, CancellationToken budget)
     {
         try
         {
             var (condition, filter) = identity.Compile(controlTypesOnServer);
             var fingerprint = ElementRegistry.Fingerprint(match, null);
             var proof = new ElementSearch(
-                    _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2)
-                .Run(window, budget);
+                    _tree, condition, e => (filter == null || filter(e)) && ElementRegistry.SameElement(fingerprint, e), keep: 2,
+                    leaveOut: OwnedWindows.Below(_windows, window.Handle))
+                .Run(window.Node, budget);
             return proof.MatchCount switch
             {
                 > 1 => false,
@@ -798,7 +807,10 @@ public sealed partial class ElementSearchService : IElementSearchService
     private static double Elapsed(Stopwatch stopwatch) => Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2);
 
     /// <summary>A window of the scope, searched: its node, its search's outcome and the matches kept from it.</summary>
-    private sealed record SearchedWindow(nint Handle, IUiaNode Node, ElementSearchOutcome Outcome, IReadOnlyList<UiaElement> Kept);
+    /// <param name="Repeated">The outcome's kept matches that a window searched before had kept already (the same runtime
+    /// id): not kept again, and not counted.</param>
+    private sealed record SearchedWindow(
+        nint Handle, IUiaNode Node, ElementSearchOutcome Outcome, IReadOnlyList<UiaElement> Kept, int Repeated = 0);
 
     /// <summary>What the searches of every window of the scope found, together.</summary>
     /// <param name="Matches">The kept matches, each with the window it was found in, in the order searched.</param>
@@ -903,10 +915,24 @@ public sealed partial class ElementSearchService : IElementSearchService
         {
             lock (_gate)
             {
-                var room = Math.Max(0, MaxResults - _searched.Sum(w => w.Kept.Count));
-                _searched.Add(new SearchedWindow(window, node, outcome, outcome.Matches.Take(room).ToList()));
+                var (kept, repeated) = Keep(outcome, _searched);
+                _searched.Add(new SearchedWindow(window, node, outcome, kept, repeated));
                 _current = null;
             }
+        }
+
+        /// <summary>
+        /// What a window's search keeps: what is left of maxResults, without an element a window searched before kept
+        /// already. The windows a window owns are left out of its search (<see cref="OwnedWindows"/>); a root that could not
+        /// be split is searched whole, so an owned dialog can still come twice, and the first copy (a popup, searched before
+        /// the window that owns it) is the one kept. Under the lock.
+        /// </summary>
+        private (List<UiaElement> Kept, int Repeated) Keep(ElementSearchOutcome outcome, IReadOnlyList<SearchedWindow> before)
+        {
+            var seen = before.SelectMany(w => w.Kept).Select(m => m.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
+            var fresh = outcome.Matches.Where(m => m.RuntimeId is not { Count: > 0 } id || !seen.Any(s => s.SequenceEqual(id))).ToList();
+            var room = Math.Max(0, MaxResults - before.Sum(w => w.Kept.Count));
+            return (fresh.Take(room).ToList(), outcome.Matches.Count - fresh.Count);
         }
 
         public void SkipWindow()
@@ -934,18 +960,18 @@ public sealed partial class ElementSearchService : IElementSearchService
         {
             lock (_gate)
             {
-                var windows = _searched.Select(w => (w.Handle, w.Outcome, Kept: (IReadOnlyList<UiaElement>)w.Kept)).ToList();
+                var windows = _searched.Select(w => (w.Handle, w.Outcome, w.Kept, w.Repeated)).ToList();
                 if (_current is { } current)
                 {
                     var running = current.Search.Snapshot();
-                    var room = Math.Max(0, MaxResults - windows.Sum(w => w.Kept.Count));
-                    windows.Add((current.Window, running, running.Matches.Take(room).ToList()));
+                    var (kept, repeated) = Keep(running, _searched);
+                    windows.Add((current.Window, running, kept, repeated));
                 }
 
                 var stop = windows.Select(w => w.Outcome.Stop).FirstOrDefault(s => s != ElementSearchStop.None);
                 return new SearchTotal(
                     Matches: windows.SelectMany(w => w.Kept.Select(m => (w.Handle, m))).ToList(),
-                    MatchCount: windows.Sum(w => w.Outcome.MatchCount),
+                    MatchCount: windows.Sum(w => w.Outcome.MatchCount - w.Repeated),
                     Candidates: windows.Sum(w => w.Outcome.Candidates),
                     Stop: stop != ElementSearchStop.None ? stop : _stop,
                     SkippedParts: windows.Sum(w => w.Outcome.SkippedParts) + _skippedWindows);

@@ -462,7 +462,8 @@ public sealed class Uia3Tree : IUiaTree
             IsKeyboardFocusable: CachedBool(element, UiaIds.IsKeyboardFocusableProperty),
             Patterns: CachedPatterns(element),
             RuntimeId: element.GetCachedPropertyValue(UiaIds.RuntimeIdProperty) as int[],
-            ControlTypeId: controlTypeId);
+            ControlTypeId: controlTypeId,
+            NativeWindowHandle: CachedInt(element, UiaIds.NativeWindowHandleProperty) ?? 0);
     }
 
     /// <summary>
@@ -581,7 +582,8 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.NameProperty, UiaIds.ControlTypeProperty, UiaIds.LocalizedControlTypeProperty,
                 UiaIds.AutomationIdProperty, UiaIds.ClassNameProperty, UiaIds.BoundingRectangleProperty,
                 UiaIds.IsEnabledProperty, UiaIds.IsOffscreenProperty, UiaIds.IsKeyboardFocusableProperty,
-                UiaIds.RuntimeIdProperty, UiaIds.FrameworkIdProperty, .. UiaIds.PatternAvailability.Select(p => p.Property)
+                UiaIds.RuntimeIdProperty, UiaIds.FrameworkIdProperty, UiaIds.NativeWindowHandleProperty,
+                .. UiaIds.PatternAvailability.Select(p => p.Property)
             ];
             WalkRequest = Request(walkProperties);
             SubtreeRequest = Request(walkProperties);
