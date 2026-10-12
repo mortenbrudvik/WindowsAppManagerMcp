@@ -136,10 +136,10 @@ public sealed class DialogService : IDialogService
     }
 
     /// <summary>
-    /// The dialog to press a button of: as <see cref="Locate"/>, except for a dialog named by its handle that a modal dialog of
-    /// its own now disables. The agent read the dialog it named, not that one, so the chain is not followed: BlockedByModal,
-    /// naming the modal dialog, and nothing is pressed. A named window that is no dialog (the application's window) still
-    /// stands for its modal dialog, down to the front one of the chain.
+    /// The dialog to press a button of: as <see cref="Locate"/>, except for a dialog named (by handle or selector) that a
+    /// modal dialog of its own now disables. The agent read the dialog it named, not that one, so the chain is not followed:
+    /// BlockedByModal, naming the modal dialog, and nothing is pressed. A named window that is no dialog (the application's
+    /// window) still stands for its modal dialog, down to the front one of the chain.
     /// </summary>
     private DialogLocation LocateToPress(nint window)
     {

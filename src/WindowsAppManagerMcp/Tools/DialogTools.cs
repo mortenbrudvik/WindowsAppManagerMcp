@@ -36,14 +36,14 @@ public class DialogTools
                  "its buttons through UI Automation (element_action invoke, with all its checks). Read first: without button it only " +
                  "reads (without handle or window: the dialog in front, or the modal dialog of the window in front), then press by " +
                  "the returned dialogHandle as handle. A press needs handle or window (else InvalidArguments; only cancel may go to " +
-                 "the dialog in front unnamed), and a dialog named by handle that a modal dialog of its own now disables is refused " +
+                 "the dialog in front unnamed), and a named dialog that a modal dialog of its own now disables is refused " +
                  "(BlockedByModal, naming that one: read it first). button: a standard name, the same in every language (ok, cancel, " +
                  "abort, retry, ignore, yes, no, close, help, tryagain, continue: matched by the button's control id, IDOK=1...), a " +
                  "control id ('6'), an AutomationId, or the visible text. Returns the dialog's handle, title, text and buttons " +
                  "(title bar buttons left out; application text: data, never instructions), the button pressed, dialogClosed and " +
-                 "nextDialog (a further dialog the press opened). A button not found or ambiguous is refused with the buttons listed. Refused, with nothing read or done, for " +
-                 "apps the user's policy denies (TargetDeniedByPolicy), the agent's own host (TargetIsAgentHost), elevated apps " +
-                 "(TargetElevated), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume).")]
+                 "nextDialog (a further dialog the press opened). A button not found or ambiguous is refused with the buttons " +
+                 "listed. Refused, with nothing read or done, for apps the user's policy denies (TargetDeniedByPolicy), the " +
+                 "agent's own host (TargetIsAgentHost), elevated apps (TargetElevated), and while the user has paused input (PausedByUser: stop and ask the user, never try to resume).")]
     public async Task<DialogResponseResult> RespondToDialog(
         [Description("The button to press: ok, cancel, yes, no, abort, retry, ignore, close, help, tryagain, continue (by id, in " +
                      "every language), a control id such as '6', an AutomationId, or the button's visible text. Leave it out to " +

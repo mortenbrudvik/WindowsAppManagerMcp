@@ -15,8 +15,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// with a title bar); else its frontmost open dialog. Only Win32 reads: no UI Automation call.</para>
 /// <para><b>Only the dialog read is answered</b> (<see cref="RespondAsync"/>): a press needs the dialog (or its window)
 /// named, since the dialog in front when the call runs may be one that came up after the agent read it; only cancel may be
-/// pressed in the dialog in front unnamed (InvalidArguments otherwise). A dialog named by its handle that a modal dialog
-/// of its own now disables is refused (BlockedByModal, naming that one) instead of followed to it: the agent read the
+/// pressed in the dialog in front unnamed (InvalidArguments otherwise). A dialog named (by handle or selector) that a modal
+/// dialog of its own now disables is refused (BlockedByModal, naming that one) instead of followed to it: the agent read the
 /// dialog it named. Reading follows the chain from any window, and a named window that is no dialog (the application's
 /// window) stands for its modal dialog for a press too.</para>
 /// <para><b>Reading</b> (<see cref="ReadAsync"/>): through find_ui_elements' search (<see cref="IElementSearchService"/>,
