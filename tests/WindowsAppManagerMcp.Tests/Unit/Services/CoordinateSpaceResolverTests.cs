@@ -205,6 +205,32 @@ public class CoordinateSpaceResolverTests
     }
 
     [Fact]
+    public void FromImage_AScreenCapture_AfterTwoMonitorsSwappedInsideTheSameVirtualScreen_IsStaleCapture()
+    {
+        // Arrange - three 1920 x 1080 monitors in a row; the user swaps the outer two, so the virtual screen stays the same
+        // but the left third of the image now shows what is on the right
+        MonitorInfo Monitor(int index, string name, int x) => new(index, name, x == 0, new MonitorRect(x, 0, 1920, 1080),
+            new MonitorRect(x, 0, 1920, 1040), 1.0);
+        var monitors = new List<MonitorInfo> { Monitor(0, "DISPLAY1", 0), Monitor(1, "DISPLAY2", -1920), Monitor(2, "DISPLAY3", 1920) };
+        var monitorService = new Mock<IMonitorService>();
+        monitorService.Setup(m => m.GetAllMonitors()).Returns(() => monitors);
+        _virtualScreen = (-1920, 0, 5760, 1080);
+        var id = _registry.Register(new CaptureGeometry(5760, 1080, new ImageToScreenTransform(-1920, 0, 1, 1),
+            new CapturedRegion(-1920, 0, 5760, 1080), null, new VirtualScreenBounds(-1920, 0, 5760, 1080),
+            CapturedMonitors.Of(monitors))).CaptureId;
+        var sut = new CoordinateSpaceResolver(_registry, _windows.Object, _hitTest.Object, _screen.Object, monitorService.Object);
+        sut.FromImage(id, 100, 50).Resolved.Should().BeTrue("nothing changed yet");
+        monitors = [Monitor(0, "DISPLAY1", 0), Monitor(1, "DISPLAY2", 1920), Monitor(2, "DISPLAY3", -1920)];
+
+        // Act
+        var point = sut.FromImage(id, 100, 50);
+
+        // Assert
+        point.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+        point.Error.Should().Contain("monitors");
+    }
+
+    [Fact]
     public void FromWindow_Window_IsRelativeToTheWindowRectangle()
     {
         var point = CreateSut().FromWindow(CoordinateSpace.Window, Window, 10, 5);

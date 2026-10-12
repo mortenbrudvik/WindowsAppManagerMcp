@@ -55,7 +55,7 @@ public class ElementWaitTools
         string? className = null,
         [Description("Search only below this element: a ref from an earlier read. Its window is searched, so window is left out")]
         string? withinRef = null,
-        [Description(UIElementTools.CriteriaScopeDescription)]
+        [Description(UIElementTools.WithinRefCriteriaScopeDescription)]
         ElementSearchScope? scope = null,
         [Description("What to wait for: 'exists' (default), 'gone', 'enabled', 'visible', 'focused', 'name_equals', 'value_equals' or 'toggle_state'")]
         ElementWaitCondition condition = ElementWaitCondition.Exists,

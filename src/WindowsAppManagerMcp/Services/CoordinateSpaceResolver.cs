@@ -8,7 +8,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="ICoordinateSpaceResolver"/>). An image point goes through the capture's own imageToScreen (the M1.2
 /// transform the capture reported), and only while what the image showed is still where it was: the captured window
 /// within <see cref="Tolerance"/> pixels of its rectangle at capture time (and of its client area, for a client
-/// capture), not closed, minimized or replaced by another process's window; for a screen capture, the same monitors.
+/// capture), not closed, minimized or replaced by another process's window; for a screen capture, the same monitors in
+/// the same places.
 /// Every conversion comes with a recheck the input guard runs inside the input gate, so a window that moves while
 /// the call waits for the gate is caught too. Reads only.
 /// </summary>
@@ -21,18 +22,25 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
     private readonly INativeWindowWrapper _windows;
     private readonly INativeHitTestWrapper _hitTest;
     private readonly IScreenCaptureWrapper _screen;
+    private readonly IMonitorService? _monitors;
 
     /// <param name="captures">The registered captures.</param>
     /// <param name="windows">Window reads: whether it exists, its process, rectangle and minimized state.</param>
     /// <param name="hitTest">The window's client area on screen.</param>
     /// <param name="screen">The virtual screen's bounds, which tell whether the monitors changed.</param>
+    /// <param name="monitors">
+    /// The monitors, which tell whether one moved or two swapped places inside the same virtual screen. The server always
+    /// passes it; without it only the virtual screen's bounds are compared.
+    /// </param>
     public CoordinateSpaceResolver(
-        ICaptureRegistry captures, INativeWindowWrapper windows, INativeHitTestWrapper hitTest, IScreenCaptureWrapper screen)
+        ICaptureRegistry captures, INativeWindowWrapper windows, INativeHitTestWrapper hitTest, IScreenCaptureWrapper screen,
+        IMonitorService? monitors = null)
     {
         _captures = captures ?? throw new ArgumentNullException(nameof(captures));
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
         _hitTest = hitTest ?? throw new ArgumentNullException(nameof(hitTest));
         _screen = screen ?? throw new ArgumentNullException(nameof(screen));
+        _monitors = monitors;
     }
 
     /// <inheritdoc />
@@ -122,10 +130,18 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
         {
             var screen = _screen.GetVirtualScreenBounds();
             var now = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
-            return now == geometry.VirtualScreen
-                ? null
-                : $"The monitors changed since capture {capture.CaptureId} (the virtual screen was {Describe(geometry.VirtualScreen)}, " +
-                  $"now {Describe(now)}), so its image points may map to other places on screen. {again}";
+            if (now != geometry.VirtualScreen)
+            {
+                return $"The monitors changed since capture {capture.CaptureId} (the virtual screen was {Describe(geometry.VirtualScreen)}, " +
+                       $"now {Describe(now)}), so its image points may map to other places on screen. {again}";
+            }
+
+            // The same bounding rectangle can hold monitors that moved or swapped places
+            return geometry.Monitors is { } captured && _monitors != null &&
+                   !captured.SequenceEqual(CapturedMonitors.Of(_monitors.GetAllMonitors()))
+                ? $"The monitors changed since capture {capture.CaptureId} (one moved, or monitors were added, removed or swapped " +
+                  $"inside the same virtual screen), so its image points may map to other places on screen. {again}"
+                : null;
         }
 
         var handle = (nint)window.Handle;
@@ -151,7 +167,7 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
         }
 
         var current = WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
-        if (!Close(current, window.WindowRect))
+        if (!WithinTolerance(current, window.WindowRect))
         {
             return $"{of} moved or resized since the capture (its rectangle was {Describe(window.WindowRect)}, now " +
                    $"{Describe(current)}), so the image no longer shows what is at its points. {again}";
@@ -159,9 +175,10 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
 
         if (!window.IncludeFrame)
         {
+            // The client area as captured: a ref crop's region is only part of it
             var region = geometry.CapturedRegion;
-            var captured = new WindowRect(region.X, region.Y, region.Width, region.Height);
-            if (_hitTest.GetClientAreaOnScreen(handle) is not { } client || !Close(client, captured))
+            var captured = window.ClientArea ?? new WindowRect(region.X, region.Y, region.Width, region.Height);
+            if (_hitTest.GetClientAreaOnScreen(handle) is not { } client || !WithinTolerance(client, captured))
             {
                 return $"{of} has its client area somewhere else than at the capture (it was {Describe(captured)}, now " +
                        $"{(_hitTest.GetClientAreaOnScreen(handle) is { } area ? Describe(area) : "unreadable")}; a menu bar or " +
@@ -173,7 +190,7 @@ public sealed class CoordinateSpaceResolver : ICoordinateSpaceResolver
     }
 
     /// <summary>True when no edge of the two rectangles is more than <see cref="Tolerance"/> pixels apart.</summary>
-    private static bool Close(WindowRect a, WindowRect b) =>
+    internal static bool WithinTolerance(WindowRect a, WindowRect b) =>
         Math.Abs(a.Left - b.Left) <= Tolerance && Math.Abs(a.Top - b.Top) <= Tolerance &&
         Math.Abs(a.Right - b.Right) <= Tolerance && Math.Abs(a.Bottom - b.Bottom) <= Tolerance;
 

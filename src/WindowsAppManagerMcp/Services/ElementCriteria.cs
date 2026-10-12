@@ -15,7 +15,7 @@ namespace WindowsAppManagerMcp.Services;
 /// the control types (by id; several are an OR), and not offscreen (<see cref="VisibleOnly"/>) and enabled
 /// (<see cref="EnabledOnly"/>). Server side, on the properties each element came with: a name that contains a text or
 /// matches a regular expression, and the control types the engine cannot search for (Unknown always; AppBar and
-/// SemanticZoom under the managed client, which throws NotSupportedException for them: compile again with
+/// SemanticZoom under the managed client, which throws UiaConditionNotSupportedException for them: compile again with
 /// <c>controlTypesOnServer</c>).
 /// </remarks>
 /// <param name="ControlTypes">Canonical control type names (UiaControlTypes.Names), or null for any.</param>

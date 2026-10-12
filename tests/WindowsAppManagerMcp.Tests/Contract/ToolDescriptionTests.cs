@@ -53,6 +53,30 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_move")]
+    public void MouseToolDescription_PointsToRefsAndImagePoints_NotToScreenBoundsTheLegendLeavesOut(string toolName)
+    {
+        // capture_with_elements returns screenBounds only with detail full; its legend centres are image points
+        var description = ServerToolCatalog.Description(toolName);
+
+        description.Should().NotContain("screenBounds");
+        description.Should().Contain("captureId", "a point seen on a capture is passed with its captureId");
+        if (toolName != "mouse_move")
+        {
+            description.Should().Contain("element_action", "acting on a ref needs no point at all");
+        }
+    }
+
+    [Fact]
+    public void GetUiElementsDescription_SaysItReturnsRefs()
+    {
+        ServerToolCatalog.Description("get_ui_elements").Should().Contain("ref");
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("right_click")]
+    [InlineData("double_click")]
     public void ClickToolDescription_SaysToConfirmTheTargetWindowFirst(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("get_foreground_window",

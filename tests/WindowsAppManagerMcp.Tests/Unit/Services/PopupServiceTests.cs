@@ -654,6 +654,36 @@ public class PopupServiceTests
     }
 
     [Fact]
+    public async Task GetActivePopups_WithAStopGrace_GivesUpOnAStuckRead_AfterIt_AndStillListsThePopup()
+    {
+        // Arrange - the menu's provider does not answer; the real worker abandons the read after the grace
+        using var release = new ManualResetEventSlim();
+        var main = AddMain("Editor");
+        var menu = AddPopup("", PopupService.MenuClass, owner: main);
+        _tree.WithWindow(menu, new FakeUiaNode("Menu", "Context") { OnRead = () => release.Wait(TimeSpan.FromSeconds(3)) });
+        Registry = new ElementRegistry(_tree, _worker, _desktop.Native.Object, ElementRegistry.DefaultCapacity, 1, TimeProvider.System);
+        var sut = new PopupService(_desktop.Native.Object, _processes.Object, _desktop.HostGuard.Object, _policy.Object, _tree,
+            new UiaWorker(), Registry);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            // Act
+            var result = await sut.GetActivePopupsAsync(main, TimeSpan.FromMilliseconds(100), CancellationToken.None,
+                stopGrace: TimeSpan.FromMilliseconds(50));
+
+            // Assert - without the grace it would wait a whole second after the timeout
+            stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(900));
+            result.Success.Should().BeTrue();
+            result.Popups.Should().ContainSingle().Which.Ref.Should().BeNull();
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
     public async Task GetActivePopups_WithNoPopup_ReadsNoUiAutomation()
     {
         var main = AddMain("Editor");

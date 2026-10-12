@@ -635,7 +635,8 @@ public static class AuditRecord
     private static string Cut(string text, int length) => text.Length <= length ? text : text[..length];
 
     /// <summary>An argument name the log can hold: ASCII letters, digits and underscores, at most 64 characters.</summary>
-    private static bool IsIdentifier(string name) =>
+    /// <summary>Whether <paramref name="name"/> looks like a parameter name: 1-64 ASCII letters, digits and underscores.</summary>
+    internal static bool IsIdentifier(string name) =>
         name.Length is > 0 and <= 64 && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
 
     /// <summary>Writes the time as 2026-10-11T14:03:22.123+02:00: milliseconds and the UTC offset, for every reader.</summary>

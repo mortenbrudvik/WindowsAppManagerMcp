@@ -281,6 +281,12 @@ public static class CaptureWarnings
     /// <summary>capture_window's ref was moved to a re-created element: the crop shows that element.</summary>
     public const string RefMoved = "RefMoved";
 
+    /// <summary>
+    /// capture_with_elements: the window moved or resized while its elements were read, so the marks are offset from the
+    /// image, which then has no captureId.
+    /// </summary>
+    public const string WindowMoved = "WindowMoved";
+
     /// <summary>"Code: text".</summary>
     public static string Format(string code, string text) => $"{code}: {text}";
 }

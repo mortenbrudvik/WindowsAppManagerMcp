@@ -372,8 +372,8 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
                 true, query.WindowHandle, notepad.Title, MatchCount: 2, Truncated: false, TypicalDesktop.FoundButtons, 21.5,
                 Scope: ElementSearchScope.Window));
-        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(
                 true, window == 0 ? TypicalDesktop.NotepadHandle : (long)window, notepad.Title, IsForeground: true,
                 TypicalDesktop.NotepadPopups, 4.25));
         ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))
@@ -539,8 +539,8 @@ public sealed class ContractServices : IDisposable
         ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
                 false, query.WindowHandle, null, 0, false, null, 1.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
-        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _) => new ActivePopupsResult(
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(
                 false, (long)window, null, false, null, 0.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
         const string stale = "Element ref 'w4120035e57' is stale: its window closed. Find the element again with find_ui_elements.";
         ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))

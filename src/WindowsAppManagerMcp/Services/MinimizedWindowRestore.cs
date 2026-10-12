@@ -90,7 +90,8 @@ public sealed class MinimizedWindowRestore : IDisposable
         _warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowRestored,
             "the window was minimized; it was restored without activation for this capture and minimized again. A window " +
             "that was maximized before it was minimized is shown at its normal size, and the user's next restore may bring " +
-            "it back un-maximized."));
+            "it back un-maximized. The captureId converts points only while the window is restored to the same place; to " +
+            "click, restore the window and capture it again."));
     }
 
     /// <summary>Notes that the window was still painting when the capture was taken.</summary>

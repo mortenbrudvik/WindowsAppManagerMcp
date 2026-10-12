@@ -275,6 +275,8 @@ public static class WrapperCatalog
                 [nameof(IUiaTree.GetFocusedElement)] = WrapperMember.Read,
                 [nameof(IUiaTree.GetParent)] = WrapperMember.Read,
                 [nameof(IUiaTree.GetChildren)] = WrapperMember.Read,
+                // A tree walker's first child: whether the node has one (the walk's maxElements check)
+                [nameof(IUiaTree.HasChildren)] = WrapperMember.Read,
                 [nameof(IUiaTree.Read)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadInteraction)] = WrapperMember.Read,
                 [nameof(IUiaTree.IsInteractable)] = WrapperMember.Read,

@@ -1256,11 +1256,44 @@ public class UIElementServiceTests
         // Act
         var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 3));
 
-        // Assert - the elements still waiting were listed: none has a child, so nothing was left unread
+        // Assert - the elements still waiting were asked for a child: none has one, so nothing was left unread
         Shape(result.Elements).Should().Be("A,B(B1)");
         result.Truncated.Should().BeFalse();
         result.TruncationReason.Should().BeNull();
-        _tree.ChildListings.Should().Contain("B1");
+        _tree.ChildProbes.Should().Contain("B1");
+        _tree.ChildListings.Should().NotContain("B1");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReached_AsksAWideElementForOneChild_WithoutListingItsLevel()
+    {
+        // Arrange - the limit falls on the last element of level 1; the first one holds ten thousand rows
+        var rows = Enumerable.Range(1, 10_000).Select(i => Node("ListItem", $"Row {i}")).ToArray();
+        Window(Node("List", "A").With(rows), Node("Button", "B"));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 2));
+
+        // Assert - one element at most was read to tell, not the whole level
+        Shape(result.Elements).Should().Be("A,B");
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        _tree.ChildProbes.Should().Equal("A");
+        _tree.ChildListings.Should().NotContain("A");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReached_AsksOnlySoManyWaitingElements_ThenAssumesSomethingWasLeft()
+    {
+        // Arrange - the limit falls on the last of many elements without children
+        Window(Enumerable.Range(1, UIElementService.MaxChildProbes + 10).Select(i => Node("Button", $"B{i}")).ToArray());
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle,
+            filter: new UIElementFilter(MaxElements: UIElementService.MaxChildProbes + 10));
+
+        // Assert
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        _tree.ChildProbes.Should().HaveCount(UIElementService.MaxChildProbes);
     }
 
     [Fact]
@@ -1338,6 +1371,30 @@ public class UIElementServiceTests
         result.Elements.Should().BeNull();
         _tree.Reads.Should().BeEmpty();
         windows.Verify(w => w.RespondsWithin(It.IsAny<nint>(), It.IsAny<uint>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfAUwpFrameWhoseAppIsHung_ReturnsNotResponding_WithoutReadingIt()
+    {
+        // Arrange - the frame host answers for the frame; the app behind its CoreWindow is hung
+        BuildToolbarWindow();
+        var coreWindow = new nint(0x6001);
+        var windows = RespondingWindow();
+        windows.Setup(w => w.GetClassName(Handle)).Returns("ApplicationFrameWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(Handle)).Returns(6000u);
+        windows.Setup(w => w.GetClassName(coreWindow)).Returns("Windows.UI.Core.CoreWindow");
+        windows.Setup(w => w.GetWindowThreadProcessId(coreWindow)).Returns(7000u);
+        windows.Setup(w => w.EnumChildWindows(Handle, It.IsAny<Func<nint, bool>>()))
+            .Callback<nint, Func<nint, bool>>((_, callback) => callback(coreWindow));
+        windows.Setup(w => w.IsHungAppWindow(coreWindow)).Returns(true);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.NotResponding);
+        _tree.Reads.Should().BeEmpty();
+        _tree.ChildListings.Should().BeEmpty();
     }
 
     [Fact]

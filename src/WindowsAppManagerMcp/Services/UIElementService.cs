@@ -18,7 +18,7 @@ namespace WindowsAppManagerMcp.Services;
 /// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
 /// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
 /// or by maxElements keeps the levels nearest the window. The children of an element are first listed without their
-/// properties (<see cref="IUiaTree.GetChildren"/>, one cheap call). A level of at most <see cref="CachedLevelLimit"/>
+/// properties (<see cref="IUiaTree.GetChildren"/>, one call of references only). A level of at most <see cref="CachedLevelLimit"/>
 /// children is then read in one more cross-process call with their properties (a cache request:
 /// <see cref="IUiaTree.GetChildElements"/>); a wider level, or one whose cached read fails, is read one element at a
 /// time, so the walk stops in the middle of it at maxElements or the timeout, and one failing element costs only
@@ -30,8 +30,9 @@ namespace WindowsAppManagerMcp.Services;
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
 /// <item>maxElements stops the walk once that many elements are returned. truncationReason MaxElements says something
 /// was left unread: an element of the level being read, or the children of an element whose children were still to
-/// be read. To tell, the elements still waiting are listed (one cheap call each) until one has a child; when that
-/// cannot be told (the timeout, a failing call), it is assumed.</item>
+/// be read. To tell, the elements still waiting are asked for a first child (<see cref="IUiaTree.HasChildren"/>, one
+/// element at most each, however wide its level) until one has one, at most <see cref="MaxChildProbes"/> of them; when
+/// that cannot be told (more are waiting, the timeout, a failing call), it is assumed.</item>
 /// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
 /// siblings. An element whose interaction properties cannot be read (interactableOnly) is left out
 /// and counted too, but the elements inside it are still walked. A timeout ends the walk and returns
@@ -60,12 +61,19 @@ public class UIElementService : IUIElementService
     /// <summary>A walk reports its progress after every this many elements read.</summary>
     public const int ProgressInterval = 100;
 
+    /// <summary>
+    /// How many of the elements still waiting a walk stopped by maxElements asks for a child; after that, something is
+    /// assumed left unread.
+    /// </summary>
+    public const int MaxChildProbes = 32;
+
     /// <summary>How long the hung-window check waits for the window to answer a message.</summary>
     public const uint RespondTimeoutMs = UiaTargets.RespondTimeoutMs;
 
     /// <summary>
     /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
-    /// tree. A walk still stuck in a UI Automation call after that is abandoned.
+    /// tree, unless the filter sets its own (<see cref="UIElementFilter.StopGrace"/>). A walk still stuck in a UI
+    /// Automation call after that is abandoned.
     /// </summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
 
@@ -146,7 +154,7 @@ public class UIElementService : IUIElementService
                 TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, started, progress, token),
                 cancellationToken,
-                StopGrace).ConfigureAwait(false);
+                filter?.StopGrace ?? StopGrace).ConfigureAwait(false);
         }
         catch (TimeoutException ex)
         {
@@ -502,22 +510,23 @@ public class UIElementService : IUIElementService
 
         /// <summary>
         /// Whether <paramref name="first"/> or an element still waiting has a child: the elements maxElements left unread.
-        /// One call per element, until the first with a child. When the walk is asked to stop, or a call fails, it is
-        /// not known, and assumed.
+        /// One call per element (a first child, never the whole level), until the first with a child. When the walk is
+        /// asked to stop, a call fails, or more than <see cref="MaxChildProbes"/> elements are waiting, it is not known,
+        /// and assumed.
         /// </summary>
         private bool AnyChildLeft(IUiaNode first)
         {
             var node = first;
-            while (true)
+            for (var probes = 0; ; probes++)
             {
-                if (cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested || probes >= MaxChildProbes)
                 {
                     return true;
                 }
 
                 try
                 {
-                    if (tree.GetChildren(node, cancellationToken).Count > 0)
+                    if (tree.HasChildren(node))
                     {
                         return true;
                     }

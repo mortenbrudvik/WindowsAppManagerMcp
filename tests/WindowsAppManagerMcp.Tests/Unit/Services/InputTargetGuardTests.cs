@@ -74,6 +74,7 @@ public class InputTargetGuardTests
         Window(Notepad, NotepadPid, "notepad", "Untitled - Notepad");
         _windows.Setup(w => w.IsWindow(NotepadEdit)).Returns(true);
         _windows.Setup(w => w.GetAncestor(NotepadEdit, WindowAncestor.Root)).Returns(Notepad);
+        _windows.Setup(w => w.GetWindowThreadProcessId(NotepadEdit)).Returns((uint)NotepadPid);
         Window(NotepadDialog, NotepadPid, "notepad", "Save As", owner: Notepad);
         Window(NotepadMenu, NotepadPid, "notepad", "", style: WsPopup | WsVisible, exStyle: WsExToolWindow);
         Window(SecondNotepad, NotepadPid, "notepad", "Other - Notepad");
@@ -489,6 +490,43 @@ public class InputTargetGuardTests
         var refused = sut.CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
         refused.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
         refused.Error.Should().Contain(TargetPolicySettings.AllowVariable);
+    }
+
+    [Fact]
+    public void Policy_AWindowWhoseProcessCannotBeNamed_IsRefused_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the process name cannot be read: the window service reports it as "Unknown", the window wrapper as null
+        Window(0x900, 9001, "Unknown", "Vault");
+        _windows.Setup(w => w.GetProcessName(9001u)).Returns((string?)null);
+        _inFront = 0x900;
+
+        // Act
+        var refused = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert - as the UI Automation reads: it cannot be checked, so it is refused
+        refused.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        refused.Error.Should().Contain("cannot be read");
+        _policy = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null);
+        CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null).Allowed.Should().BeTrue(
+            "a policy that denies nothing has nothing to check");
+    }
+
+    [Fact]
+    public void Policy_AWindowTheWindowServiceCannotRead_WhoseProcessCannotBeNamed_IsRefused()
+    {
+        // Arrange - a point on a window the window service cannot read, of a process whose name cannot be read either
+        _windows.Setup(w => w.IsWindow(0x910)).Returns(true);
+        _windows.Setup(w => w.GetAncestor(0x910, WindowAncestor.Root)).Returns(0x910);
+        _windows.Setup(w => w.GetWindowThreadProcessId(0x910)).Returns(9101u);
+        Style(0x910, WsOverlappedWindow | WsVisible);
+        _threads.Setup(t => t.GetWindowThreadId(0x910)).Returns(9102u);
+        At(0x910);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, InputTarget.None);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
     }
 
     [Fact]

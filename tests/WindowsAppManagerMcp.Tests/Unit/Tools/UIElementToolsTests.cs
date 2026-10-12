@@ -24,6 +24,25 @@ public class UIElementToolsTests
     #region Basic Tool Operation Tests
 
     [Fact]
+    public void TheTextFormatsExample_IsALineAsTheFormatWritesIt_RefFirst()
+    {
+        // Arrange - the format parameter's description is what an agent reads about the cheapest format
+        var format = typeof(UIElementTools).GetMethod(nameof(UIElementTools.GetUIElements))!.GetParameters()
+            .Single(p => p.Name == "format");
+        var description = format.GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false)
+            .Cast<System.ComponentModel.DescriptionAttribute>().Single().Description;
+        var example = description.Split('"')[1];
+
+        // Act
+        var line = UIElementTextFormat.Line(new UIElementInfo("Save", "Button", "SaveBtn", new BoundsDto(812, 44, 80, 24),
+            IsEnabled: false, IsOffscreen: false, Ref: "w4120035e17"));
+
+        // Assert
+        description.Should().Contain("ref").And.Contain("fw=");
+        example.Should().Be(line);
+    }
+
+    [Fact]
     public async Task GetUIElements_CallsService()
     {
         // Arrange

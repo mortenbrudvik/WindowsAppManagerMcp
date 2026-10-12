@@ -257,7 +257,8 @@ public class ScreenshotService : IScreenshotService
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
+            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true,
+                WithClientArea(window, capture));
         });
 
     public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
@@ -269,6 +270,9 @@ public class ScreenshotService : IScreenshotService
             var window = ReadCapturedWindow(windowHandle, includeFrame);
             var warnings = new List<string>();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+
+            // The client area before the crop: a click on the crop checks that the client area is still there
+            window = WithClientArea(window, capture);
 
             // Only what the window capture shows can be cropped to: the visible frame, or the client area without it
             var crop = Rectangle.Intersect(
@@ -300,7 +304,8 @@ public class ScreenshotService : IScreenshotService
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
         ElementOverlayOptions overlays,
-        CaptureOptions options)
+        CaptureOptions options,
+        CapturedWindow? walkedWindow = null)
     {
         ArgumentNullException.ThrowIfNull(overlays);
         try
@@ -313,6 +318,19 @@ public class ScreenshotService : IScreenshotService
             var captureStopwatch = Stopwatch.StartNew();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
+            window = WithClientArea(window, capture);
+
+            // The elements were read before the pixels: a window that moved or resized meanwhile shows them elsewhere than
+            // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11)
+            if (walkedWindow != null && window != null &&
+                (walkedWindow.ProcessId != window.ProcessId || !CoordinateSpaceResolver.WithinTolerance(walkedWindow.WindowRect, window.WindowRect)))
+            {
+                warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowMoved,
+                    $"the window moved or resized while its elements were read (its rectangle was {Describe(walkedWindow.WindowRect)}, " +
+                    $"then {Describe(window.WindowRect)}), so the marks and the legend are offset from the controls in the image, and " +
+                    "the capture has no captureId. Capture it again, or act by ref with element_action."));
+                window = null;
+            }
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
             AddBlankWarning(capture, warnings);
@@ -742,7 +760,7 @@ public class ScreenshotService : IScreenshotService
     /// origin then: its process and rectangle. Null when the rectangle cannot be read; the capture then gets no
     /// captureId, because a click could not tell whether the window moved since.
     /// </summary>
-    private CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
+    public CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
     {
         if (_captureRegistry == null || _windows.GetWindowRect(windowHandle) is not { } rect)
         {
@@ -754,8 +772,17 @@ public class ScreenshotService : IScreenshotService
     }
 
     /// <summary>
+    /// <paramref name="window"/> with the client area on screen that a client-area capture shows (its origin and size, read
+    /// with the pixels, before any crop), which a click with its captureId checks; a frame capture is left as it is.
+    /// </summary>
+    private static CapturedWindow? WithClientArea(CapturedWindow? window, CaptureResult capture) =>
+        window is { IncludeFrame: false }
+            ? window with { ClientArea = new WindowRect(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height) }
+            : window;
+
+    /// <summary>
     /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with the virtual
-    /// screen as it is now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
+    /// screen and the monitors as they are now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
     /// capture whose window could not be read.
     /// </summary>
     private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
@@ -767,13 +794,15 @@ public class ScreenshotService : IScreenshotService
         }
 
         VirtualScreenBounds? virtualScreen = null;
+        IReadOnlyList<CapturedMonitor>? monitors = null;
         if (!windowCapture)
         {
             var screen = _captureWrapper.GetVirtualScreenBounds();
             virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
+            monitors = ReadMonitors();
         }
 
-        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen)).CaptureId;
+        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen, monitors)).CaptureId;
     }
 
     /// <summary>The encoded output image and where it was written.</summary>
@@ -824,6 +853,22 @@ public class ScreenshotService : IScreenshotService
             isScaled,
             filePath);
     }
+
+    /// <summary>The monitors a screen capture registers, or null when they cannot be read (only the virtual screen is compared then).</summary>
+    private IReadOnlyList<CapturedMonitor>? ReadMonitors()
+    {
+        try
+        {
+            return CapturedMonitors.Of(_monitorService.GetAllMonitors());
+        }
+        catch (Exception)
+        {
+            // The capture itself does not depend on them
+            return null;
+        }
+    }
+
+    private static string Describe(WindowRect rect) => $"({rect.X}, {rect.Y}, {rect.Width}x{rect.Height})";
 
     private static CapturedRegion CapturedRegionOf(CaptureResult capture) =>
         new(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height);

@@ -97,12 +97,15 @@ public class DesktopStateToolsTests
         _state.Verify(s => s.GetStateAsync(It.IsAny<DesktopStateRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    [Fact]
-    public async Task ScopeDesktop_IsRefused()
+    [Theory]
+    [InlineData(DesktopStateScope.Window, ElementSearchScope.Window)]
+    [InlineData(DesktopStateScope.WindowAndPopups, ElementSearchScope.WindowAndPopups)]
+    public async Task TheScope_IsTheSearchScopeOfTheSameName(DesktopStateScope scope, ElementSearchScope expected)
     {
-        var error = await RefusedAsync(() => CreateSut().GetDesktopState(scope: ElementSearchScope.Desktop));
+        // desktop is not one of get_desktop_state's values: the schema leaves it out, and binding refuses it (InvalidArguments)
+        await CreateSut().GetDesktopState(scope: scope);
 
-        error.Message.Should().Contain("find_ui_elements");
+        _request!.Scope.Should().Be(expected);
     }
 
     [Fact]

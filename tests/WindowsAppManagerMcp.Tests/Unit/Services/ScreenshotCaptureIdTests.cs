@@ -47,6 +47,26 @@ public class ScreenshotCaptureIdTests
     }
 
     [Fact]
+    public void CaptureMonitor_RegistersTheMonitors_ByDeviceName()
+    {
+        // Arrange
+        var monitors = new List<MonitorInfo>
+        {
+            new(0, "DISPLAY2", true, new MonitorRect(0, 0, 1920, 1080), new MonitorRect(0, 0, 1920, 1040), 1.0),
+            new(1, "DISPLAY1", false, new MonitorRect(-1920, 0, 1920, 1080), new MonitorRect(-1920, 0, 1920, 1040), 1.0)
+        };
+        _monitors.Setup(m => m.GetAllMonitors()).Returns(monitors);
+
+        // Act
+        var metadata = CreateSut().CaptureMonitor(0, Defaults).Metadata;
+
+        // Assert
+        _registry.Find(metadata.CaptureId!)!.Geometry.Monitors.Should().Equal(
+            new CapturedMonitor("DISPLAY1", new MonitorRect(-1920, 0, 1920, 1080)),
+            new CapturedMonitor("DISPLAY2", new MonitorRect(0, 0, 1920, 1080)));
+    }
+
+    [Fact]
     public void CaptureRegion_RegistersTheCapture()
     {
         var metadata = CreateSut().CaptureRegion(10, 20, 300, 200, Defaults).Metadata;
@@ -62,9 +82,10 @@ public class ScreenshotCaptureIdTests
         // Act
         var metadata = CreateSut().CaptureWindow(Window, includeFrame, Defaults).Metadata;
 
-        // Assert
+        // Assert - a client capture also keeps the client area it shows (800 x 600 at (108, 231))
         var geometry = _registry.Find(metadata.CaptureId!)!.Geometry;
-        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), includeFrame));
+        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), includeFrame,
+            includeFrame ? null : new WindowRect(108, 231, 800, 600)));
         geometry.ImageToScreen.Should().Be(metadata.ImageToScreen);
         geometry.VirtualScreen.Should().BeNull();
     }
@@ -91,8 +112,45 @@ public class ScreenshotCaptureIdTests
         var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default, Defaults).Metadata;
 
         var geometry = _registry.Find(metadata.CaptureId!)!.Geometry;
-        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false));
+        geometry.Window.Should().Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), false,
+            new WindowRect(108, 231, 800, 600)));
         geometry.ImageToScreen.Should().Be(metadata.ImageToScreen);
+    }
+
+    [Fact]
+    public void ReadCapturedWindow_IsTheWindowAsACaptureRegistersIt()
+    {
+        CreateSut().ReadCapturedWindow(Window, includeFrame: true).Should()
+            .Be(new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(100, 200, 916, 839), true));
+    }
+
+    [Fact]
+    public void CaptureWithElements_OfAWindowThatMovedSinceItsElementsWereRead_HasNoCaptureId_AndSaysWhy()
+    {
+        // Arrange - the elements were read while the window was 100 pixels further left
+        var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(0, 200, 816, 839), false);
+
+        // Act
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default,
+            Defaults, walked).Metadata;
+
+        // Assert
+        metadata.Success.Should().BeTrue(metadata.Error);
+        metadata.CaptureId.Should().BeNull("the marks are offset from what the image shows");
+        metadata.Warnings.Should().ContainSingle(w => w.StartsWith(CaptureWarnings.WindowMoved + ":"))
+            .Which.Should().Contain("Capture it again");
+    }
+
+    [Fact]
+    public void CaptureWithElements_OfAWindowThatStayedWithinTheTolerance_IsRegistered()
+    {
+        var walked = new CapturedWindow(0x1234, 4242, WindowRect.FromLTRB(101, 199, 917, 840), false);
+
+        var metadata = CreateSut().CaptureWindowWithElements(Window, "App", [], includeFrame: false, ElementOverlayOptions.Default,
+            Defaults, walked).Metadata;
+
+        metadata.CaptureId.Should().NotBeNull();
+        (metadata.Warnings ?? []).Should().NotContain(w => w.StartsWith(CaptureWarnings.WindowMoved));
     }
 
     [Fact]

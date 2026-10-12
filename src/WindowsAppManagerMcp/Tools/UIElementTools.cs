@@ -57,14 +57,19 @@ public class UIElementTools
 
     /// <summary>
     /// The scope of the tools that name one element by find_ui_elements' criteria in a window they require (read_element_text,
-    /// wait_for_element, element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope.
+    /// element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope. These tools take no withinRef.
     /// </summary>
-    internal const string CriteriaScopeDescription =
+    internal const string CriteriaScopeDescription = CriteriaScope + ".";
+
+    /// <summary><see cref="CriteriaScopeDescription"/> for wait_for_element, which also takes withinRef.</summary>
+    internal const string WithinRefCriteriaScopeDescription = CriteriaScope + "; with withinRef, only 'window'.";
+
+    private const string CriteriaScope =
         "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), " +
         "'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' " +
         "(every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are " +
         "left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the " +
-        "window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'.";
+        "window or one of its popups is in front, else window. Not with ref";
 
     /// <summary>
     /// The InvalidArguments message for a scope that cannot apply: with a ref (it names its element), or a scope other than
@@ -128,7 +133,7 @@ public class UIElementTools
     }
 
     [McpServerTool(Name = "get_ui_elements", Title = "Get UI Element Tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Get UI element tree with bounding boxes for a window. Returns control names, types, automation IDs, and coordinates for programmatic interaction planning. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).")]
+    [Description("Get UI element tree with bounding boxes for a window. Returns each element's ref (for element_action and the other element tools), control name, type, automation ID and coordinates. Use this as a lightweight alternative to screenshots when only element coordinates are needed. The walk is breadth first and stops at maxElements (default 300) or the timeout with what it has read, truncated=true and truncationReason saying why (OperationTimedOut when no element matching the filters was found yet). format 'text' gives one compact line per element and costs the fewest tokens. A window that does not respond is not read (NotResponding).")]
     public async Task<UIElementResult> GetUIElements(
         [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
         long? handle = null,
@@ -150,7 +155,7 @@ public class UIElementTools
         int timeoutMs = DefaultTimeoutMs,
         [Description("Stop once this many elements are returned (default: 300, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes, interactableOnly or a smaller maxDepth rather than raising this.")]
         int maxElements = DefaultMaxElements,
-        [Description("Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (@x,y wxh are the bounds in physical screen pixels; flags [disabled], [offscreen]).")]
+        [Description("Shape of the result: 'tree' (default) nests each element's children under it; 'flat' lists every element once in reading order with depth (1 = under the window) and parent (index in the list); 'text' leaves elements out and returns text, one line per element indented by depth, such as \"w4120035e17 Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\" (the element's ref first, for element_action and withinRef; then type, name, aid=, fw= where the UI framework changes, @x,y wxh bounds in physical screen pixels, flags [disabled], [offscreen]).")]
         UIElementFormat format = UIElementFormat.Tree,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)

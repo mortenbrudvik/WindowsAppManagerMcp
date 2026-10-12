@@ -47,10 +47,17 @@ public interface IUiaTree
 
     /// <summary>
     /// The children of a node in the control view, in tree order, read in one call so a child that
-    /// disappears during the read cannot end the list early. Only references: no property is read, so the call is cheap
-    /// even for a wide level, and tells how wide it is before its properties are read.
+    /// disappears during the read cannot end the list early. Only references: no property is read, so it is the cheapest
+    /// way to tell how wide a level is before its properties are read, but the call still grows with the level's width
+    /// (one reference per child). To tell only whether there is a child, use <see cref="HasChildren"/>.
     /// </summary>
     IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether a node has a child in the control view: a tree walker's first child, so at most one element is read, however
+    /// wide the level.
+    /// </summary>
+    bool HasChildren(IUiaNode node);
 
     /// <summary>The properties every tree walk needs.</summary>
     UiaNodeProperties Read(IUiaNode node);
@@ -115,8 +122,9 @@ public interface IUiaTree
     /// properties, in one call that cannot be stopped once started. Search a small root, or the children of one;
     /// <see cref="Services.ElementSearch"/> splits a large root into parts and stops between them (roadmap M3.4).
     /// </summary>
-    /// <exception cref="NotSupportedException">The engine cannot express the condition (the managed client has no
-    /// id for the AppBar and SemanticZoom control types).</exception>
+    /// <exception cref="UiaConditionNotSupportedException">The engine cannot express the condition (the managed client
+    /// has no id for the AppBar and SemanticZoom control types).</exception>
+    /// <exception cref="NotSupportedException">The provider does not support the search (UIA_E_NOTSUPPORTED).</exception>
     IReadOnlyList<UiaElement> FindAll(IUiaNode root, UiaScope scope, UiaCondition condition, CancellationToken cancellationToken);
 
     /// <summary>
@@ -244,6 +252,20 @@ public readonly record struct UiaRect(double X, double Y, double Width, double H
         }
 
         return new BoundsDto((int)left, (int)top, (int)(right - left), (int)(bottom - top));
+    }
+}
+
+/// <summary>
+/// The engine cannot express a search condition (<see cref="IUiaTree.FindAll"/>): the managed client
+/// (WAM_UIA_ENGINE=uia2) has no id for the AppBar and SemanticZoom control types. The caller can test that criterion on
+/// the server instead. Not a <see cref="NotSupportedException"/>: that is a provider that does not support a call
+/// (UIA_E_NOTSUPPORTED), which fails only the part of a search it was asked for.
+/// </summary>
+public class UiaConditionNotSupportedException : Exception
+{
+    public UiaConditionNotSupportedException(string message)
+        : base(message)
+    {
     }
 }
 

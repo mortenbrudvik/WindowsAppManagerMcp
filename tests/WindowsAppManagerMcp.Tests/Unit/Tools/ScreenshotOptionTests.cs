@@ -100,7 +100,7 @@ public class ScreenshotOptionTests
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             true,
             ElementOverlayOptions.Default,
-            options), Times.Once);
+            options, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]

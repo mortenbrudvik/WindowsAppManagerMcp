@@ -12,7 +12,12 @@ namespace WindowsAppManagerMcp.Models;
 /// True for a frame capture; false for a client-area capture, whose image starts at the client area's corner, so the
 /// client area on screen is checked too (a menu bar or toolbar can move it without moving the window).
 /// </param>
-public sealed record CapturedWindow(long Handle, int ProcessId, WindowRect WindowRect, bool IncludeFrame);
+/// <param name="ClientArea">
+/// For a client-area capture: the client area on screen as it was captured, before any crop. A ref crop of it
+/// (capture_window with ref) shows only part of the client area, so this, not the crop, is what the client area is
+/// checked against. Null for a frame capture.
+/// </param>
+public sealed record CapturedWindow(long Handle, int ProcessId, WindowRect WindowRect, bool IncludeFrame, WindowRect? ClientArea = null);
 
 /// <summary>
 /// What a capture's image shows and how its pixels map to the screen: the facts the capture registry keeps under a
@@ -27,13 +32,30 @@ public sealed record CapturedWindow(long Handle, int ProcessId, WindowRect Windo
 /// For a capture without a window: the virtual screen (all monitors) at capture time. A change means the monitors
 /// were moved, added, removed or rescaled, so a screen point may no longer show what the image showed.
 /// </param>
+/// <param name="Monitors">
+/// For a capture without a window: each monitor at capture time (<see cref="CapturedMonitors.Of"/>). Monitors can move,
+/// or swap places, inside the same virtual screen; any change means a screen point may no longer show what the image
+/// showed. Null when they were not read.
+/// </param>
 public sealed record CaptureGeometry(
     int ImageWidth,
     int ImageHeight,
     ImageToScreenTransform ImageToScreen,
     CapturedRegion CapturedRegion,
     CapturedWindow? Window,
-    VirtualScreenBounds? VirtualScreen);
+    VirtualScreenBounds? VirtualScreen,
+    IReadOnlyList<CapturedMonitor>? Monitors = null);
+
+/// <summary>A monitor as a screen capture saw it: its device name and its bounds on the virtual screen.</summary>
+public sealed record CapturedMonitor(string DeviceName, MonitorRect Bounds);
+
+/// <summary>The monitors a screen capture registers (roadmap M3.11).</summary>
+public static class CapturedMonitors
+{
+    /// <summary>Each monitor's device name and bounds, ordered by device name, so two reads of the same monitors are equal.</summary>
+    public static IReadOnlyList<CapturedMonitor> Of(IEnumerable<MonitorInfo> monitors) =>
+        monitors.Select(m => new CapturedMonitor(m.DeviceName, m.Bounds)).OrderBy(m => m.DeviceName, StringComparer.Ordinal).ToList();
+}
 
 /// <summary>A capture the registry keeps: its id, when it was taken, and its geometry.</summary>
 /// <param name="CaptureId">The id the capture result reported (for example <c>c7-3fa91c</c>).</param>

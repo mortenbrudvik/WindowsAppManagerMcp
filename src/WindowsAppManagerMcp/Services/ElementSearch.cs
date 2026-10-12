@@ -65,9 +65,10 @@ public sealed record ElementSearchOutcome(
 /// evaluator cannot test, a level that cannot be read) is searched whole, owned windows included; the callers that search
 /// several windows drop such duplicates by runtime id.</para>
 /// <para>A condition the evaluator cannot test on cached properties (FrameworkId, ProcessId) is not split: the root is
-/// searched in one call. A part that disappears or whose provider fails is skipped and counted; a timeout ends the search;
-/// a <see cref="NotSupportedException"/> (the managed client cannot search for AppBar or SemanticZoom) is thrown to the
-/// caller, which can move that criterion into the client filter. An exception of the client filter (a name pattern that
+/// searched in one call. A part that disappears or whose provider fails (also one that does not support the search,
+/// UIA_E_NOTSUPPORTED) is skipped and counted; a timeout ends the search; a <see cref="UiaConditionNotSupportedException"/>
+/// (the managed client cannot search for AppBar or SemanticZoom) is thrown to the caller, which can move that criterion
+/// into the client filter. An exception of the client filter (a name pattern that
 /// ran too long) ends the search and goes to the caller.</para>
 /// <para>It runs on a UI Automation worker thread. <see cref="Snapshot"/> can be read from another thread while it runs, so
 /// a caller whose worker abandoned the search still gets what it had found.</para>
@@ -136,7 +137,7 @@ public sealed class ElementSearch
     }
 
     /// <summary>Searches the elements below <paramref name="root"/> (not the root itself).</summary>
-    /// <exception cref="NotSupportedException">The engine cannot express the condition.</exception>
+    /// <exception cref="UiaConditionNotSupportedException">The engine cannot express the condition.</exception>
     /// <exception cref="UiaElementUnavailableException">The root is gone.</exception>
     public ElementSearchOutcome Run(IUiaNode root, CancellationToken cancellationToken)
     {
@@ -157,7 +158,7 @@ public sealed class ElementSearch
                 {
                     found = _tree.FindAll(part, UiaScope.Descendants, _condition, cancellationToken);
                 }
-                catch (Exception ex) when (ex is not (NotSupportedException or TimeoutException or OperationCanceledException)
+                catch (Exception ex) when (ex is not (UiaConditionNotSupportedException or TimeoutException or OperationCanceledException)
                                            && !ReferenceEquals(part, root))
                 {
                     // This part disappeared or its provider failed; the others are still searched

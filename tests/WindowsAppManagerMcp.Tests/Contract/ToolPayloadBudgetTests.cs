@@ -128,7 +128,30 @@ public class ToolPayloadBudgetTests
         ["get_server_info"] = 850, // 598
     };
 
+    /// <summary>
+    /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
+    /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
+    /// measured size (51,286 tokens, 205,144 bytes for 64 tools, October 2026), so every addition to the surface is a decision. When a change
+    /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
+    /// trims descriptions, lower it.
+    /// </summary>
+    public const int ToolListTokenBudget = 52_000;
+
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
+
+    [Fact]
+    public async Task ToolList_StaysWithinItsBudget()
+    {
+        // Act - the tools as a client receives them, serialized as the SDK writes them
+        var tools = await ToolSurface.ListToolsAsync();
+        var bytes = Encoding.UTF8.GetByteCount(tools.ToJsonString(ModelContextProtocol.McpJsonUtilities.DefaultOptions));
+        var tokens = (bytes + BytesPerToken - 1) / BytesPerToken;
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(ToolListTokenBudget,
+            "tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the surface grew on purpose, raise the budget",
+            tokens, bytes, tools.Count, ToolListTokenBudget);
+    }
 
     [Fact]
     public void EveryServedTool_HasATextBudget()

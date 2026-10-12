@@ -12,6 +12,29 @@ public class UiaTreeTests
     // A handle that is extremely unlikely to be a real window
     private static readonly nint NotAWindow = new(999999999);
 
+    [Theory]
+    [InlineData(UiaComErrors.NotSupported, typeof(NotSupportedException))]
+    [InlineData(UiaComErrors.NoClickablePoint, typeof(NotSupportedException))]
+    [InlineData(UiaComErrors.Disconnected, typeof(UiaElementUnavailableException))]
+    [InlineData(UiaComErrors.ElementNotEnabled, typeof(InvalidOperationException))]
+    public void Translate_TurnsComErrorsIntoTheSameSeamExceptionsAsTheUia3Engine(int hresult, Type expected)
+    {
+        // The managed client passes most UI Automation HRESULTs on as a COMException; the UIA3 engine translates them
+        var com = new System.Runtime.InteropServices.COMException("provider", hresult);
+
+        var thrown = FluentActions.Invoking(() => UiaTree.Translate<int>(() => throw com)).Should().Throw<Exception>().Which;
+
+        thrown.Should().BeOfType(expected);
+        thrown.GetType().Should().Be(UiaComErrors.Translate(com)!.GetType());
+    }
+
+    [Fact]
+    public void Translate_LeavesOtherComErrorsAsTheyAre()
+    {
+        FluentActions.Invoking(() => UiaTree.Translate<int>(() => throw new System.Runtime.InteropServices.COMException("E_FAIL", unchecked((int)0x80004005))))
+            .Should().Throw<System.Runtime.InteropServices.COMException>();
+    }
+
     [Fact]
     public void IsAvailable_OnWindows_IsTrue()
     {

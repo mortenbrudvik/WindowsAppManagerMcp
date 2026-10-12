@@ -203,6 +203,26 @@ public class ScreenshotMarksTests
     }
 
     [Fact]
+    public void CaptureWindowArea_OfTheClientArea_KeepsTheClientAreaItWasCutFrom_SoItsPointsStillConvert()
+    {
+        // Arrange - the client area is the whole 200 x 100 capture at (100, 100); the crop is a part of it
+        BlackWindow(200, 100, 100, 100);
+        var hitTest = new Mock<INativeHitTestWrapper>();
+        hitTest.Setup(h => h.GetClientAreaOnScreen(Window)).Returns(new WindowRect(100, 100, 200, 100));
+        _windows.Setup(w => w.IsWindow(Window)).Returns(true);
+
+        // Act
+        var metadata = CreateSut().CaptureWindowArea(Window, includeFrame: false, new BoundsDto(150, 120, 40, 20), Png).Metadata;
+        var point = new CoordinateSpaceResolver(_registry, _windows.Object, hitTest.Object, _capture.Object)
+            .FromImage(metadata.CaptureId!, 20, 10);
+
+        // Assert
+        _registry.Find(metadata.CaptureId!)!.Geometry.Window!.ClientArea.Should().Be(new WindowRect(100, 100, 200, 100));
+        point.Resolved.Should().BeTrue(point.Error);
+        (point.X, point.Y).Should().Be((170, 130));
+    }
+
+    [Fact]
     public void CaptureWindowArea_ClipsTheAreaToTheWindow()
     {
         // Arrange

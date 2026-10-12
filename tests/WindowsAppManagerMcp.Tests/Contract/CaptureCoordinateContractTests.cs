@@ -182,6 +182,37 @@ public class CaptureCoordinateContractTests
     }
 
     [Fact]
+    public async Task AWindowThatMovedWhileItsElementsWereRead_IsCapturedWithAWarning_AndNoCaptureIdToClickWith()
+    {
+        // Arrange - Notepad moves 100 pixels right after the walk read its Save button at (380, 290): the marks drawn from
+        // the walk would sit 100 pixels left of the button the image shows, and a legend click would hit its neighbour
+        var originX = 0;
+        _capture.Setup(c => c.CaptureWindow(Notepad, It.IsAny<bool>()))
+            .Returns(() => new CaptureResult(new byte[1600 * 900 * 4], 1600, 900, originX, 100, "PrintWindow"));
+        UIElementInfo save = new("Save", "Button", "btnSave", new BoundsDto(380, 290, 40, 20), IsEnabled: true,
+            IsOffscreen: false, Ref: "w1000001e7");
+        _uiElements.Setup(u => u.GetUIElementsAsync(Notepad, It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                _notepadRect = (100, 100, 1700, 1000);
+                originX = 100;
+            })
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(windowHandle: Notepad, elements: [save]));
+        _windowService.Setup(s => s.IsValidWindow(Notepad)).Returns(true);
+        await using var server = await StartServerAsync();
+
+        // Act
+        var capture = Payload(await server.CallToolAsync("capture_with_elements", new Dictionary<string, object?> { ["handle"] = (long)Notepad }));
+
+        // Assert - the image comes back, but nothing points into it
+        capture.GetProperty("success").GetBoolean().Should().BeTrue(capture.ToString());
+        capture.TryGetProperty("captureId", out _).Should().BeFalse(capture.ToString());
+        capture.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).Should()
+            .Contain(w => w!.StartsWith(CaptureWarnings.WindowMoved + ":", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ARefCrop_ThenAClickAtItsMiddle_ClicksTheElement()
     {
         // Arrange - Notepad's Save button at (380, 290, 40, 20), named by its ref; the crop keeps 8 pixels around it
@@ -211,6 +242,42 @@ public class CaptureCoordinateContractTests
         payload.GetProperty("x").GetInt32().Should().Be(400);
         payload.GetProperty("y").GetInt32().Should().Be(300);
         payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Notepad);
+    }
+
+    [Fact]
+    public async Task ARefCropWithoutTheFrame_ThenAClickAtItsMiddle_ClicksTheElement()
+    {
+        // Arrange - as above, but the crop is cut from the client area, which is the whole capture (1600 x 900 at (0, 100)):
+        // the crop is checked against the client area seen at capture time, not against the crop itself
+        const string saveRef = "w1000001e7";
+        var element = new UiaElement(new FakeUiaNode("Button", "Save"),
+            new UiaNodeProperties("Save", "Button", "btnSave", new UiaRect(380, 290, 40, 20), IsEnabled: true, IsOffscreen: false),
+            ClassName: null, IsKeyboardFocusable: true, UiaPatterns.Invoke, RuntimeId: [42, 7], ControlTypeId: null);
+        _elementRegistry.Setup(r => r.Lookup(saveRef)).Returns(new ElementLookup(saveRef, Notepad,
+            new ElementFingerprint("Save", "Button", "btnSave", null, null), 1));
+        _elementRegistry.Setup(r => r.ResolveAsync(saveRef, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementResolution(new ResolvedElement(saveRef, Notepad, element.Node, element, ElementResolutionPath.Live)));
+        _hitTest.Setup(h => h.GetClientAreaOnScreen(Notepad)).Returns(new WindowRect(0, 100, 1600, 900));
+        await using var server = await StartServerAsync();
+        var crop = Payload(await server.CallToolAsync("capture_window", new Dictionary<string, object?>
+        {
+            ["ref"] = saveRef,
+            ["includeFrame"] = false
+        }));
+        crop.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(372, crop.ToString());
+        crop.GetProperty("width").GetInt32().Should().Be(56);
+
+        // Act - the middle of the 56 x 36 crop
+        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        {
+            ["x"] = 28,
+            ["y"] = 18,
+            ["captureId"] = crop.GetProperty("captureId").GetString()
+        }));
+
+        // Assert
+        payload.GetProperty("success").GetBoolean().Should().BeTrue(payload.ToString());
+        (payload.GetProperty("x").GetInt32(), payload.GetProperty("y").GetInt32()).Should().Be((400, 300));
     }
 
     [Fact]
