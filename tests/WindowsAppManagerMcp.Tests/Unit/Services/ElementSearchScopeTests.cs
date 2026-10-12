@@ -128,6 +128,53 @@ public class ElementSearchScopeTests
         _popups.Verify(p => p.GetPopupList(It.IsAny<nint>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Find_WithPopups_LeavesOutAPopupOfADeniedApp_AndCountsIt()
+    {
+        // Arrange - the dialog in front is a credential prompt of another process that the app owns
+        SetPopups(Popup(Menu, PopupKind.Menu), Popup(Dialog, PopupKind.Dialog) with { IsDeniedByPolicy = true });
+
+        // Act - only the prompt has a Save button besides the window
+        var result = await Find(name: "Save", scope: ElementSearchScope.WindowAndPopups);
+
+        // Assert - a popup is never named: it is not read, as the desktop scope leaves such a window out
+        result.Success.Should().BeTrue();
+        result.WindowsSearched.Should().Be(2);
+        result.WindowsExcluded.Should().Be(1);
+        result.Elements!.Should().ContainSingle().Which.WindowHandle.Should().BeNull("the match is the window's own button");
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_LeavesOutAPopupOfTheAgentsHost_UnlessAnActionsSearchAsks()
+    {
+        // Arrange - the menu belongs to the agent's host (a terminal's context menu over the app)
+        SetPopups(Popup(Menu, PopupKind.Menu) with { IsAgentHost = true }, Popup(Dialog, PopupKind.Dialog));
+        var query = new ElementQuery(Main, Name: "Rename", MaxResults: 5, Timeout: TimeSpan.FromSeconds(5),
+            Scope: ElementSearchScope.WindowAndPopups);
+
+        // Act
+        var read = await CreateSut().FindAsync(query);
+        var action = await CreateSut().FindAsync(query with { IncludeHostPopups = true });
+
+        // Assert - element_action's search keeps it: the input guard decides there (allowHostTarget)
+        read.MatchCount.Should().Be(0);
+        read.WindowsExcluded.Should().Be(1);
+        action.Elements!.Should().ContainSingle().Which.WindowHandle.Should().Be((long)Menu);
+        action.WindowsExcluded.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Find_WithPopups_LeavesOutAPopupOfADeniedApp_EvenForAnAction()
+    {
+        SetPopups(Popup(Menu, PopupKind.Menu) with { IsDeniedByPolicy = true, IsAgentHost = true });
+
+        var result = await CreateSut().FindAsync(new ElementQuery(Main, Name: "Rename", Timeout: TimeSpan.FromSeconds(5),
+            Scope: ElementSearchScope.WindowAndPopups) { IncludeHostPopups = true });
+
+        result.MatchCount.Should().Be(0);
+        result.WindowsExcluded.Should().Be(1);
+    }
+
     #endregion
 
     #region Refs and limits

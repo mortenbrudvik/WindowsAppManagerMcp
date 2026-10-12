@@ -12,6 +12,8 @@ namespace WindowsAppManagerMcp.Services;
 /// <remarks>
 /// Walk rules:
 /// <list type="bullet">
+/// <item>A window of an app the user's target policy denies is not read (TargetDeniedByPolicy, see
+/// <see cref="UiaTargets.ReadVerdict"/>): checked before the walk, the warm-up and the hung-window check.</item>
 /// <item>A window that does not respond is not read (NotResponding): Windows reports it hung, or it does not answer a
 /// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
 /// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
@@ -72,6 +74,7 @@ public class UIElementService : IUIElementService
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
     private readonly IElementRegistry? _registry;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
@@ -82,18 +85,22 @@ public class UIElementService : IUIElementService
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
     /// <param name="registry">Gives every returned element its ref (roadmap M3.4). Without it the elements have none.</param>
+    /// <param name="policy">The user's target policy, which refuses reads of a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
     public UIElementService(
         IUiaTree tree,
         IUiaWorker worker,
         INativeWindowWrapper? windows = null,
         IAccessibilityWarmup? warmup = null,
-        IElementRegistry? registry = null)
+        IElementRegistry? registry = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
         _windows = windows;
         _warmup = warmup;
         _registry = registry;
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -123,6 +130,12 @@ public class UIElementService : IUIElementService
         if (ParseControlTypes(filter?.ControlTypes, out var controlTypes) is { } invalidControlTypes)
         {
             return CreateErrorResult(windowHandle, stopwatch, invalidControlTypes, UIElementErrorCode.InvalidControlType);
+        }
+
+        // Before the worker: no warm-up and no UI Automation call reaches a window of an app the user denies
+        if (UiaTargets.PolicyRefusal(_windows, _policy, windowHandle) is { } denied)
+        {
+            return CreateErrorResult(windowHandle, stopwatch, denied, UIElementErrorCode.TargetDeniedByPolicy);
         }
 
         var started = new WalkStarted();

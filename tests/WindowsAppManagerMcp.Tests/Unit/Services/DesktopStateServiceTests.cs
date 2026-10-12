@@ -211,24 +211,95 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
-    public async Task AWindowThePolicyDenies_IsNotReadUnasked_ButIsWhenNamed()
+    public async Task AWindowThePolicyDenies_IsNotRead_UnaskedOrNamed()
     {
         _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["notepad"] });
 
         var (unnamed, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
         var (named, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
 
-        unnamed.Elements.Should().BeNull();
-        unnamed.Focus.Should().BeNull("the denied window in front holds the keyboard focus");
-        unnamed.Errors.Should().BeEquivalentTo(
-        [
-            new { Section = "target", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) },
-            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) }
-        ], o => o.WithStrictOrdering());
-        named.Elements.Should().NotBeNull();
-        named.Focus!.Ref.Should().Be("w4120035e3", "the focus is in the window that was named");
-        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once,
-            "the unasked observation does not read the denied window's focus at all");
+        foreach (var state in new[] { unnamed, named })
+        {
+            state.WindowHandle.Should().Be(0);
+            state.Elements.Should().BeNull();
+            state.Popups.Should().BeNull();
+            state.Focus.Should().BeNull("the denied window in front holds the keyboard focus");
+            state.Errors.Should().BeEquivalentTo(
+            [
+                new { Section = "target", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) },
+                new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) }
+            ], o => o.WithStrictOrdering());
+            state.Windows.Should().NotBeEmpty("the window list is no read of the denied window");
+        }
+
+        named.Errors![0].Error.Should().Contain("notes.txt - Notepad").And.Contain("not read");
+        _elements.VerifyNoOtherCalls();
+        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never,
+            "neither observation reads the denied window's focus at all");
+    }
+
+    [Fact]
+    public async Task TheFocus_InTheAgentsOwnTerminalInFront_IsNotRead_WhenAnotherWindowIsNamed()
+    {
+        // Arrange - an observe after an action on Notepad, while the agent's terminal is in front
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(Terminal, "pwsh", "WindowsTerminal") with { IsAgentHost = true });
+        FocusIn(Terminal);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert - no UI Automation call goes into the agent's own terminal or editor, not even to warm it up
+        state.Elements.Should().NotBeNull("the named window is read");
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetIsAgentHost) });
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheFocus_InADeniedAppInFront_IsNotRead_WhenAnotherWindowIsNamed()
+    {
+        // Arrange
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["keepass"] });
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(KeePass, "Passwords.kdbx - KeePass", "KeePass"));
+        FocusIn(KeePass);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        state.Focus.Should().BeNull();
+        state.Errors.Should().ContainSingle().Which.ErrorCode.Should().Be(nameof(InputErrorCode.TargetDeniedByPolicy));
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheFocus_InTheAgentsOwnTerminal_IsRead_WhenTheTerminalIsNamedAndInFront()
+    {
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(Terminal, "pwsh", "WindowsTerminal") with { IsAgentHost = true });
+        FocusIn(Terminal);
+
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Terminal), CancellationToken.None);
+
+        state.Focus.Should().NotBeNull("the terminal was named");
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TheFocus_ThatMovedIntoADeniedWindowNamed_IsLeftOut()
+    {
+        // Arrange - Notepad is in front and allowed; the focus read finds itself in KeePass, which was named
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["keepass"] });
+        FocusIn(KeePass);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: KeePass, include: new HashSet<DesktopStateSection> { DesktopStateSection.Focus }),
+            CancellationToken.None);
+
+        // Assert
+        state.Focus.Should().BeNull("a window the policy denies is not read, named or not");
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) });
     }
 
     [Fact]
@@ -416,6 +487,36 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task APopupOfADeniedAppOrOfTheAgentsHost_IsNotWalked_AndIsCounted()
+    {
+        // Arrange - the named window owns a credential prompt of a denied app (in front) and a popup of the agent's host
+        var prompt = new nint(0x260A50);
+        _popups.Setup(p => p.IsInForeground(Notepad)).Returns(true);
+        _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
+        [
+            new PopupWindow(prompt, PopupKind.Dialog, "Windows Security", "Credential Dialog Xaml Host", 777, Notepad, PopupRelation.Owned,
+                null, true, IsDeniedByPolicy: true),
+            new PopupWindow(0x260A60, PopupKind.Popup, null, "Host popup", 888, Notepad, PopupRelation.Owned, null, false,
+                IsAgentHost: true),
+            new PopupWindow(Menu, PopupKind.Menu, null, "#32768", 4242, 0, PopupRelation.SameProcess, null, false)
+        ], false));
+        _popups.Setup(p => p.GetActivePopupsAsync(Notepad, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ActivePopupsResult(true, Notepad, "notes.txt - Notepad", true,
+                [new ActivePopup("w4120036e0", Menu, PopupKind.Menu, null, "#32768", 4242, "notepad", null, null, "Menu")], 2,
+                PopupsExcluded: 2));
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert - a popup is never named: neither is read, as a desktop search leaves such windows out
+        _walks.Select(w => w.Handle).Should().Equal([Menu, Notepad]);
+        state.Elements!.Text.Should().StartWith("# popup 2492984 Menu").And.NotContain("Windows Security");
+        state.Popups.Should().ContainSingle().Which.Handle.Should().Be(Menu);
+        state.PopupsExcluded.Should().Be(2);
+        state.Errors.Should().BeNull();
+    }
+
+    [Fact]
     public async Task WithTheTargetInFront_ItsOpenPopupsAreWalkedFirst_UnderHeaders_WithinMaxElements()
     {
         // Arrange - the default scope is find_ui_elements': windowAndPopups while the window or a popup is in front
@@ -502,9 +603,10 @@ public class DesktopStateServiceTests
 
         var (state, image) = await CreateSut().GetStateAsync(Request(window: Notepad, include: include), CancellationToken.None);
 
+        // The window named is refused as the target: its capture, elements and popups are all left out
         image.Should().BeNull();
         state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
-            new { Section = "screenshot", ErrorCode = nameof(ScreenshotErrorCode.TargetDeniedByPolicy) });
+            new { Section = "target", ErrorCode = nameof(ScreenshotErrorCode.TargetDeniedByPolicy) });
         _screenshots.VerifyNoOtherCalls();
     }
 

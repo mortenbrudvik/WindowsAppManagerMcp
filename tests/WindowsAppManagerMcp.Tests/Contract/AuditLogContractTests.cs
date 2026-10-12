@@ -169,6 +169,24 @@ public class AuditLogContractTests
     }
 
     [Fact]
+    public async Task ElementAction_RecordsTheNameCriterionsLengthOnly_WhileALayoutsNameIsKept()
+    {
+        // Act - an element's name is UI content (a file, an email subject, a contact); a layout preset's name is the user's label
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle, ["name"] = "meeting-notes.docx", ["action"] = "invoke"
+        });
+        var (_, layoutLines) = await CallAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "layout-1" });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("meeting-notes", "an element's name can say what the user works on");
+        line.GetProperty("args").GetProperty("nameLength").GetInt32().Should().Be(18);
+        line.GetProperty("args").GetProperty("action").GetString().Should().Be("invoke");
+        layoutLines.Single().GetProperty("args").GetProperty("name").GetString().Should().Be("layout-1");
+    }
+
+    [Fact]
     public async Task ElementAction_RecordsObserve_ButNotTheObservation()
     {
         // Act - roadmap M3.12: the observation after the action holds window titles and element names
@@ -186,13 +204,57 @@ public class AuditLogContractTests
     [Fact]
     public async Task RespondToDialog_RecordsTheButton_AndWhetherTheDialogClosed()
     {
-        var (_, lines) = await CallAsync("respond_to_dialog", EveryToolContractTests.ArgumentsFor("respond_to_dialog"));
+        var (_, lines) = await CallAsync("respond_to_dialog", EveryToolContractTests.ArgumentsFor("respond_to_dialog"), NoteTheDialogs);
 
         var line = lines.Single();
         line.GetProperty("args").GetProperty("button").GetString().Should().Be("no");
-        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.SavePromptAnswered.DialogHandle,
+            "the handle named Notepad, and the line names the dialog of it that was answered");
+        line.GetProperty("target").GetProperty("process").GetString().Should().Be("notepad");
         line.GetProperty("result").GetProperty("dialogClosed").GetBoolean().Should().BeTrue();
         line.GetRawText().Should().NotContain("save changes", "the dialog's text is never logged");
+    }
+
+    /// <summary>The save prompt and the Save As dialog of the typical desktop, as the dialog services note them before acting.</summary>
+    private static readonly WindowInfo SavePrompt =
+        TestDataFactory.CreateWindowInfo((int)TypicalDesktop.SavePromptAnswered.DialogHandle, "Notepad", "notepad", TypicalDesktop.Notepad.ProcessId);
+
+    private static readonly WindowInfo SaveAsDialog =
+        TestDataFactory.CreateWindowInfo(0x1A0C00, "Save As", "notepad", TypicalDesktop.Notepad.ProcessId);
+
+    /// <summary>The dialog services' mocks note the dialog they found, as the real services do (AuditScope).</summary>
+    private static void NoteTheDialogs(ContractServices services)
+    {
+        services.Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => AuditScope.NoteWindow(SavePrompt))
+            .ReturnsAsync(TypicalDesktop.SavePromptAnswered);
+        services.FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => AuditScope.NoteWindow(SaveAsDialog))
+            .ReturnsAsync((FileDialogRequest request, CancellationToken _) => TypicalDesktop.FileSaved(request));
+    }
+
+    public static TheoryData<string, string> DialogCallsWithoutAHandle() => new()
+    {
+        { "respond_to_dialog", """{ "window": { "processName": "notepad" }, "button": "no" }""" },
+        { "respond_to_dialog", """{ "button": "no" }""" },
+        { "file_dialog", $$"""{ "window": { "processName": "notepad" }, "path": {{JsonSerializer.Serialize(TypicalDesktop.SavePath)}}, "action": "save" }""" },
+        { "file_dialog", $$"""{ "path": {{JsonSerializer.Serialize(TypicalDesktop.SavePath)}}, "action": "save" }""" }
+    };
+
+    [Theory]
+    [MemberData(nameof(DialogCallsWithoutAHandle))]
+    public async Task ADialogAnswered_IsTheTarget_AlsoWhenTheCallNamedNoHandle(string tool, string json)
+    {
+        // Act - a selector, or the dialog in front: the arguments hold no handle, and the result names the dialog as dialogHandle
+        var arguments = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!.ToDictionary(a => a.Key, a => (object?)a.Value);
+        var (_, lines) = await CallAsync(tool, arguments, NoteTheDialogs);
+
+        // Assert
+        var target = lines.Single().GetProperty("target");
+        var dialog = tool == "file_dialog" ? SaveAsDialog : SavePrompt;
+        target.GetProperty("handle").GetInt64().Should().Be(dialog.Handle);
+        target.GetProperty("title").GetString().Should().Be(dialog.Title);
+        target.GetProperty("process").GetString().Should().Be("notepad");
     }
 
     [Fact]

@@ -5,9 +5,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <summary>
 /// The server-enforced target policy (roadmap M1.12; see <see cref="TargetPolicySettings"/>). The input
 /// guard, close_window and close_windows_batch, the window changes (focus_window, move, resize, bounds,
-/// state, snap, move to a monitor, their batches and apply_layout), kill_process, capture_window and
-/// capture_with_elements ask it before they act, and refuse with TargetDeniedByPolicy. It is matched on the image name of the
-/// target window's process (for a UWP window also its frame host); no tool argument overrides it.
+/// state, snap, move to a monitor, their batches and apply_layout), kill_process, capture_window,
+/// capture_with_elements and the UI Automation reads (<see cref="UiaTargets.ReadVerdict"/>) ask it before they act or read,
+/// and refuse with TargetDeniedByPolicy. It is matched on the image name of the target window's process (for a UWP window
+/// also its frame host); no tool argument overrides it.
 /// </summary>
 public interface ITargetPolicy
 {

@@ -233,7 +233,15 @@ public enum UIElementErrorCode
     /// file_dialog with action save: the file exists and overwrite was not true. Nothing was typed when the server saw the
     /// file first; when the application asked whether to replace it, the answer was No and the dialog is still open.
     /// </summary>
-    FileExists = 23
+    FileExists = 23,
+
+    /// <summary>
+    /// The user's target policy denies the window's app (its process, or for a UWP frame the app it hosts), so none of its
+    /// UI elements was read: get_ui_elements, find_ui_elements, get_focused_element, get_element_at_point, read_element_text,
+    /// read_table, wait_for_element and get_active_popups refuse it as the captures do, before any warm-up or read. The same
+    /// name as the input guard's code; no tool argument changes it.
+    /// </summary>
+    TargetDeniedByPolicy = 24
 }
 
 /// <summary>

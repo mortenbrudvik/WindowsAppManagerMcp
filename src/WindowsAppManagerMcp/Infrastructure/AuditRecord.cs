@@ -17,14 +17,16 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// The arguments are summarized by default-deny against the tool's declared input schema, so a new tool or parameter,
 /// or a value of the wrong type, cannot leak what it carries (<see cref="SummarizeArguments"/>): an argument the tool
 /// does not declare is only counted; a number or boolean is kept only where the tool declares one; a string is kept
-/// only when its name is in <see cref="NamedStringArguments"/> (process and preset names, fixed values), a program to
+/// only when its name is in <see cref="NamedStringArguments"/> (process and preset names, fixed values) and it is no
+/// content for that tool (<see cref="ContentArguments"/>: element_action's name criterion), a program to
 /// launch is kept as a path or as a URL's scheme and host (<see cref="RedactExecutable"/>), and any other value is
 /// recorded as its length (<c>&lt;name&gt;Length</c>) or count (<c>&lt;name&gt;Count</c>). So typed text, keys,
 /// clipboard text, URL paths and queries, working directories and command-line arguments never reach the file. Of the
 /// result, only the numbers and booleans at its top level, its errorCode, get_clipboard's origin, the receiving window and its items (a batch's
 /// results, close_application's windows, apply_layout's placements: handle, title, process, a launch's program redacted,
 /// success, status and errorCode) are kept; never its text. A window a tool learns of only while it runs (a selector's,
-/// or close_application's) is named by the title and process the tool noted before acting on it (<see cref="AuditScope"/>).
+/// close_application's, or the dialog respond_to_dialog and file_dialog answered, which is their target) is named by the
+/// title and process the tool noted before acting on it (<see cref="AuditScope"/>).
 /// </remarks>
 public static class AuditRecord
 {
@@ -37,6 +39,8 @@ public static class AuditRecord
     /// <summary>
     /// The string arguments that are kept as they are: they name a process, a layout preset or a fixed value, never
     /// content. <c>executable</c> is kept too, as a path or as a URL's scheme and host only (<see cref="RedactExecutable"/>).
+    /// <c>name</c> is a layout preset's name (apply_layout, save_layout, delete_layout); element_action's <c>name</c> is an
+    /// element's name, which is content, and is recorded as nameLength (<see cref="ContentArguments"/>).
     /// </summary>
     public static IReadOnlySet<string> NamedStringArguments { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -48,6 +52,17 @@ public static class AuditRecord
         "button"
     };
 
+    /// <summary>
+    /// The arguments of <see cref="NamedStringArguments"/> that are content for one tool, and are recorded as their length
+    /// there: element_action's <c>name</c> criterion is an element's name (a file in Explorer, an email's subject, a
+    /// contact), which can say what the user works on, as file_dialog's path can.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlySet<string>> ContentArguments { get; } =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            [ElementActionTool] = new HashSet<string>(StringComparer.Ordinal) { "name" }
+        };
+
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
     private const string ClipboardOriginProperty = "origin";
 
@@ -55,6 +70,12 @@ public static class AuditRecord
     private const string LaunchStatusProperty = "launchStatus";
 
     private const string ElementActionTool = "element_action";
+
+    /// <summary>The tools that answer a dialog (roadmap M3.5, M3.14): their line's target is the dialog, <see cref="DialogHandleProperty"/>.</summary>
+    private static readonly HashSet<string> DialogTools = new(StringComparer.Ordinal) { "respond_to_dialog", "file_dialog" };
+
+    /// <summary>The result property that names the dialog respond_to_dialog or file_dialog found.</summary>
+    private const string DialogHandleProperty = "dialogHandle";
 
     /// <summary>element_action's result properties kept as identifiers: its method and status.</summary>
     private static readonly string[] ElementActionIdentifiers = ["method", "status"];
@@ -97,7 +118,7 @@ public static class AuditRecord
                 ? Window(window)
                 : null,
             items,
-            SummarizeArguments(call.Arguments, call.DeclaredTypes),
+            SummarizeArguments(call.Arguments, call.DeclaredTypes, call.Tool),
             body == null ? null : Scalars(body, call.Tool),
             serverPid,
             call.RequestId);
@@ -114,19 +135,23 @@ public static class AuditRecord
     /// <item>A number or boolean is kept where the tool declares the parameter as one; where it does not (a PIN sent as
     /// a number for a text), or with no schema, it is recorded as the length of its JSON text.</item>
     /// <item>A string in <see cref="NamedStringArguments"/> is kept (<c>executable</c> redacted, with
-    /// <c>executableLength</c> when something was cut); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
+    /// <c>executableLength</c> when something was cut), unless it is content for <paramref name="tool"/>
+    /// (<see cref="ContentArguments"/>); any other string is recorded as <c>&lt;name&gt;Length</c>.</item>
     /// <item>An array is recorded as <c>&lt;name&gt;Count</c>; objects and nulls are left out.</item>
     /// </list>
     /// Null when nothing is left.
     /// </summary>
     /// <param name="arguments">The call's arguments.</param>
     /// <param name="declaredTypes">The JSON types the tool declares per parameter (<see cref="DeclaredTypes"/>); null when unknown.</param>
+    /// <param name="tool">The tool called, for <see cref="ContentArguments"/>; null keeps every name of <see cref="NamedStringArguments"/>.</param>
     public static JsonObject? SummarizeArguments(
         IReadOnlyDictionary<string, JsonElement> arguments,
-        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes)
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? declaredTypes,
+        string? tool = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
+        var content = tool != null && ContentArguments.TryGetValue(tool, out var names) ? names : null;
         var summary = new JsonObject();
         var unknown = 0;
         foreach (var (name, value) in arguments)
@@ -157,7 +182,7 @@ public static class AuditRecord
                     }
 
                     break;
-                case JsonValueKind.String when NamedStringArguments.Contains(name):
+                case JsonValueKind.String when NamedStringArguments.Contains(name) && content?.Contains(name) != true:
                     summary[name] = Cut(value.GetString()!, MaxTitleLength);
                     break;
                 case JsonValueKind.String:
@@ -315,6 +340,14 @@ public static class AuditRecord
 
     private static AuditTarget? Target(AuditCall call, JsonObject? body)
     {
+        // The dialog respond_to_dialog or file_dialog found (their results name it dialogHandle; 0 when none was found) is the
+        // target, also when the arguments named its owner, a selector or no window at all: the dialog services note it
+        // before they act on it (AuditScope), so its title and process are known
+        if (body != null && DialogTools.Contains(call.Tool) && Long(body, DialogHandleProperty) is { } dialog and not 0)
+        {
+            return Before(call, dialog) ?? new AuditTarget(Handle: dialog);
+        }
+
         // What the arguments aimed at, read before the call: a window, else a process, else a program to launch
         AuditTarget? target = null;
         var handles = WindowHandles(call.Arguments);

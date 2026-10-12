@@ -47,6 +47,13 @@ public class TargetPolicyTests
         TargetPolicySettings.DefaultDeniedProcesses.Should().Contain(["NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe"]);
     }
 
+    [Fact]
+    public void DefaultDeniedProcesses_CoverTheSmartScreenPrompt_TheWindowsSecurityApp_AndTheCredentialDialogHost()
+    {
+        // CHXSmartScreen draws the "Windows protected your PC" prompt; smartscreen.exe is the reputation broker that starts it
+        TargetPolicySettings.DefaultDeniedProcesses.Should().Contain(["CHXSmartScreen", "smartscreen", "SecHealthUI", "CredDialogHost"]);
+    }
+
     [Theory]
     [InlineData("KeePass.exe Bitwarden.exe")]
     [InlineData("KeePass.exe  Bitwarden.EXE")]
@@ -140,6 +147,23 @@ public class TargetPolicyTests
         verdict.Allowed.Should().BeFalse();
         verdict.ProcessName.Should().NotBeNullOrEmpty();
         verdict.Reason.Should().Contain("deny list").And.Contain(TargetPolicySettings.DenyVariable);
+    }
+
+    [Theory]
+    [InlineData("CHXSmartScreen")]
+    [InlineData(@"C:\Windows\SystemApps\Microsoft.Windows.AppRep.ChxApp_cw5n1h2txyewy\CHXSmartScreen.exe")]
+    [InlineData("smartscreen")]
+    [InlineData("SecHealthUI")]
+    [InlineData(@"C:\Windows\SystemApps\microsoft.creddialoghost_cw5n1h2txyewy\CredDialogHost.exe")]
+    public void Evaluate_DefaultDenyList_RefusesTheWindowsSecurityPrompts_InTheirUwpFrame(string processName)
+    {
+        // Act - a UWP window goes by its app's process and by its frame host
+        var verdict = Policy().Evaluate([processName, "ApplicationFrameHost"]);
+
+        // Assert
+        verdict.Allowed.Should().BeFalse();
+        verdict.ProcessName.Should().Be(TargetPolicySettings.NormalizeProcessName(processName));
+        verdict.Reason.Should().Contain("default deny list");
     }
 
     [Theory]

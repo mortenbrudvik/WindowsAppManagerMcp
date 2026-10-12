@@ -7,7 +7,9 @@ namespace WindowsAppManagerMcp.Services;
 
 /// <summary>find_ui_elements (roadmap M3.4); see <see cref="IElementSearchService"/>.</summary>
 /// <remarks>
-/// <para>Order of work, all in one read on the worker thread: the hung-window check (NotResponding), the window's node
+/// <para>Order of work: the target policy's check of the named window (TargetDeniedByPolicy, before the worker, see
+/// <see cref="UiaTargets.ReadVerdict"/>; a withinRef search names withinRef's window), then all in one read on the worker
+/// thread: the hung-window check (NotResponding), the window's node
 /// (WindowNotFound), the warm-up of a window that shows web content (Chromium, Electron, WebView2: see
 /// <see cref="IAccessibilityWarmup"/>, roadmap M3.3) within a third of the timeout, withinRef resolved through the
 /// registry (its own codes: ElementStale, AmbiguousElement), the search
@@ -21,8 +23,10 @@ namespace WindowsAppManagerMcp.Services;
 /// offscreen or disabled twin, a single match is checked by one more search of the window for its identity alone, limited
 /// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique.</para>
 /// <para><b>Scope</b> (roadmap M3.5): <see cref="ElementSearchScope.WindowAndPopups"/> also searches the window's popups
-/// (<see cref="IPopupService.GetPopups"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
-/// own), front first and before the window, since an open popup is in front of it; <see cref="ElementSearchScope.Desktop"/>
+/// (<see cref="IPopupService.GetPopupList"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
+/// own), front first and before the window, since an open popup is in front of it, but not a popup of an app the target
+/// policy denies, nor one of the agent's host unless <see cref="ElementQuery.IncludeHostPopups"/> (both counted in
+/// windowsExcluded, as the desktop scope counts such windows); <see cref="ElementSearchScope.Desktop"/>
 /// searches the windows of <see cref="IPopupService.GetDesktopWindows"/> (the named window first). Every window is searched
 /// under the one deadline, the one maxResults and the one candidate limit (each window's search gets what the windows before
 /// it left, and the popups searched before the named window leave it <see cref="NamedWindowCandidateReserve"/>), so a scope
@@ -77,6 +81,7 @@ public sealed partial class ElementSearchService : IElementSearchService
     private readonly INativeWindowWrapper? _windows;
     private readonly IAccessibilityWarmup? _warmup;
     private readonly IPopupService? _popups;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the search under a deadline.</param>
@@ -87,13 +92,16 @@ public sealed partial class ElementSearchService : IElementSearchService
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
     /// <param name="popups">The windows of the windowAndPopups and desktop scopes (roadmap M3.5). The server always passes
     /// it; without it every search covers the window alone.</param>
+    /// <param name="policy">The user's target policy, which refuses a search of a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no named window is refused.</param>
     public ElementSearchService(
         IUiaTree tree,
         IUiaWorker worker,
         IElementRegistry registry,
         INativeWindowWrapper? windows = null,
         IAccessibilityWarmup? warmup = null,
-        IPopupService? popups = null)
+        IPopupService? popups = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
@@ -101,6 +109,7 @@ public sealed partial class ElementSearchService : IElementSearchService
         _windows = windows;
         _warmup = warmup;
         _popups = popups;
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -149,6 +158,12 @@ public sealed partial class ElementSearchService : IElementSearchService
             EnabledOnly: query.EnabledOnly);
         var maxResults = Math.Clamp(query.MaxResults, 1, MaxResultsLimit);
         var timeout = query.Timeout ?? DefaultTimeout;
+
+        // Before the worker: no warm-up and no UI Automation call reaches a window of an app the user denies, named or not
+        if (UiaTargets.PolicyRefusal(_windows, _policy, handle) is { } denied)
+        {
+            return Failure(denied, UIElementErrorCode.TargetDeniedByPolicy);
+        }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
@@ -207,19 +222,24 @@ public sealed partial class ElementSearchService : IElementSearchService
     }
 
     /// <summary>
-    /// The windows a scope covers, in the order searched, how many it left out (desktop only), and how many were over its
-    /// limit (for windowAndPopups, 1 when more popups were open than <see cref="PopupService.MaxPopups"/>).
+    /// The windows a scope covers, in the order searched, how many it left out (the agent's host windows and the windows of
+    /// apps the target policy denies, see <see cref="PopupList.ForReading"/>), and how many were over its limit (for
+    /// windowAndPopups, 1 when more popups were open than <see cref="PopupService.MaxPopups"/>).
     /// </summary>
-    private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(nint handle, ElementSearchScope scope) => scope switch
+    private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(ElementQuery query, ElementSearchScope scope)
     {
-        ElementSearchScope.WindowAndPopups when _popups != null =>
-            _popups.GetPopupList(handle) is { } list
-                ? ([.. list.Popups.Select(p => p.Handle), handle], 0, list.Truncated ? 1 : 0)
-                : ([handle], 0, 0),
-        ElementSearchScope.Desktop when _popups != null =>
-            _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
-        _ => ([handle], 0, 0)
-    };
+        var handle = query.WindowHandle;
+        return scope switch
+        {
+            ElementSearchScope.WindowAndPopups when _popups != null =>
+                _popups.GetPopupList(handle) is { } list && list.ForReading(query.IncludeHostPopups) is var (popups, excluded)
+                    ? ([.. popups.Select(p => p.Handle), handle], excluded, list.Truncated ? 1 : 0)
+                    : ([handle], 0, 0),
+            ElementSearchScope.Desktop when _popups != null =>
+                _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
+            _ => ([handle], 0, 0)
+        };
+    }
 
     /// <summary>The search, on the worker thread.</summary>
     private FindElementsResult Find(
@@ -296,7 +316,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
             var generation = _registry.NextGeneration();
             started.Generation = generation;
-            var (windows, excluded, overLimit) = WindowsOf(handle, scope);
+            var (windows, excluded, overLimit) = WindowsOf(query, scope);
             var compiled = criteria.Compile();
             var controlTypesOnServer = false;
             for (var index = 0; index < windows.Count; index++)

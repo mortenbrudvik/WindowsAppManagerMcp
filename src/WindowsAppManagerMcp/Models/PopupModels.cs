@@ -24,7 +24,8 @@ public enum ElementSearchScope
 
     /// <summary>
     /// Every visible top-level window on the desktop, in z-order, at most <see cref="Services.PopupService.DesktopWindowLimit"/>,
-    /// without the windows the target policy denies and the agent's own host windows (unless named as the window).
+    /// without the windows the target policy denies (a named one is refused) and the agent's own host windows (unless named
+    /// as the window).
     /// </summary>
     [JsonStringEnumMemberName("desktop")]
     Desktop
@@ -83,6 +84,10 @@ public enum PopupRelation
 /// <param name="Bounds">Its visible frame in physical screen pixels.</param>
 /// <param name="IsBlocking">True when the target is disabled and this is its enabled popup (GW_ENABLEDPOPUP): the modal
 /// dialog that takes the target's input.</param>
+/// <param name="IsAgentHost">Set by <see cref="Services.Interfaces.IPopupService.GetPopupList"/> only: the popup is a window of
+/// the agent's host (its terminal or editor, or a window one of them owns).</param>
+/// <param name="IsDeniedByPolicy">Set by <see cref="Services.Interfaces.IPopupService.GetPopupList"/> only: the target policy
+/// denies the popup's process (for a UWP frame, its app's), or cannot check it.</param>
 public sealed record PopupWindow(
     nint Handle,
     PopupKind Kind,
@@ -92,7 +97,9 @@ public sealed record PopupWindow(
     nint OwnerHandle,
     PopupRelation Relation,
     BoundsDto? Bounds,
-    bool IsBlocking);
+    bool IsBlocking,
+    bool IsAgentHost = false,
+    bool IsDeniedByPolicy = false);
 
 /// <summary>The windows a desktop-scope search covers (<see cref="Services.Interfaces.IPopupService.GetDesktopWindows"/>).</summary>
 /// <param name="Windows">The windows to search, in z-order (front first); the named window first when there is one.</param>
@@ -104,7 +111,19 @@ public sealed record DesktopWindowSet(IReadOnlyList<nint> Windows, int Excluded,
 /// <summary>The open popups of a window (<see cref="Services.Interfaces.IPopupService.GetPopupList"/>).</summary>
 /// <param name="Popups">The popups, front first, at most <see cref="Services.PopupService.MaxPopups"/>.</param>
 /// <param name="Truncated">More popups were open; the ones furthest back are left out.</param>
-public sealed record PopupList(IReadOnlyList<PopupWindow> Popups, bool Truncated);
+public sealed record PopupList(IReadOnlyList<PopupWindow> Popups, bool Truncated)
+{
+    /// <summary>
+    /// The popups a read covers, and how many it leaves out: a popup is never a window the caller named, so one of an app
+    /// the target policy denies is left out, and so is one of the agent's host unless <paramref name="includeHost"/> (an
+    /// action's search, which the input guard checks per element), as a desktop search leaves such windows out.
+    /// </summary>
+    public (IReadOnlyList<PopupWindow> Popups, int Excluded) ForReading(bool includeHost = false)
+    {
+        var read = Popups.Where(p => !p.IsDeniedByPolicy && (includeHost || !p.IsAgentHost)).ToList();
+        return (read, Popups.Count - read.Count);
+    }
+}
 
 /// <summary>An open popup of the target app, as get_active_popups returns it (roadmap M3.5).</summary>
 /// <param name="Ref">The ref of the popup window's own element, for find_ui_elements withinRef and the element tools; null
@@ -132,6 +151,8 @@ public sealed record ActivePopup(
 /// <param name="IsForeground">True when that window, or one of its popups, is in the foreground.</param>
 /// <param name="Popups">The open popups, front first (z-order).</param>
 /// <param name="Truncated">True when more popups were open than one call returns (<see cref="Services.PopupService.MaxPopups"/>).</param>
+/// <param name="PopupsExcluded">Open popups left out because they are windows of the agent's own host or of an app the target
+/// policy denies; left out when none was.</param>
 public sealed record ActivePopupsResult(
     bool Success,
     long WindowHandle,
@@ -141,4 +162,5 @@ public sealed record ActivePopupsResult(
     double ElapsedMilliseconds,
     bool Truncated = false,
     string? Error = null,
-    UIElementErrorCode ErrorCode = UIElementErrorCode.None);
+    UIElementErrorCode ErrorCode = UIElementErrorCode.None,
+    int? PopupsExcluded = null);

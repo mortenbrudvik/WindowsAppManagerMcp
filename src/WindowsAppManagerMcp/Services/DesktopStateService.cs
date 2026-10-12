@@ -52,7 +52,7 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <param name="elements">get_ui_elements' walk (refs, hung-window precheck, warm-up).</param>
     /// <param name="popups">The target's popups and find_ui_elements' default scope.</param>
     /// <param name="screenshots">capture_window's capture (captureId).</param>
-    /// <param name="policy">The user's target policy: never a capture of a denied window, never an unasked read of one.</param>
+    /// <param name="policy">The user's target policy: never a read or a capture of a denied window, named or not.</param>
     /// <param name="toolsets">The tools the server serves; the capture follows capture_window, and the observation other tools
     /// return follows get_desktop_state. Null: every tool.</param>
     public DesktopStateService(
@@ -126,11 +126,12 @@ public sealed class DesktopStateService : IDesktopStateService
             errors.Add(refusal);
         }
 
-        // Keyboard focus is in the window in front: when that window is not read unasked, neither is its focus
+        // Keyboard focus is in the window in front: when that window is not read (the agent's host unless it was named, an app
+        // the user's policy denies), neither is its focus. Checked before the read, so neither is warmed up or read at all
         var readFocus = include.Contains(DesktopStateSection.Focus);
-        if (readFocus && target.Refusal is { ErrorCode: nameof(InputErrorCode.TargetIsAgentHost) or nameof(InputErrorCode.TargetDeniedByPolicy) } skipped)
+        if (readFocus && ForegroundRefusal(foreground, request.Window) is { } skipped)
         {
-            errors.Add(FocusError(skipped.ErrorCode, "the window in front"));
+            errors.Add(FocusError(skipped, "the window in front"));
             readFocus = false;
         }
 
@@ -195,15 +196,17 @@ public sealed class DesktopStateService : IDesktopStateService
             ? FocusOf(focused, request.Window, foreground, errors)
             : null;
 
-        var popups = Collect(popupsTask, "popups", timeoutMs, errors) is { } popupResult
-            ? PopupsOf(popupResult, errors)
-            : null;
+        var popupResult = Collect(popupsTask, "popups", timeoutMs, errors);
+        var popups = popupResult is null ? null : PopupsOf(popupResult, errors);
 
         var walk = Collect(elementsTask, "elements", timeoutMs, errors);
         if (walk?.Error is { } walkError)
         {
             errors.Add(walkError);
         }
+
+        // The same popups are left out of both sections; either may not have been read
+        var popupsExcluded = Math.Max(popupResult?.PopupsExcluded ?? 0, walk?.PopupsExcluded ?? 0);
 
         EncodedImage? image = null;
         ScreenshotResult? screenshot = null;
@@ -236,18 +239,34 @@ public sealed class DesktopStateService : IDesktopStateService
             Elements: walk?.Elements,
             Screenshot: screenshot,
             Errors: errors.Count == 0 ? null : Ordered(errors),
-            ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1));
+            ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1),
+            PopupsExcluded: popupsExcluded > 0 ? popupsExcluded : null);
         return new DesktopStateSnapshot(state, image);
     }
 
-    /// <summary>The window to read: the one named, else the window in front unless it is the agent's host or a denied app.</summary>
+    /// <summary>
+    /// The window to read: the one named unless the user's policy denies it, else the window in front unless it is the agent's
+    /// host or a denied app.
+    /// </summary>
     private Target ChooseTarget(nint? named, WindowInfo? foreground)
     {
         if (named is { } window)
         {
-            return _windows.IsValidWindow(window)
-                ? new Target(window, Read(() => _windows.GetWindowInfo(window))?.Title, null)
-                : new Target(window, null, null, Invalid: true);
+            if (!_windows.IsValidWindow(window))
+            {
+                return new Target(window, null, null, Invalid: true);
+            }
+
+            // Named or not, a window of an app the user denies is not read, as get_ui_elements and capture_window refuse it
+            var info = Read(() => _windows.GetWindowInfo(window));
+            if (info != null && _policy.Evaluate(info) is { Allowed: false } denied)
+            {
+                return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetDeniedByPolicy),
+                    $"The window named ('{info.Title}', {info.ProcessName}) is refused by the user's target policy: {denied.Reason}. " +
+                    "Its elements, popups and capture were not read; no argument changes that."));
+            }
+
+            return new Target(window, info?.Title, null);
         }
 
         if (foreground is null)
@@ -276,6 +295,26 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     private static DesktopStateError TargetError(string code, string message) => new("target", code, message);
+
+    /// <summary>
+    /// Why the window in front, and so the keyboard focus in it, is not read: TargetIsAgentHost for the agent's host unless it
+    /// is the window named, TargetDeniedByPolicy for an app the user's policy denies. Null when it is read, and when nothing
+    /// is in front (the focus read then says where the focus is, and <see cref="FocusRefusal"/> checks that window).
+    /// </summary>
+    private string? ForegroundRefusal(WindowInfo? foreground, nint? named)
+    {
+        if (foreground is null)
+        {
+            return null;
+        }
+
+        if (foreground.IsAgentHost && foreground.Handle != named)
+        {
+            return nameof(InputErrorCode.TargetIsAgentHost);
+        }
+
+        return _policy.Evaluate(foreground) is { Allowed: false } ? nameof(InputErrorCode.TargetDeniedByPolicy) : null;
+    }
 
     /// <summary>Why the capture is not made: captures are turned off, or the policy denies the window (as capture_window).</summary>
     private DesktopStateError? CaptureRefusal(nint handle)
@@ -312,16 +351,18 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     /// <summary>
-    /// The target's elements: with scope windowAndPopups, first each open popup (no tooltip), front first, within half of
-    /// maxElements, each under a header line; then the window with what is left.
+    /// The target's elements: with scope windowAndPopups, first each open popup (no tooltip, none of the agent's host or of an
+    /// app the policy denies: they are counted), front first, within half of maxElements, each under a header line; then the
+    /// window with what is left.
     /// </summary>
     private async Task<ElementsWalk> WalkAsync(
         nint window, string? title, DesktopStateRequest request, TimeSpan budget, CancellationToken stop)
     {
         var scope = request.Scope ?? (_popups.IsInForeground(window) ? ElementSearchScope.WindowAndPopups : ElementSearchScope.Window);
-        var popups = scope == ElementSearchScope.WindowAndPopups
-            ? (_popups.GetPopupList(window)?.Popups ?? []).Where(p => p.Kind != PopupKind.Tooltip).ToList()
-            : [];
+        var (readable, excluded) = scope == ElementSearchScope.WindowAndPopups && _popups.GetPopupList(window) is { } list
+            ? list.ForReading()
+            : ([], 0);
+        var popups = readable.Where(p => p.Kind != PopupKind.Tooltip).ToList();
 
         var warmupBudget = AccessibilityWarmup.BudgetFor(budget);
         var text = new StringBuilder();
@@ -375,7 +416,7 @@ public sealed class DesktopStateService : IDesktopStateService
         var remaining = request.MaxElements - count;
         if (remaining <= 0)
         {
-            return new ElementsWalk(Elements(text, count, true, UIElementTruncationReason.MaxElements, scope, null), null);
+            return new ElementsWalk(Elements(text, count, true, UIElementTruncationReason.MaxElements, scope, null), null, excluded);
         }
 
         var result = await _elements.GetUIElementsAsync(window, MaxDepth, Filter(request, remaining, warmupBudget), null, stop)
@@ -385,7 +426,7 @@ public sealed class DesktopStateService : IDesktopStateService
             var error = new DesktopStateError("elements", result.ErrorCode.ToString(),
                 result.Error ?? "The window's elements could not be read.");
             return new ElementsWalk(count > 0 ? Elements(text, count, true, reason ?? UIElementTruncationReason.ElementsSkipped, scope, null) : null,
-                error);
+                error, excluded);
         }
 
         if (result.Elements is { Count: > 0 } windowElements)
@@ -405,7 +446,7 @@ public sealed class DesktopStateService : IDesktopStateService
             reason = result.TruncationReason ?? reason;
         }
 
-        return new ElementsWalk(Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup), null);
+        return new ElementsWalk(Elements(text, count, truncated, truncated ? reason : null, scope, result.AccessibilityWarmup), null, excluded);
     }
 
     private static UIElementFilter Filter(DesktopStateRequest request, int maxElements, TimeSpan warmupBudget) => new(
@@ -452,27 +493,27 @@ public sealed class DesktopStateService : IDesktopStateService
     }
 
     /// <summary>
-    /// Why the focused element is left out: its window (the window in front when the read does not say) was not named and is
-    /// the agent's host or a window the policy denies, or it cannot be checked. A window that was named is read, as its
+    /// Why the focused element is left out, checked again after the read (the focus can move, or be in a window other than the
+    /// one in front): its window (the window in front when the read does not say) is a window the policy denies, named or
+    /// not; it was not named and is the agent's host, or cannot be checked. The agent's host that was named is read, as its
     /// elements are.
     /// </summary>
     private DesktopStateError? FocusRefusal(FocusedElementResult focused, nint? named, WindowInfo? foreground)
     {
         var window = focused.WindowHandle is { } known and not 0 ? (nint)known : foreground?.Handle ?? nint.Zero;
-        if (window != nint.Zero && window == named)
-        {
-            return null;
-        }
-
+        var isNamed = window != nint.Zero && window == named;
         var info = window == nint.Zero ? null : window == foreground?.Handle ? foreground : Read(() => _windows.GetWindowInfo(window));
         if (info is null)
         {
-            return new DesktopStateError("focus", nameof(UIElementErrorCode.OperationException),
-                "The window that holds the keyboard focus could not be read, so it could not be checked against the user's " +
-                "target policy, and the focused element was left out. Read it with get_focused_element.");
+            // The window named was checked against the policy before anything was read
+            return isNamed
+                ? null
+                : new DesktopStateError("focus", nameof(UIElementErrorCode.OperationException),
+                    "The window that holds the keyboard focus could not be read, so it could not be checked against the user's " +
+                    "target policy, and the focused element was left out. Read it with get_focused_element.");
         }
 
-        if (info.IsAgentHost)
+        if (info.IsAgentHost && !isNamed)
         {
             return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})");
         }
@@ -588,5 +629,6 @@ public sealed class DesktopStateService : IDesktopStateService
 
     private sealed record Target(nint Handle, string? Title, DesktopStateError? Refusal, bool Invalid = false);
 
-    private sealed record ElementsWalk(DesktopElements? Elements, DesktopStateError? Error);
+    /// <param name="PopupsExcluded">The popups the walk left out: of the agent's host, or of an app the policy denies.</param>
+    private sealed record ElementsWalk(DesktopElements? Elements, DesktopStateError? Error, int PopupsExcluded = 0);
 }

@@ -224,7 +224,9 @@ public partial class ElementActionTools
             Scope: scope)
         {
             // realize (roadmap M3.10): items the list has not realized are found too, through its ItemContainer pattern
-            SearchVirtualized = action == ElementActionKind.Realize && FitsVirtualizedSearch(name, nameMatch, automationId)
+            SearchVirtualized = action == ElementActionKind.Realize && FitsVirtualizedSearch(name, nameMatch, automationId),
+            // The input guard checks the found element's window, and allowHostTarget may name the host's own popups
+            IncludeHostPopups = true
         };
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var found = await FindOneAsync(query, action, cancellationToken).ConfigureAwait(false);
