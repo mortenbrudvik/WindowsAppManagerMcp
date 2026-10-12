@@ -25,7 +25,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// result, only the numbers and booleans at its top level, its errorCode, get_clipboard's origin, the receiving window and its items (a batch's
 /// results, close_application's windows, apply_layout's placements: handle, title, process, a launch's program redacted,
 /// success, status and errorCode) are kept; never its text. A window a tool learns of only while it runs (a selector's,
-/// or close_application's) is named by the title and process the tool noted before acting on it (<see cref="AuditScope"/>).
+/// close_application's, or the dialog respond_to_dialog and file_dialog answered, which is their target) is named by the
+/// title and process the tool noted before acting on it (<see cref="AuditScope"/>).
 /// </remarks>
 public static class AuditRecord
 {
@@ -69,6 +70,12 @@ public static class AuditRecord
     private const string LaunchStatusProperty = "launchStatus";
 
     private const string ElementActionTool = "element_action";
+
+    /// <summary>The tools that answer a dialog (roadmap M3.5, M3.14): their line's target is the dialog, <see cref="DialogHandleProperty"/>.</summary>
+    private static readonly HashSet<string> DialogTools = new(StringComparer.Ordinal) { "respond_to_dialog", "file_dialog" };
+
+    /// <summary>The result property that names the dialog respond_to_dialog or file_dialog found.</summary>
+    private const string DialogHandleProperty = "dialogHandle";
 
     /// <summary>element_action's result properties kept as identifiers: its method and status.</summary>
     private static readonly string[] ElementActionIdentifiers = ["method", "status"];
@@ -333,6 +340,14 @@ public static class AuditRecord
 
     private static AuditTarget? Target(AuditCall call, JsonObject? body)
     {
+        // The dialog respond_to_dialog or file_dialog found (their results name it dialogHandle; 0 when none was found) is the
+        // target, also when the arguments named its owner, a selector or no window at all: the dialog services note it
+        // before they act on it (AuditScope), so its title and process are known
+        if (body != null && DialogTools.Contains(call.Tool) && Long(body, DialogHandleProperty) is { } dialog and not 0)
+        {
+            return Before(call, dialog) ?? new AuditTarget(Handle: dialog);
+        }
+
         // What the arguments aimed at, read before the call: a window, else a process, else a program to launch
         AuditTarget? target = null;
         var handles = WindowHandles(call.Arguments);

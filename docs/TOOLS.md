@@ -93,7 +93,7 @@ to do anything for it, and cannot turn it off.
 - **Kept:** 7 days. The first line a server writes on a day deletes the day files that are 7 or more days old. Only
   files named like a day's file are deleted; nothing else in the folder is touched.
 - **Audited tools:** click, right_click, double_click, mouse_move, type_text, send_keys, release_all_input,
-  scroll, element_action, close_window, close_windows_batch, close_application, kill_process, launch_application,
+  scroll, element_action, respond_to_dialog, file_dialog, close_window, close_windows_batch, close_application, kill_process, launch_application,
   launch_applications_batch, launch_browser_with_debug, apply_layout, save_layout, delete_layout, set_clipboard and
   get_clipboard (the one read that can return the user's own clipboard; its line keeps `format` and the result's
   `origin` and `length`, never the content).
@@ -138,7 +138,7 @@ Each line is one JSON object:
 | `outcome` | `ok`; `error` (the result went out with `isError`; `errorCode` says why); `cancelled` (the client cancelled the call); `protocolError` (nothing ran, for example a tool that is turned off) |
 | `errorCode` | The result's `errorCode`, such as `TargetOccluded`, `PausedByUser` or `InvalidArguments` |
 | `durationMs` | How long the call took, including the wait for other input and window calls and for the user's answer to a confirmation |
-| `target` | What the arguments named: the window (`handle`, with its `title`, `process` and `processId` read before the call, so a closed window is still named; for a [window selector](#window-selectors), the window it resolved to, as the tool noted it before acting), the process of a kill, or the `executable` of a launch with the `processId` and window `handle` it started, and its `placement`: what was asked for (`snap` and `state` only when they are valid values, `monitorIndex`, `bounds`, `focus`) and what it did (`finalBounds`, `finalState`, `focused`, `reapplied`, `errorCode`) |
+| `target` | What the arguments named: the window (`handle`, with its `title`, `process` and `processId` read before the call, so a closed window is still named; for a [window selector](#window-selectors), the window it resolved to, as the tool noted it before acting; for [respond_to_dialog](#respond_to_dialog) and [file_dialog](#file_dialog), the dialog they found and answered, also when the call named its owner window, a selector or no window), the process of a kill, or the `executable` of a launch with the `processId` and window `handle` it started, and its `placement`: what was asked for (`snap` and `state` only when they are valid values, `monitorIndex`, `bounds`, `focus`) and what it did (`finalBounds`, `finalState`, `focused`, `reapplied`, `errorCode`) |
 | `receivingWindow` | For input: the window the input went to, or would have gone to when it was refused |
 | `items` | For a batch: each window or application, in request order, with its `success`, `errorCode` and, for closes, its `status` (`closed`, `promptShown`, `notSent`, ...); for launches, `status` is the item's `launchStatus` and `placement` its placement, as for `target`. For close_application: each window it was asked to close, with its `title`, `process`, `status` and `errorCode`. For apply_layout: each placement's window, `status` (`applied`, `notFound`, ...), `launched` and the program its launch command ran (as `executable`, cut like a launch's) |
 | `args` | The arguments, summarized as above |
@@ -5888,6 +5888,11 @@ Since 1.14.0 (roadmap M3):
   `"File>Save As"`, with `handle` or `window` alone allowed), and its result a `steps` field for it. New UI element
   errorCodes `DialogNotFound` (21), `DialogNotCompleted` (22) and `FileExists` (23, the same name as the captures'
   code).
+- **Audit log lines of the dialogs and element names (M3 review).** The [audit log](#audit-log) line of
+  respond_to_dialog and file_dialog names the dialog they answered as its `target` (handle, title and process), also
+  when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the
+  arguments. element_action's `name` criterion is recorded as `nameLength`, as file_dialog's path is; the `name` of
+  apply_layout, save_layout and delete_layout is still kept.
 
 ## Error Codes
 
