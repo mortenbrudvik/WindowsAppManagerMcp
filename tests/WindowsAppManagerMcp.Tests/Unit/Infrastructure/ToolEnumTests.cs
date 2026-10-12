@@ -31,7 +31,9 @@ public class ToolEnumTests
             typeof(CaptureFormat), typeof(CaptureOutputMode), typeof(DebugBrowser), typeof(ClipboardFormat),
             typeof(WindowSort), typeof(WindowDetail), typeof(UIElementFormat), typeof(WindowWaitCondition), typeof(LaunchWindowState),
             typeof(ElementNameMatch), typeof(ElementDetail), typeof(CoordinateSpace), typeof(ElementSearchScope),
-            typeof(ElementWaitCondition)
+            typeof(ElementWaitCondition),
+            typeof(ElementActionKind), typeof(ElementActionFallback), typeof(ElementValueMode), typeof(ElementScrollDirection),
+            typeof(ElementScrollAmount)
         });
     }
 

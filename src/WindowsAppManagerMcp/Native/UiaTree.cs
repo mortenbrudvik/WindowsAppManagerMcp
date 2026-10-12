@@ -570,6 +570,14 @@ public sealed class UiaTree : IUiaTree
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>The managed client has no AutoSetFocus switch; its pattern actions may move focus as the provider does.</remarks>
+    public void SetFocus(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        Translate(element.SetFocus);
+    }
+
     /// <summary>Runs an action of a pattern and reports a vanished element as <see cref="UiaElementUnavailableException"/>.</summary>
     private static void Translate(Action act) => Translate<object?>(() =>
     {

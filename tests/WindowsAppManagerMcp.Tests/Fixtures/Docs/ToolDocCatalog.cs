@@ -80,6 +80,7 @@ public static class ToolDocCatalog
         [
             new("get_ui_elements", "Get UI element tree", "handle", "maxDepth", "controlTypes", "timeoutMs"),
             new("find_ui_elements", "Find elements by name, automationId, controlType or className; refs, click points", "window (or handle)", "name", "nameMatch", "automationId", "controlType", "withinRef", "scope", "detail"),
+            new("element_action", "Act on an element through UI Automation patterns; state before and after", "action", "ref (or window + criteria)", "value", "mode", "direction", "fallback"),
             new("get_focused_element", "Element with keyboard focus, its window and process", "timeoutMs"),
             new("get_element_at_point", "Element at a screen point, its ancestors and window", "x", "y", "ancestors"),
             new("get_active_popups", "Open menus, dropdowns, flyouts and dialogs of an app, with refs", "window (or handle)", "timeoutMs"),

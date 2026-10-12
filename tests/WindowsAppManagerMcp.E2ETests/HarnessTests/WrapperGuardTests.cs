@@ -191,9 +191,10 @@ public class WrapperGuardTests
     }
 
     [Fact]
-    public void Guards_ThePatternObjectsTheUiaTreeHandsOut_AndRefusesTheirActionsInEveryTier()
+    public void Guards_ThePatternObjectsTheUiaTreeHandsOut_AndRefusesTheirActions_WhenTheElementCannotBeIdentified()
     {
-        // Arrange - the widened IUiaTree (roadmap M3.2) hands out control patterns through a generic method
+        // Arrange - the widened IUiaTree (roadmap M3.2) hands out control patterns through a generic method; this tree
+        // cannot say which process the element belongs to (ReadIdentity is not set up), so even the input tier refuses
         var node = new Mock<IUiaNode>().Object;
         var value = new Mock<IUiaValuePattern>(MockBehavior.Strict);
         value.SetupGet(v => v.IsReadOnly).Returns(false);
@@ -216,6 +217,74 @@ public class WrapperGuardTests
         }
 
         value.Verify(v => v.SetValue(It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(FixturePid, true)]
+    [InlineData(OtherPid, false)]
+    public void FixtureOnlyGuard_AllowsAPatternAction_OnlyOnAnElementOfTheFixture(int elementProcess, bool allowed)
+    {
+        // Arrange - element_action (roadmap M3.6) invokes through the pattern the guarded tree handed out
+        var node = new Mock<IUiaNode>().Object;
+        var invoke = new Mock<IUiaInvokePattern>();
+        var tree = new Mock<IUiaTree>(MockBehavior.Strict);
+        tree.Setup(t => t.GetPattern<IUiaInvokePattern>(node)).Returns(invoke.Object);
+        tree.Setup(t => t.ReadIdentity(node)).Returns(new UiaNodeIdentity("Button", "WPF", elementProcess, 0, false));
+        var guarded = WrapperGuard.Create(tree.Object, FixtureOnly(new FakeDesktop()));
+        var pattern = guarded.GetPattern<IUiaInvokePattern>(node)!;
+
+        // Act
+        var act = () => pattern.Invoke();
+
+        // Assert
+        if (allowed)
+        {
+            act.Should().NotThrow();
+            invoke.Verify(i => i.Invoke(), Times.Once);
+        }
+        else
+        {
+            act.Should().Throw<E2EGuardException>().WithMessage($"*process {OtherPid} is not the fixture*");
+            invoke.Verify(i => i.Invoke(), Times.Never);
+        }
+    }
+
+    [Theory]
+    [InlineData(FixturePid, true)]
+    [InlineData(OtherPid, false)]
+    public void FixtureOnlyGuard_AllowsSetFocus_OnlyOnAnElementOfTheFixture(int elementProcess, bool allowed)
+    {
+        // Arrange
+        var node = new Mock<IUiaNode>().Object;
+        var tree = new Mock<IUiaTree>();
+        tree.Setup(t => t.ReadIdentity(node)).Returns(new UiaNodeIdentity("TextBox", "WPF", elementProcess, 0, false));
+        var guarded = WrapperGuard.Create(tree.Object, FixtureOnly(new FakeDesktop()));
+
+        // Act
+        var act = () => guarded.SetFocus(node);
+
+        // Assert
+        if (allowed)
+        {
+            act.Should().NotThrow();
+        }
+        else
+        {
+            act.Should().Throw<E2EGuardException>();
+        }
+
+        tree.Verify(t => t.SetFocus(node), allowed ? Times.Once() : Times.Never());
+    }
+
+    [Fact]
+    public void ReadOnlyGuard_RefusesSetFocus()
+    {
+        var node = new Mock<IUiaNode>().Object;
+        var tree = new Mock<IUiaTree>();
+        var guarded = WrapperGuard.Create(tree.Object, new ReadOnlyCallPolicy());
+
+        guarded.Invoking(t => t.SetFocus(node)).Should().Throw<E2EGuardException>().WithMessage("*UiaAction*");
+        tree.Verify(t => t.SetFocus(It.IsAny<IUiaNode>()), Times.Never);
     }
 
     #endregion

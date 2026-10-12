@@ -40,7 +40,9 @@ public static class AuditRecord
     /// </summary>
     public static IReadOnlySet<string> NamedStringArguments { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position", "format", "space"
+        "processName", "expectedProcessName", "name", "matchBy", "browser", "executable", "state", "position", "format", "space",
+        // element_action (roadmap M3.6): the element's ref and fixed values; its value is recorded as valueLength
+        "ref", "action", "mode", "direction", "amount", "fallback"
     };
 
     /// <summary>The result property, kept as an identifier, that says whose clipboard content get_clipboard returned.</summary>
@@ -48,6 +50,11 @@ public static class AuditRecord
 
     /// <summary>The result property, kept as an identifier, that says what a launch led to.</summary>
     private const string LaunchStatusProperty = "launchStatus";
+
+    private const string ElementActionTool = "element_action";
+
+    /// <summary>element_action's result properties kept as identifiers: its method and status.</summary>
+    private static readonly string[] ElementActionIdentifiers = ["method", "status"];
 
     /// <summary>The key under which the arguments a tool does not declare are counted.</summary>
     public const string UnknownArgumentsCount = "unknownArgumentsCount";
@@ -88,7 +95,7 @@ public static class AuditRecord
                 : null,
             items,
             SummarizeArguments(call.Arguments, call.DeclaredTypes),
-            body == null ? null : Scalars(body),
+            body == null ? null : Scalars(body, call.Tool),
             serverPid,
             call.RequestId);
     }
@@ -502,9 +509,22 @@ public static class AuditRecord
         Int(window, "processId"));
 
     /// <summary>The numbers and booleans at the top of the result, except success (the outcome says it). Null when none.</summary>
-    private static JsonObject? Scalars(JsonObject body)
+    private static JsonObject? Scalars(JsonObject body, string tool)
     {
         var scalars = new JsonObject();
+
+        // element_action (roadmap M3.6): how it acted (a pattern, or the mouse or keyboard path) and whether it left a dialog
+        // pending; fixed identifiers, never content
+        if (tool == ElementActionTool)
+        {
+            foreach (var property in ElementActionIdentifiers)
+            {
+                if (Identifier(body, property) is { } identifier)
+                {
+                    scalars[property] = identifier;
+                }
+            }
+        }
 
         // get_clipboard's origin (user, setClipboard, agentInput): whose clipboard content the agent read, never the content
         if (Identifier(body, ClipboardOriginProperty) is { } origin)

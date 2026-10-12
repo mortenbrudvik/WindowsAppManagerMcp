@@ -97,6 +97,11 @@ public static class ServiceRegistration
         services.AddSingleton<IElementReadService, ElementReadService>();
         // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above
         services.AddSingleton<IElementWaitService, ElementWaitService>();
+        // element_action (roadmap M3.6): pattern calls on threads of their own (a blocked Invoke never stops the reads of the
+        // dialog it opened), the application's new windows, and the action itself behind the input guard's target checks
+        services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
+        services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
+        services.AddSingleton<IElementActionService, ElementActionService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -190,6 +195,7 @@ public static class ServiceRegistration
         services.AddSingleton<PopupTools>();
         services.AddSingleton<ElementReadTools>();
         services.AddSingleton<ElementWaitTools>();
+        services.AddSingleton<ElementActionTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -262,6 +268,7 @@ public static class ServiceRegistration
             .WithServerTools<PopupTools>()
             .WithServerTools<ElementReadTools>()
             .WithServerTools<ElementWaitTools>()
+            .WithServerTools<ElementActionTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

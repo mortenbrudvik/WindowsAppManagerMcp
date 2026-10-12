@@ -318,6 +318,14 @@ public sealed class Uia3Tree : IUiaTree
         return pattern == null ? null : WrapPattern(typeof(TPattern), pattern) as TPattern;
     }
 
+    /// <inheritdoc />
+    public void SetFocus(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        Started();
+        UiaComErrors.Run(element.SetFocus);
+    }
+
     /// <summary>
     /// Creates the CUIAutomation8 client, one thread at a time, in the multithreaded apartment: the worker threads that
     /// use it are MTA threads, and a client created on an STA thread would belong to that thread's apartment.
@@ -370,10 +378,33 @@ public sealed class Uia3Tree : IUiaTree
                 var automation = _createClient();
                 automation.ConnectionTimeout = ConnectionTimeoutMs;
                 automation.TransactionTimeout = TransactionTimeoutMs;
+                TurnOffAutoSetFocus(automation);
                 _client = UiaComErrors.Run(() => new Client(automation));
             }
 
             return _client;
+        }
+    }
+
+    /// <summary>
+    /// Turns off IUIAutomation6.AutoSetFocus (on by default), so a pattern action (Invoke, Toggle, SetValue, ...) does not
+    /// first move keyboard focus to its element, which can bring a background window to the front and take the foreground
+    /// from the user (roadmap M3.6). Pattern actions are meant to work on background windows; element_action's focus action
+    /// and its keyboard path set focus on purpose, after verified activation. A client older than Windows 10 1809 has no
+    /// IUIAutomation6 and keeps its behaviour.
+    /// </summary>
+    private static void TurnOffAutoSetFocus(IUIAutomation2 automation)
+    {
+        if (automation is IUIAutomation6 six)
+        {
+            try
+            {
+                six.AutoSetFocus = 0;
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // Not supported by this client: pattern actions may move focus, as with the managed client
+            }
         }
     }
 

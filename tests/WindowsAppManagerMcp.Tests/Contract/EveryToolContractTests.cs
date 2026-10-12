@@ -59,6 +59,7 @@ public class EveryToolContractTests
             ["find_ui_elements"] = Args("""{ "handle": 1706796, "name": "Save", "controlType": "Button" }"""),
             ["read_element_text"] = Args("""{ "ref": "w4120035e57" }"""),
             ["read_table"] = Args("""{ "ref": "w4120035e61" }"""),
+            ["element_action"] = Args("""{ "ref": "w4120035e17", "action": "set_value", "value": "window layout presets" }"""),
             ["get_focused_element"] = Args("{}"),
             ["get_element_at_point"] = Args("""{ "x": 560, "y": 110 }"""),
             ["get_active_popups"] = Args("""{ "window": { "processName": "notepad" } }"""),

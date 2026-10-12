@@ -24,7 +24,8 @@ namespace WindowsAppManagerMcp.Infrastructure;
 public static class AuditLogToolFilter
 {
     /// <summary>
-    /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases), closes a
+    /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases) or acts on a UI
+    /// element through a UI Automation pattern (element_action, with its value's length only), closes a
     /// window, stops a process, starts a program, changes the windows or presets of a layout, or replaces the clipboard;
     /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
@@ -34,8 +35,8 @@ public static class AuditLogToolFilter
     /// </summary>
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        // Input
-        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
+        // Input, and actions on UI elements through UI Automation patterns (roadmap M3.6)
+        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input", "element_action",
         // Close and kill
         "close_window", "close_windows_batch", "close_application", "kill_process",
         // Launch

@@ -59,6 +59,9 @@ public sealed class ContractServices : IDisposable
     /// <summary>The popups of a window (roadmap M3.5): a context menu and a Save As dialog of Notepad.</summary>
     public Mock<IPopupService> Popups { get; } = new();
 
+    /// <summary>element_action's service (roadmap M3.6).</summary>
+    public Mock<IElementActionService> ElementActions { get; } = new();
+
     /// <summary>The element registry (roadmap M3.4): every ref belongs to Notepad's window unless a test arranges otherwise.</summary>
     public Mock<IElementRegistry> ElementRegistry { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
@@ -124,6 +127,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(ElementSearch.Object);
         services.AddSingleton(Popups.Object);
         services.AddSingleton(ElementReads.Object);
+        services.AddSingleton(ElementActions.Object);
         services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
@@ -354,6 +358,8 @@ public sealed class ContractServices : IDisposable
         ElementWait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WaitForElementResult(true, true, false, ElapsedMs: 480, Polls: 3, WindowHandle: TypicalDesktop.NotepadHandle,
                 Element: TypicalDesktop.FoundButtons[0], MatchCount: 1));
+        ElementActions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementActionRequest request, CancellationToken _) => TypicalDesktop.ElementActionDone(request));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -516,6 +522,11 @@ public sealed class ContractServices : IDisposable
                 Element: TypicalDesktop.FoundButtons[0] with { IsEnabled = false }, MatchCount: 1,
                 LastObservedState: "Button 'Save' (w4120035e9) is disabled", ErrorCode: "WaitTimedOut",
                 Error: "No element matching name 'Save' became enabled within 10000 ms (24 checks): Button 'Save' (w4120035e9) is disabled."));
+        ElementActions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementActionRequest request, CancellationToken _) => new ElementActionResult(
+                false, "set_value", request.Ref, TypicalDesktop.NotepadHandle,
+                Error: "Element ref is stale: its window closed. Find the element again with find_ui_elements.",
+                ErrorCode: nameof(UIElementErrorCode.ElementStale), ElapsedMilliseconds: 1.5));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

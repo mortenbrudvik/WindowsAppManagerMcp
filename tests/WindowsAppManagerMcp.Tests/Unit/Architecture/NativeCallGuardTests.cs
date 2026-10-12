@@ -405,6 +405,8 @@ public class NativeCallGuardTests
     [InlineData(typeof(PopupService))]
     [InlineData(typeof(ElementReadService))]
     [InlineData(typeof(ElementWaitService))]
+    [InlineData(typeof(ElementActionService))]
+    [InlineData(typeof(AppWindowProbe))]
     public void UiaTreeServices_ReadUiAutomationOnlyThroughIUiaTree(Type service)
     {
         // Act - any call into System.Windows.Automation or the COM client, reads included
