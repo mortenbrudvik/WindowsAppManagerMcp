@@ -256,13 +256,14 @@ public class ElementSearchScopeTests
     [Fact]
     public async Task Find_KeepsOneDeadlineForAllTheWindows()
     {
-        // Arrange - the menu's 60 items are one provider call, which takes longer than the whole timeout
+        // Arrange - the menu's 60 items are one provider call, which returns only once the whole timeout has passed (the
+        // deadline is the token the worker runs the search with)
         _tree.WithWindow(Menu, new FakeUiaNode("Menu", "Context").With(Enumerable.Range(0, 60)
             .Select(i => new FakeUiaNode("MenuItem", i == 7 ? "Delete" : $"Item {i}")).ToArray()));
-        _tree.OnFindAll = (_, _) => Thread.Sleep(250);
+        _tree.OnFindAll = (_, _) => _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
 
         // Act
-        var result = await CreateSut().FindAsync(new ElementQuery(Main, Name: "Delete", Timeout: TimeSpan.FromMilliseconds(100),
+        var result = await CreateSut().FindAsync(new ElementQuery(Main, Name: "Delete", Timeout: TimeSpan.FromMilliseconds(1000),
             Scope: ElementSearchScope.WindowAndPopups));
 
         // Assert - what the menu gave is returned; the window was not searched after the deadline

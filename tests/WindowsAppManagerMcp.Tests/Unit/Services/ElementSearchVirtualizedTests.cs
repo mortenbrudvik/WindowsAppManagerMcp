@@ -220,17 +220,17 @@ public class ElementSearchVirtualizedTests
     [Fact]
     public async Task TheDeadlinePassingBetweenProbes_IsTimeout()
     {
-        // Arrange - the first probe answers after the search's timeout has passed
+        // Arrange - the first probe answers only once the search's deadline (the token the worker runs it with) has passed
         _list.OnProbe = probe =>
         {
             if (probe == 1)
             {
-                Thread.Sleep(600);
+                _worker.LastToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(30));
             }
         };
 
         // Act
-        var result = await Find(name: "Duplicate", timeout: TimeSpan.FromMilliseconds(300));
+        var result = await Find(name: "Duplicate", timeout: TimeSpan.FromMilliseconds(1000));
 
         // Assert
         result.Success.Should().BeTrue(result.Error);
