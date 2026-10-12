@@ -13,6 +13,9 @@ public sealed partial class ElementActionService
     /// <summary>How many ancestors are looked through for the window an element of another process belongs to.</summary>
     private const int MaxWindowAncestors = 32;
 
+    /// <summary>The most toggles a toggle toward a state makes: a three-state check box reaches any state in two.</summary>
+    private const int MaxToggles = 2;
+
     /// <summary>The actions that act on an element the user can see and use: refused for a disabled or offscreen one.</summary>
     private static bool NeedsUsableElement(ElementActionKind action) => action is not (ElementActionKind.ScrollIntoView
         or ElementActionKind.Scroll or ElementActionKind.Realize or ElementActionKind.WindowClose
@@ -216,16 +219,24 @@ public sealed partial class ElementActionService
                 var poll = ToggleStatePoll;
                 plan.Act = () =>
                 {
-                    // Up to three toggles: a three-state check box can need two to reach a state. Each next toggle waits until
-                    // the state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report
-                    // the old state for a while, and toggling again on a stale read would click once too often.
+                    // Up to two toggles: a three-state check box reaches any state in two. Each next toggle waits until the
+                    // state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report the
+                    // old state for a while, and toggling again on a stale read would click once too often. A box that is back
+                    // in its state before has gone round without the goal (a two-state box asked for indeterminate): it is left
+                    // there, as it was, since any further toggle could only move it away again.
                     var current = before.ToggleState;
-                    for (var i = 0; i < 3; i++)
+                    for (var i = 0; i < MaxToggles; i++)
                     {
                         toggle.Toggle();
                         plan.Toggles++;
                         if (goal == null || ToggleStateAfter(toggle, current, wait, poll) is not { } now || now == goal)
                         {
+                            break;
+                        }
+
+                        if (now == before.ToggleState)
+                        {
+                            plan.CycledBack = true;
                             break;
                         }
 
@@ -962,6 +973,9 @@ public sealed partial class ElementActionService
 
         /// <summary>How many toggles the toggle loop made (set on the action's thread).</summary>
         public int Toggles { get; set; }
+
+        /// <summary>The toggle loop stopped because the element was back in its state before, without the goal.</summary>
+        public bool CycledBack { get; set; }
 
         public static Plan Pattern(ElementActionMethod method, Action act) => new(PlanKind.Pattern, method) { Act = act };
 

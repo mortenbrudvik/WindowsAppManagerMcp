@@ -462,6 +462,23 @@ public sealed class ElementActionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Toggle_ToAStateTheBoxDoesNotHave_StopsWhenItIsBackWhereItStarted()
+    {
+        // Arrange - a two-state box asked for indeterminate (its three-state parent in Windows Features looks the same)
+        var toggle = new FakeCyclingTogglePattern(UiaToggleState.Off);
+        var box = RefOf(CheckBox(toggle));
+
+        // Act
+        var result = await ActAsync(box, ElementActionKind.Toggle, "indeterminate");
+
+        // Assert - a third toggle could only turn it on again: the user's setting is left as it was
+        result.ErrorCode.Should().Be("ActionFailed");
+        toggle.Toggles.Should().Be(2);
+        result.After!.ToggleState.Should().Be(UiaToggleState.Off);
+        result.Error.Should().Contain("back to Off").And.Contain("as it was");
+    }
+
+    [Fact]
     public async Task Toggle_ToTheStateItIsIn_DoesNothing_AndIsVerified()
     {
         // Arrange

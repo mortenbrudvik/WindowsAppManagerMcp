@@ -90,7 +90,7 @@ public partial class ElementActionTools
         [Description(UIElementTools.CriteriaScopeDescription)]
         ElementSearchScope? scope = null,
         [Description("set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, " +
-                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. menu_path: the menu items " +
+                     "'on', 'off' or 'indeterminate' (up to two toggles); leave it out to toggle once. menu_path: the menu items " +
                      "separated by '>', e.g. 'File>Save As' (names ignore case and a trailing '...'). Logged as its length only; a password " +
                      "field's value is never read or returned.")]
         string? value = null,

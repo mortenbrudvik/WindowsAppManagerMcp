@@ -635,9 +635,13 @@ public sealed partial class ElementActionService : IElementActionService
         // A toggle asked for a state it did not reach did not do what was asked
         if (request.Action == ElementActionKind.Toggle && request.Value != null && verified == false)
         {
-            return call.Fail(nameof(UIElementErrorCode.ActionFailed),
-                $"The element did not reach toggle state {ParseToggleState(request.Value)} after {element.Plan.Toggles} toggles " +
-                $"(it is {after.State?.ToggleState?.ToString() ?? "unknown"}). It may cycle through other states or refuse this one.") with
+            var goal = ParseToggleState(request.Value);
+            return call.Fail(nameof(UIElementErrorCode.ActionFailed), element.Plan.CycledBack
+                ? $"The element came back to {element.Before.ToggleState} after {element.Plan.Toggles} toggles without reaching " +
+                  $"toggle state {goal}: it does not have that state (a two-state check box has no Indeterminate) or skips it. " +
+                  "It was not toggled again, so it is left as it was."
+                : $"The element did not reach toggle state {goal} after {element.Plan.Toggles} toggles " +
+                  $"(it is {after.State?.ToggleState?.ToString() ?? "unknown"}). It may cycle through other states or refuse this one.") with
             {
                 Method = method,
                 After = after.State,
