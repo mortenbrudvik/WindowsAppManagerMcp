@@ -96,7 +96,15 @@ public sealed partial class ElementReadService
         }
         catch (UiaElementUnavailableException ex)
         {
-            // The table itself is gone (a row or cell that disappears is read as far as it can be): the rows read may be stale
+            // The table itself is gone (a cell that disappears is null): the rows read before are still returned, said to be all
+            if (progress.RowCount > 0)
+            {
+                progress.Stop(ElementTableTruncation.Disappeared,
+                    $"The table disappeared while it was read ({ex.Message}). The rows read before are returned; its ref is stale, so " +
+                    "find the table again (find_ui_elements) before reading on.");
+                return progress.Result((long)handle, stopwatch);
+            }
+
             return Failure($"The table disappeared while it was read: {ex.Message}", UIElementErrorCode.ElementAccessFailed);
         }
         catch (TimeoutException ex)
@@ -160,7 +168,7 @@ public sealed partial class ElementReadService
             for (var column = 0; column < columns; column++)
             {
                 token.ThrowIfCancellationRequested();
-                var item = TryRead(() => grid.GetItem(row, column));
+                var item = ItemAt(grid, row, column);
                 cells[column] = item == null ? null : CellText(TryRead(() => _tree.ReadElement(item)), token);
             }
 
@@ -325,19 +333,16 @@ public sealed partial class ElementReadService
     }
 
     /// <summary>
-    /// A cell's text: its name, else its value (never a password field's: null), else the names of its few children. Null for
-    /// a cell that could not be read.
+    /// A cell's text: its value when it has the Value pattern (never a password field's: null), else its name, else the names
+    /// of its few children. The value comes first because the name of a cell that has one often describes the cell instead
+    /// of holding its text: "Amount Row 1, Not sorted." in a WinForms DataGridView, "Item: ..., Column Display Index: 0" in a
+    /// WPF DataGrid, the column's name in Explorer's details rows. Null for a cell that could not be read or disappeared.
     /// </summary>
     private string? CellText(UiaElement? cell, CancellationToken token)
     {
         if (cell == null)
         {
             return null;
-        }
-
-        if (cell.Properties.Name is { Length: > 0 } name)
-        {
-            return name;
         }
 
         if ((cell.Patterns & UiaPatterns.Value) != 0)
@@ -348,10 +353,26 @@ public sealed partial class ElementReadService
                 return null;
             }
 
-            if (TryValue(cell.Node) is { Length: > 0 } value)
+            string? value;
+            try
+            {
+                value = TryValue(cell.Node);
+            }
+            catch (UiaElementUnavailableException)
+            {
+                // The cell is gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that is gone)
+                return null;
+            }
+
+            if (value is { Length: > 0 })
             {
                 return value;
             }
+        }
+
+        if (cell.Properties.Name is { Length: > 0 } name)
+        {
+            return name;
         }
 
         var children = TryRead(() => _tree.GetChildren(cell.Node, token));
@@ -362,6 +383,22 @@ public sealed partial class ElementReadService
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// The grid's cell at a row and column, or null when it has none there or the provider fails; a grid that is gone throws
+    /// (<see cref="UiaElementUnavailableException"/>), which ends the read with the rows read before.
+    /// </summary>
+    private static IUiaNode? ItemAt(IUiaGridPattern grid, int row, int column)
+    {
+        try
+        {
+            return grid.GetItem(row, column);
+        }
+        catch (Exception ex) when (ex is not TimeoutException and not OperationCanceledException and not UiaElementUnavailableException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A read whose failure (other than a timeout, which ends the table read) gives null.</summary>
@@ -403,6 +440,7 @@ public sealed partial class ElementReadService
         private bool _cellsTruncated;
         private bool _rowsRemain;
         private ElementTableTruncation? _stop;
+        private string? _warning;
 
         public int StartRow { get; } = startRow;
 
@@ -488,11 +526,21 @@ public sealed partial class ElementReadService
             }
         }
 
-        public void Stop(ElementTableTruncation reason)
+        public int RowCount
+        {
+            get { lock (_gate) return _rows.Count; }
+        }
+
+        /// <summary>Ends the page for <paramref name="reason"/> (the first reason given counts), with what to tell the agent.</summary>
+        public void Stop(ElementTableTruncation reason, string? warning = null)
         {
             lock (_gate)
             {
-                _stop ??= reason;
+                if (_stop == null)
+                {
+                    _stop = reason;
+                    _warning = warning;
+                }
             }
         }
 
@@ -527,7 +575,8 @@ public sealed partial class ElementReadService
                     TruncationReason: reason,
                     NextStartRow: rowsRemain ? StartRow + _rows.Count : null,
                     CellsTruncated: _cellsTruncated ? true : null,
-                    AccessibilityWarmup: Warmup.Value);
+                    AccessibilityWarmup: Warmup.Value,
+                    Warning: _warning);
             }
         }
 

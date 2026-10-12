@@ -24,10 +24,11 @@ namespace WindowsAppManagerMcp.Services;
 /// Table pattern's column headers, else from a Header among the grid's first children. Otherwise a walk of the element's
 /// children: DataItem, ListItem and TreeItem children are the rows (read in one cached call when there are at most
 /// <see cref="CachedRowsLimit"/> children), a Header child or a first row of HeaderItems gives the headers, and a row's
-/// children are its cells (a row without children is one cell, its own text). A cell's text is its name, else its value
-/// (never a password field's), else the names of its children. The read stops at the timeout (whole rows only), at
-/// <see cref="MaxTableTextBytes"/> bytes of JSON, and between cells when the token is cancelled; the rows read until the
-/// worker abandons a stuck call are still returned.</para>
+/// children are its cells (a row without children is one cell, its own text). A cell's text is its value when it has the
+/// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
+/// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
+/// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself
+/// disappears, are still returned.</para>
 /// </remarks>
 public sealed partial class ElementReadService : IElementReadService
 {

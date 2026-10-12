@@ -44,9 +44,16 @@ public class ElementReadServiceTableTests
             .Select(r => (IReadOnlyList<FakeUiaNode?>)Enumerable.Range(0, columns).Select(c => (FakeUiaNode?)Cell($"r{r}c{c}")).ToList())
             .ToList();
 
+    /// <summary>
+    /// A WinForms grid (its GridPattern.GetItem only looks the cell up, so read_table asks for each cell by row and column) of
+    /// <paramref name="cells"/>, with a Table pattern of <paramref name="headers"/> when there are any.
+    /// </summary>
     private static FakeUiaNode Grid(IReadOnlyList<IReadOnlyList<FakeUiaNode?>> cells, params string[] headers)
     {
-        var grid = new FakeUiaNode("DataGrid", "Processes") { OtherPatterns = UiaPatterns.Grid | (headers.Length > 0 ? UiaPatterns.Table : 0) }
+        var grid = new FakeUiaNode("DataGrid", "Processes")
+            {
+                OtherPatterns = UiaPatterns.Grid | (headers.Length > 0 ? UiaPatterns.Table : 0), FrameworkId = "WinForm"
+            }
             .WithPattern<IUiaGridPattern>(new FakeGridPattern(cells));
         if (headers.Length > 0)
         {
@@ -87,7 +94,7 @@ public class ElementReadServiceTableTests
     {
         // Arrange
         var grid = new FakeGridPattern(Cells(10, 2));
-        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid }.WithPattern<IUiaGridPattern>(grid));
+        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid, FrameworkId = "WinForm" }.WithPattern<IUiaGridPattern>(grid));
 
         // Act
         var result = await Read(elementRef, startRow: 4, maxRows: 3);
@@ -133,8 +140,8 @@ public class ElementReadServiceTableTests
     [Fact]
     public async Task ReadTable_OfAGridWithoutATablePattern_TakesTheHeadersFromItsHeaderRow()
     {
-        // Arrange - a list view: its first child is a Header with a HeaderItem per column
-        var list = new FakeUiaNode("List", "Items View") { OtherPatterns = UiaPatterns.Grid }
+        // Arrange - a Win32 list view: its first child is a Header with a HeaderItem per column
+        var list = new FakeUiaNode("List", "Items View") { OtherPatterns = UiaPatterns.Grid, FrameworkId = "Win32" }
             .WithPattern<IUiaGridPattern>(new FakeGridPattern(Cells(2, 2)))
             .With(new FakeUiaNode("Header").With(new FakeUiaNode("HeaderItem", "Name"), new FakeUiaNode("HeaderItem", "Size")));
         var elementRef = Add(list);
@@ -167,6 +174,158 @@ public class ElementReadServiceTableTests
 
         // Assert
         result.Rows![0].Should().Equal("42", "Running", null);
+    }
+
+    [Fact]
+    public async Task ReadTable_ACellWithAValue_GivesTheValue_NotItsNameThatDescribesIt()
+    {
+        // Arrange - a WinForms DataGridView cell is named "<header> Row <n>, Not sorted." and holds its text as its value
+        var cells = new List<IReadOnlyList<FakeUiaNode?>>
+        {
+            new List<FakeUiaNode?> { new FakeUiaNode("DataItem", "Amount Row 1, Not sorted.") { ActionPatterns = ["Value"], Value = "42.50" } }
+        };
+        var elementRef = Add(Grid(cells, "Amount"));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows![0].Should().Equal("42.50");
+    }
+
+    [Fact]
+    public async Task ReadTable_ACellWithAnEmptyValue_GivesItsName_AndACellWithoutAValue_ItsName()
+    {
+        // Arrange - an HTML cell has no Value pattern; an empty value falls back to the name
+        var cells = new List<IReadOnlyList<FakeUiaNode?>>
+        {
+            new List<FakeUiaNode?> { Cell("Tea"), new FakeUiaNode("DataItem", "Pending") { ActionPatterns = ["Value"], Value = "" } }
+        };
+        var elementRef = Add(Grid(cells, "Item", "Status"));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows![0].Should().Equal("Tea", "Pending");
+    }
+
+    [Fact]
+    public async Task ReadTable_OfRowsWhoseCellsAreNamedForTheirColumn_GivesTheValues()
+    {
+        // Arrange - Explorer's details rows: each cell is an Edit named for its column, holding the text as its value
+        var list = new FakeUiaNode("List", "Items View").With(
+            new FakeUiaNode("ListItem", "a.doc").With(
+                new FakeUiaNode("Edit", "Name") { ActionPatterns = ["Value"], Value = "a.doc" },
+                new FakeUiaNode("Edit", "Date modified") { ActionPatterns = ["Value"], Value = "8/25/2006" }));
+        var elementRef = Add(list);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().ContainSingle().Which.Should().Equal("a.doc", "8/25/2006");
+    }
+
+    [Fact]
+    public async Task ReadTable_ACellOfAWpfRowNamedByItsItemAndColumn_GivesItsValue()
+    {
+        // Arrange - a WPF DataGrid cell without plain text is named "Item: <item>, Column Display Index: <n>"
+        var table = new FakeUiaNode("Table", "People").With(
+            new FakeUiaNode("DataItem", "Contoso.Person").With(
+                new FakeUiaNode("Custom", "Item: Contoso.Person, Column Display Index: 0") { ActionPatterns = ["Value"], Value = "Ann" }));
+        var elementRef = Add(table);
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Rows.Should().ContainSingle().Which.Should().Equal("Ann");
+    }
+
+    [Fact]
+    public async Task ReadTable_ANamedPasswordCell_IsNull_AndItsValueIsNeverRead()
+    {
+        var cells = new List<IReadOnlyList<FakeUiaNode?>>
+        {
+            new List<FakeUiaNode?> { new FakeUiaNode("Edit", "Password") { ActionPatterns = ["Value"], IsPassword = true, Value = "secret" } }
+        };
+        var elementRef = Add(Grid(cells, "Password"));
+
+        var result = await Read(elementRef);
+
+        result.Rows![0].Should().Equal([null]);
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:"));
+    }
+
+    [Fact]
+    public async Task ReadTable_ACellThatVanishesWhileItsValueIsRead_IsNull_AndTheRestIsRead()
+    {
+        // Arrange - the cell at row 1, column 0 is gone by the time its value is read
+        var cells = Cells(3, 2);
+        cells[1] = [new FakeUiaNode("DataItem") { ActionPatterns = ["Value"], ValueException = FakeUiaTree.Vanished() }, Cell("r1c1")];
+        var elementRef = Add(Grid(cells, "A", "B"));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Rows.Should().HaveCount(3);
+        result.Rows![1].Should().Equal(null, "r1c1");
+        result.Rows[2].Should().Equal("r2c0", "r2c1");
+    }
+
+    [Fact]
+    public async Task ReadTable_ACellOfARowThatVanishesWhileItsValueIsRead_IsNull()
+    {
+        var list = new FakeUiaNode("List", "Files").With(
+            new FakeUiaNode("ListItem", "a").With(
+                new FakeUiaNode("Edit", "Name") { ActionPatterns = ["Value"], ValueException = FakeUiaTree.Vanished() },
+                new FakeUiaNode("Text", "12 KB")),
+            new FakeUiaNode("ListItem", "b").With(new FakeUiaNode("Text", "b.txt"), new FakeUiaNode("Text", "3 KB")));
+        var elementRef = Add(list);
+
+        var result = await Read(elementRef);
+
+        result.Success.Should().BeTrue();
+        result.Rows.Should().HaveCount(2);
+        result.Rows![0].Should().Equal(null, "12 KB");
+        result.Rows[1].Should().Equal("b.txt", "3 KB");
+    }
+
+    [Fact]
+    public async Task ReadTable_WhenTheGridVanishesAfterRowsWereRead_ReturnsThoseRows_AndSaysTheTableIsGone()
+    {
+        // Arrange - the grid is gone from row 2 on
+        var grid = new FakeGridPattern(Cells(5, 2)) { ItemFailure = (row, _) => row >= 2 ? FakeUiaTree.Vanished("grid") : null };
+        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid, FrameworkId = "WinForm" }
+            .WithPattern<IUiaGridPattern>(grid));
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Rows.Should().HaveCount(2);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementTableTruncation.Disappeared);
+        result.NextStartRow.Should().Be(2);
+        result.Warning.Should().Contain("disappeared").And.Contain("find_ui_elements");
+    }
+
+    [Fact]
+    public async Task ReadTable_WhenTheGridVanishesBeforeARowWasRead_FailsWithElementAccessFailed()
+    {
+        var grid = new FakeGridPattern(Cells(5, 2)) { ItemFailure = (_, _) => FakeUiaTree.Vanished("grid") };
+        var elementRef = Add(new FakeUiaNode("DataGrid", "Rows") { OtherPatterns = UiaPatterns.Grid, FrameworkId = "WinForm" }
+            .WithPattern<IUiaGridPattern>(grid));
+
+        var result = await Read(elementRef);
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.ElementAccessFailed);
+        result.Rows.Should().BeNull();
     }
 
     [Fact]

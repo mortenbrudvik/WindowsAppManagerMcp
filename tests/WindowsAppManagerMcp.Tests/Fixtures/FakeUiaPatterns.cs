@@ -136,9 +136,17 @@ public sealed class FakeGridPattern(IReadOnlyList<IReadOnlyList<FakeUiaNode?>> c
     /// <summary>Every GetItem call, in order.</summary>
     public IReadOnlyList<(int Row, int Column)> Items => _items;
 
+    /// <summary>The exception GetItem throws for a row and column, or null to answer (as a grid that disappeared).</summary>
+    public Func<int, int, Exception?>? ItemFailure { get; set; }
+
     public IUiaNode? GetItem(int row, int column)
     {
         _items.Add((row, column));
+        if (ItemFailure?.Invoke(row, column) is { } failure)
+        {
+            throw failure;
+        }
+
         if (row < 0 || row >= cells.Count || column < 0 || column >= ColumnCount)
         {
             throw new ArgumentOutOfRangeException(nameof(row), "No such cell.");

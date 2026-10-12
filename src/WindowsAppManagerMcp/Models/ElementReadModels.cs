@@ -39,7 +39,13 @@ public enum ElementTableTruncation
     Timeout = 3,
 
     /// <summary>The page's text reached the size limit of one result; read on from <c>nextStartRow</c>.</summary>
-    Size = 4
+    Size = 4,
+
+    /// <summary>
+    /// The table disappeared while the page was read (its window closed, or the application replaced it); the rows read until
+    /// then are returned. Its ref is stale: find the table again before reading on.
+    /// </summary>
+    Disappeared = 5
 }
 
 /// <summary>
@@ -120,6 +126,8 @@ public sealed record ElementTextResult(
 /// <param name="Truncated">True when the result does not hold every row from <paramref name="StartRow"/> on, or every column.</param>
 /// <param name="NextStartRow">The startRow of the next page, when rows were left out.</param>
 /// <param name="CellsTruncated">True when a header or cell was cut to the cell length limit; left out otherwise.</param>
+/// <param name="Warning">What the agent should know about a page that is not the whole rest of the table and what to do
+/// (the table disappeared); left out otherwise.</param>
 public sealed record ElementTableResult(
     bool Success,
     string? Ref,
@@ -137,5 +145,6 @@ public sealed record ElementTableResult(
     bool? CellsTruncated = null,
     string? Error = null,
     UIElementErrorCode ErrorCode = UIElementErrorCode.None,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    string? Warning = null
 );
