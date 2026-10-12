@@ -64,8 +64,10 @@ public sealed class PopupService : IPopupService
 
     /// <param name="windows">The Win32 window reads.</param>
     /// <param name="processes">The process snapshot of the child-process rule; without it no child process counts.</param>
-    /// <param name="hostGuard">The agent's host windows, which a desktop search leaves out; without it none is left out.</param>
-    /// <param name="policy">The target policy, which a desktop search respects; without it no window is left out.</param>
+    /// <param name="hostGuard">The agent's host windows, which the reads of popups and of the desktop leave out; without it none
+    /// is left out.</param>
+    /// <param name="policy">The target policy, which the reads of popups and of the desktop respect; without it no window is
+    /// left out.</param>
     /// <param name="tree">get_active_popups' UI Automation reads.</param>
     /// <param name="worker">Runs them under a deadline.</param>
     /// <param name="registry">Gives each popup's element its ref.</param>
@@ -97,8 +99,16 @@ public sealed class PopupService : IPopupService
     public PopupList GetPopupList(nint window)
     {
         var popups = Popups(window, out var truncated);
-        return new PopupList(popups, truncated);
+        return new PopupList(Marked(popups, []), truncated);
     }
+
+    /// <summary>
+    /// The popups with <see cref="PopupWindow.IsAgentHost"/> and <see cref="PopupWindow.IsDeniedByPolicy"/> set: whether the
+    /// popup is a window of the agent's host, and whether the target policy denies its process (for a UWP frame, its app).
+    /// <paramref name="names"/> keeps the process names read.
+    /// </summary>
+    private List<PopupWindow> Marked(List<PopupWindow> popups, Dictionary<uint, string?> names) =>
+        popups.Select(p => p with { IsAgentHost = IsHost(p.Handle), IsDeniedByPolicy = !PolicyAllows(p.Handle, names) }).ToList();
 
     /// <param name="window">The window.</param>
     /// <param name="truncated">More than <see cref="MaxPopups"/> popups were open.</param>
@@ -336,7 +346,7 @@ public sealed class PopupService : IPopupService
                 continue;
             }
 
-            if (IsHost(candidate) || !PolicyAllows(candidate, className, processId, names))
+            if (IsHost(candidate) || !PolicyAllows(candidate, names))
             {
                 excluded++;
                 continue;
@@ -367,8 +377,11 @@ public sealed class PopupService : IPopupService
         }
     }
 
-    /// <summary>The target policy's verdict on a window's process (and for a UWP frame, its app's).</summary>
-    private bool PolicyAllows(nint window, string className, uint processId, Dictionary<uint, string?> names)
+    /// <summary>
+    /// The target policy's verdict on reading a window: its process and, for a UWP frame, its app's, failing closed when the
+    /// process cannot be named (<see cref="UiaTargets.ReadVerdict"/>). <paramref name="names"/> keeps the process names read.
+    /// </summary>
+    private bool PolicyAllows(nint window, Dictionary<uint, string?> names)
     {
         if (_policy == null)
         {
@@ -385,22 +398,7 @@ public sealed class PopupService : IPopupService
             return name;
         }
 
-        try
-        {
-            var processNames = new List<string?> { NameOf(processId) };
-            if (WindowClassification.IsApplicationFrameWindow(className) &&
-                UwpFrames.FindHostedAppProcessId(_windows, window, processId) is { } app)
-            {
-                processNames.Insert(0, NameOf(app));
-            }
-
-            return _policy.Evaluate(processNames).Allowed;
-        }
-        catch (Exception)
-        {
-            // Fail closed: the policy could not be applied
-            return false;
-        }
+        return UiaTargets.ReadVerdict(_windows, _policy, window, NameOf).Allowed;
     }
 
     /// <inheritdoc />
@@ -438,8 +436,13 @@ public sealed class PopupService : IPopupService
 
         var title = EmptyToNull(_windows.GetWindowText(window));
         var foregroundNow = IsInForeground(window);
-        var popups = Popups(window, out var truncated);
+
+        // A popup is never named: one of the agent's host or of an app the user denies is neither listed nor read (as a
+        // desktop search leaves such windows out), also when the window named is the host's
         var names = new Dictionary<uint, string?>();
+        var marked = Marked(Popups(window, out var truncated), names);
+        var popups = marked.Where(p => !p.IsAgentHost && !p.IsDeniedByPolicy).ToList();
+        var excluded = marked.Count - popups.Count;
         var listed = popups.Select(p => new ActivePopup(
             Ref: null,
             Handle: (long)p.Handle,
@@ -482,7 +485,7 @@ public sealed class PopupService : IPopupService
         cancellationToken.ThrowIfCancellationRequested();
         // A copy: a read the worker abandoned may still write into the array
         return new ActivePopupsResult(true, (long)window, title, foregroundNow, Snapshot(listed), Elapsed(stopwatch),
-            Truncated: truncated);
+            Truncated: truncated, PopupsExcluded: excluded > 0 ? excluded : null);
     }
 
     /// <summary>The popups' elements, read on the worker: each one's ref and control type written into <paramref name="listed"/>.</summary>

@@ -219,7 +219,11 @@ public sealed class MenuPathService : IMenuPathService
                     MaxResults: 2,
                     Detail: ElementDetail.Minimal,
                     Timeout: run.StepTimeout,
-                    Scope: scope), cancellationToken).ConfigureAwait(false);
+                    Scope: scope)
+                {
+                    // The menus are popups; each item is acted on through element_action, whose guard checks its window
+                    IncludeHostPopups = true
+                }, cancellationToken).ConfigureAwait(false);
             }
             catch (RegexMatchTimeoutException)
             {

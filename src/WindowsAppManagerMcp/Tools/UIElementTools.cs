@@ -49,8 +49,9 @@ public class UIElementTools
     internal const string ScopeDescription =
         "Which windows to search: 'window' (the window alone), 'windowAndPopups' (also its open menus, dropdowns, flyouts and " +
         "dialogs, which are windows of their own, and the popups of a WebView2 child process; front first, an element there has " +
-        "windowHandle) or 'desktop' (every visible window front first, at most 40; windows the target policy denies are left " +
-        "out, and the agent's own terminal unless named; handle and window may then be left out). Default: windowAndPopups when " +
+        "windowHandle) or 'desktop' (every visible window front first, at most 40; handle and window may then be left out). " +
+        "Windows and popups of apps the target policy denies are never searched (a named one is refused), and the agent's own " +
+        "terminal only as the window named, not its popups (windowsExcluded counts them). Default: windowAndPopups when " +
         "the window or one of its popups is in front, else window. One timeoutMs and maxResults cover all the windows. With " +
         "withinRef, only 'window'.";
 
@@ -61,9 +62,9 @@ public class UIElementTools
     internal const string CriteriaScopeDescription =
         "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), " +
         "'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' " +
-        "(every visible window too, the named one first, at most 40; windows the target policy denies and the agent's own " +
-        "terminal are left out). Default: windowAndPopups when the window or one of its popups is in front, else window. Not " +
-        "with ref; with withinRef, only 'window'.";
+        "(every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are " +
+        "left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the " +
+        "window or one of its popups is in front, else window. Not with ref; with withinRef, only 'window'.";
 
     /// <summary>
     /// The InvalidArguments message for a scope that cannot apply: with a ref (it names its element), or a scope other than

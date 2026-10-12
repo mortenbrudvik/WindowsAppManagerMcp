@@ -147,6 +147,8 @@ public sealed record DesktopStateError(string Section, string ErrorCode, string 
 /// <param name="Windows">The user-facing windows (no cloaked, tool, untitled or shell windows), front first, at most maxWindows.</param>
 /// <param name="WindowCount">How many user-facing windows there are; more than <paramref name="Windows"/> lists when it was cut.</param>
 /// <param name="Popups">The target's open menus, dropdowns, flyouts and dialogs, front first, with refs.</param>
+/// <param name="PopupsExcluded">The target's open popups left out of <paramref name="Popups"/> and <paramref name="Elements"/>
+/// because they are windows of the agent's own host or of an app the target policy denies; left out when none was.</param>
 /// <param name="Screenshot">The capture's metadata (captureId, imageToScreen, size); the image is the image content before the
 /// JSON.</param>
 public sealed record DesktopState(
@@ -165,7 +167,8 @@ public sealed record DesktopState(
     IReadOnlyList<DesktopStateError>? Errors,
     double ElapsedMilliseconds,
     string? Error = null,
-    string? ErrorCode = null);
+    string? ErrorCode = null,
+    int? PopupsExcluded = null);
 
 /// <summary>get_desktop_state's observation and, when a capture was asked for and made, its image.</summary>
 public sealed record DesktopStateSnapshot(DesktopState State, EncodedImage? Image);

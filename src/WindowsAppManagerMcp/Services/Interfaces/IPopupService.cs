@@ -48,7 +48,13 @@ public interface IPopupService
     /// <summary>The open popups of <paramref name="window"/>, front first (see the remarks); empty when it is no window.</summary>
     IReadOnlyList<PopupWindow> GetPopups(nint window);
 
-    /// <summary><see cref="GetPopups"/>, and whether more popups were open than it lists (find_ui_elements reports that).</summary>
+    /// <summary>
+    /// <see cref="GetPopups"/>, and whether more popups were open than it lists (find_ui_elements reports that), with each
+    /// popup's <see cref="PopupWindow.IsAgentHost"/> and <see cref="PopupWindow.IsDeniedByPolicy"/> set: the reads of a window
+    /// and its popups (find_ui_elements' windowAndPopups scope, get_desktop_state's walk) leave those popups out and count
+    /// them (<see cref="PopupList.ForReading"/>). The dialog tools use <see cref="GetPopups"/>, which keeps them, so a denied
+    /// dialog is found and then refused as a target rather than missed.
+    /// </summary>
     PopupList GetPopupList(nint window);
 
     /// <summary>
@@ -74,8 +80,10 @@ public interface IPopupService
     /// element (registered under the popup's window) and its UI Automation control type, which also sharpens its kind (a
     /// root Menu is a menu, a List a dropdown). Runs the UI Automation reads on the worker under
     /// <paramref name="timeout"/>; a popup that does not respond, or that closed meanwhile, is returned without a ref.
-    /// Fails with InvalidHandle for a handle that is no window, and with WindowNotFound when <paramref name="window"/> is
-    /// zero and no window is in front.
+    /// A popup of the agent's host or of an app the target policy denies is neither listed nor read, and is counted
+    /// (PopupsExcluded). Fails with InvalidHandle for a handle that is no window, with WindowNotFound when
+    /// <paramref name="window"/> is zero and no window is in front, and with TargetDeniedByPolicy for a window named whose
+    /// app the policy denies.
     /// </summary>
     /// <param name="window">The app window, or zero for the app in front: the window that owns the foreground window
     /// (WindowOwnerChain.TopOwner), so a dialog in front is listed as a popup of its app.</param>

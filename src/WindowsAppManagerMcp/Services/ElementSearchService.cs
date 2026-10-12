@@ -23,8 +23,10 @@ namespace WindowsAppManagerMcp.Services;
 /// offscreen or disabled twin, a single match is checked by one more search of the window for its identity alone, limited
 /// to <see cref="UniquenessBudget"/>. Two kept matches with one fingerprint are not unique.</para>
 /// <para><b>Scope</b> (roadmap M3.5): <see cref="ElementSearchScope.WindowAndPopups"/> also searches the window's popups
-/// (<see cref="IPopupService.GetPopups"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
-/// own), front first and before the window, since an open popup is in front of it; <see cref="ElementSearchScope.Desktop"/>
+/// (<see cref="IPopupService.GetPopupList"/>: its menus, dropdowns, flyouts and dialogs, which are top-level windows of their
+/// own), front first and before the window, since an open popup is in front of it, but not a popup of an app the target
+/// policy denies, nor one of the agent's host unless <see cref="ElementQuery.IncludeHostPopups"/> (both counted in
+/// windowsExcluded, as the desktop scope counts such windows); <see cref="ElementSearchScope.Desktop"/>
 /// searches the windows of <see cref="IPopupService.GetDesktopWindows"/> (the named window first). Every window is searched
 /// under the one deadline, the one maxResults and the one candidate limit (each window's search gets what the windows before
 /// it left, and the popups searched before the named window leave it <see cref="NamedWindowCandidateReserve"/>), so a scope
@@ -220,19 +222,24 @@ public sealed partial class ElementSearchService : IElementSearchService
     }
 
     /// <summary>
-    /// The windows a scope covers, in the order searched, how many it left out (desktop only), and how many were over its
-    /// limit (for windowAndPopups, 1 when more popups were open than <see cref="PopupService.MaxPopups"/>).
+    /// The windows a scope covers, in the order searched, how many it left out (the agent's host windows and the windows of
+    /// apps the target policy denies, see <see cref="PopupList.ForReading"/>), and how many were over its limit (for
+    /// windowAndPopups, 1 when more popups were open than <see cref="PopupService.MaxPopups"/>).
     /// </summary>
-    private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(nint handle, ElementSearchScope scope) => scope switch
+    private (IReadOnlyList<nint> Windows, int Excluded, int OverLimit) WindowsOf(ElementQuery query, ElementSearchScope scope)
     {
-        ElementSearchScope.WindowAndPopups when _popups != null =>
-            _popups.GetPopupList(handle) is { } list
-                ? ([.. list.Popups.Select(p => p.Handle), handle], 0, list.Truncated ? 1 : 0)
-                : ([handle], 0, 0),
-        ElementSearchScope.Desktop when _popups != null =>
-            _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
-        _ => ([handle], 0, 0)
-    };
+        var handle = query.WindowHandle;
+        return scope switch
+        {
+            ElementSearchScope.WindowAndPopups when _popups != null =>
+                _popups.GetPopupList(handle) is { } list && list.ForReading(query.IncludeHostPopups) is var (popups, excluded)
+                    ? ([.. popups.Select(p => p.Handle), handle], excluded, list.Truncated ? 1 : 0)
+                    : ([handle], 0, 0),
+            ElementSearchScope.Desktop when _popups != null =>
+                _popups.GetDesktopWindows(handle, PopupService.DesktopWindowLimit) is var set ? (set.Windows, set.Excluded, set.OverLimit) : default,
+            _ => ([handle], 0, 0)
+        };
+    }
 
     /// <summary>The search, on the worker thread.</summary>
     private FindElementsResult Find(
@@ -309,7 +316,7 @@ public sealed partial class ElementSearchService : IElementSearchService
 
             var generation = _registry.NextGeneration();
             started.Generation = generation;
-            var (windows, excluded, overLimit) = WindowsOf(handle, scope);
+            var (windows, excluded, overLimit) = WindowsOf(query, scope);
             var compiled = criteria.Compile();
             var controlTypesOnServer = false;
             for (var index = 0; index < windows.Count; index++)

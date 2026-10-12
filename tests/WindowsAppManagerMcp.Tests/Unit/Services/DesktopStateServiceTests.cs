@@ -487,6 +487,36 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task APopupOfADeniedAppOrOfTheAgentsHost_IsNotWalked_AndIsCounted()
+    {
+        // Arrange - the named window owns a credential prompt of a denied app (in front) and a popup of the agent's host
+        var prompt = new nint(0x260A50);
+        _popups.Setup(p => p.IsInForeground(Notepad)).Returns(true);
+        _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
+        [
+            new PopupWindow(prompt, PopupKind.Dialog, "Windows Security", "Credential Dialog Xaml Host", 777, Notepad, PopupRelation.Owned,
+                null, true, IsDeniedByPolicy: true),
+            new PopupWindow(0x260A60, PopupKind.Popup, null, "Host popup", 888, Notepad, PopupRelation.Owned, null, false,
+                IsAgentHost: true),
+            new PopupWindow(Menu, PopupKind.Menu, null, "#32768", 4242, 0, PopupRelation.SameProcess, null, false)
+        ], false));
+        _popups.Setup(p => p.GetActivePopupsAsync(Notepad, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ActivePopupsResult(true, Notepad, "notes.txt - Notepad", true,
+                [new ActivePopup("w4120036e0", Menu, PopupKind.Menu, null, "#32768", 4242, "notepad", null, null, "Menu")], 2,
+                PopupsExcluded: 2));
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert - a popup is never named: neither is read, as a desktop search leaves such windows out
+        _walks.Select(w => w.Handle).Should().Equal([Menu, Notepad]);
+        state.Elements!.Text.Should().StartWith("# popup 2492984 Menu").And.NotContain("Windows Security");
+        state.Popups.Should().ContainSingle().Which.Handle.Should().Be(Menu);
+        state.PopupsExcluded.Should().Be(2);
+        state.Errors.Should().BeNull();
+    }
+
+    [Fact]
     public async Task WithTheTargetInFront_ItsOpenPopupsAreWalkedFirst_UnderHeaders_WithinMaxElements()
     {
         // Arrange - the default scope is find_ui_elements': windowAndPopups while the window or a popup is in front

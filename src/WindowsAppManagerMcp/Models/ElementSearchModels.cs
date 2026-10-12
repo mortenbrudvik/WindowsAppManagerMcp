@@ -144,7 +144,8 @@ public record FoundElement(
 /// <param name="WindowsSearched">With scope windowAndPopups or desktop: how many windows were searched, the window itself
 /// included. Left out for scope window.</param>
 /// <param name="WindowsExcluded">With scope desktop: visible windows left out because the target policy denies their process
-/// or they are the agent's own host windows. Left out when none was.</param>
+/// or they are the agent's own host windows; with scope windowAndPopups: popups left out for the same reasons. Left out when
+/// none was.</param>
 /// <param name="Virtualized">With searchVirtualized (roadmap M3.10): the lists searched through their ItemContainer pattern
 /// and how many items only they found. Left out otherwise.</param>
 public record FindElementsResult(
@@ -229,4 +230,13 @@ public record ElementQuery(
     /// Needs automationId, or name with nameMatch exact (<see cref="Services.ElementSearchService.VirtualizedArgumentError"/>).
     /// </summary>
     public bool SearchVirtualized { get; init; }
+
+    /// <summary>
+    /// Whether the windowAndPopups scope also searches the popups of the agent's own host (its terminal or editor, and the
+    /// windows they own); default false: a read leaves them out and counts them in windowsExcluded, as the desktop scope
+    /// leaves host windows out. element_action and menu_path set it: the input guard checks the window of the element they
+    /// act on, and allowHostTarget lifts the host rule for a named host window and the windows it owns. Popups of an app the
+    /// target policy denies are left out either way: they are never read.
+    /// </summary>
+    public bool IncludeHostPopups { get; init; }
 }
