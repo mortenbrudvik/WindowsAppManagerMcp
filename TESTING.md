@@ -1960,7 +1960,8 @@ Rules for new tests:
 owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
 mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
 
-**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a check box, a
+**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a password box
+(UI Automation reports it as a password field, whose value the server never reads), a check box, a
 combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
 button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
 unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000

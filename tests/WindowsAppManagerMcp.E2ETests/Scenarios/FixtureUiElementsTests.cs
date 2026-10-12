@@ -9,9 +9,11 @@ public class FixtureUiElementsTests
     /// <summary>UI Automation bounds may be off by rounding (the server truncates to whole pixels).</summary>
     private const int BoundsTolerance = 2;
 
-    private static readonly IReadOnlyDictionary<string, string> MainWindowControlTypes = new Dictionary<string, string>
+    /// <summary>The control type of each element of the main window that the ready event reports.</summary>
+    internal static readonly IReadOnlyDictionary<string, string> MainWindowControlTypes = new Dictionary<string, string>
     {
         [FixtureContract.Ids.EditBox] = "Edit",
+        [FixtureContract.Ids.PasswordBox] = "Edit",
         [FixtureContract.Ids.CheckBox] = "CheckBox",
         [FixtureContract.Ids.ComboBox] = "ComboBox",
         [FixtureContract.Ids.OpenModalButton] = "Button",
