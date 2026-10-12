@@ -284,6 +284,21 @@ public class InputSimulationServiceSessionTests
 
     [Theory]
     [MemberData(nameof(InputPaths))]
+    public async Task AStuckModifier_IsModifiersHeld_WithTheAdviceElementActionReplaces(string path)
+    {
+        // Arrange - Windows is down, which the pause hotkey does not use
+        _input.Press(VkLWin);
+
+        // Act
+        var result = await Call(CreateSut(), path);
+
+        // Assert - element_action, which has no releaseHeldModifiers, puts its own advice in place of this one
+        result.Code.Should().Be(InputErrorCode.ModifiersHeld);
+        result.Error.Should().Contain(InputSimulationService.ReleaseHeldModifiersAdvice);
+    }
+
+    [Theory]
+    [MemberData(nameof(InputPaths))]
     public async Task ReleaseHeldModifiers_ReleasesThemFirst_AndReportsIt(string path)
     {
         // Arrange - Ctrl is stuck down, and the pause hotkey does not use Ctrl

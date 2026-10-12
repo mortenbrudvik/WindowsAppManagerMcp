@@ -1272,6 +1272,47 @@ public sealed class ElementActionServiceTests : IDisposable
         result.Method.Should().Be(ElementActionMethod.Mouse);
     }
 
+    /// <summary>The input service's ModifiersHeld message, which names its own releaseHeldModifiers parameter.</summary>
+    private const string ModifiersHeldMessage =
+        "LeftCtrl is held down, by the user or stuck, so nothing (more) was clicked: with a modifier down, keys become shortcuts " +
+        "and clicks become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing it, " +
+        "pass releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release it.";
+
+    [Fact]
+    public async Task AModifierHeldDown_IsModifiersHeld_WithAdviceThatElementActionCanFollow()
+    {
+        // Arrange - element_action has no releaseHeldModifiers: an agent that passed it would get the same refusal again
+        var button = Button("Save");
+        var target = RefOf(button);
+        _tree.AtPoint = (_, _) => button;
+        _input.Setup(i => i.RightClick(140, 212, It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .Returns(new ClickResult(false, 140, 212, "right", ModifiersHeldMessage, InputErrorCode.ModifiersHeld) { HeldModifiers = ["LeftCtrl"] });
+
+        // Act
+        var result = await ActAsync(target, ElementActionKind.RightClick);
+
+        // Assert
+        result.ErrorCode.Should().Be("ModifiersHeld");
+        result.Error.Should().Contain("LeftCtrl").And.Contain("release_all_input with releaseHeldModifiers: true")
+            .And.NotContain("pass releaseHeldModifiers");
+    }
+
+    [Fact]
+    public async Task AModifierHeldDown_WhileTyping_IsModifiersHeld_WithAdviceThatElementActionCanFollow()
+    {
+        // Arrange
+        var name = RefOf(Edit(new FakeValuePattern("old")));
+        _input.Setup(i => i.SendKeysAsync("^a", It.IsAny<InputTarget>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SendKeysResult(false, "^a", ModifiersHeldMessage, InputErrorCode.ModifiersHeld));
+
+        // Act
+        var result = await ActAsync(name, ElementActionKind.SetValue, "Ada", ElementValueMode.Type);
+
+        // Assert
+        result.ErrorCode.Should().Be("ModifiersHeld");
+        result.Error.Should().Contain("release_all_input").And.NotContain("pass releaseHeldModifiers");
+    }
+
     [Fact]
     public async Task AWindowThatCannotBeActivated_GetsNoClick()
     {

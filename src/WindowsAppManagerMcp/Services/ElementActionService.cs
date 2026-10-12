@@ -460,7 +460,7 @@ public sealed partial class ElementActionService : IElementActionService
 
         return clicked.Success
             ? new InputStep(null, clicked.ReceivingWindow)
-            : InputStep.Failed(call.Fail(clicked.ErrorCode.ToString(), clicked.Error ?? "The click was not sent.") with
+            : InputStep.Failed(call.Fail(clicked.ErrorCode.ToString(), InputError(clicked.ErrorCode, clicked.Error, "The click was not sent.")) with
             {
                 Method = ElementActionMethod.Mouse,
                 ReceivingWindow = clicked.ReceivingWindow
@@ -522,7 +522,8 @@ public sealed partial class ElementActionService : IElementActionService
             releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
         if (!first.Success)
         {
-            return InputStep.Failed(call.Fail(first.ErrorCode.ToString(), (first.Error ?? "The keys were not sent.") + " Nothing was typed.") with
+            return InputStep.Failed(call.Fail(first.ErrorCode.ToString(),
+                InputError(first.ErrorCode, first.Error, "The keys were not sent.") + " Nothing was typed.") with
             {
                 Method = ElementActionMethod.Keyboard,
                 ReceivingWindow = first.ReceivingWindow
@@ -543,7 +544,7 @@ public sealed partial class ElementActionService : IElementActionService
             var deleted = await _input.SendKeysAsync("{DELETE}", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return deleted.Success
                 ? new InputStep(null, deleted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(deleted.ErrorCode.ToString(), deleted.Error ?? "Delete was not sent.") with
+                : InputStep.Failed(call.Fail(deleted.ErrorCode.ToString(), InputError(deleted.ErrorCode, deleted.Error, "Delete was not sent.")) with
                 {
                     Method = ElementActionMethod.Keyboard,
                     ReceivingWindow = deleted.ReceivingWindow
@@ -555,7 +556,7 @@ public sealed partial class ElementActionService : IElementActionService
             var pasted = await _input.SendKeysAsync("^v", target, releaseHeldModifiers: false, cancellationToken).ConfigureAwait(false);
             return pasted.Success
                 ? new InputStep(null, pasted.ReceivingWindow ?? receiving)
-                : InputStep.Failed(call.Fail(pasted.ErrorCode.ToString(), pasted.Error ?? "The paste was not sent.") with
+                : InputStep.Failed(call.Fail(pasted.ErrorCode.ToString(), InputError(pasted.ErrorCode, pasted.Error, "The paste was not sent.")) with
                 {
                     Method = ElementActionMethod.Keyboard,
                     ReceivingWindow = pasted.ReceivingWindow
@@ -566,12 +567,23 @@ public sealed partial class ElementActionService : IElementActionService
         return typed.Success
             ? new InputStep(null, typed.ReceivingWindow ?? receiving)
             : InputStep.Failed(call.Fail(typed.ErrorCode.ToString(),
-                $"{typed.Error} ({typed.CharactersTyped} of {text.Length} characters were typed.)") with
+                $"{InputError(typed.ErrorCode, typed.Error, "The text was not typed.")} ({typed.CharactersTyped} of {text.Length} characters were typed.)") with
             {
                 Method = ElementActionMethod.Keyboard,
                 ReceivingWindow = typed.ReceivingWindow
             });
     }
+
+    /// <summary>
+    /// An input path's error as element_action reports it (<paramref name="ifNone"/> when it has none). The input service's
+    /// ModifiersHeld advice for a stuck key names its own releaseHeldModifiers argument, which element_action does not take
+    /// (an agent passing it would get the same refusal again): release_all_input is named instead.
+    /// </summary>
+    private static string InputError(InputErrorCode code, string? error, string ifNone) =>
+        code == InputErrorCode.ModifiersHeld && error != null
+            ? error.Replace(InputSimulationService.ReleaseHeldModifiersAdvice, "call release_all_input with releaseHeldModifiers: true",
+                StringComparison.Ordinal)
+            : error ?? ifNone;
 
     /// <summary>FocusNotOnElement when keyboard focus is not on the element or inside it; null when it is.</summary>
     private async Task<ElementActionResult?> FocusRefusalAsync(

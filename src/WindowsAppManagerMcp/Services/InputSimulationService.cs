@@ -22,6 +22,13 @@ public class InputSimulationService : IInputSimulationService
     /// <summary>The most wheel notches scroll sends in one direction in one call.</summary>
     public const int MaxScrollNotches = 100;
 
+    /// <summary>
+    /// The ModifiersHeld message's advice for a stuck key. element_action, which has no releaseHeldModifiers, puts its own
+    /// advice in its place.
+    /// </summary>
+    public const string ReleaseHeldModifiersAdvice =
+        "pass releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true)";
+
     private readonly IMonitorService _monitorService;
     private readonly INativeInputWrapper _inputWrapper;
     private readonly IInputTargetGuard _guard;
@@ -1062,8 +1069,8 @@ public class InputSimulationService : IInputSimulationService
               $"(more) was {action}. The user may be about to pause input, so {(one ? "it is" : "they are")} not released, " +
               $"not even with releaseHeldModifiers. Wait, and ask the user if {(one ? "it stays" : "they stay")} down."
             : $"{held}, by the user or stuck, so nothing (more) was {action}: with a modifier down, keys become shortcuts and clicks " +
-              $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, pass " +
-              $"releaseHeldModifiers: true (or call release_all_input with releaseHeldModifiers: true) to release {them}.";
+              $"become Ctrl- or Shift-clicks. If the user is using the keyboard, wait and try again. If nobody is pressing {them}, " +
+              $"{ReleaseHeldModifiersAdvice} to release {them}.";
     }
 
     private static string CursorPositionFailedMessage(string done) =>
