@@ -223,7 +223,7 @@ public class UIElementTools
 
     [McpServerTool(Name = "find_ui_elements", Title = "Find UI Elements", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Find elements in a window by name, automationId, controlType and className, in one call: the application's UI Automation provider evaluates the criteria, so any depth is searched. " +
-                 "Returns matchCount and the first maxResults matches, each with a ref such as 'w4120035e17', which names the same element in every later read and call (an element that is gone gives ElementStale, never another element), " +
+                 "Returns matchCount and the first maxResults matches, each with a ref such as 'w4120035e17', which names the same element in every later read and call (once it is gone: ElementStale, or a re-created element that alone fits its description, which results report as refMoved and element_action refuses until a read returns it again), " +
                  "clickPoint (physical screen pixels, the space click uses), bounds and patterns. detail 'standard' adds value, toggle, expand and selection state and focus; 'full' adds framework, process, help text and keys. " +
                  "The criteria combine with AND; give at least one. withinRef searches only inside an element found before. " +
                  "When the window (or one of its popups) is in front, its open menus, dropdowns and dialogs, which are windows of their own, are searched too, front first (scope). " +

@@ -29,7 +29,7 @@ public class ElementWaitTools
                  "read), or by find_ui_elements' criteria (name, nameMatch, automationId, controlType, className, withinRef) in window, " +
                  "which is waited for first, so it may still be opening; scope as find_ui_elements' (its open menus and dialogs are " +
                  "searched too while it is in front). condition: 'exists' (default: an element matches, offscreen " +
-                 "or disabled included), 'gone' (none is left; by ref: its element is gone), 'enabled', 'visible' (not offscreen, with " +
+                 "or disabled included), 'gone' (none is left; by ref: its element is gone, also when a re-created look-alike took its place: refMoved), 'enabled', 'visible' (not offscreen, with " +
                  "a size), 'focused' (has keyboard focus), 'name_equals' or 'value_equals' (exactly expected, case-sensitive; a " +
                  "password field's value is never read, so value_equals refuses it), 'toggle_state' (expected on, off or " +
                  "indeterminate). With criteria, any of the first 10 matches satisfies it. Returns satisfied, elapsedMs, polls and " +
