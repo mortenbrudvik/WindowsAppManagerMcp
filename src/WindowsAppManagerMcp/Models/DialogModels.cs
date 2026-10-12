@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Ref">The button's element ref (registered under the dialog's window).</param>
 /// <param name="Name">Its visible text, as the application gave it (untrusted data, in the user's language).</param>
 /// <param name="AutomationId">Its AutomationId: the control id for a Win32 dialog box ("6"), "CommandButton_6" for a task
-/// dialog, the developer's name for a WPF or WinForms one.</param>
+/// dialog, the developer's name for a WPF or WinForms one; at most 100 characters (a web page's HTML id can be longer).</param>
 /// <param name="Standard">The standard dialog button the AutomationId names (ok, cancel, abort, retry, ignore, yes, no,
 /// close, help, tryagain, continue: IDOK=1 to IDCONTINUE=11), the same in every language; left out for other buttons.</param>
 public sealed record DialogButton(
@@ -54,7 +54,8 @@ public sealed record DialogResponseRequest(nint Window, string? Button, bool All
 /// <param name="Method">How element_action pressed it (Invoke, or the MSAA default action).</param>
 /// <param name="DialogClosed">True when the dialog window was gone (or hidden) after the press; false when it stayed open
 /// (a Help or Apply button, an input the dialog refused, or a further dialog it opened, see <paramref name="NextDialog"/>).</param>
-/// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next.</param>
+/// <param name="NextDialog">A new dialog the press opened (a confirmation), which the dialog waits for: answer it next. Its
+/// title is at most 200 characters.</param>
 public sealed record DialogResponseResult(
     bool Success,
     long DialogHandle = 0,

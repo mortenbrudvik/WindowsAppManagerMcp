@@ -187,6 +187,20 @@ public class DialogServiceTests
     }
 
     [Fact]
+    public async Task Read_CutsLongAutomationIds_InTheButtonsAndInTheMessages()
+    {
+        // Web content in an Electron dialog: an HTML id is the AutomationId
+        _buttons = [Element("w1e1", null, new string('i', 5000), "Button")];
+
+        var content = (await CreateSut().ReadAsync(Dialog, TimeSpan.FromSeconds(1))).Content!;
+        var refused = await RespondAsync("retry", Dialog);
+
+        content.Buttons.Single().AutomationId.Should().HaveLength(DialogService.MaxButtonNameLength);
+        refused.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
+        refused.Error!.Length.Should().BeLessThan(1000);
+    }
+
+    [Fact]
     public async Task Read_BoundsTheText()
     {
         _texts = Enumerable.Range(0, 20).Select(i => Element($"w1t{i}", new string((char)('a' + i), 600), null, "Text")).ToList();
@@ -324,6 +338,27 @@ public class DialogServiceTests
         result.DialogClosed.Should().BeFalse();
         result.NextDialog!.Handle.Should().Be((long)Prompt);
         result.Warnings.Should().ContainSingle(w => w.Contains("still open"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Respond_CutsTheNextDialogsLongTitle(bool reportedByThePress)
+    {
+        var title = new string('t', 5000);
+        _act = request =>
+        {
+            _shown[Prompt] = ("#32770", WsCaption, Dialog, title);
+            _popupsOf[Dialog] = [Popup(Prompt, PopupKind.Dialog, Dialog, title: title)];
+            return reportedByThePress
+                ? new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.InvokedPendingModal,
+                    ElementActionMethod.Invoke, OpenedPopup: new OpenedWindow((long)Prompt, title, "#32770", 4242, "notepad"))
+                : new ElementActionResult(true, "invoke", request.Ref, (long)Dialog, ElementActionStatus.Done, ElementActionMethod.Invoke);
+        };
+
+        var result = await RespondAsync("yes", Dialog);
+
+        result.NextDialog!.Title.Should().HaveLength(DialogService.MaxTitleLength);
     }
 
     [Fact]

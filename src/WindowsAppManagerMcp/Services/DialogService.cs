@@ -167,8 +167,9 @@ public sealed class DialogService : IDialogService
         }
 
         var dialogButtons = WithoutTitleBar(buttons.Elements ?? []);
+        // A web page's HTML id is an AutomationId too (an Electron dialog): it is cut as a name is
         var buttonList = dialogButtons.Take(MaxButtons).Select(e => new DialogButton(
-            e.Ref, EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)), EmptyToNull(e.AutomationId),
+            e.Ref, EmptyToNull(Cut(e.Name ?? string.Empty, MaxButtonNameLength)), EmptyToNull(Cut(e.AutomationId ?? string.Empty, MaxButtonNameLength)),
             DialogButtons.StandardOf(e.AutomationId), e.IsEnabled)).ToList();
         var (text, textCut) = Text(texts.Success ? texts.Elements ?? [] : [], buttonList);
         var title = EmptyToNull(_windows.GetWindowText(dialog));
@@ -362,7 +363,7 @@ public sealed class DialogService : IDialogService
         }
 
         bool closed;
-        var next = pressed.OpenedPopup;
+        var next = pressed.OpenedPopup is { } opened ? opened with { Title = Cut(opened.Title, MaxTitleLength) } : null;
         if (pressed.Status == ElementActionStatus.InvokedPendingModal)
         {
             // The press waits for the dialog it opened: the first dialog stays until that one is answered
@@ -375,7 +376,7 @@ public sealed class DialogService : IDialogService
             {
                 next ??= NewDialogOf(dialog, before);
                 warnings.Add(next != null
-                    ? $"The dialog is still open: the press opened another dialog ('{Cut(next.Title, MaxTitleLength)}', handle {next.Handle}). Answer it next."
+                    ? $"The dialog is still open: the press opened another dialog ('{next.Title}', handle {next.Handle}). Answer it next."
                     : "The dialog is still open after the press (a button such as Help or Apply, input the dialog refused, or a busy " +
                       "application). Read it again.");
             }
@@ -428,7 +429,7 @@ public sealed class DialogService : IDialogService
         var popup = _popups.GetPopups(dialog).FirstOrDefault(p => !before.Contains(p.Handle) && p.Kind != PopupKind.Tooltip);
         return popup == null
             ? null
-            : new OpenedWindow((long)popup.Handle, popup.Title ?? string.Empty, popup.ClassName, popup.ProcessId,
+            : new OpenedWindow((long)popup.Handle, Cut(popup.Title ?? string.Empty, MaxTitleLength), popup.ClassName, popup.ProcessId,
                 _windows.GetProcessName((uint)popup.ProcessId));
     }
 
