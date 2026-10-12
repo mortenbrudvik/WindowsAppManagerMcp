@@ -49,7 +49,9 @@ public static class TargetPolicyExtensions
     /// Decides for a window as <see cref="Evaluate(ITargetPolicy, WindowInfo)"/> does, but fails closed as the UI Automation
     /// reads do (<see cref="UiaTargets.ReadVerdict"/>): while the policy denies anything, a window whose process, or for a
     /// UWP window whose frame host, cannot be named (<see cref="WindowInfo.UnknownProcessName"/>) is refused
-    /// (<see cref="TargetPolicyVerdict.Unreadable"/>). The input guard and the captures decide with it.
+    /// (<see cref="TargetPolicyVerdict.Unreadable"/>). The input guard, the captures, get_desktop_state's choice of window
+    /// and focus, and the window service's check (<see cref="IWindowService.EvaluateTargetPolicy"/>: the window changes, the
+    /// closes, focus_window and the windows a restore would show) decide with it.
     /// </summary>
     public static TargetPolicyVerdict EvaluateFailClosed(this ITargetPolicy policy, WindowInfo window)
     {

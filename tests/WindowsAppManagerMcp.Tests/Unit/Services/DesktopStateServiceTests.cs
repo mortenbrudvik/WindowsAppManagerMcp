@@ -240,6 +240,62 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task AWindowWhoseProcessCannotBeNamed_IsNotRead_UnaskedOrNamed_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the window service reports a process it cannot name (it may run elevated) as "Unknown": the window cannot
+        // be checked against the policy, so it is not chosen, as the reads themselves would refuse it
+        var vault = Window(Notepad, "Vault", WindowInfo.UnknownProcessName);
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(vault);
+        _windows.Setup(w => w.GetWindowInfo(Notepad)).Returns(vault);
+
+        // Act
+        var (unnamed, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+        var (named, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        foreach (var state in new[] { unnamed, named })
+        {
+            state.WindowHandle.Should().Be(0);
+            state.Elements.Should().BeNull();
+            state.Popups.Should().BeNull();
+            state.Focus.Should().BeNull("the window in front holds the keyboard focus");
+            state.Errors.Should().BeEquivalentTo(
+            [
+                new { Section = "target", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) },
+                new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) }
+            ], o => o.WithStrictOrdering());
+            state.Errors![0].Error.Should().Contain("cannot be read");
+        }
+
+        _elements.VerifyNoOtherCalls();
+        _popups.Verify(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()), Times.Never);
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AWindowWhoseProcessCannotBeNamed_IsRead_UnaskedOrNamed_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        _policy = new TargetPolicy(TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null));
+        var vault = Window(Notepad, "Vault", WindowInfo.UnknownProcessName);
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(vault);
+        _windows.Setup(w => w.GetWindowInfo(Notepad)).Returns(vault);
+
+        // Act
+        var (unnamed, _) = await CreateSut().GetStateAsync(Request(), CancellationToken.None);
+        var (named, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        foreach (var state in new[] { unnamed, named })
+        {
+            state.Errors.Should().BeNull();
+            state.WindowHandle.Should().Be(Notepad);
+            state.Elements.Should().NotBeNull();
+            state.Focus.Should().NotBeNull();
+        }
+    }
+
+    [Fact]
     public async Task TheFocus_InTheAgentsOwnTerminalInFront_IsNotRead_WhenAnotherWindowIsNamed()
     {
         // Arrange - an observe after an action on Notepad, while the agent's terminal is in front
@@ -271,6 +327,59 @@ public class DesktopStateServiceTests
         state.Focus.Should().BeNull();
         state.Errors.Should().ContainSingle().Which.ErrorCode.Should().Be(nameof(InputErrorCode.TargetDeniedByPolicy));
         _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheFocus_InAnAppInFrontWhoseProcessCannotBeNamed_IsNotRead_WhenAnotherWindowIsNamed()
+    {
+        // Arrange - Notepad is named, but the window in front belongs to a process the server cannot name
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(Window(KeePass, "Vault", WindowInfo.UnknownProcessName));
+        FocusIn(KeePass);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        state.Elements.Should().NotBeNull("the named window is read");
+        state.Focus.Should().BeNull();
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) });
+        _inspection.Verify(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheFocus_InAWindowWhoseProcessCannotBeNamed_IsLeftOut_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - Notepad is in front and allowed; the focus read finds the focus in a window of a process the server cannot
+        // name (a prompt that may run elevated)
+        _windows.Setup(w => w.GetWindowInfo(KeePass)).Returns(Window(KeePass, "Vault", WindowInfo.UnknownProcessName));
+        FocusIn(KeePass);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection> { DesktopStateSection.Focus }),
+            CancellationToken.None);
+
+        // Assert
+        state.Focus.Should().BeNull("a focus that cannot be checked against the policy is not returned");
+        state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
+            new { Section = "focus", ErrorCode = nameof(InputErrorCode.TargetDeniedByPolicy) });
+    }
+
+    [Fact]
+    public async Task TheFocus_InAWindowWhoseProcessCannotBeNamed_IsRead_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        _policy = new TargetPolicy(TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null));
+        _windows.Setup(w => w.GetWindowInfo(KeePass)).Returns(Window(KeePass, "Vault", WindowInfo.UnknownProcessName));
+        FocusIn(KeePass);
+
+        // Act
+        var (state, _) = await CreateSut().GetStateAsync(Request(include: new HashSet<DesktopStateSection> { DesktopStateSection.Focus }),
+            CancellationToken.None);
+
+        // Assert
+        state.Errors.Should().BeNull();
+        state.Focus.Should().NotBeNull();
     }
 
     [Fact]
@@ -714,9 +823,10 @@ public class DesktopStateServiceTests
 
         var (state, image) = await CreateSut().GetStateAsync(Request(window: Notepad, include: include), CancellationToken.None);
 
+        // The window named is refused as the target, as a denied one is: its capture, elements and popups are all left out
         image.Should().BeNull();
         state.Errors.Should().ContainSingle().Which.Should().BeEquivalentTo(
-            new { Section = "screenshot", ErrorCode = nameof(ScreenshotErrorCode.TargetDeniedByPolicy) });
+            new { Section = "target", ErrorCode = nameof(ScreenshotErrorCode.TargetDeniedByPolicy) });
         _screenshots.VerifyNoOtherCalls();
     }
 

@@ -263,7 +263,8 @@ public sealed class DesktopStateService : IDesktopStateService
 
     /// <summary>
     /// The window to read: the one named unless the user's policy denies it, else the window in front unless it is the agent's
-    /// host or a denied app.
+    /// host or a denied app. A window whose process cannot be named counts as denied while the policy denies anything, as the
+    /// reads themselves refuse it (<see cref="UiaTargets.ReadVerdict"/>).
     /// </summary>
     private Target ChooseTarget(nint? named, WindowInfo? foreground)
     {
@@ -276,7 +277,7 @@ public sealed class DesktopStateService : IDesktopStateService
 
             // Named or not, a window of an app the user denies is not read, as get_ui_elements and capture_window refuse it
             var info = Read(() => _windows.GetWindowInfo(window));
-            if (info != null && _policy.Evaluate(info) is { Allowed: false } denied)
+            if (info != null && _policy.EvaluateFailClosed(info) is { Allowed: false } denied)
             {
                 return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetDeniedByPolicy),
                     $"The window named ('{info.Title}', {info.ProcessName}) is refused by the user's target policy: {denied.Reason}. " +
@@ -301,7 +302,7 @@ public sealed class DesktopStateService : IDesktopStateService
                 "listed here)."));
         }
 
-        if (_policy.Evaluate(foreground) is { Allowed: false } verdict)
+        if (_policy.EvaluateFailClosed(foreground) is { Allowed: false } verdict)
         {
             return new Target(nint.Zero, null, TargetError(nameof(InputErrorCode.TargetDeniedByPolicy),
                 $"The window in front ('{foreground.Title}', {foreground.ProcessName}) is refused by the user's target policy: " +
@@ -315,8 +316,9 @@ public sealed class DesktopStateService : IDesktopStateService
 
     /// <summary>
     /// Why the window in front, and so the keyboard focus in it, is not read: TargetIsAgentHost for the agent's host unless it
-    /// is the window named, TargetDeniedByPolicy for an app the user's policy denies. Null when it is read, and when nothing
-    /// is in front (the focus read then says where the focus is, and <see cref="FocusRefusal"/> checks that window).
+    /// is the window named, TargetDeniedByPolicy for an app the user's policy denies (or whose process cannot be named while
+    /// the policy denies anything). Null when it is read, and when nothing is in front (the focus read then says where the
+    /// focus is, and <see cref="FocusRefusal"/> checks that window).
     /// </summary>
     private string? ForegroundRefusal(WindowInfo? foreground, nint? named)
     {
@@ -330,7 +332,7 @@ public sealed class DesktopStateService : IDesktopStateService
             return nameof(InputErrorCode.TargetIsAgentHost);
         }
 
-        return _policy.Evaluate(foreground) is { Allowed: false } ? nameof(InputErrorCode.TargetDeniedByPolicy) : null;
+        return _policy.EvaluateFailClosed(foreground) is { Allowed: false } ? nameof(InputErrorCode.TargetDeniedByPolicy) : null;
     }
 
     /// <summary>Why the capture is not made: captures are turned off, or the policy denies the window (as capture_window).</summary>
@@ -544,7 +546,7 @@ public sealed class DesktopStateService : IDesktopStateService
             return FocusError(nameof(InputErrorCode.TargetIsAgentHost), $"your own host window ('{info.Title}', {info.ProcessName})");
         }
 
-        return _policy.Evaluate(info) is { Allowed: false }
+        return _policy.EvaluateFailClosed(info) is { Allowed: false }
             ? FocusError(nameof(InputErrorCode.TargetDeniedByPolicy), $"'{info.Title}' ({info.ProcessName})")
             : null;
     }
