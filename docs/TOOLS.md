@@ -2740,7 +2740,7 @@ Read Notepad's save prompt first (nothing is pressed); the result has its `dialo
 }
 ```
 
-The text asks what the user decided, so answer that dialog by its handle:
+It asks whether to save; the user said not to, so answer that dialog by its handle:
 
 ```json
 {
