@@ -553,6 +553,24 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public void TheObservation_IsUnavailable_WhenTheUserTurnedGetDesktopStateOff()
+    {
+        CreateSut().StateUnavailable().Should().BeNull("every tool is served by default");
+
+        _toolsets = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? "-elements" : null, Toolsets.Server);
+        CreateSut().StateUnavailable().Should().Contain("get_desktop_state");
+
+        _toolsets = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ExcludeToolsVariable ? "get_desktop_state" : null, Toolsets.Server);
+        CreateSut().StateUnavailable().Should().Contain("get_desktop_state");
+
+        _toolsets = ToolsetSelection.FromEnvironment(
+            name => name == ToolsetSelection.ToolsetsVariable ? "-windows" : null, Toolsets.Server);
+        CreateSut().StateUnavailable().Should().BeNull("get_desktop_state is in the elements toolset");
+    }
+
+    [Fact]
     public async Task ACancelledCall_IsCancelled()
     {
         using var cancelled = new CancellationTokenSource();

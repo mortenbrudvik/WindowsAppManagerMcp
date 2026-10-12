@@ -1469,7 +1469,7 @@
             "default": 5000
           },
           "observe": {
-            "description": "What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default observation of the element's window, or of the window in front once that closed, as observed) or 'screenshot' (as state, plus a capture of that window as image content with a captureId; needs capture_window to be served).",
+            "description": "What to return about the desktop after the action: 'none' (default), 'state' (get_desktop_state's default observation of the element's window, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content with a captureId; needs capture_window to be served too).",
             "default": "none",
             "type": "string",
             "enum": [
