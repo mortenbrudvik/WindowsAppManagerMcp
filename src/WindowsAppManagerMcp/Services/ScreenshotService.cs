@@ -799,7 +799,7 @@ public class ScreenshotService : IScreenshotService
         {
             var screen = _captureWrapper.GetVirtualScreenBounds();
             virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
-            monitors = CapturedMonitors.Of(_monitorService.GetAllMonitors());
+            monitors = ReadMonitors();
         }
 
         return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen, monitors)).CaptureId;
@@ -852,6 +852,20 @@ public class ScreenshotService : IScreenshotService
             height,
             isScaled,
             filePath);
+    }
+
+    /// <summary>The monitors a screen capture registers, or null when they cannot be read (only the virtual screen is compared then).</summary>
+    private IReadOnlyList<CapturedMonitor>? ReadMonitors()
+    {
+        try
+        {
+            return CapturedMonitors.Of(_monitorService.GetAllMonitors());
+        }
+        catch (Exception)
+        {
+            // The capture itself does not depend on them
+            return null;
+        }
     }
 
     private static string Describe(WindowRect rect) => $"({rect.X}, {rect.Y}, {rect.Width}x{rect.Height})";
