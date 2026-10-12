@@ -430,6 +430,134 @@ public class Uia3TreeTests
 
     #endregion
 
+    #region Identity and interaction reads (the managed client reads these from element.Current instead)
+
+    /// <summary>
+    /// An element of <paramref name="sut"/> whose BuildUpdatedCache returns <paramref name="cached"/>, and the cache requests
+    /// it was asked with, in order.
+    /// </summary>
+    private (IUiaNode Node, Mock<IUIAutomationElement> Element, List<IUIAutomationCacheRequest> Requests) CachedBy(
+        Uia3Tree sut, Mock<IUIAutomationElement> cached)
+    {
+        var element = new Mock<IUIAutomationElement>();
+        var requests = new List<IUIAutomationCacheRequest>();
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>()))
+            .Callback<IUIAutomationCacheRequest>(requests.Add)
+            .Returns(cached.Object);
+        return (NodeOf(sut, element), element, requests);
+    }
+
+    [Fact]
+    public void ReadIdentity_ReadsClassFrameworkProcessHandleAndPasswordFlag_InOneCall()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var cached = new Mock<IUIAutomationElement>();
+        cached.Setup(e => e.GetCachedPropertyValue(It.IsAny<int>())).Returns(NotSupported);
+        var (node, element, requests) = CachedBy(sut, cached);
+
+        // Act
+        sut.ReadIdentity(node);
+
+        // Assert - the identity request is one cross-process call for all five
+        var request = _requests.Single(r => r.Object == requests.Single());
+        foreach (var property in new[]
+                 {
+                     UiaIds.ClassNameProperty, UiaIds.FrameworkIdProperty, UiaIds.ProcessIdProperty,
+                     UiaIds.NativeWindowHandleProperty, UiaIds.IsPasswordProperty
+                 })
+        {
+            request.Verify(r => r.AddProperty(property), Times.Once, $"property {property}");
+        }
+
+        element.Verify(e => e.GetCurrentPropertyValue(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public void ReadIdentity_MapsTheCachedValues()
+    {
+        // Arrange - a password box of process 4242 that is a window of its own
+        var sut = CreateSut();
+        var cached = new Mock<IUIAutomationElement>();
+        cached.Setup(e => e.GetCachedPropertyValue(It.IsAny<int>())).Returns(NotSupported);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ClassNameProperty)).Returns("PasswordBox");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.FrameworkIdProperty)).Returns("WPF");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ProcessIdProperty)).Returns(4242);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.NativeWindowHandleProperty)).Returns(0x1234);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.IsPasswordProperty)).Returns(true);
+        var (node, _, _) = CachedBy(sut, cached);
+
+        // Act
+        var identity = sut.ReadIdentity(node);
+
+        // Assert
+        identity.Should().Be(new UiaNodeIdentity("PasswordBox", "WPF", 4242, 0x1234, true));
+    }
+
+    [Fact]
+    public void ReadIdentity_PropertiesTheProviderDoesNotSupport_ReadAsNoProcessNoWindowAndNoPassword()
+    {
+        // Arrange
+        var sut = CreateSut();
+        var cached = new Mock<IUIAutomationElement>();
+        cached.Setup(e => e.GetCachedPropertyValue(It.IsAny<int>())).Returns(NotSupported);
+        var (node, _, _) = CachedBy(sut, cached);
+
+        // Act
+        var identity = sut.ReadIdentity(node);
+
+        // Assert - process 0 is no process: the action tools' target checks refuse it
+        identity.Should().Be(new UiaNodeIdentity(null, null, 0, 0, false));
+    }
+
+    [Fact]
+    public void ReadInteraction_ReadsFocusAndTheActionPatterns_InOneCall()
+    {
+        // Arrange - LegacyIAccessible and Scroll are available too, but they are not action patterns
+        var sut = CreateSut();
+        var cached = Cached(null, 50000, focusable: true, availablePatternProperties:
+        [
+            UiaIds.IsInvokePatternAvailableProperty, UiaIds.IsScrollPatternAvailableProperty,
+            UiaIds.IsLegacyIAccessiblePatternAvailableProperty
+        ]);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.HasKeyboardFocusProperty)).Returns(true);
+        var (node, element, requests) = CachedBy(sut, cached);
+
+        // Act
+        var interaction = sut.ReadInteraction(node);
+
+        // Assert
+        interaction.IsKeyboardFocusable.Should().BeTrue();
+        interaction.HasKeyboardFocus.Should().BeTrue();
+        interaction.ActionPatterns.Should().Equal("Invoke");
+        var request = _requests.Single(r => r.Object == requests.Single());
+        request.Verify(r => r.AddProperty(UiaIds.IsKeyboardFocusableProperty), Times.Once);
+        request.Verify(r => r.AddProperty(UiaIds.HasKeyboardFocusProperty), Times.Once);
+        foreach (var (property, _) in UiaIds.PatternAvailability)
+        {
+            request.Verify(r => r.AddProperty(property), Times.Once, $"property {property}");
+        }
+
+        element.Verify(e => e.GetCurrentPropertyValue(It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false, UiaIds.IsLegacyIAccessiblePatternAvailableProperty, false)]
+    [InlineData(false, UiaIds.IsScrollPatternAvailableProperty, false)]
+    [InlineData(false, UiaIds.IsTogglePatternAvailableProperty, true)]
+    [InlineData(true, UiaIds.IsScrollPatternAvailableProperty, true)]
+    public void IsInteractable_IsFocusabilityOrAnActionPattern_NotLegacyIAccessible(bool focusable, int availablePattern, bool expected)
+    {
+        // Arrange - the UIA3 engine reports LegacyIAccessible on nearly every element, so it makes nothing interactable
+        var sut = CreateSut();
+        var (node, _, _) = CachedBy(sut, Cached(null, 50020, focusable: focusable, availablePatternProperties: availablePattern));
+
+        // Act & Assert
+        sut.IsInteractable(node).Should().Be(expected);
+    }
+
+    #endregion
+
     #region Search conditions
 
     [Fact]
