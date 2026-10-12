@@ -22,9 +22,6 @@ public class ScreenshotService : IScreenshotService
     public static readonly string DefaultCaptureFolder =
         Path.Combine(Path.GetTempPath(), "WindowsAppManagerMcp", "captures");
 
-    /// <summary>How wide capture_with_elements' overlay lines are in the returned image, in pixels.</summary>
-    private const float OutputOverlayLineWidth = 2f;
-
     /// <summary>
     /// The WindowMinimized message: Windows does not draw a minimized window, and its rectangle is the icon's at
     /// (-32000, -32000), so a capture would succeed with a tiny or black image.
@@ -263,14 +260,49 @@ public class ScreenshotService : IScreenshotService
             return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
         });
 
+    public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        return Run("window area", options, request =>
+        {
+            ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
+            var warnings = new List<string>();
+            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+
+            // Only what the window capture shows can be cropped to: the visible frame, or the client area without it
+            var crop = Rectangle.Intersect(
+                new Rectangle(area.X, area.Y, area.Width, area.Height),
+                new Rectangle(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height));
+            if (crop.Width <= 0 || crop.Height <= 0)
+            {
+                throw new CaptureException(ScreenshotErrorCode.ElementOffscreen,
+                    $"The element's area ({area.X}, {area.Y}, {area.Width}x{area.Height}) is outside the captured " +
+                    $"{(includeFrame ? "window" : "client area")} ({capture.ScreenOriginX}, {capture.ScreenOriginY}, " +
+                    $"{capture.Width}x{capture.Height}), so nothing was captured. Scroll it into view (element_action " +
+                    "scroll_into_view), or capture the whole window" + (includeFrame ? "." : ", or pass includeFrame: true."));
+            }
+
+            if (crop.Width != capture.Width || crop.Height != capture.Height)
+            {
+                capture = Crop(capture, crop);
+            }
+
+            var monitor = _monitorService.GetMonitorForWindow(windowHandle);
+            AddDpiWarning(windowHandle, monitor, warnings);
+            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
+        });
+    }
+
     public ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
         nint windowHandle,
         string? windowTitle,
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
-        bool highlightInteractable,
+        ElementOverlayOptions overlays,
         CaptureOptions options)
     {
+        ArgumentNullException.ThrowIfNull(overlays);
         try
         {
             var request = CaptureRequest.Resolve(options);
@@ -285,23 +317,27 @@ public class ScreenshotService : IScreenshotService
             AddDpiWarning(windowHandle, monitor, warnings);
             AddBlankWarning(capture, warnings);
 
+            // Element bounds are screen pixels; the image starts at the capture's screen origin, which is the client
+            // area's corner when the frame is left out. The marks are placed in the returned image's pixels and drawn on
+            // it after it was scaled (roadmap M3.11), so their lines and tags keep their size.
             var annotationStopwatch = Stopwatch.StartNew();
-            var annotations = new List<AnnotatedElement>();
-            var penWidth = OverlayPenWidth(capture, request);
-            var rendered = Render(capture, request, bitmap =>
-            {
-                using var graphics = Graphics.FromImage(bitmap);
-                graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
+            var colored = new List<(AnnotatedElement Element, Color Color)>();
+            CollectAnnotations(elements, capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height,
+                overlays.HighlightInteractable, colored);
+            var finalAnnotations = outputWidth != capture.Width || outputHeight != capture.Height
+                ? ScaleAnnotations(colored.Select(c => c.Element).ToList(), outputWidth, outputHeight, capture.Width, capture.Height)
+                : colored.Select(c => c.Element).ToList();
+            var marks = finalAnnotations
+                .Select((annotation, i) => new ElementMark(
+                    new Rectangle(annotation.ImageBounds.X, annotation.ImageBounds.Y, annotation.ImageBounds.Width, annotation.ImageBounds.Height),
+                    colored[i].Color,
+                    annotation.Ref))
+                .ToList();
 
-                // Element bounds are screen pixels; the image starts at the capture's screen origin,
-                // which is the client area's corner when the frame is left out.
-                DrawElementOverlays(graphics, elements, capture.ScreenOriginX, capture.ScreenOriginY,
-                    capture.Width, capture.Height, highlightInteractable, penWidth, annotations);
-            });
-
-            IReadOnlyList<AnnotatedElement> finalAnnotations = rendered.IsScaled
-                ? ScaleAnnotations(annotations, rendered.Width, rendered.Height, capture.Width, capture.Height)
-                : annotations;
+            var rendered = Render(capture, request, overlays.Draw
+                ? bitmap => ElementMarkRenderer.Draw(bitmap, marks, overlays.Labels)
+                : null);
             var annotationMs = annotationStopwatch.Elapsed.TotalMilliseconds;
 
             var metadata = new AnnotatedScreenshotResult(
@@ -750,9 +786,10 @@ public class ScreenshotService : IScreenshotService
         string? FilePath);
 
     /// <summary>
-    /// Turns raw pixels into the output image: optional overlays at full resolution, scaling to the size limit,
-    /// encoding, and the file write when the output includes a file. A failure to build, scale or encode the image is
-    /// <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file write reports its own codes.
+    /// Turns raw pixels into the output image: scaling to the size limit, optional overlays drawn on the scaled image (so
+    /// they keep their size in pixels of the returned image), encoding, and the file write when the output includes a
+    /// file. A failure to build, scale or encode the image is <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file
+    /// write reports its own codes.
     /// </summary>
     private static RenderedImage Render(CaptureResult capture, CaptureRequest request, Action<Bitmap>? annotate)
     {
@@ -765,9 +802,10 @@ public class ScreenshotService : IScreenshotService
         {
             data = WithBitmap(capture, bitmap =>
             {
-                annotate?.Invoke(bitmap);
                 using var scaled = isScaled ? ResizeImage(bitmap, width, height) : null;
-                return Encode(scaled ?? bitmap, encoding, request.Quality);
+                var output = scaled ?? bitmap;
+                annotate?.Invoke(output);
+                return Encode(output, encoding, request.Quality);
             });
         }
         catch (Exception ex) when (ex is not CaptureException)
@@ -785,18 +823,6 @@ public class ScreenshotService : IScreenshotService
             height,
             isScaled,
             filePath);
-    }
-
-    /// <summary>
-    /// The overlay pen width at full resolution. Overlays are drawn before the image is scaled down,
-    /// so the pen is widened by the scale factor (the larger of the two axes) to stay about
-    /// <see cref="OutputOverlayLineWidth"/> pixels wide in the returned image instead of a faint pixel.
-    /// </summary>
-    private static float OverlayPenWidth(CaptureResult capture, CaptureRequest request)
-    {
-        var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
-        var scale = Math.Max((float)capture.Width / outputWidth, (float)capture.Height / outputHeight);
-        return OutputOverlayLineWidth * Math.Max(1f, scale);
     }
 
     private static CapturedRegion CapturedRegionOf(CaptureResult capture) =>
@@ -958,64 +984,47 @@ public class ScreenshotService : IScreenshotService
         return Math.Min(scaled, room);
     }
 
-    private static void DrawElementOverlays(
-        Graphics graphics,
+    /// <summary>
+    /// The marks of <paramref name="elements"/> and their children, in reading order (an element, then the elements inside
+    /// it), with their positions in the full-resolution capture (clipped to it) and their colors. Elements smaller than 2
+    /// pixels, without bounds or outside the image get no mark; their children still can.
+    /// </summary>
+    private static void CollectAnnotations(
         IReadOnlyList<UIElementInfo> elements,
         int originX,
         int originY,
         int imageWidth,
         int imageHeight,
         bool highlightInteractable,
-        float penWidth,
-        List<AnnotatedElement> annotations)
+        List<(AnnotatedElement Element, Color Color)> annotations)
     {
         foreach (var element in elements)
         {
-            DrawElementOverlay(graphics, element, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
-        }
-    }
-
-    private static void DrawElementOverlay(
-        Graphics graphics,
-        UIElementInfo element,
-        int originX,
-        int originY,
-        int imageWidth,
-        int imageHeight,
-        bool highlightInteractable,
-        float penWidth,
-        List<AnnotatedElement> annotations)
-    {
-        // Elements smaller than 2 pixels, or without bounds, get no overlay; their children still can.
-        if (element.Bounds is { Width: >= 2, Height: >= 2 } screenBounds)
-        {
-            // The element's position in the image, clipped to the image
-            var visible = Rectangle.Intersect(
-                new Rectangle(screenBounds.X - originX, screenBounds.Y - originY, screenBounds.Width, screenBounds.Height),
-                new Rectangle(0, 0, imageWidth, imageHeight));
-
-            if (visible.Width > 0 && visible.Height > 0)
+            if (element.Bounds is { Width: >= 2, Height: >= 2 } screenBounds)
             {
-                var (color, colorName) = GetOverlayColor(element.ControlType, element.IsEnabled, highlightInteractable);
-                using var pen = new Pen(color, penWidth);
-                graphics.DrawRectangle(pen, visible);
+                var visible = Rectangle.Intersect(
+                    new Rectangle(screenBounds.X - originX, screenBounds.Y - originY, screenBounds.Width, screenBounds.Height),
+                    new Rectangle(0, 0, imageWidth, imageHeight));
 
-                annotations.Add(new AnnotatedElement(
-                    Name: element.Name,
-                    ControlType: element.ControlType,
-                    AutomationId: element.AutomationId,
-                    ImageBounds: new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
-                    ScreenBounds: screenBounds,
-                    IsEnabled: element.IsEnabled,
-                    OverlayColor: colorName,
-                    Ref: element.Ref
-                ));
+                if (visible.Width > 0 && visible.Height > 0)
+                {
+                    var (color, colorName) = GetOverlayColor(element.ControlType, element.IsEnabled, highlightInteractable);
+                    annotations.Add((new AnnotatedElement(
+                        Name: element.Name,
+                        ControlType: element.ControlType,
+                        AutomationId: element.AutomationId,
+                        ImageBounds: new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
+                        ScreenBounds: screenBounds,
+                        IsEnabled: element.IsEnabled,
+                        OverlayColor: colorName,
+                        Ref: element.Ref), color));
+                }
             }
-        }
 
-        if (element.Children != null)
-        {
-            DrawElementOverlays(graphics, element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
+            if (element.Children != null)
+            {
+                CollectAnnotations(element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, annotations);
+            }
         }
     }
 

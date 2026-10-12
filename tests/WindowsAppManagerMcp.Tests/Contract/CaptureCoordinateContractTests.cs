@@ -32,6 +32,8 @@ public class CaptureCoordinateContractTests
     private readonly Mock<IHostGuard> _hostGuard = new();
     private readonly Mock<INativeThreadInputWrapper> _threads = new();
     private readonly CaptureRegistry _registry = new();
+    private readonly Mock<IUIElementService> _uiElements = TestDataFactory.CreateMockUIElementService();
+    private readonly Mock<IElementRegistry> _elementRegistry = new();
     private (int Left, int Top, int Right, int Bottom) _notepadRect = (0, 100, 1600, 1000);
 
     public CaptureCoordinateContractTests()
@@ -91,8 +93,8 @@ public class CaptureCoordinateContractTests
         var input = new InputSimulationService(monitors.Object, _input.Object, guard, new InputSession(_input.Object), hitTest: _hitTest.Object);
         var screenshots = new ScreenshotService(_capture.Object, monitors.Object, _windows.Object, captureRegistry: _registry);
         var resolver = new CoordinateSpaceResolver(_registry, _windows.Object, _hitTest.Object, _capture.Object);
-        var screenshotTools = new ScreenshotTools(screenshots, TestDataFactory.CreateMockUIElementService().Object, _windowService.Object,
-            new TargetPolicy(TargetPolicySettings.Default));
+        var screenshotTools = new ScreenshotTools(screenshots, _uiElements.Object, _windowService.Object,
+            new TargetPolicy(TargetPolicySettings.Default), elementRegistry: _elementRegistry.Object);
         return InProcessMcpServer.StartAsync(
             [],
             builder => builder.AddToolErrorReporting()
@@ -145,6 +147,70 @@ public class CaptureCoordinateContractTests
         requested.GetProperty("captureId").GetString().Should().Be(captureId);
         payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Notepad);
         _input.Verify(i => i.SetCursorPos(400, 300), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AMarksLegendCenter_ClickedWithTheCaptureId_ClicksTheElementsMiddle()
+    {
+        // Arrange - Notepad's Save button, whose middle is screen (400, 300) (roadmap M3.11: the marks and image-space
+        // clicks agree)
+        UIElementInfo save = new("Save", "Button", "btnSave", new BoundsDto(380, 290, 40, 20), IsEnabled: true,
+            IsOffscreen: false, Ref: "w1000001e7");
+        _uiElements.Setup(u => u.GetUIElementsAsync(Notepad, It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestDataFactory.CreateUIElementResult(windowHandle: Notepad, elements: [save]));
+        _windowService.Setup(s => s.IsValidWindow(Notepad)).Returns(true);
+        await using var server = await StartServerAsync();
+        var capture = Payload(await server.CallToolAsync("capture_with_elements", new Dictionary<string, object?> { ["handle"] = (long)Notepad }));
+        capture.TryGetProperty("legend", out var legendProperty).Should().BeTrue(capture.ToString());
+        var legend = legendProperty.GetString()!;
+        legend.Should().StartWith("[w1000001e7] Button 'Save' #btnSave center=(");
+        var center = legend[(legend.IndexOf("center=(", StringComparison.Ordinal) + 8)..legend.IndexOf(')')].Split(',').Select(int.Parse).ToArray();
+
+        // Act
+        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        {
+            ["x"] = center[0],
+            ["y"] = center[1],
+            ["captureId"] = capture.GetProperty("captureId").GetString()
+        }));
+
+        // Assert
+        payload.GetProperty("success").GetBoolean().Should().BeTrue(payload.ToString());
+        payload.GetProperty("x").GetInt32().Should().Be(400);
+        payload.GetProperty("y").GetInt32().Should().Be(300);
+    }
+
+    [Fact]
+    public async Task ARefCrop_ThenAClickAtItsMiddle_ClicksTheElement()
+    {
+        // Arrange - Notepad's Save button at (380, 290, 40, 20), named by its ref; the crop keeps 8 pixels around it
+        const string saveRef = "w1000001e7";
+        var element = new UiaElement(new FakeUiaNode("Button", "Save"),
+            new UiaNodeProperties("Save", "Button", "btnSave", new UiaRect(380, 290, 40, 20), IsEnabled: true, IsOffscreen: false),
+            ClassName: null, IsKeyboardFocusable: true, UiaPatterns.Invoke, RuntimeId: [42, 7], ControlTypeId: null);
+        _elementRegistry.Setup(r => r.Lookup(saveRef)).Returns(new ElementLookup(saveRef, Notepad,
+            new ElementFingerprint("Save", "Button", "btnSave", null, null), 1));
+        _elementRegistry.Setup(r => r.ResolveAsync(saveRef, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementResolution(new ResolvedElement(saveRef, Notepad, element.Node, element, ElementResolutionPath.Live)));
+        await using var server = await StartServerAsync();
+        var crop = Payload(await server.CallToolAsync("capture_window", new Dictionary<string, object?> { ["ref"] = saveRef }));
+        crop.GetProperty("capturedRegion").GetProperty("x").GetInt32().Should().Be(372, crop.ToString());
+        crop.GetProperty("width").GetInt32().Should().Be(56);
+
+        // Act - the middle of the 56 x 36 crop
+        var payload = Payload(await server.CallToolAsync("click", new Dictionary<string, object?>
+        {
+            ["x"] = 28,
+            ["y"] = 18,
+            ["captureId"] = crop.GetProperty("captureId").GetString()
+        }));
+
+        // Assert
+        payload.GetProperty("success").GetBoolean().Should().BeTrue(payload.ToString());
+        payload.GetProperty("x").GetInt32().Should().Be(400);
+        payload.GetProperty("y").GetInt32().Should().Be(300);
+        payload.GetProperty("receivingWindow").GetProperty("handle").GetInt64().Should().Be(Notepad);
     }
 
     [Fact]

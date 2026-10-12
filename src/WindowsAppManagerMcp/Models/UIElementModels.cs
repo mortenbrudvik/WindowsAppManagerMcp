@@ -108,6 +108,10 @@ public enum UIElementTruncationReason
 /// <param name="AccessibilityWarmupBudget">The longest wait for the accessibility tree of a window that shows web content
 /// (roadmap M3.3), or null for <see cref="Services.AccessibilityWarmup.MaxWait"/>. Not a filter: the tools set it to a
 /// share of their timeout (<see cref="Services.AccessibilityWarmup.BudgetFor"/>), so the walk keeps time to read.</param>
+/// <param name="ActionableOnly">Keep only elements that support an action pattern (Invoke, Toggle, Value, SelectionItem,
+/// ExpandCollapse, RangeValue: <see cref="Services.Interfaces.UiaPatterns.Actions"/>), enabled or not: the elements an agent
+/// can act on with element_action. Unlike <see cref="InteractableOnly"/>, keyboard focus alone does not count, and a disabled
+/// element is kept (capture_with_elements' marks show it dimmed; roadmap M3.11).</param>
 public record UIElementFilter(
     string[]? ControlTypes = null,
     bool InteractableOnly = false,
@@ -115,7 +119,8 @@ public record UIElementFilter(
     int? MinWidth = null,
     int? MinHeight = null,
     int? MaxElements = null,
-    TimeSpan? AccessibilityWarmupBudget = null
+    TimeSpan? AccessibilityWarmupBudget = null,
+    bool ActionableOnly = false
 );
 
 /// <summary>

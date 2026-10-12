@@ -99,7 +99,7 @@ public class ScreenshotOptionTests
             It.IsAny<string?>(),
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             true,
-            true,
+            ElementOverlayOptions.Default,
             options), Times.Once);
     }
 

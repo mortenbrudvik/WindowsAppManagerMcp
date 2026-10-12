@@ -23,7 +23,7 @@ namespace WindowsAppManagerMcp.Services;
 /// itself.</item>
 /// <item>maxDepth counts levels below the window: its children are level 1, and nothing below
 /// level maxDepth is read.</item>
-/// <item>The controlTypes, size and interactable filters decide only whether an element itself is
+/// <item>The controlTypes, size, interactable and actionable filters decide only whether an element itself is
 /// returned. An element that fails one is left out, and the elements inside it that pass take its
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
 /// <item>maxElements stops the walk once that many elements are returned. truncationReason MaxElements says something
@@ -817,7 +817,35 @@ public class UIElementService : IUIElementService
                 }
             }
 
+            if (filter?.ActionableOnly == true && !IsActionable(candidate))
+            {
+                return false;
+            }
+
             return true;
+        }
+
+        /// <summary>
+        /// Whether the element supports an action pattern: from the patterns fetched with its level, or from one fresh read
+        /// of the element (a cross-process call) when it was read on its own. An element whose patterns cannot be read is
+        /// left out and counted, and the elements inside it are still walked; one that disappeared throws.
+        /// </summary>
+        private bool IsActionable(Candidate candidate)
+        {
+            if (candidate.Cached is { } cached)
+            {
+                return (cached.Patterns & UiaPatterns.Actions) != 0;
+            }
+
+            try
+            {
+                return (tree.ReadElement(candidate.Node).Patterns & UiaPatterns.Actions) != 0;
+            }
+            catch (Exception ex) when (ex is not UiaElementUnavailableException)
+            {
+                Count(ref _skippedElementCount);
+                return false;
+            }
         }
 
         private bool StopRequested()

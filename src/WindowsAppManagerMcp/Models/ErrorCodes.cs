@@ -423,7 +423,14 @@ public enum ScreenshotErrorCode
     RegionOffScreen = 15,
 
     /// <summary>The pixels were captured, but the image could not be built, scaled or encoded (for example out of memory).</summary>
-    EncodeFailed = 16
+    EncodeFailed = 16,
+
+    /// <summary>
+    /// capture_window with a ref (roadmap M3.11): the element is offscreen, has no bounds, or lies outside the captured
+    /// window (its client area without the frame), so there is nothing of it to crop to. The same name as element_action's
+    /// UIElementErrorCode.ElementOffscreen.
+    /// </summary>
+    ElementOffscreen = 17
 }
 
 /// <summary>

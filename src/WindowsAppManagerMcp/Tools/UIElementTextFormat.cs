@@ -115,10 +115,10 @@ public static class UIElementTextFormat
     }
 
     // '@' and '[' start the bounds and flag tokens of a line, so an id holding them is quoted too
-    private static bool NeedsQuotes(string value) =>
+    internal static bool NeedsQuotes(string value) =>
         value.Any(c => char.IsWhiteSpace(c) || c is '\'' or '\\' or '@' or '[' or ']' || char.IsControl(c));
 
-    private static string Quote(string value, int maxLength)
+    internal static string Quote(string value, int maxLength)
     {
         var cut = value.Length > maxLength ? value[..maxLength] : value;
         var quoted = new StringBuilder("'", cut.Length + 3);

@@ -44,21 +44,35 @@ public interface IScreenshotService
     ScreenCapture<ScreenshotResult> CaptureWindow(nint windowHandle, bool includeFrame, CaptureOptions options);
 
     /// <summary>
-    /// Captures a window and draws UI element bounding boxes on it. Overlays are placed relative to the
-    /// capture's own screen origin, so they line up with or without the frame.
+    /// Captures part of a window (capture_window with a ref, roadmap M3.11): the window is captured as by
+    /// <see cref="CaptureWindow"/> (so covering windows do not show), then cut to <paramref name="area"/> clipped to the
+    /// captured window. The capture is registered with the crop's origin and the window, so an image point of the crop
+    /// converts to the screen and is refused once the window moved. An area outside the captured window (or its client
+    /// area without the frame) fails with ElementOffscreen.
+    /// </summary>
+    /// <param name="windowHandle">Handle to the window.</param>
+    /// <param name="includeFrame">Whether the frame is part of what the area is clipped to.</param>
+    /// <param name="area">The area in screen pixels: an element's bounds and padding.</param>
+    /// <param name="options">Format, size limit, output mode and file options.</param>
+    ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options);
+
+    /// <summary>
+    /// Captures a window and draws its UI elements on it as marks (roadmap M3.11): a box and a filled tag with the element's
+    /// ref, drawn on the returned image after it was scaled. Marks are placed relative to the capture's own screen origin, so
+    /// they line up with or without the frame.
     /// </summary>
     /// <param name="windowHandle">Handle to the window</param>
     /// <param name="windowTitle">The window title to report, or null</param>
     /// <param name="elements">UI elements to draw overlays for, with screen bounds</param>
     /// <param name="includeFrame">Whether to include the window frame/decoration</param>
-    /// <param name="highlightInteractable">Use brighter colors for enabled/interactable elements</param>
+    /// <param name="overlays">Whether to draw the marks, their tags, and dimmed boxes for disabled elements.</param>
     /// <param name="options">Format, size limit, output mode and file options. ImageBounds follow the output image.</param>
     ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
         nint windowHandle,
         string? windowTitle,
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
-        bool highlightInteractable,
+        ElementOverlayOptions overlays,
         CaptureOptions options);
 
     /// <summary>

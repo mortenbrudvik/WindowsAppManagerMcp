@@ -421,6 +421,46 @@ public class UIElementServiceTests
     }
 
     [Fact]
+    public async Task GetUIElements_ActionableOnly_KeepsElementsWithAnActionPattern_EnabledOrNot()
+    {
+        // Arrange - capture_with_elements' marks (roadmap M3.11): what an agent can act on, not what can take focus
+        Window(
+            Node("Pane", "Panel").With(
+                Node("Text", "Label"),
+                new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"] },
+                new FakeUiaNode("Pane", "Focusable pane") { IsKeyboardFocusable = true },
+                new FakeUiaNode("Button", "Off") { IsEnabled = false, ActionPatterns = ["Invoke"] },
+                new FakeUiaNode("Pane", "Scroller") { OtherPatterns = UiaPatterns.Scroll | UiaPatterns.LegacyIAccessible }),
+            new FakeUiaNode("Edit", "Field") { ActionPatterns = ["Value"] });
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ActionableOnly: true));
+
+        // Assert - a disabled button is still a mark (shown dimmed); focusable-only and container patterns are not
+        Shape(result.Elements).Should().Be("Go,Off,Field");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Interactable:") || r.StartsWith("Interaction:"),
+            "the patterns came with the level's cached read");
+    }
+
+    [Fact]
+    public async Task GetUIElements_ActionableOnly_ReadOneAtATime_ReadsThePatternsOfTheCandidatesOnly()
+    {
+        // Arrange - the cached fetch fails, so the children are read one at a time
+        Window(
+            new FakeUiaNode("Text", "Label"),
+            new FakeUiaNode("Button", "Go") { ActionPatterns = ["Invoke"] },
+            new FakeUiaNode("Edit", "Field") { IsKeyboardFocusable = true })
+            .CachedChildrenException = new System.Runtime.InteropServices.COMException("cache request failed");
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(ControlTypes: ["Button", "Edit"], ActionableOnly: true));
+
+        // Assert - one fresh read per element that passed the control types; the label is never asked
+        Shape(result.Elements).Should().Be("Go");
+        _tree.Reads.Where(r => r.StartsWith("Element:")).Should().Equal("Element:Go", "Element:Field");
+    }
+
+    [Fact]
     public async Task GetUIElements_WithoutInteractableOnly_DoesNotReadFocusOrPatterns()
     {
         // Arrange
