@@ -537,10 +537,12 @@ public class ElementSearchServiceTests
 
         // Act
         var resolution = _registry.Resolve(detailsRef, CancellationToken.None);
+        var again = _registry.Resolve(detailsRef, CancellationToken.None);
 
-        // Assert
+        // Assert - and the re-created row is the ref's row from now on
         resolution.Success.Should().BeTrue(resolution.Error);
         resolution.Element!.Moved.Should().BeTrue();
+        again.Element!.Via.Should().Be(ElementResolutionPath.Live);
     }
 
     [Fact]

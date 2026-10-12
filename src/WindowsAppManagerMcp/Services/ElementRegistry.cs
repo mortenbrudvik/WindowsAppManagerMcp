@@ -422,7 +422,8 @@ public sealed class ElementRegistry : IElementRegistry
         switch (found.MatchCount)
         {
             case 1 when found.Complete:
-                return MovedToAnotherRow(entry, found.Matches[0].Node, row, fingerprint, cancellationToken) ?? Rebind(entry, found.Matches[0]);
+                return MovedToAnotherRow(entry, found.Matches[0].Node, row, fingerprint, cancellationToken, out var rowNow) ??
+                       Rebind(entry, found.Matches[0], rowNow);
             case > 1:
                 return ElementResolution.Failed(UIElementErrorCode.AmbiguousElement,
                     $"Element ref '{entry.Ref}' is ambiguous: its element ({Describe(fingerprint)}) is gone, and " +
@@ -463,7 +464,7 @@ public sealed class ElementRegistry : IElementRegistry
         string? change;
         try
         {
-            change = ElementRows.Changed(_tree, node, row, reCreated: false, cancellationToken);
+            change = ElementRows.Changed(_tree, node, row, reCreated: false, cancellationToken, out _);
         }
         catch (UiaElementUnavailableException)
         {
@@ -484,9 +485,12 @@ public sealed class ElementRegistry : IElementRegistry
     /// re-created too. A control that exists in one row only (the selected row's details) proves unique among the realized
     /// rows, and a list re-creates it in whichever row is selected next: the ref must not move there.
     /// </summary>
+    /// <param name="rowNow">The row as read now (re-created, with its own runtime id), for the ref moved into it.</param>
     private ElementResolution? MovedToAnotherRow(
-        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken)
+        Entry entry, IUiaNode node, ElementRow? row, ElementFingerprint fingerprint, CancellationToken cancellationToken,
+        out ElementRow? rowNow)
     {
+        rowNow = null;
         if (row == null)
         {
             return null;
@@ -495,7 +499,7 @@ public sealed class ElementRegistry : IElementRegistry
         string? change;
         try
         {
-            change = ElementRows.Changed(_tree, node, row, reCreated: true, cancellationToken);
+            change = ElementRows.Changed(_tree, node, row, reCreated: true, cancellationToken, out rowNow);
         }
         catch (UiaElementUnavailableException)
         {
@@ -553,9 +557,9 @@ public sealed class ElementRegistry : IElementRegistry
     /// Moves a ref to its re-created element. When that element already has a ref of its own, the old ref is dropped and
     /// the element's own ref is returned, so one element never has two refs. Either way the resolution is
     /// <see cref="ResolvedElement.Moved"/>; a moved ref stays so in later resolutions until a read registers its element
-    /// again (the caller has then seen it).
+    /// again (the caller has then seen it). <paramref name="row"/> is the element's row as read now, when it has one.
     /// </summary>
-    private ElementResolution Rebind(Entry entry, UiaElement element)
+    private ElementResolution Rebind(Entry entry, UiaElement element, ElementRow? row)
     {
         lock (_gate)
         {
@@ -580,6 +584,7 @@ public sealed class ElementRegistry : IElementRegistry
             entry.Window.Entries[key] = entry;
             entry.Node = element.Node;
             entry.Fingerprint = Merge(entry.Fingerprint, Fingerprint(element, null));
+            entry.Row = row ?? entry.Row;
             entry.Moved = true;
             Touch(entry);
             return new ElementResolution(new ResolvedElement(

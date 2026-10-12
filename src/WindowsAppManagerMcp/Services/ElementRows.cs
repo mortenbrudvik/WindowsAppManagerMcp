@@ -58,10 +58,13 @@ public static class ElementRows
     /// </summary>
     /// <param name="reCreated">For an element that was re-created (the row may be re-created too): the item's name and
     /// automation id are compared, not its runtime id.</param>
+    /// <param name="now">The row as read now when it is the same item (its runtime id may be new), else null.</param>
     /// <exception cref="OperationCanceledException">The token was cancelled.</exception>
     /// <exception cref="UiaElementUnavailableException">The element or an ancestor is gone.</exception>
-    public static string? Changed(IUiaTree tree, IUiaNode node, ElementRow row, bool reCreated, CancellationToken cancellationToken)
+    public static string? Changed(
+        IUiaTree tree, IUiaNode node, ElementRow row, bool reCreated, CancellationToken cancellationToken, out ElementRow? now)
     {
+        now = null;
         var current = node;
         for (var level = 0; level < row.Levels; level++)
         {
@@ -86,9 +89,13 @@ public static class ElementRows
         var sameItem = string.Equals(automationId, row.AutomationId, StringComparison.Ordinal) &&
                        (row.AutomationId != null || string.Equals(name, row.Name, StringComparison.Ordinal)) &&
                        (reCreated || (item.RuntimeId is { Count: > 0 } id && id.SequenceEqual(row.RuntimeId)));
-        return sameItem
-            ? null
-            : $"its row now shows another item ({item.Properties.ControlType} '{name}', not {Describe(row)})";
+        if (!sameItem)
+        {
+            return $"its row now shows another item ({item.Properties.ControlType} '{name}', not {Describe(row)})";
+        }
+
+        now = OfItem(item.RuntimeId, item.Properties) is { } read ? read with { Levels = row.Levels } : row;
+        return null;
     }
 
     /// <summary>
