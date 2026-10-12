@@ -248,6 +248,13 @@ public sealed class InputTargetGuard : IInputTargetGuard
     {
         ArgumentNullException.ThrowIfNull(approved);
 
+        // A converted point is checked against what it was measured on before every press: the window can move while the
+        // same window stays at the point (the 10 ms before a click, up to 500 ms between a double click's presses)
+        if (PointRefusal(approved.Target) is { } stale)
+        {
+            return stale;
+        }
+
         // The capture is read again even when the same window is at the point: it can start at any moment
         var hit = RootAt(x, y);
         if (hit == approved.Receiving)

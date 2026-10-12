@@ -69,8 +69,9 @@ public interface IInputTargetGuard
 
     /// <summary>
     /// Checks again before a later batch at the same point (the click after the cursor move, the second
-    /// click of a double click). Allowed while the same window is at the point; otherwise the new window is
-    /// checked in full. Reads only.
+    /// click of a double click). A converted point is first checked again against what it was measured on
+    /// (<see cref="InputTarget.PointRecheck"/>: StaleCapture), so before every press. Then allowed while the same
+    /// window is at the point; otherwise the new window is checked in full. Reads only.
     /// </summary>
     InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved);
 

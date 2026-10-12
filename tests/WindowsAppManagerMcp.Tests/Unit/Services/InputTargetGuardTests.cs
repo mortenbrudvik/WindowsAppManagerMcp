@@ -1263,6 +1263,40 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void RecheckMouse_RunsThePointRecheckAgain_EvenWithTheSameWindowAtThePoint()
+    {
+        // Arrange - an image-space double click: the captured window moved between the presses, but is still at the point
+        At(NotepadEdit, root: Notepad);
+        var rechecks = 0;
+        var target = To(Notepad) with
+        {
+            PointRecheck = () => ++rechecks == 1 ? null : new SelectorRefusal("StaleCapture", "Window 512 moved 40 px since capture c3-abcdef.")
+        };
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, target);
+
+        // Act
+        var rechecked = sut.RecheckMouse(500, 300, approved);
+
+        // Assert
+        approved.Allowed.Should().BeTrue(approved.Error);
+        rechecked.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+        rechecked.Error.Should().Contain("moved 40 px");
+        rechecks.Should().Be(2);
+    }
+
+    [Fact]
+    public void RecheckMouse_APointRecheckThatStillPasses_KeepsTheApproval()
+    {
+        At(Notepad);
+        var target = To(Notepad) with { PointRecheck = () => null };
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, target);
+
+        sut.RecheckMouse(500, 300, approved).Should().BeSameAs(approved);
+    }
+
+    [Fact]
     public void RecheckMouse_AnotherWindowAppearedAtThePoint_IsTargetOccluded()
     {
         // Arrange - moving the cursor opened a window of another app over the point

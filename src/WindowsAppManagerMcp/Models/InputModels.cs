@@ -50,7 +50,8 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
     /// For a point converted from image, window or client coordinates (roadmap M3.11): checks that what the point was
     /// measured on is unchanged, and returns why not (errorCode StaleCapture), or null when it is. The point is converted
     /// before the call waits for the input gate; the input guard runs this inside the gate for mouse input, after the
-    /// target's own checks, so input never reaches a point that a window moving meanwhile turned into another spot.
+    /// target's own checks, and again before every press (the second click of a double click too), so input never reaches a
+    /// point that a window moving meanwhile turned into another spot.
     /// </summary>
     public Func<SelectorRefusal?>? PointRecheck { get; init; }
 
