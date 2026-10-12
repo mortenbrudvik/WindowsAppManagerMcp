@@ -38,7 +38,9 @@ public sealed class FakeSelectionItemPattern(bool isSelected) : IUiaSelectionIte
 /// <summary>
 /// A Text pattern over a document string (roadmap M3.9). A page is cut from the document by character, as a provider whose
 /// character unit is one UTF-16 code unit does; <see cref="LineBreakIsOneCharacter"/> makes "\r\n" one character, as some
-/// providers count it. Every call is counted; <see cref="Failure"/> makes every call throw.
+/// providers count it, and <see cref="CharacterLength"/> makes every character longer. Like a provider's range, and unlike
+/// the engines' adapters, a page holds the whole text of the characters it spans, however long. Every call is counted;
+/// <see cref="Failure"/> makes every call throw.
 /// </summary>
 public sealed class FakeTextPattern(string document) : IUiaTextPattern
 {
@@ -46,6 +48,12 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
 
     /// <summary>Count "\r\n" as one character, as some providers do.</summary>
     public bool LineBreakIsOneCharacter { get; init; }
+
+    /// <summary>How many UTF-16 characters each of the provider's characters holds (1: one each).</summary>
+    public int CharacterLength { get; init; } = 1;
+
+    /// <summary>The maxLength of every page asked for, in order.</summary>
+    public List<int> PageLengths { get; } = [];
 
     /// <summary>Thrown by every call when set.</summary>
     public Exception? Failure { get; set; }
@@ -75,6 +83,7 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
         Calls++;
         ThrowIfFailing();
         OnGetTextPage?.Invoke();
+        PageLengths.Add(maxLength);
         var units = Units();
         var start = Math.Min(offset, units.Count);
         var length = Math.Min(maxLength, units.Count - start);
@@ -91,6 +100,11 @@ public sealed class FakeTextPattern(string document) : IUiaTextPattern
             {
                 units.Add("\r\n");
                 i++;
+            }
+            else if (CharacterLength > 1)
+            {
+                units.Add(Document.Substring(i, Math.Min(CharacterLength, Document.Length - i)));
+                i += CharacterLength - 1;
             }
             else
             {
@@ -122,15 +136,44 @@ public sealed class FakeGridPattern(IReadOnlyList<IReadOnlyList<FakeUiaNode?>> c
     /// <summary>Every GetItem call, in order.</summary>
     public IReadOnlyList<(int Row, int Column)> Items => _items;
 
+    /// <summary>The exception GetItem throws for a row and column, or null to answer (as a grid that disappeared).</summary>
+    public Func<int, int, Exception?>? ItemFailure { get; set; }
+
     public IUiaNode? GetItem(int row, int column)
     {
         _items.Add((row, column));
+        if (ItemFailure?.Invoke(row, column) is { } failure)
+        {
+            throw failure;
+        }
+
         if (row < 0 || row >= cells.Count || column < 0 || column >= ColumnCount)
         {
             throw new ArgumentOutOfRangeException(nameof(row), "No such cell.");
         }
 
         return column < cells[row].Count ? cells[row][column] : null;
+    }
+}
+
+/// <summary>A GridItem pattern: where a cell sits in its grid (read_table, roadmap M3.9). Every read is counted.</summary>
+public sealed class FakeGridItemPattern(int row, int column, int rowSpan = 1, int columnSpan = 1) : IUiaGridItemPattern
+{
+    /// <summary>How many of the four properties were read.</summary>
+    public int Reads { get; private set; }
+
+    public int Row => Read(row);
+
+    public int Column => Read(column);
+
+    public int RowSpan => Read(rowSpan);
+
+    public int ColumnSpan => Read(columnSpan);
+
+    private int Read(int value)
+    {
+        Reads++;
+        return value;
     }
 }
 

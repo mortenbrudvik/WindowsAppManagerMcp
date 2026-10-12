@@ -65,6 +65,7 @@ public class UiaIdsTests
         { UiaIds.ScrollPattern, nameof(ScrollPattern) },
         { UiaIds.ExpandCollapsePattern, nameof(ExpandCollapsePattern) },
         { UiaIds.GridPattern, nameof(GridPattern) },
+        { UiaIds.GridItemPattern, nameof(GridItemPattern) },
         { UiaIds.WindowPattern, nameof(WindowPattern) },
         { UiaIds.SelectionItemPattern, nameof(SelectionItemPattern) },
         { UiaIds.TablePattern, nameof(TablePattern) },
@@ -94,14 +95,15 @@ public class UiaIdsTests
     }
 
     [Fact]
-    public void EveryPatternOfTheSeam_HasAnId_AndAnAvailabilityProperty()
+    public void EveryPatternOfTheSeam_HasAnId_AndEveryPatternFlagAnAvailabilityProperty()
     {
         var patternInterfaces = typeof(IUiaPattern).Assembly.GetTypes()
             .Where(t => t.IsInterface && t != typeof(IUiaPattern) && typeof(IUiaPattern).IsAssignableFrom(t))
             .ToList();
 
-        patternInterfaces.Should().HaveCount(15);
+        patternInterfaces.Should().HaveCount(16);
         patternInterfaces.Should().OnlyContain(t => UiaIds.PatternId(t) != null);
+        // GridItem has no flag in UiaPatterns: read_table asks a cell for it, and find_ui_elements would list it on every cell
         UiaIds.PatternAvailability.Select(p => p.Pattern).Should().OnlyHaveUniqueItems().And.HaveCount(15);
         UiaIds.PatternAvailability.Aggregate(UiaPatterns.None, (all, p) => all | p.Pattern)
             .Should().HaveFlag(UiaPatterns.Actions);

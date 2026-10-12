@@ -155,6 +155,7 @@ public sealed class FakeUiaTree : IUiaTree
     {
         var fake = Fake(node);
         _reads.Enqueue($"Value:{fake.Name}");
+        ThrowIfSet(fake.ValueException);
         return fake.Value;
     }
 
@@ -384,6 +385,9 @@ public sealed class FakeUiaNode : IUiaNode
     public nint NativeWindowHandle { get; init; }
     public bool IsPassword { get; init; }
     public string? Value { get; set; }
+
+    /// <summary>Thrown by <see cref="FakeUiaTree.ReadValue"/> for this node, as a value read of an element that vanished.</summary>
+    public Exception? ValueException { get; set; }
 
     /// <summary>The Window pattern's IsModal, or null when the node has no Window pattern.</summary>
     public bool? IsModal { get; init; }

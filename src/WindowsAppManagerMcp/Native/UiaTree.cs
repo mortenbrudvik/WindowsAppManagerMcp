@@ -373,6 +373,7 @@ public sealed class UiaTree : IUiaTree
             nameof(IUiaWindowPattern) => System.Windows.Automation.WindowPattern.Pattern,
             nameof(IUiaTextPattern) => System.Windows.Automation.TextPattern.Pattern,
             nameof(IUiaGridPattern) => System.Windows.Automation.GridPattern.Pattern,
+            nameof(IUiaGridItemPattern) => System.Windows.Automation.GridItemPattern.Pattern,
             nameof(IUiaTablePattern) => System.Windows.Automation.TablePattern.Pattern,
             nameof(IUiaItemContainerPattern) => System.Windows.Automation.ItemContainerPattern.Pattern,
             nameof(IUiaVirtualizedItemPattern) => System.Windows.Automation.VirtualizedItemPattern.Pattern,
@@ -528,6 +529,7 @@ public sealed class UiaTree : IUiaTree
         nameof(IUiaWindowPattern) => new WindowPatternAdapter((System.Windows.Automation.WindowPattern)pattern),
         nameof(IUiaTextPattern) => new TextPatternAdapter((System.Windows.Automation.TextPattern)pattern),
         nameof(IUiaGridPattern) => new GridPatternAdapter((System.Windows.Automation.GridPattern)pattern),
+        nameof(IUiaGridItemPattern) => new GridItemPatternAdapter((System.Windows.Automation.GridItemPattern)pattern),
         nameof(IUiaTablePattern) => new TablePatternAdapter((System.Windows.Automation.TablePattern)pattern),
         nameof(IUiaItemContainerPattern) => new ItemContainerPatternAdapter((System.Windows.Automation.ItemContainerPattern)pattern),
         nameof(IUiaVirtualizedItemPattern) => new VirtualizedItemPatternAdapter((System.Windows.Automation.VirtualizedItemPattern)pattern),
@@ -697,26 +699,27 @@ public sealed class UiaTree : IUiaTree
             return maxLength >= 0 && text.Length > maxLength ? text[..maxLength] : text;
         });
 
-        public UiaTextPage GetTextPage(int offset, int maxLength) => Translate(() =>
-        {
-            // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
-            var range = pattern.DocumentRange;
-            var start = offset > 0
-                ? range.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start,
-                    System.Windows.Automation.Text.TextUnit.Character, offset)
-                : 0;
-            range.MoveEndpointByRange(System.Windows.Automation.Text.TextPatternRangeEndpoint.End, range,
-                System.Windows.Automation.Text.TextPatternRangeEndpoint.Start);
-            var length = range.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End,
-                System.Windows.Automation.Text.TextUnit.Character, Math.Max(1, maxLength));
-            var text = length > 0 ? range.GetText(-1) ?? string.Empty : string.Empty;
+        // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
+        public UiaTextPage GetTextPage(int offset, int maxLength) =>
+            Translate(() => new TextPageReader(pattern.DocumentRange).Read(offset, maxLength));
+    }
 
-            // A full page: one more character after it tells whether text follows
-            var hasMore = length >= maxLength &&
-                          range.Clone().MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End,
-                              System.Windows.Automation.Text.TextUnit.Character, 1) > 0;
-            return new UiaTextPage(text, start, length, hasMore);
-        });
+    /// <summary>The page reader of both engines over a managed text range.</summary>
+    private sealed class TextPageReader(System.Windows.Automation.Text.TextPatternRange range) : UiaTextPageReader
+    {
+        protected override int MoveStart(int count) => range.MoveEndpointByUnit(
+            System.Windows.Automation.Text.TextPatternRangeEndpoint.Start, System.Windows.Automation.Text.TextUnit.Character, count);
+
+        protected override void Collapse() => range.MoveEndpointByRange(
+            System.Windows.Automation.Text.TextPatternRangeEndpoint.End, range, System.Windows.Automation.Text.TextPatternRangeEndpoint.Start);
+
+        protected override int MoveEnd(int count) => range.MoveEndpointByUnit(
+            System.Windows.Automation.Text.TextPatternRangeEndpoint.End, System.Windows.Automation.Text.TextUnit.Character, count);
+
+        protected override string GetText(int maxLength) => range.GetText(maxLength) ?? string.Empty;
+
+        protected override bool HasCharacterAfterEnd() => range.Clone().MoveEndpointByUnit(
+            System.Windows.Automation.Text.TextPatternRangeEndpoint.End, System.Windows.Automation.Text.TextUnit.Character, 1) > 0;
     }
 
     private sealed class GridPatternAdapter(System.Windows.Automation.GridPattern pattern) : IUiaGridPattern
@@ -726,6 +729,17 @@ public sealed class UiaTree : IUiaTree
         public int ColumnCount => Translate(() => pattern.Current.ColumnCount);
 
         public IUiaNode? GetItem(int row, int column) => Translate(() => (IUiaNode?)Wrap(pattern.GetItem(row, column)));
+    }
+
+    private sealed class GridItemPatternAdapter(System.Windows.Automation.GridItemPattern pattern) : IUiaGridItemPattern
+    {
+        public int Row => Translate(() => pattern.Current.Row);
+
+        public int Column => Translate(() => pattern.Current.Column);
+
+        public int RowSpan => Translate(() => pattern.Current.RowSpan);
+
+        public int ColumnSpan => Translate(() => pattern.Current.ColumnSpan);
     }
 
     private sealed class TablePatternAdapter(System.Windows.Automation.TablePattern pattern) : IUiaTablePattern

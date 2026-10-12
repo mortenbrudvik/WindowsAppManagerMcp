@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -14,24 +15,38 @@ namespace WindowsAppManagerMcp.Services;
 /// <para><b>Text.</b> The password flag is read first; a password field, or one whose flag cannot be read, is never read.
 /// Then the sources in this order: the Text pattern's document, paged by
 /// the provider (<see cref="IUiaTextPattern.GetTextPage"/>, so a page costs its own length and not the document's), the
-/// Value pattern's value (read in full, then cut), and the name. An empty document falls through to the value and a failing
+/// Value pattern's value (read in full, then cut), and the name. A page holds at most maxLength characters and
+/// <see cref="MaxTextBytes"/> bytes of JSON: a document page that does not fit is read again over fewer characters, so its
+/// nextOffset skips nothing. An empty document falls through to the value and a failing
 /// pattern to the next source, but an element with either pattern is never read by its name: an empty edit box is empty, not
 /// its label. The Text pattern comes before the Value pattern (the
 /// design had them the other way round) because a browser document's value is its URL, and because only the Text pattern
 /// can page a long document without reading all of it for every page; where an edit has both, they hold the same text.</para>
-/// <para><b>Tables.</b> Through the Grid pattern when the element has it: GetItem per cell of the page, the headers from the
-/// Table pattern's column headers, else from a Header among the grid's first children. Otherwise a walk of the element's
-/// children: DataItem, ListItem and TreeItem children are the rows (read in one cached call when there are at most
-/// <see cref="CachedRowsLimit"/> children), a Header child or a first row of HeaderItems gives the headers, and a row's
-/// children are its cells (a row without children is one cell, its own text). A cell's text is its name, else its value
-/// (never a password field's), else the names of its children. The read stops at the timeout (whole rows only), at
-/// <see cref="MaxTableTextLength"/> characters, and between cells when the token is cancelled; the rows read until the
-/// worker abandons a stuck call are still returned.</para>
+/// <para><b>Tables.</b> Only reads: never scrolls, realizes or acts. Through the Grid pattern when the element has it: its row
+/// and column counts, the headers from the Table pattern's column headers (paired with their columns by where they sit when
+/// they are grid items, and their rows then left out of the data rows), else from a Header among the grid's first children.
+/// The page's cells come through GetItem for the frameworks whose GetItem only looks the cell up
+/// (<see cref="GetItemFrameworks"/>), else from the grid's realized rows, placed by their cells' GridItem row: a row that is
+/// not realized ends the page (NotRealized). Otherwise a walk of the element's children: DataItem, ListItem and TreeItem
+/// children are the rows (read in one cached call when there are at most <see cref="CachedRowsLimit"/> children), a Header
+/// child or a first row of HeaderItems gives the headers, and a row's children but nested tree items are its cells (a row
+/// without cells is one cell, its own text). A cell's text is its value when it has the
+/// Value pattern (never a password field's: null), else its name, else the names of its children; a cell that disappears is
+/// null. The read stops at the timeout (whole rows only), at <see cref="MaxTableTextBytes"/> bytes of JSON, and between
+/// cells when the token is cancelled; the rows read until the worker abandons a stuck call, or until the table itself
+/// disappears, are still returned.</para>
 /// </remarks>
 public sealed partial class ElementReadService : IElementReadService
 {
     /// <summary>The most characters one read_element_text call returns.</summary>
     public const int MaxTextLength = 50_000;
+
+    /// <summary>
+    /// The most bytes a read_element_text page takes in the result's JSON (<see cref="ToolJson.StringBytes"/>: UTF-8 with the
+    /// escapes), so that a page costs at most about 15,000 tokens in any script: 60,000 ASCII characters, 30,000 Cyrillic,
+    /// 20,000 CJK, 5,000 emoji. <see cref="MaxTextLength"/> still bounds the characters.
+    /// </summary>
+    public const int MaxTextBytes = 60_000;
 
     /// <summary>The most rows one read_table call returns.</summary>
     public const int MaxRowsLimit = 200;
@@ -42,8 +57,12 @@ public sealed partial class ElementReadService : IElementReadService
     /// <summary>A header or cell longer than this is cut (cellsTruncated).</summary>
     public const int MaxCellLength = 500;
 
-    /// <summary>The most characters of headers and cells one read_table call returns; the rows after it are left out (Size).</summary>
-    public const int MaxTableTextLength = 40_000;
+    /// <summary>
+    /// The most bytes the headers and cells of one read_table call take in the result's JSON (<see cref="ToolJson.StringBytes"/>
+    /// of each, with its quotes and comma); the rows after it are left out (Size). A page's first row is always returned, its
+    /// cells cut to fit when it alone would pass the limit, and headers that would take more than half of it are cut too.
+    /// </summary>
+    public const int MaxTableTextBytes = 40_000;
 
     /// <summary>A table with at most this many children has its rows read in one cached call; a larger one row by row.</summary>
     public const int CachedRowsLimit = 1_000;
@@ -56,6 +75,24 @@ public sealed partial class ElementReadService : IElementReadService
 
     /// <summary>How many of a grid's first children are checked for a Header.</summary>
     private const int HeaderSearchChildren = 3;
+
+    /// <summary>How many times a text page that does not fit one result is read again over fewer characters before it is cut.</summary>
+    private const int TextPageFits = 3;
+
+    /// <summary>The most rows a grid's column headers are taken to fill (a header row over a header row, as Q1 over Revenue).</summary>
+    private const int MaxHeaderRows = 4;
+
+    /// <summary>How many of a realized row's first cells are asked for their GridItem row before the row is placed by its position.</summary>
+    private const int RowIndexCells = 3;
+
+    /// <summary>
+    /// The UI frameworks (FrameworkId) whose GridPattern.GetItem only looks the cell up, checked against their sources: the
+    /// Win32 list view, the WinForms DataGridView (Rows[row].Cells[column]) and Chromium (its table's cell ids). Elsewhere
+    /// GetItem can scroll: WPF's DataGrid scrolls the cell into view and realizes its row (ScrollIntoView, then UpdateLayout),
+    /// WPF's GridView brings the row into view, and the Windows Community Toolkit DataGrid (XAML) scrolls too. A read never
+    /// scrolls, so every other grid, one of an unknown framework included, is read through its realized rows.
+    /// </summary>
+    private static readonly HashSet<string> GetItemFrameworks = new(StringComparer.OrdinalIgnoreCase) { "Win32", "WinForm", "Chrome" };
 
     /// <summary>How long to keep waiting after the timeout for a table read to stop and hand back its rows.</summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
@@ -167,8 +204,10 @@ public sealed partial class ElementReadService : IElementReadService
     }
 
     /// <summary>
-    /// The ref of the one element the criteria found, or null with why not: none (ElementNotFound), several
-    /// (AmbiguousElement), or a search that did not cover the whole window, so another match may exist.
+    /// The ref of the one element the criteria found, or null with why not, with element_action's codes: several
+    /// (AmbiguousElement, also from a search that did not finish: more search cannot make them one), a search that did not
+    /// cover the whole window, so another match (or the only one) may be in the rest (OperationTimedOut), or none
+    /// (ElementNotFound).
     /// </summary>
     private static string? Unique(FindElementsResult found, ElementQuery query, out string? error, out UIElementErrorCode code)
     {
@@ -181,33 +220,35 @@ public sealed partial class ElementReadService : IElementReadService
             return null;
         }
 
+        var unfinished = found.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
+            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit;
+        if (found.MatchCount > 1)
+        {
+            error = $"{(unfinished ? "At least " : string.Empty)}{found.MatchCount} elements match the criteria, so none was read: " +
+                    "a read never picks one for you. Pass the ref of the one you mean (candidates lists them), or narrow the criteria.";
+            code = UIElementErrorCode.AmbiguousElement;
+            return null;
+        }
+
+        if (unfinished)
+        {
+            var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
+                ? "every window of its scope"
+                : "the whole window";
+            error = $"The search did not cover {covered} ({found.TruncationReason}), so " +
+                    (found.MatchCount == 0
+                        ? "the element may be in the part it did not search: it found none so far."
+                        : "the one element it found may not be the only match.") +
+                    " Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
+            code = UIElementErrorCode.OperationTimedOut;
+            return null;
+        }
+
         if (found.MatchCount == 0)
         {
             error = "No element matches the criteria" + (query.VisibleOnly ? " among the visible elements" : string.Empty) +
                     ". Check them with find_ui_elements, or read an element by its ref.";
             code = UIElementErrorCode.ElementNotFound;
-            return null;
-        }
-
-        if (found.MatchCount > 1)
-        {
-            error = $"{found.MatchCount} elements match the criteria, so none was read: a read never picks one for you. Pass the " +
-                    "ref of the one you mean (candidates lists them), or narrow the criteria.";
-            code = UIElementErrorCode.AmbiguousElement;
-            return null;
-        }
-
-        if (found.TruncationReason is ElementSearchTruncation.Timeout or ElementSearchTruncation.SearchLimit or
-            ElementSearchTruncation.PartsSkipped or ElementSearchTruncation.WindowLimit)
-        {
-            var covered = found.Scope is ElementSearchScope.WindowAndPopups or ElementSearchScope.Desktop
-                ? "every window of its scope"
-                : "the whole window";
-            error = $"The search did not cover {covered} ({found.TruncationReason}), so the one element it found may not " +
-                    "be the only match. Nothing was read. Pass the element's ref, narrow the criteria, or give more time.";
-            code = found.TruncationReason == ElementSearchTruncation.PartsSkipped
-                ? UIElementErrorCode.ElementAccessFailed
-                : UIElementErrorCode.OperationTimedOut;
             return null;
         }
 
@@ -267,8 +308,12 @@ public sealed partial class ElementReadService : IElementReadService
             var page = (patterns & UiaPatterns.Text) != 0 ? TryTextPage(node, offset, maxLength) : null;
             if (page != null && (!hasValue || page is not { Start: 0, Length: 0, HasMore: false }))
             {
+                page = FitTextPage(node, page, offset, maxLength);
                 int? next = page.HasMore ? page.Start + page.Length : null;
-                return Page(page.Text, ElementTextSource.Text, page.Start, page.HasMore ? null : page.Start + page.Length, next);
+                return Page(page.Text, ElementTextSource.Text, page.Start, page.HasMore ? null : page.Start + page.Length, next) with
+                {
+                    TextSkipped = page.Cut ? true : null
+                };
             }
 
             if (hasValue && TryValue(node) is { } value)
@@ -286,14 +331,7 @@ public sealed partial class ElementReadService : IElementReadService
             ElementTextResult Slice(string text, ElementTextSource source)
             {
                 var start = Math.Min(offset, text.Length);
-                var end = (int)Math.Min((long)start + maxLength, text.Length);
-
-                // Never end a page between the two halves of a surrogate pair (unless the page would be empty)
-                if (end < text.Length && end > start + 1 && char.IsHighSurrogate(text[end - 1]))
-                {
-                    end--;
-                }
-
+                var end = start + FittingLength(text.AsSpan(start), maxLength, MaxTextBytes);
                 return Page(text[start..end], source, start, text.Length, end < text.Length ? end : null);
             }
         }
@@ -328,6 +366,63 @@ public sealed partial class ElementReadService : IElementReadService
             // A provider whose Text pattern fails: the value or the name may still have the text
             return null;
         }
+    }
+
+    /// <summary>
+    /// The page made to fit one result: at most <paramref name="maxLength"/> characters and <see cref="MaxTextBytes"/> bytes of
+    /// JSON. A page whose text does not fit is read again over fewer of the provider's characters, in proportion to the part
+    /// that fits, so that its end (Start + Length, the next page's offset) is still just past its text and nothing is skipped.
+    /// Only when that does not work (one of the provider's characters is longer than the page, or the document changes under
+    /// the read) is the text cut, and the page says so (<see cref="UiaTextPage.Cut"/>: the rest of its range is skipped).
+    /// </summary>
+    private UiaTextPage FitTextPage(IUiaNode node, UiaTextPage page, int offset, int maxLength)
+    {
+        for (var tries = 0; tries < TextPageFits; tries++)
+        {
+            var fits = FittingLength(page.Text, maxLength, MaxTextBytes);
+            if (fits == page.Text.Length || page.Length <= 1)
+            {
+                break;
+            }
+
+            var fewer = (int)Math.Clamp((long)page.Length * fits / page.Text.Length, 1, page.Length - 1);
+            if (TryTextPage(node, offset, fewer) is not { } shorter)
+            {
+                break;
+            }
+
+            page = shorter;
+        }
+
+        var end = FittingLength(page.Text, maxLength, MaxTextBytes);
+        return end == page.Text.Length ? page : page with { Text = page.Text[..end], Cut = true };
+    }
+
+    /// <summary>
+    /// How many characters from the start of <paramref name="text"/> fit both limits: at most <paramref name="maxChars"/>
+    /// characters that take at most <paramref name="maxBytes"/> bytes in the result's JSON (<see cref="ToolJson.StringBytes"/>),
+    /// never ending between the two halves of a surrogate pair (unless that would leave nothing).
+    /// </summary>
+    private static int FittingLength(ReadOnlySpan<char> text, int maxChars, int maxBytes)
+    {
+        var end = Math.Min(text.Length, maxChars);
+        var bytes = 0;
+        for (var i = 0; i < end; i++)
+        {
+            bytes += ToolJson.CharBytes(text[i]);
+            if (bytes > maxBytes)
+            {
+                end = i;
+                break;
+            }
+        }
+
+        if (end < text.Length && end > 1 && char.IsHighSurrogate(text[end - 1]))
+        {
+            end--;
+        }
+
+        return end;
     }
 
     private string? TryValue(IUiaNode node)

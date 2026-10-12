@@ -554,6 +554,7 @@ public sealed class Uia3Tree : IUiaTree
         _ when type == typeof(IUiaWindowPattern) => pattern is IUIAutomationWindowPattern p ? new WindowPattern(p) : null,
         _ when type == typeof(IUiaTextPattern) => pattern is IUIAutomationTextPattern p ? new TextPattern(p) : null,
         _ when type == typeof(IUiaGridPattern) => pattern is IUIAutomationGridPattern p ? new GridPattern(p) : null,
+        _ when type == typeof(IUiaGridItemPattern) => pattern is IUIAutomationGridItemPattern p ? new GridItemPattern(p) : null,
         _ when type == typeof(IUiaTablePattern) => pattern is IUIAutomationTablePattern p ? new TablePattern(p) : null,
         _ when type == typeof(IUiaItemContainerPattern) =>
             pattern is IUIAutomationItemContainerPattern p ? new ItemContainerPattern(p) : null,
@@ -758,25 +759,27 @@ public sealed class Uia3Tree : IUiaTree
             return maxLength >= 0 && text.Length > maxLength ? text[..maxLength] : text;
         });
 
-        public UiaTextPage GetTextPage(int offset, int maxLength) => UiaComErrors.Run(() =>
-        {
-            // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
-            var range = pattern.DocumentRange;
-            var start = offset > 0
-                ? range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, offset)
-                : 0;
-            range.MoveEndpointByRange(
-                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start);
-            var length = range.MoveEndpointByUnit(
-                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, Math.Max(1, maxLength));
-            var text = length > 0 ? range.GetText(-1) ?? string.Empty : string.Empty;
+        // DocumentRange is a new range each time: moving its endpoints changes nothing in the document
+        public UiaTextPage GetTextPage(int offset, int maxLength) =>
+            UiaComErrors.Run(() => new TextPageReader(pattern.DocumentRange).Read(offset, maxLength));
+    }
 
-            // A full page: one more character after it tells whether text follows
-            var hasMore = length >= maxLength &&
-                          range.Clone().MoveEndpointByUnit(
-                              TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1) > 0;
-            return new UiaTextPage(text, start, length, hasMore);
-        });
+    /// <summary>The page reader of both engines over a COM text range.</summary>
+    private sealed class TextPageReader(IUIAutomationTextRange range) : UiaTextPageReader
+    {
+        protected override int MoveStart(int count) =>
+            range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start, TextUnit.TextUnit_Character, count);
+
+        protected override void Collapse() => range.MoveEndpointByRange(
+            TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start);
+
+        protected override int MoveEnd(int count) =>
+            range.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, count);
+
+        protected override string GetText(int maxLength) => range.GetText(maxLength) ?? string.Empty;
+
+        protected override bool HasCharacterAfterEnd() =>
+            range.Clone().MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1) > 0;
     }
 
     private sealed class GridPattern(IUIAutomationGridPattern pattern) : IUiaGridPattern
@@ -786,6 +789,17 @@ public sealed class Uia3Tree : IUiaTree
         public int ColumnCount => UiaComErrors.Run(() => pattern.CurrentColumnCount);
 
         public IUiaNode? GetItem(int row, int column) => UiaComErrors.Run(() => Wrap(pattern.GetItem(row, column)));
+    }
+
+    private sealed class GridItemPattern(IUIAutomationGridItemPattern pattern) : IUiaGridItemPattern
+    {
+        public int Row => UiaComErrors.Run(() => pattern.CurrentRow);
+
+        public int Column => UiaComErrors.Run(() => pattern.CurrentColumn);
+
+        public int RowSpan => UiaComErrors.Run(() => pattern.CurrentRowSpan);
+
+        public int ColumnSpan => UiaComErrors.Run(() => pattern.CurrentColumnSpan);
     }
 
     private sealed class TablePattern(IUIAutomationTablePattern pattern) : IUiaTablePattern

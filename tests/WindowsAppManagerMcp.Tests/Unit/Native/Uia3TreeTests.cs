@@ -808,7 +808,7 @@ public class Uia3TreeTests
         range.Setup(r => r.MoveEndpointByRange(
             TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start));
         range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 3)).Returns(3);
-        range.Setup(r => r.GetText(-1)).Returns("wor");
+        range.Setup(r => r.GetText(6)).Returns("wor");
         range.Setup(r => r.Clone()).Returns(probe.Object);
         probe.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 1)).Returns(1);
         var text = new Mock<IUIAutomationTextPattern>();
@@ -833,7 +833,7 @@ public class Uia3TreeTests
         range.Setup(r => r.MoveEndpointByRange(
             TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start));
         range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, 100)).Returns(11);
-        range.Setup(r => r.GetText(-1)).Returns("hello world");
+        range.Setup(r => r.GetText(200)).Returns("hello world");
         var text = new Mock<IUIAutomationTextPattern>();
         text.SetupGet(p => p.DocumentRange).Returns(range.Object);
         document.Setup(e => e.GetCurrentPattern(UiaIds.TextPattern)).Returns(text.Object);
@@ -843,6 +843,36 @@ public class Uia3TreeTests
 
         // Assert
         page.Should().Be(new UiaTextPage("hello world", 0, 11, HasMore: false));
+    }
+
+    [Fact]
+    public void GetTextPage_WhenTheProvidersCharactersAreWider_ReadsAShorterRange_NeverTheWholeText()
+    {
+        // Arrange - a strict range whose 100 characters hold 1,000 UTF-16 characters: GetText(-1) would fail the test
+        var sut = CreateSut();
+        var document = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, document);
+        var range = new Mock<IUIAutomationTextRange>(MockBehavior.Strict);
+        var spanned = 0;
+        range.Setup(r => r.MoveEndpointByRange(
+                TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, range.Object, TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start))
+            .Callback(() => spanned = 0);
+        range.Setup(r => r.MoveEndpointByUnit(TextPatternRangeEndpoint.TextPatternRangeEndpoint_End, TextUnit.TextUnit_Character, It.IsAny<int>()))
+            .Returns((TextPatternRangeEndpoint _, TextUnit _, int count) => spanned = Math.Min(count, 100));
+        range.Setup(r => r.GetText(It.IsInRange(1, 200, Moq.Range.Inclusive)))
+            .Returns((int maxLength) => new string('x', Math.Min(spanned * 10, maxLength)));
+        var text = new Mock<IUIAutomationTextPattern>();
+        text.SetupGet(p => p.DocumentRange).Returns(range.Object);
+        document.Setup(e => e.GetCurrentPattern(UiaIds.TextPattern)).Returns(text.Object);
+
+        // Act
+        var page = sut.GetPattern<IUiaTextPattern>(node)!.GetTextPage(0, 100);
+
+        // Assert - the page spans the characters whose text fits, so the next page starts just after it
+        page.Text.Length.Should().BeLessThanOrEqualTo(100);
+        page.Text.Length.Should().Be(page.Length * 10);
+        page.HasMore.Should().BeTrue();
+        page.Cut.Should().BeFalse();
     }
 
     [Fact]

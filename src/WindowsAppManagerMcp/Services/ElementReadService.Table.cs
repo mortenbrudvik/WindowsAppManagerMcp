@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WindowsAppManagerMcp.Infrastructure;
 using WindowsAppManagerMcp.Models;
 using WindowsAppManagerMcp.Services.Interfaces;
 
@@ -79,7 +80,7 @@ public sealed partial class ElementReadService
             var grid = (resolved.Element.Patterns & UiaPatterns.Grid) != 0 ? _tree.GetPattern<IUiaGridPattern>(node) : null;
             if (grid != null)
             {
-                ReadGrid(node, grid, resolved.Element.Patterns, maxRows, progress, token);
+                ReadGrid(resolved.Element, grid, maxRows, progress, token);
             }
             else if (!ReadRows(node, resolved.Element.Properties.ControlType, maxRows, progress, token))
             {
@@ -95,7 +96,15 @@ public sealed partial class ElementReadService
         }
         catch (UiaElementUnavailableException ex)
         {
-            // The table itself is gone (a row or cell that disappears is read as far as it can be): the rows read may be stale
+            // The table itself is gone (a cell that disappears is null): the rows read before are still returned, said to be all
+            if (progress.RowCount > 0)
+            {
+                progress.Stop(ElementTableTruncation.Disappeared,
+                    $"The table disappeared while it was read ({ex.Message}). The rows read before are returned; its ref is stale, so " +
+                    "find the table again (find_ui_elements) before reading on.");
+                return progress.Result((long)handle, stopwatch);
+            }
+
             return Failure($"The table disappeared while it was read: {ex.Message}", UIElementErrorCode.ElementAccessFailed);
         }
         catch (TimeoutException ex)
@@ -125,41 +134,47 @@ public sealed partial class ElementReadService
         }
     }
 
-    /// <summary>The page's cells through the Grid pattern, the headers through the Table pattern or the header row.</summary>
-    private void ReadGrid(IUiaNode node, IUiaGridPattern grid, UiaPatterns patterns, int maxRows, TableProgress progress, CancellationToken token)
+    /// <summary>
+    /// A grid: its row and column counts through the Grid pattern, its headers through the Table pattern or its header row, and
+    /// the page's cells through GetItem where that only reads (<see cref="GetItemFrameworks"/>), else through the grid's
+    /// realized rows. Header rows that are grid rows (an HTML table's) are not data rows: they are left out of the page and of
+    /// the row count.
+    /// </summary>
+    private void ReadGrid(UiaElement element, IUiaGridPattern grid, int maxRows, TableProgress progress, CancellationToken token)
     {
         var rowCount = Math.Max(0, grid.RowCount);
         var columnCount = Math.Max(0, grid.ColumnCount);
-        progress.Begin(ElementTableSource.Grid, rowCount, columnCount);
         var columns = Math.Min(columnCount, progress.MaxColumns);
+        var byItem = element.Properties.FrameworkId is { } framework && GetItemFrameworks.Contains(framework);
+        var headers = ColumnHeadersOf(element, columns, token);
+        var headerRows = Math.Min(rowCount, headers.Rows ?? (byItem ? HeaderRowsByItem(grid, headers, rowCount, columns) : 0));
+        var dataRows = rowCount - headerRows;
+        progress.Begin(ElementTableSource.Grid, dataRows, columnCount);
+        progress.SetHeaders(headers.Names, columnCount);
 
-        List<string?>? headers = null;
-        var headerCount = 0;
-        if ((patterns & UiaPatterns.Table) != 0 &&
-            TryRead(() => _tree.GetPattern<IUiaTablePattern>(node)?.GetColumnHeaders()) is { Count: > 0 } columnHeaders)
+        var end = (int)Math.Min((long)progress.StartRow + maxRows, dataRows);
+        if (byItem)
         {
-            headerCount = columnHeaders.Count;
-            headers = columnHeaders.Take(progress.MaxColumns)
-                .Select(header => (string?)(TryRead(() => _tree.ReadElement(header))?.Properties.Name ?? string.Empty))
-                .ToList();
+            ReadGridByItem(grid, headerRows, columns, end, progress, token);
+        }
+        else
+        {
+            ReadRealizedRows(element.Node, headers, headerRows, columns, end, progress, token);
         }
 
-        if (headers == null && HeaderRowOf(node, token) is { Count: > 0 } headerRow)
-        {
-            headerCount = headerRow.Count;
-            headers = headerRow.Take(progress.MaxColumns).Select(h => (string?)(h.Properties.Name ?? string.Empty)).ToList();
-        }
+        progress.Finish(rowsRemain: end < dataRows);
+    }
 
-        progress.SetHeaders(headers, headerCount);
-
-        var end = (int)Math.Min((long)progress.StartRow + maxRows, rowCount);
+    /// <summary>The page's cells asked for by row and column (GridPattern.GetItem), of a grid whose GetItem only reads.</summary>
+    private void ReadGridByItem(IUiaGridPattern grid, int headerRows, int columns, int end, TableProgress progress, CancellationToken token)
+    {
         for (var row = progress.StartRow; row < end; row++)
         {
             var cells = new string?[columns];
             for (var column = 0; column < columns; column++)
             {
                 token.ThrowIfCancellationRequested();
-                var item = TryRead(() => grid.GetItem(row, column));
+                var item = ItemAt(grid, headerRows + row, column);
                 cells[column] = item == null ? null : CellText(TryRead(() => _tree.ReadElement(item)), token);
             }
 
@@ -168,8 +183,216 @@ public sealed partial class ElementReadService
                 return;
             }
         }
+    }
 
-        progress.Finish(rowsRemain: end < rowCount);
+    /// <summary>
+    /// The page's rows of a grid whose GetItem may scroll, read through the tree: its row children are the rows it has realized
+    /// (a WPF DataGrid has only those around what it shows in the tree), each placed by its first cell's GridItem.Row, which
+    /// only reads (a WPF cell's row is its item's index). The page ends before the first of its rows that is not among them
+    /// (NotRealized): read_table never scrolls, so the agent scrolls with element_action and reads on.
+    /// </summary>
+    private void ReadRealizedRows(
+        IUiaNode node, GridHeaders headers, int headerRows, int columns, int end, TableProgress progress, CancellationToken token)
+    {
+        var children = _tree.GetChildren(node, token);
+        var cached = children.Count <= CachedRowsLimit ? TryRead(() => _tree.GetChildElements(node, token)) : null;
+        var count = cached?.Count ?? children.Count;
+        var next = progress.StartRow;
+        var position = 0;
+        for (var i = 0; i < count && next < end; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            var child = cached != null ? cached[i] : TryRead(() => _tree.ReadElement(children[i]));
+            if (child == null || !RowTypes.Contains(child.Properties.ControlType))
+            {
+                continue;
+            }
+
+            // Where the row sits, from its first cells (a row header, a HeaderItem, is no grid item): a row before the page, or
+            // a header row whose cells sit in the grid's header rows, is passed without reading its cells
+            var rowChildren = TryRead(() => _tree.GetChildren(child.Node, token)) ?? [];
+            var gridRow = RowOf(rowChildren) ?? RowOf(child.Node);
+            if (gridRow - headerRows < next)
+            {
+                position++;
+                continue;
+            }
+
+            var all = CellsOf(child.Node, rowChildren, token);
+            if (all.Count > 0 && all.All(headers.Contains))
+            {
+                // A header row whose cells do not say where they sit (an HTML table's header cells): headers, not data
+                continue;
+            }
+
+            // A row header is not a column: GetItem's column 0 is the first cell after it
+            var cells = all.Where(cell => cell.Properties.ControlType != "HeaderItem").ToList();
+            var row = (gridRow ?? headerRows + position) - headerRows;
+            position++;
+            if (row < next)
+            {
+                continue;
+            }
+
+            if (row > next)
+            {
+                // A row of the page that the grid has not realized: the page never skips it
+                break;
+            }
+
+            string?[] texts = cells.Count == 0
+                ? [CellText(child, token)]
+                : cells.Take(columns).Select(cell => CellText(cell, token)).ToArray();
+            if (!progress.TryAddRow(texts))
+            {
+                return;
+            }
+
+            next++;
+        }
+
+        if (next < end)
+        {
+            progress.Stop(ElementTableTruncation.NotRealized,
+                $"Rows from {next} on are not realized: the grid creates its rows only around what it shows, and read_table never " +
+                "scrolls (it reads, it does not act). Bring them into view with element_action (action 'scroll' on the grid's ref, " +
+                $"or 'realize' on a row found with find_ui_elements searchVirtualized), then call read_table again with startRow {next}.");
+        }
+    }
+
+    /// <summary>
+    /// The grid's column headers through the Table pattern, else from a Header among its first children. Headers that are grid
+    /// items (an HTML table's th cells, through Chromium) say where they sit, so each column gets the headers above it, top
+    /// first ("Q1 / Revenue"), and their rows are the grid's header rows; Chromium lists a header that spans columns once per
+    /// column. Other headers are taken one per column, in order.
+    /// </summary>
+    private GridHeaders ColumnHeadersOf(UiaElement grid, int columns, CancellationToken token)
+    {
+        if ((grid.Patterns & UiaPatterns.Table) != 0 &&
+            TryRead(() => _tree.GetPattern<IUiaTablePattern>(grid.Node)?.GetColumnHeaders()) is { Count: > 0 } nodes)
+        {
+            // The first header tells whether they say where they sit (a header that is no grid item costs one read)
+            var positioned = PositionOf(nodes[0]) != null;
+            var read = nodes.Take(positioned ? columns * MaxHeaderRows : columns)
+                .Select(header => (Element: TryRead(() => _tree.ReadElement(header)), Position: positioned ? PositionOf(header) : null))
+                .ToList();
+            var ids = read.Select(h => h.Element?.RuntimeId).OfType<IReadOnlyList<int>>().Select(RuntimeIdKey).ToHashSet();
+            if (!positioned || read.Any(h => h.Element == null || h.Position == null))
+            {
+                var inOrder = read.Take(columns).Select(h => (string?)(h.Element?.Properties.Name ?? string.Empty)).ToList();
+                return new GridHeaders(inOrder, ids, null);
+            }
+
+            var distinct = read
+                .Select(h => (Name: h.Element!.Properties.Name, Position: h.Position!))
+                .DistinctBy(h => h.Position)
+                .ToList();
+            var names = Enumerable.Range(0, columns)
+                .Select(column => (string?)string.Join(" / ", distinct
+                    .Where(h => h.Position.CoversColumn(column) && !string.IsNullOrEmpty(h.Name))
+                    .OrderBy(h => h.Position.Row)
+                    .Select(h => h.Name)))
+                .ToList();
+
+            // The grid's leading rows that hold nothing but these headers
+            var rows = 0;
+            while (columns > 0 && rows < MaxHeaderRows &&
+                   Enumerable.Range(0, columns).All(column => distinct.Any(h => h.Position.Covers(rows, column))))
+            {
+                rows++;
+            }
+
+            return new GridHeaders(names, ids, rows);
+        }
+
+        if (HeaderRowOf(grid.Node, token) is { Count: > 0 } headerRow)
+        {
+            return new GridHeaders(
+                headerRow.Take(columns).Select(h => (string?)(h.Properties.Name ?? string.Empty)).ToList(),
+                headerRow.Select(h => h.RuntimeId).OfType<IReadOnlyList<int>>().Select(RuntimeIdKey).ToHashSet(),
+                null);
+        }
+
+        return GridHeaders.None;
+    }
+
+    /// <summary>
+    /// How many of the grid's leading rows are its column headers, for a grid read through GetItem whose headers do not say
+    /// where they sit: the rows whose cells (the first columns) are the Table pattern's header elements themselves.
+    /// </summary>
+    private int HeaderRowsByItem(IUiaGridPattern grid, GridHeaders headers, int rowCount, int columns)
+    {
+        if (headers.Ids.Count == 0)
+        {
+            return 0;
+        }
+
+        var rows = 0;
+        while (rows < Math.Min(rowCount, MaxHeaderRows) && columns > 0 &&
+               Enumerable.Range(0, columns).All(column => ItemAt(grid, rows, column) is { } item &&
+                                                          TryRead(() => _tree.GetRuntimeId(item)) is { } id &&
+                                                          headers.Ids.Contains(RuntimeIdKey(id))))
+        {
+            rows++;
+        }
+
+        return rows;
+    }
+
+    /// <summary>The grid row of the first of a row's first cells that is a grid item, or null when none says.</summary>
+    private int? RowOf(IReadOnlyList<IUiaNode> cells)
+    {
+        foreach (var cell in cells.Take(RowIndexCells))
+        {
+            if (RowOf(cell) is { } row)
+            {
+                return row;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The grid row of a grid item (its GridItem pattern's Row), or null when it is none or the read fails.</summary>
+    private int? RowOf(IUiaNode node)
+    {
+        try
+        {
+            return _tree.GetPattern<IUiaGridItemPattern>(node)?.Row;
+        }
+        catch (Exception ex) when (ex is not TimeoutException and not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Where a grid item sits (its GridItem pattern), or null when it is none or the read fails.</summary>
+    private GridPosition? PositionOf(IUiaNode node) =>
+        TryRead(() => _tree.GetPattern<IUiaGridItemPattern>(node) is { } item
+            ? new GridPosition(item.Row, item.Column, Math.Max(1, item.RowSpan), Math.Max(1, item.ColumnSpan))
+            : null);
+
+    private static string RuntimeIdKey(IReadOnlyList<int> runtimeId) => string.Join(".", runtimeId);
+
+    /// <summary>Where a grid item sits: its first row and column, and how many it spans.</summary>
+    private sealed record GridPosition(int Row, int Column, int RowSpan, int ColumnSpan)
+    {
+        public bool CoversColumn(int column) => column >= Column && column < Column + ColumnSpan;
+
+        public bool Covers(int row, int column) => row >= Row && row < Row + RowSpan && CoversColumn(column);
+    }
+
+    /// <summary>
+    /// A grid's column headers: the text of each of the first columns (null when it has none), the runtime ids of the header
+    /// elements, and how many of the grid's leading rows they are (null when the headers do not say where they sit).
+    /// </summary>
+    private sealed record GridHeaders(IReadOnlyList<string?>? Names, IReadOnlySet<string> Ids, int? Rows)
+    {
+        public static GridHeaders None { get; } = new(null, new HashSet<string>(), null);
+
+        /// <summary>True for a column header: one of the header elements, or a HeaderItem.</summary>
+        public bool Contains(UiaElement cell) =>
+            cell.Properties.ControlType == "HeaderItem" || (cell.RuntimeId is { } id && Ids.Contains(RuntimeIdKey(id)));
     }
 
     /// <summary>
@@ -303,40 +526,41 @@ public sealed partial class ElementReadService
         return null;
     }
 
-    /// <summary>The children of a row or header, read in one cached call when there are few, else the first ones one by one.</summary>
-    private IReadOnlyList<UiaElement> CellsOf(UiaElement row, CancellationToken token)
+    /// <summary>
+    /// The cells of a row or header: its children, read in one cached call when there are few, else the first ones one by one,
+    /// but for nested tree items. An expanded tree item's child items are rows of their own, not its cells (a treegrid row's
+    /// cells are DataItems, which stay).
+    /// </summary>
+    private IReadOnlyList<UiaElement> CellsOf(UiaElement row, CancellationToken token) =>
+        CellsOf(row.Node, TryRead(() => _tree.GetChildren(row.Node, token)) ?? [], token);
+
+    /// <summary>The cells of a row whose <paramref name="children"/> were listed already (see the other overload).</summary>
+    private IReadOnlyList<UiaElement> CellsOf(IUiaNode row, IReadOnlyList<IUiaNode> children, CancellationToken token)
     {
-        var children = TryRead(() => _tree.GetChildren(row.Node, token)) ?? [];
         if (children.Count == 0)
         {
             return [];
         }
 
-        if (children.Count <= CachedCellsLimit && TryRead(() => _tree.GetChildElements(row.Node, token)) is { } cached)
-        {
-            return cached;
-        }
-
-        return children.Take(MaxColumnsLimit)
-            .Select(child => TryRead(() => _tree.ReadElement(child)))
-            .OfType<UiaElement>()
-            .ToList();
+        var cells = children.Count <= CachedCellsLimit && TryRead(() => _tree.GetChildElements(row, token)) is { } cached
+            ? cached
+            : children.Take(MaxColumnsLimit).Select(child => TryRead(() => _tree.ReadElement(child))).OfType<UiaElement>().ToList();
+        return cells.Any(cell => cell.Properties.ControlType == "TreeItem")
+            ? cells.Where(cell => cell.Properties.ControlType != "TreeItem").ToList()
+            : cells;
     }
 
     /// <summary>
-    /// A cell's text: its name, else its value (never a password field's: null), else the names of its few children. Null for
-    /// a cell that could not be read.
+    /// A cell's text: its value when it has the Value pattern (never a password field's: null), else its name, else the names
+    /// of its few children. The value comes first because the name of a cell that has one often describes the cell instead
+    /// of holding its text: "Amount Row 1, Not sorted." in a WinForms DataGridView, "Item: ..., Column Display Index: 0" in a
+    /// WPF DataGrid, the column's name in Explorer's details rows. Null for a cell that could not be read or disappeared.
     /// </summary>
     private string? CellText(UiaElement? cell, CancellationToken token)
     {
         if (cell == null)
         {
             return null;
-        }
-
-        if (cell.Properties.Name is { Length: > 0 } name)
-        {
-            return name;
         }
 
         if ((cell.Patterns & UiaPatterns.Value) != 0)
@@ -347,10 +571,26 @@ public sealed partial class ElementReadService
                 return null;
             }
 
-            if (TryValue(cell.Node) is { Length: > 0 } value)
+            string? value;
+            try
+            {
+                value = TryValue(cell.Node);
+            }
+            catch (UiaElementUnavailableException)
+            {
+                // The cell is gone: null, as a cell the table no longer has (the next GetItem or row read finds a table that is gone)
+                return null;
+            }
+
+            if (value is { Length: > 0 })
             {
                 return value;
             }
+        }
+
+        if (cell.Properties.Name is { Length: > 0 } name)
+        {
+            return name;
         }
 
         var children = TryRead(() => _tree.GetChildren(cell.Node, token));
@@ -361,6 +601,22 @@ public sealed partial class ElementReadService
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// The grid's cell at a row and column, or null when it has none there or the provider fails; a grid that is gone throws
+    /// (<see cref="UiaElementUnavailableException"/>), which ends the read with the rows read before.
+    /// </summary>
+    private static IUiaNode? ItemAt(IUiaGridPattern grid, int row, int column)
+    {
+        try
+        {
+            return grid.GetItem(row, column);
+        }
+        catch (Exception ex) when (ex is not TimeoutException and not OperationCanceledException and not UiaElementUnavailableException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A read whose failure (other than a timeout, which ends the table read) gives null.</summary>
@@ -388,6 +644,9 @@ public sealed partial class ElementReadService
     /// </summary>
     private sealed class TableProgress(int startRow, int maxColumns)
     {
+        /// <summary>The bytes of a null cell in the result's JSON, with its comma.</summary>
+        private const int NullCellBytes = 5;
+
         private readonly object _gate = new();
         private readonly List<IReadOnlyList<string?>> _rows = [];
         private string? _ref;
@@ -395,10 +654,11 @@ public sealed partial class ElementReadService
         private IReadOnlyList<string?>? _headers;
         private int? _totalRows;
         private int? _totalColumns;
-        private int _length;
+        private int _bytes;
         private bool _cellsTruncated;
         private bool _rowsRemain;
         private ElementTableTruncation? _stop;
+        private string? _warning;
 
         public int StartRow { get; } = startRow;
 
@@ -431,8 +691,8 @@ public sealed partial class ElementReadService
         {
             lock (_gate)
             {
-                _headers = headers is { Count: > 0 } ? headers.Select(Cap).ToList() : null;
-                _length += _headers?.Sum(h => h?.Length ?? 0) ?? 0;
+                _headers = headers is { Count: > 0 } ? Fit(headers.Select(Cap).ToList(), MaxTableTextBytes / 2) : null;
+                _bytes += _headers?.Sum(CellBytes) ?? 0;
                 if (headerCount > 0 && _totalColumns == null)
                 {
                     _totalColumns = headerCount;
@@ -456,30 +716,49 @@ public sealed partial class ElementReadService
             }
         }
 
-        /// <summary>Adds a whole row; false (and stopped with Size) when it would pass the size limit.</summary>
+        /// <summary>
+        /// Adds a whole row; false (and stopped with Size) when it would pass the size limit. The page's first row is always
+        /// added, its cells cut to what is left when it alone would pass the limit, so that every page moves the read on.
+        /// </summary>
         public bool TryAddRow(IReadOnlyList<string?> cells)
         {
             var capped = cells.Select(Cap).ToList();
-            var length = capped.Sum(c => c?.Length ?? 0);
+            var bytes = capped.Sum(CellBytes);
             lock (_gate)
             {
-                if (_length + length > MaxTableTextLength)
+                if (_bytes + bytes > MaxTableTextBytes)
                 {
-                    _stop ??= ElementTableTruncation.Size;
-                    return false;
+                    if (_rows.Count > 0 || _stop != null)
+                    {
+                        _stop ??= ElementTableTruncation.Size;
+                        return false;
+                    }
+
+                    capped = Fit(capped, MaxTableTextBytes - _bytes);
+                    bytes = capped.Sum(CellBytes);
                 }
 
-                _length += length;
+                _bytes += bytes;
                 _rows.Add(capped);
                 return true;
             }
         }
 
-        public void Stop(ElementTableTruncation reason)
+        public int RowCount
+        {
+            get { lock (_gate) return _rows.Count; }
+        }
+
+        /// <summary>Ends the page for <paramref name="reason"/> (the first reason given counts), with what to tell the agent.</summary>
+        public void Stop(ElementTableTruncation reason, string? warning = null)
         {
             lock (_gate)
             {
-                _stop ??= reason;
+                if (_stop == null)
+                {
+                    _stop = reason;
+                    _warning = warning;
+                }
             }
         }
 
@@ -514,7 +793,8 @@ public sealed partial class ElementReadService
                     TruncationReason: reason,
                     NextStartRow: rowsRemain ? StartRow + _rows.Count : null,
                     CellsTruncated: _cellsTruncated ? true : null,
-                    AccessibilityWarmup: Warmup.Value);
+                    AccessibilityWarmup: Warmup.Value,
+                    Warning: _warning);
             }
         }
 
@@ -530,5 +810,32 @@ public sealed partial class ElementReadService
             _cellsTruncated = true;
             return text[..end];
         }
+
+        /// <summary>
+        /// The cells cut so that together they take at most <paramref name="budget"/> bytes, each to an equal share, noting a
+        /// cut. Called under the lock.
+        /// </summary>
+        private List<string?> Fit(List<string?> cells, int budget)
+        {
+            if (cells.Sum(CellBytes) <= budget)
+            {
+                return cells;
+            }
+
+            var share = Math.Max(0, budget / cells.Count - NullCellBytes);
+            return cells.Select(cell =>
+            {
+                if (cell == null || FittingLength(cell, cell.Length, share) is var end && end == cell.Length)
+                {
+                    return cell;
+                }
+
+                _cellsTruncated = true;
+                return cell[..end];
+            }).ToList();
+        }
+
+        /// <summary>The bytes a header or cell takes in the result's JSON: its text with its quotes and comma, or null and its comma.</summary>
+        private static int CellBytes(string? cell) => cell == null ? NullCellBytes : ToolJson.StringBytes(cell) + 3;
     }
 }
