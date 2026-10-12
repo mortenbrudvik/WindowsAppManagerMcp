@@ -22,6 +22,7 @@ public class ElementActionRealizeToolTests
     private int _foundOnPage = 3;
     private Func<int, bool> _atEnd = _ => false;
     private Func<ElementActionRequest, ElementActionResult?> _refuse = _ => null;
+    private Func<ElementQuery, FindElementsResult?> _firstSearch = _ => null;
 
     public ElementActionRealizeToolTests()
     {
@@ -30,6 +31,11 @@ public class ElementActionRealizeToolTests
             .Callback((ElementQuery query, CancellationToken _) => _queries.Add(query))
             .ReturnsAsync((ElementQuery query, CancellationToken _) =>
             {
+                if (_firstSearch(query) is { } first)
+                {
+                    return first;
+                }
+
                 if (query.ControlTypes is { } types && types.Contains("List"))
                 {
                     return Found(_listCount, Enumerable.Range(0, _listCount)
@@ -123,7 +129,8 @@ public class ElementActionRealizeToolTests
             (ElementActionKind.Scroll, "w1e2", ElementScrollDirection.Down),
             (ElementActionKind.Scroll, "w1e2", ElementScrollDirection.Down),
             (ElementActionKind.Realize, "w1e9", (ElementScrollDirection?)null));
-        _requests.Should().OnlyContain(r => r.AllowHostTarget && r.Timeout == TimeSpan.FromSeconds(20));
+        _requests.Should().OnlyContain(r => r.AllowHostTarget && r.Timeout <= TimeSpan.FromSeconds(20) && r.Timeout > TimeSpan.FromSeconds(19),
+            "each step gets what is left of the one timeout");
         _requests.Where(r => r.Action == ElementActionKind.Scroll).Should().OnlyContain(r => r.Amount == ElementScrollAmount.Page);
 
         // The lists are the window's own, visible ones; each page is searched below the list, as the criteria say
@@ -191,5 +198,55 @@ public class ElementActionRealizeToolTests
         result.Action.Should().Be("realize");
         result.Error.Should().Contain("after 1 pages").And.Contain("paused");
         _requests.Should().HaveCount(2);
+    }
+
+    [Theory]
+    [InlineData(ElementSearchTruncation.Timeout)]
+    [InlineData(ElementSearchTruncation.PartsSkipped)]
+    public async Task Realize_ByCriteria_WhenTheListsWereNotAllSearched_IsOperationTimedOut_AndNothingIsDoneOrScrolled(
+        ElementSearchTruncation reason)
+    {
+        // Arrange - the list lookup found one item, then stopped (the deadline, a provider that failed): a look-alike further on
+        // was never checked, so the one match is not known to be the only one
+        _firstSearch = query => query.SearchVirtualized
+            ? new FindElementsResult(true, Handle, "Chat", 1, true,
+                [new FoundElement("w1e9", "Old message", "ListItem", null, null, null, null, true, true, [], Virtualized: true)], 1,
+                TruncationReason: reason)
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10);
+
+        // Assert - not ElementNotFound, and the scroll fallback does not start
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("Nothing was done");
+        _requests.Should().BeEmpty();
+        _queries.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_GivesEachStepWhatIsLeftOfTheTimeout()
+    {
+        // Arrange - the first page takes a second and a half
+        _refuse = _ =>
+        {
+            if (_requests.Count == 1)
+            {
+                Thread.Sleep(1500);
+            }
+
+            return null;
+        };
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            timeoutMs: 5000);
+
+        // Assert - the later pages, their searches and the realize get what is left, not the whole timeout again
+        result.Success.Should().BeTrue(result.Error);
+        _requests[0].Timeout.Should().BeGreaterThan(TimeSpan.FromSeconds(4.5));
+        _requests.Skip(1).Should().OnlyContain(r => r.Timeout <= TimeSpan.FromSeconds(3.5));
+        _queries.Where(q => q.WithinRef == "w1e2").Should().OnlyContain(q => q.Timeout <= TimeSpan.FromSeconds(3.5));
     }
 }

@@ -17,5 +17,8 @@ public interface IElementSearchService
     /// <exception cref="System.Text.RegularExpressions.RegexMatchTimeoutException">The name pattern took longer than 100 ms
     /// on an element's name.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    /// <exception cref="ArgumentException">The query's arguments cannot be searched for, which the tools check before they call:
+    /// a name pattern that is not a valid regular expression, or <see cref="ElementQuery.SearchVirtualized"/> without an
+    /// automation id or an exact name, or without a window (ElementSearchService.VirtualizedArgumentError says why).</exception>
     Task<FindElementsResult> FindAsync(ElementQuery query, CancellationToken cancellationToken = default);
 }

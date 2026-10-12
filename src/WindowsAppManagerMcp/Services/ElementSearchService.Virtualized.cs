@@ -17,6 +17,9 @@ public sealed partial class ElementSearchService
     /// </summary>
     public const int MaxVirtualizedProbes = 200;
 
+    private const string TimedOutNote = "The timeout passed before every list was searched; the items found until then are returned.";
+    private const string NoAnswerNote = "A list's provider did not answer in time; the items found until then are returned.";
+
     /// <summary>The list control types searchVirtualized looks for.</summary>
     private static readonly string[] ListControlTypes = ["List", "Tree", "DataGrid", "Table"];
 
@@ -64,26 +67,34 @@ public sealed partial class ElementSearchService
         }
 
         List<UiaElement> containers;
+        string? containersSkipped;
         try
         {
-            containers = FindContainers(root, rootIsWithin, token);
+            (containers, containersSkipped) = FindContainers(root, rootIsWithin, token);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || token.IsCancellationRequested)
         {
-            return VirtualizedLookup.Skipped($"The lists could not be looked for: {ex.Message}");
+            return VirtualizedLookup.Skipped(
+                $"The lists could not be looked for: {ex.Message}",
+                ex is TimeoutException or OperationCanceledException ? ElementSearchTruncation.Timeout : ElementSearchTruncation.PartsSkipped);
         }
 
         if (containers.Count == 0)
         {
-            return VirtualizedLookup.Skipped(
-                $"No list ({string.Join(", ", ListControlTypes)}) was found {(rootIsWithin ? "at or below withinRef's element" : "in the window")}.");
+            return containersSkipped != null
+                ? VirtualizedLookup.Skipped(containersSkipped,
+                    token.IsCancellationRequested ? ElementSearchTruncation.Timeout : ElementSearchTruncation.PartsSkipped)
+                : VirtualizedLookup.Skipped(
+                    $"No list ({string.Join(", ", ListControlTypes)}) was found {(rootIsWithin ? "at or below withinRef's element" : "in the window")}.");
         }
 
         if (!containers.Any(c => (c.Patterns & UiaPatterns.ItemContainer) != 0))
         {
             return new VirtualizedLookup([], false, containers,
                 "No list here supports the ItemContainer pattern, so items that are not realized cannot be asked for: scroll the " +
-                "list (element_action realize with maxScrolls, or element_action scroll and find_ui_elements withinRef).");
+                "list (element_action realize with maxScrolls, or element_action scroll and find_ui_elements withinRef)." +
+                (containersSkipped == null ? string.Empty : " " + containersSkipped),
+                containersSkipped == null ? null : ElementSearchTruncation.PartsSkipped);
         }
 
         // The automation id names an item best; else its whole name. The other criteria are tested here on what was read
@@ -95,127 +106,189 @@ public sealed partial class ElementSearchService
         var known = total.Matches.Select(m => m.Element.RuntimeId).OfType<IReadOnlyList<int>>().ToList();
         var items = new List<UiaElement>();
         var more = false;
-        string? note = null;
-        foreach (var container in containers.Where(c => (c.Patterns & UiaPatterns.ItemContainer) != 0))
+
+        // Why the lookup did not finish: every way it stops early is reported as truncation, so a caller that needs exactly
+        // one match (element_action) does not take a partial lookup for a complete one. A timeout outranks a skipped part
+        var stop = containersSkipped == null ? (ElementSearchTruncation?)null : ElementSearchTruncation.PartsSkipped;
+        var notes = new List<string>();
+        if (containersSkipped != null)
         {
-            if (token.IsCancellationRequested)
+            notes.Add(containersSkipped);
+        }
+
+        void Stopped(ElementSearchTruncation reason, string note)
+        {
+            if (stop != ElementSearchTruncation.Timeout)
             {
-                note = "The timeout passed before every list was searched.";
-                break;
+                stop = reason;
             }
 
-            IUiaItemContainerPattern? pattern;
-            try
+            if (!notes.Contains(note))
             {
-                pattern = _tree.GetPattern<IUiaItemContainerPattern>(container.Node);
+                notes.Add(note);
             }
-            catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
-            {
-                continue;
-            }
+        }
 
-            IUiaNode? after = null;
-            for (var probe = 0; pattern != null && probe < MaxVirtualizedProbes; probe++)
+        try
+        {
+            foreach (var container in containers.Where(c => (c.Patterns & UiaPatterns.ItemContainer) != 0))
             {
                 if (token.IsCancellationRequested)
                 {
-                    note = "The timeout passed before every list was searched.";
+                    Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
                     break;
                 }
 
-                IUiaNode? item;
-                UiaElement element;
+                IUiaItemContainerPattern? pattern;
                 try
                 {
-                    item = pattern.FindItemByProperty(after, property, value);
+                    pattern = _tree.GetPattern<IUiaItemContainerPattern>(container.Node);
                 }
                 catch (TimeoutException)
                 {
-                    note = "A list's provider did not answer in time; the items found until then are returned.";
+                    Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
                     break;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // This list's provider failed (or the item to start after went away): the next list is searched
-                    break;
-                }
-
-                if (item == null)
-                {
-                    break;
-                }
-
-                after = item;
-                try
-                {
-                    element = _tree.ReadElement(item);
-                }
-                catch (TimeoutException)
-                {
-                    note = "A list's provider did not answer in time; the items found until then are returned.";
-                    break;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // A placeholder whose properties cannot be read, or an item that went away: the next one is asked for
+                    Stopped(ElementSearchTruncation.PartsSkipped, $"A list's ItemContainer pattern could not be read: {ex.Message}");
                     continue;
                 }
 
-                if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
+                IUiaNode? after = null;
+                var finished = pattern == null;
+                for (var probe = 0; pattern != null && probe < MaxVirtualizedProbes; probe++)
                 {
-                    continue;
-                }
+                    if (token.IsCancellationRequested)
+                    {
+                        Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
+                        break;
+                    }
 
-                if (element.RuntimeId is { } id)
-                {
-                    if (known.Any(k => k.SequenceEqual(id)))
+                    IUiaNode? item;
+                    UiaElement element;
+                    try
+                    {
+                        item = pattern.FindItemByProperty(after, property, value);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
+                        break;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // This list's provider failed (or the item to start after went away): its other items are not known, so
+                        // the lookup is not complete. The next list is searched
+                        Stopped(ElementSearchTruncation.PartsSkipped, $"A list's provider failed, so not all of its items were searched: {ex.Message}");
+                        finished = true;
+                        break;
+                    }
+
+                    if (item == null)
+                    {
+                        finished = true;
+                        break;
+                    }
+
+                    after = item;
+                    try
+                    {
+                        element = _tree.ReadElement(item);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Stopped(ElementSearchTruncation.Timeout, NoAnswerNote);
+                        break;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // A placeholder whose properties cannot be read, or an item that went away: the provider matched it, but it
+                        // cannot be checked or named. The next one is asked for
+                        Stopped(ElementSearchTruncation.PartsSkipped, "An item a list matched could not be read, so it was skipped.");
+                        continue;
+                    }
+
+                    if ((evaluate && !UiaConditionEvaluator.Matches(condition, element)) || (filter != null && !filter(element)))
                     {
                         continue;
                     }
 
-                    known.Add(id);
+                    if (element.RuntimeId is { } id)
+                    {
+                        if (known.Any(k => k.SequenceEqual(id)))
+                        {
+                            continue;
+                        }
+
+                        known.Add(id);
+                    }
+
+                    if (items.Count >= room)
+                    {
+                        more = true;
+                        break;
+                    }
+
+                    items.Add(element);
                 }
 
-                if (items.Count >= room)
+                if (more || stop == ElementSearchTruncation.Timeout)
                 {
-                    more = true;
                     break;
                 }
 
-                items.Add(element);
-            }
-
-            if (more || note != null)
-            {
-                break;
+                if (!finished)
+                {
+                    Stopped(ElementSearchTruncation.PartsSkipped,
+                        $"A list kept matching after {MaxVirtualizedProbes} items were asked for, so the rest of it was not searched. " +
+                        "Add criteria (automationId), or search below the list with withinRef.");
+                }
             }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            Stopped(ElementSearchTruncation.Timeout, TimedOutNote);
+        }
 
-        return new VirtualizedLookup(items, more, containers, note);
+        return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
     }
 
     /// <summary>
     /// The lists searchVirtualized searches: withinRef's element when it is a list (or supports ItemContainer), else the
-    /// List, Tree, DataGrid and Table elements below the root, those with the ItemContainer pattern first, at most
-    /// <see cref="MaxVirtualizedContainers"/>.
+    /// List, Tree, DataGrid and Table elements below the root, those with the ItemContainer pattern first, then those on
+    /// screen, at most <see cref="MaxVirtualizedContainers"/>; and why lists were left out, or null.
     /// </summary>
-    private List<UiaElement> FindContainers(IUiaNode root, bool rootIsWithin, CancellationToken token)
+    private (List<UiaElement> Containers, string? Skipped) FindContainers(IUiaNode root, bool rootIsWithin, CancellationToken token)
     {
         if (rootIsWithin)
         {
             var self = _tree.ReadElement(root);
             if ((self.Patterns & UiaPatterns.ItemContainer) != 0 || ListControlTypes.Contains(self.Properties.ControlType))
             {
-                return [self];
+                return ([self], null);
             }
         }
 
         var condition = UiaCondition.Or(ListControlTypes.Select(t => UiaCondition.PropertyEquals(UiaProperty.ControlType, t)).ToArray());
         var outcome = new ElementSearch(_tree, condition, filter: null, keep: MaxVirtualizedContainers * 4, maxCandidates: 200).Run(root, token);
-        return outcome.Matches
+        var ordered = outcome.Matches
             .OrderBy(c => (c.Patterns & UiaPatterns.ItemContainer) != 0 ? 0 : 1)
-            .Take(MaxVirtualizedContainers)
+            .ThenBy(c => c.Properties.IsOffscreen ? 1 : 0)
             .ToList();
+        var withContainer = ordered.Count(c => (c.Patterns & UiaPatterns.ItemContainer) != 0);
+        string? skipped = null;
+        if (outcome.Stop != ElementSearchStop.None || outcome.SkippedParts > 0 || outcome.MatchCount > outcome.Matches.Count)
+        {
+            skipped = "Not every list of the window could be looked for (the search for them did not finish).";
+        }
+        else if (withContainer > MaxVirtualizedContainers)
+        {
+            skipped = $"{withContainer} lists support the ItemContainer pattern; the first {MaxVirtualizedContainers} (those on " +
+                      "screen first) were searched. Search below the one you mean with withinRef.";
+        }
+
+        return (ordered.Take(MaxVirtualizedContainers).ToList(), skipped);
     }
 
     /// <summary>The result with what searchVirtualized found: its items after the tree's matches, and the lists with refs.</summary>
@@ -265,11 +338,28 @@ public sealed partial class ElementSearchService
         {
             MatchCount = result.MatchCount + items.Count + (lookup.More ? 1 : 0),
             Elements = [.. result.Elements ?? [], .. items],
-            Truncated = result.Truncated || lookup.More,
-            TruncationReason = result.TruncationReason ?? (lookup.More ? ElementSearchTruncation.MaxResults : null),
+            Truncated = result.Truncated || lookup.More || lookup.Stop != null,
+            TruncationReason = MostSerious(result.TruncationReason, lookup.Stop, lookup.More ? ElementSearchTruncation.MaxResults : null),
             Virtualized = new VirtualizedSearchInfo(items.Count, containers, lookup.Note)
         };
     }
+
+    /// <summary>
+    /// The truncation reason that says most about what was not searched: a timeout, then the search limit, a skipped part
+    /// and the window limit, then maxResults (every part searched, only more matches than returned).
+    /// </summary>
+    private static ElementSearchTruncation? MostSerious(params ElementSearchTruncation?[] reasons) =>
+        reasons.OfType<ElementSearchTruncation>()
+            .OrderBy(r => r switch
+            {
+                ElementSearchTruncation.Timeout => 0,
+                ElementSearchTruncation.SearchLimit => 1,
+                ElementSearchTruncation.PartsSkipped => 2,
+                ElementSearchTruncation.WindowLimit => 3,
+                _ => 4
+            })
+            .Select(r => (ElementSearchTruncation?)r)
+            .FirstOrDefault();
 
     private string? TryRegister(nint window, UiaElement element, long generation)
     {
@@ -288,8 +378,13 @@ public sealed partial class ElementSearchService
     /// <param name="More">Another such item exists beyond <paramref name="Items"/>.</param>
     /// <param name="Containers">The lists looked at.</param>
     /// <param name="Note">Why not everything could be searched, or null.</param>
-    private sealed record VirtualizedLookup(IReadOnlyList<UiaElement> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note)
+    /// <param name="Stop">Why the lookup did not search every item of every list, as the result's truncation reason: Timeout
+    /// (the deadline, or a provider that did not answer), PartsSkipped (a provider that failed, an item that could not be
+    /// read, lists left out by the limits). Null when it finished, or when it did not run because the tree search's own
+    /// truncation already says why.</param>
+    private sealed record VirtualizedLookup(
+        IReadOnlyList<UiaElement> Items, bool More, IReadOnlyList<UiaElement> Containers, string? Note, ElementSearchTruncation? Stop = null)
     {
-        public static VirtualizedLookup Skipped(string note) => new([], false, [], note);
+        public static VirtualizedLookup Skipped(string note, ElementSearchTruncation? stop = null) => new([], false, [], note, stop);
     }
 }

@@ -35,10 +35,10 @@ public class ElementSearchVirtualizedTests
     private Task<FindElementsResult> Find(
         string? name = null, string? automationId = null, string[]? controlTypes = null, bool searchVirtualized = true,
         int maxResults = 20, string? withinRef = null, ElementDetail detail = ElementDetail.Minimal,
-        ElementNameMatch nameMatch = ElementNameMatch.Exact) =>
+        ElementNameMatch nameMatch = ElementNameMatch.Exact, TimeSpan? timeout = null) =>
         new ElementSearchService(_tree, _worker, _registry, _windows.Object).FindAsync(
             new ElementQuery(Handle, withinRef, name, nameMatch, automationId, controlTypes, MaxResults: maxResults, Detail: detail,
-                Timeout: TimeSpan.FromSeconds(5)) { SearchVirtualized = searchVirtualized });
+                Timeout: timeout ?? TimeSpan.FromSeconds(5)) { SearchVirtualized = searchVirtualized });
 
     [Fact]
     public async Task WithoutSearchVirtualized_AnItemTheListHasNotRealized_IsNotFound_AndTheListIsNotAsked()
@@ -173,7 +173,7 @@ public class ElementSearchVirtualizedTests
     }
 
     [Fact]
-    public async Task AListWhoseProviderFails_FindsNothingMore_AndTheSearchStillSucceeds()
+    public async Task AListWhoseProviderFails_IsReportedAsPartsSkipped_AndTheTreesMatchesAreStillReturned()
     {
         _list.FindException = new InvalidOperationException("provider failed");
 
@@ -181,6 +181,116 @@ public class ElementSearchVirtualizedTests
 
         result.Success.Should().BeTrue();
         result.Elements.Should().ContainSingle().Which.Virtualized.Should().BeNull();
+        result.Truncated.Should().BeTrue("the list's items that are not realized were not searched");
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Virtualized!.Note.Should().Contain("provider failed");
+    }
+
+    [Fact]
+    public async Task AProviderThatFailsAfterTheFirstItem_IsPartsSkipped_NotAComplete_Search()
+    {
+        // Arrange - a provider that rejects startAfter: only the first look-alike is seen
+        _list.FindException = new ArgumentException("E_INVALIDARG");
+        _list.FailFromProbe = 1;
+
+        // Act
+        var result = await Find(name: "Duplicate");
+
+        // Assert - one item found, but whether it is the only one is not known
+        result.Elements.Should().ContainSingle().Which.Name.Should().Be("Duplicate");
+        result.MatchCount.Should().Be(1);
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+    }
+
+    [Fact]
+    public async Task AProviderTimeoutAfterTheFirstItem_IsTimeout()
+    {
+        _list.FindException = new TimeoutException("UI Automation did not answer");
+        _list.FailFromProbe = 1;
+
+        var result = await Find(name: "Duplicate");
+
+        result.Elements.Should().ContainSingle();
+        result.Truncated.Should().BeTrue();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.Timeout);
+        result.Virtualized!.Note.Should().Contain("did not answer in time");
+    }
+
+    [Fact]
+    public async Task TheDeadlinePassingBetweenProbes_IsTimeout()
+    {
+        // Arrange - the first probe answers after the search's timeout has passed
+        _list.OnProbe = probe =>
+        {
+            if (probe == 1)
+            {
+                Thread.Sleep(600);
+            }
+        };
+
+        // Act
+        var result = await Find(name: "Duplicate", timeout: TimeSpan.FromMilliseconds(300));
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Elements.Should().ContainSingle();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.Timeout);
+        result.Virtualized!.Note.Should().Contain("timeout");
+        _list.Probes.Should().ContainSingle("nothing more is asked after the deadline");
+    }
+
+    [Fact]
+    public async Task AnItemWhosePropertiesCannotBeRead_IsPartsSkipped()
+    {
+        _list.Items[7000].ReadException = new InvalidOperationException("placeholder");
+
+        var result = await Find(name: "Duplicate");
+
+        result.Elements.Should().ContainSingle().Which.Ref.Should().NotBeNull();
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped, "the provider matched an item that could not be checked");
+    }
+
+    [Fact]
+    public async Task AListThatKeepsMatchingPastTheProbeLimit_IsPartsSkipped()
+    {
+        // Arrange - every item has the name, but none is a Button: each is asked for and skipped
+        var same = new FakeVirtualList(ElementSearchService.MaxVirtualizedProbes + 10, realized: 0, _ => "Same", Pid);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Explorer") { ProcessId = Pid }.With(same.List));
+
+        // Act
+        var result = await Find(name: "Same", controlTypes: ["Button"]);
+
+        // Assert
+        result.MatchCount.Should().Be(0);
+        same.Probes.Should().HaveCount(ElementSearchService.MaxVirtualizedProbes);
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Virtualized!.Note.Should().Contain("items were asked for");
+    }
+
+    [Fact]
+    public async Task MoreListsThanAreSearched_IsPartsSkipped_AndTheVisibleOnesAreSearchedFirst()
+    {
+        // Arrange - offscreen lists first in the tree, then the visible one holding the item
+        var hidden = Enumerable.Range(0, ElementSearchService.MaxVirtualizedContainers)
+            .Select(i => new FakeVirtualList(3, realized: 0, j => $"Hidden {i}.{j}", Pid))
+            .ToList();
+        foreach (var list in hidden)
+        {
+            list.List.IsOffscreen = true;
+        }
+
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Explorer") { ProcessId = Pid }
+            .With([.. hidden.Select(h => h.List), _list.List]));
+
+        // Act
+        var result = await Find(name: "Item 05000");
+
+        // Assert
+        result.Elements.Should().ContainSingle().Which.Name.Should().Be("Item 05000");
+        result.Virtualized!.Containers.Should().HaveCount(ElementSearchService.MaxVirtualizedContainers);
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Virtualized.Note.Should().Contain("lists");
     }
 
     [Fact]

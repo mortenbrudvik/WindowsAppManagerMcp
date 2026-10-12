@@ -22,7 +22,8 @@ public partial class ElementActionTools
         "pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table) a page at a time, " +
         "at most this many pages (down to its end, then back up), searching it after each page, and realize the first match. " +
         "Every page is an element_action scroll with every check; the list stays where the item was found (or where the search " +
-        "ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search: raise it for long lists.";
+        "ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, at least " +
+        "a second): raise it for long lists.";
 
     /// <summary>Whether criteria can be searched for through a list's ItemContainer pattern (one whole property).</summary>
     private static bool FitsVirtualizedSearch(string? name, ElementNameMatch nameMatch, string? automationId) =>
@@ -85,7 +86,7 @@ public partial class ElementActionTools
 
             var scrolled = await _actions.ActAsync(new ElementActionRequest(
                 listRef, ElementActionKind.Scroll, Direction: direction, Amount: ElementScrollAmount.Page,
-                AllowHostTarget: request.AllowHostTarget, Timeout: timeout), cancellationToken).ConfigureAwait(false);
+                AllowHostTarget: request.AllowHostTarget, Timeout: Remaining(timeout, stopwatch)), cancellationToken).ConfigureAwait(false);
             if (!scrolled.Success)
             {
                 return scrolled with
@@ -108,7 +109,8 @@ public partial class ElementActionTools
                 }, ElementActionKind.Realize, cancellationToken).ConfigureAwait(false);
                 if (item.Ref is { } itemRef)
                 {
-                    var realized = await _actions.ActAsync(request with { Ref = itemRef }, cancellationToken).ConfigureAwait(false);
+                    var realized = await _actions.ActAsync(request with { Ref = itemRef, Timeout = Remaining(timeout, stopwatch) },
+                        cancellationToken).ConfigureAwait(false);
                     return realized with
                     {
                         Warnings = [.. realized.Warnings ?? [], $"Found after scrolling {listName} {pages} pages ({ToolEnum<ElementScrollDirection>.Name(direction)})."]
@@ -139,7 +141,8 @@ public partial class ElementActionTools
             ". The list was left where the search ended. Nothing was realized. Check the criteria with find_ui_elements.");
     }
 
-    /// <summary>What is left of the timeout, at least a second (a search's shortest timeout).</summary>
+    /// <summary>What is left of the timeout, at least a second (a search's shortest timeout): every page, search and the final
+    /// realize get this, so the one timeoutMs bounds the whole search.</summary>
     private static TimeSpan Remaining(TimeSpan timeout, Stopwatch stopwatch)
     {
         var left = timeout - stopwatch.Elapsed;

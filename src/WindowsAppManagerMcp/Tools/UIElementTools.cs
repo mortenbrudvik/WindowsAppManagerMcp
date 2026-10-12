@@ -93,9 +93,10 @@ public class UIElementTools
         "create only the rows in view; default: false). After the normal search, the window's lists (List, Tree, DataGrid, " +
         "Table; or withinRef's element when it is one; at most 8) that support the ItemContainer pattern are asked for items " +
         "whose automationId, else whole name, equals the criterion, compared by the application (usually case-sensitive). " +
-        "Needs automationId, or name with nameMatch exact. Only reads: nothing is realized or scrolled. Each such item has " +
-        "virtualized=true and a ref but usually no bounds or clickPoint; act on it after element_action realize, which makes it " +
-        "real and scrolls it into view. The result's virtualized lists the lists with refs. Cost: one more search for the lists, " +
+        "Needs automationId, or name with nameMatch exact. Only reads: nothing is realized or scrolled. Each item only a list " +
+        "found has virtualized=true and a ref (one not realized has no bounds or clickPoint); act on it after element_action " +
+        "realize, which makes it real and scrolls it into view. The result's virtualized lists the lists with refs; a lookup " +
+        "that stops early is truncated (Timeout, PartsSkipped). Cost: one more search for the lists, " +
         "then one provider call per item (the application scans its whole list in its own process), within timeoutMs; runs " +
         "only when the normal search finished with fewer than maxResults matches.";
 

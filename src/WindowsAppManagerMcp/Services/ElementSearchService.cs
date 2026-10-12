@@ -396,8 +396,9 @@ public sealed partial class ElementSearchService : IElementSearchService
                 ? SearchVirtualized(criteria, root, query.WithinRef != null, total, maxResults, token)
                 : null;
 
-            // Items found through a list can be look-alikes of a tree match: no match is proven unique then
-            var unique = query.WithinRef == null && virtualized is not { Items.Count: > 0 }
+            // Items found through a list can be look-alikes of a tree match, and a lookup that stopped early may have missed
+            // one: no match is proven unique then
+            var unique = query.WithinRef == null && virtualized is not ({ Items.Count: > 0 } or { Stop: not null })
                 ? Uniqueness(criteria, controlTypesOnServer, started.Searched, handle, token)
                 : _ => null;
             var result = Result(query, withinRef, title, total,

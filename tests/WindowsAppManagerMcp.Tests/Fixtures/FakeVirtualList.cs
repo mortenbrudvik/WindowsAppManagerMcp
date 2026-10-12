@@ -58,6 +58,12 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
     /// <summary>Thrown by <see cref="FindItemByProperty"/> when set (a provider that fails).</summary>
     public Exception? FindException { get; set; }
 
+    /// <summary>How many FindItemByProperty calls answer before <see cref="FindException"/> is thrown (0: from the first).</summary>
+    public int FailFromProbe { get; set; }
+
+    /// <summary>Runs on every FindItemByProperty call with its number (1 for the first), before it answers.</summary>
+    public Action<int>? OnProbe { get; set; }
+
     /// <summary>The VirtualizedItem pattern of item <paramref name="index"/>.</summary>
     public FakeVirtualizedItemPattern VirtualizedOf(int index) =>
         (FakeVirtualizedItemPattern)_items[index].PatternObjects[typeof(IUiaVirtualizedItemPattern)];
@@ -72,7 +78,8 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
     public IUiaNode? FindItemByProperty(IUiaNode? startAfter, UiaProperty? property, object? value)
     {
         _probes.Add($"{property}={value} after {(startAfter is FakeUiaNode after ? after.Name : "start")}");
-        if (FindException != null)
+        OnProbe?.Invoke(_probes.Count);
+        if (FindException != null && _probes.Count > FailFromProbe)
         {
             throw FindException;
         }

@@ -93,8 +93,9 @@ public record ScreenPoint(int X, int Y);
 /// a dropdown, a dialog) of a windowAndPopups search, or another window of a desktop search (roadmap M3.5). Its ref is
 /// registered under that window. Left out for an element of the window searched.</param>
 /// <param name="Virtualized">searchVirtualized (roadmap M3.10): true for an item its list's ItemContainer pattern found that the
-/// tree search did not, usually because the list has not realized it (it is not in the tree yet: offscreen, no bounds, no
-/// clickPoint). element_action realize makes it real and scrolls it into view. Left out otherwise.</param>
+/// tree search did not: usually one the list has not realized (it is not in the tree yet: offscreen, no bounds, no
+/// clickPoint), else a realized one scrolled out of view, which the tree search leaves out with visibleOnly. element_action
+/// realize makes it real and scrolls it into view. Left out otherwise.</param>
 public record FoundElement(
     [property: JsonPropertyOrder(-1)] string? Ref,
     string? Name,
@@ -172,7 +173,9 @@ public record FindElementsResult(
 /// <param name="ItemsFound">The matches only the lists' ItemContainer pattern found (each has virtualized true).</param>
 /// <param name="Containers">The lists searched for, at most <see cref="Services.ElementSearchService.MaxVirtualizedContainers"/>:
 /// List, Tree, DataGrid and Table elements, withinRef's element itself when it is one.</param>
-/// <param name="Note">Why nothing more could be searched (no list, no ItemContainer pattern, the timeout), or null.</param>
+/// <param name="Note">Why nothing more could be searched (no list, no ItemContainer pattern, the timeout, a provider that
+/// failed), or null. A lookup that did not search every list to its end also sets the result's truncation reason (Timeout or
+/// PartsSkipped).</param>
 public record VirtualizedSearchInfo(int ItemsFound, IReadOnlyList<VirtualizedContainer> Containers, string? Note = null);
 
 /// <summary>A list searchVirtualized looked at (roadmap M3.10).</summary>
