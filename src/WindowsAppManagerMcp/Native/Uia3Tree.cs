@@ -125,6 +125,14 @@ public sealed class Uia3Tree : IUiaTree
     }
 
     /// <inheritdoc />
+    public bool HasChildren(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        var client = Started();
+        return UiaComErrors.Run(() => client.ControlViewWalker.GetFirstChildElement(element) != null);
+    }
+
+    /// <inheritdoc />
     public UiaNodeProperties Read(IUiaNode node)
     {
         var element = Unwrap(node);

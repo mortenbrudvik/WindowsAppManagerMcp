@@ -1256,11 +1256,44 @@ public class UIElementServiceTests
         // Act
         var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 3));
 
-        // Assert - the elements still waiting were listed: none has a child, so nothing was left unread
+        // Assert - the elements still waiting were asked for a child: none has one, so nothing was left unread
         Shape(result.Elements).Should().Be("A,B(B1)");
         result.Truncated.Should().BeFalse();
         result.TruncationReason.Should().BeNull();
-        _tree.ChildListings.Should().Contain("B1");
+        _tree.ChildProbes.Should().Contain("B1");
+        _tree.ChildListings.Should().NotContain("B1");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReached_AsksAWideElementForOneChild_WithoutListingItsLevel()
+    {
+        // Arrange - the limit falls on the last element of level 1; the first one holds ten thousand rows
+        var rows = Enumerable.Range(1, 10_000).Select(i => Node("ListItem", $"Row {i}")).ToArray();
+        Window(Node("List", "A").With(rows), Node("Button", "B"));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle, filter: new UIElementFilter(MaxElements: 2));
+
+        // Assert - one element at most was read to tell, not the whole level
+        Shape(result.Elements).Should().Be("A,B");
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        _tree.ChildProbes.Should().Equal("A");
+        _tree.ChildListings.Should().NotContain("A");
+    }
+
+    [Fact]
+    public async Task GetUIElements_MaxElementsReached_AsksOnlySoManyWaitingElements_ThenAssumesSomethingWasLeft()
+    {
+        // Arrange - the limit falls on the last of many elements without children
+        Window(Enumerable.Range(1, UIElementService.MaxChildProbes + 10).Select(i => Node("Button", $"B{i}")).ToArray());
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle,
+            filter: new UIElementFilter(MaxElements: UIElementService.MaxChildProbes + 10));
+
+        // Assert
+        result.TruncationReason.Should().Be(UIElementTruncationReason.MaxElements);
+        _tree.ChildProbes.Should().HaveCount(UIElementService.MaxChildProbes);
     }
 
     [Fact]

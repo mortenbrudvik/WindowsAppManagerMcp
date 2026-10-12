@@ -153,6 +153,13 @@ public sealed class UiaTree : IUiaTree
     }
 
     /// <inheritdoc />
+    public bool HasChildren(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        return Translate(() => TreeWalker.ControlViewWalker.GetFirstChild(element) != null);
+    }
+
+    /// <inheritdoc />
     public UiaNodeProperties Read(IUiaNode node)
     {
         var element = Unwrap(node);

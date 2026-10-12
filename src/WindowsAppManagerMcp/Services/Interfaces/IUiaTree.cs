@@ -47,10 +47,17 @@ public interface IUiaTree
 
     /// <summary>
     /// The children of a node in the control view, in tree order, read in one call so a child that
-    /// disappears during the read cannot end the list early. Only references: no property is read, so the call is cheap
-    /// even for a wide level, and tells how wide it is before its properties are read.
+    /// disappears during the read cannot end the list early. Only references: no property is read, so it is the cheapest
+    /// way to tell how wide a level is before its properties are read, but the call still grows with the level's width
+    /// (one reference per child). To tell only whether there is a child, use <see cref="HasChildren"/>.
     /// </summary>
     IReadOnlyList<IUiaNode> GetChildren(IUiaNode node, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether a node has a child in the control view: a tree walker's first child, so at most one element is read, however
+    /// wide the level.
+    /// </summary>
+    bool HasChildren(IUiaNode node);
 
     /// <summary>The properties every tree walk needs.</summary>
     UiaNodeProperties Read(IUiaNode node);

@@ -13,6 +13,7 @@ public sealed class FakeUiaTree : IUiaTree
     private readonly ConcurrentQueue<string> _reads = new();
     private readonly ConcurrentQueue<string> _cachedFetches = new();
     private readonly ConcurrentQueue<string> _childListings = new();
+    private readonly ConcurrentQueue<string> _childProbes = new();
     private readonly ConcurrentQueue<string> _finds = new();
 
     /// <summary>The engine the fake claims to be.</summary>
@@ -90,6 +91,15 @@ public sealed class FakeUiaTree : IUiaTree
         fake.OnGetChildren?.Invoke();
         ThrowIfSet(fake.ChildrenException);
         return fake.Children.ToList();
+    }
+
+    /// <summary>Whether the node has a child: logged in <see cref="ChildProbes"/>; fails like <see cref="GetChildren"/>.</summary>
+    public bool HasChildren(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _childProbes.Enqueue(fake.Name ?? fake.ControlType);
+        ThrowIfSet(fake.ChildrenException);
+        return fake.Children.Count > 0;
     }
 
     public UiaNodeProperties Read(IUiaNode node)
@@ -276,6 +286,9 @@ public sealed class FakeUiaTree : IUiaTree
 
     /// <summary>The nodes whose children were listed with <see cref="GetChildren"/>, by name, in call order.</summary>
     public IReadOnlyList<string> ChildListings => _childListings.ToList();
+
+    /// <summary>The nodes asked <see cref="HasChildren"/>, by name, in call order.</summary>
+    public IReadOnlyList<string> ChildProbes => _childProbes.ToList();
 
     private UiaElement ReadCached(FakeUiaNode node)
     {
