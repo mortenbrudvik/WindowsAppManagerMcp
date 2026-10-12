@@ -31,7 +31,16 @@ public class ElementActionToolTests
         _registry.Setup(r => r.Lookup(It.IsAny<string>())).Returns((string r) => new ElementLookup(r, Handle, null, 1));
     }
 
-    private ElementActionTools CreateSut() => new(_actions.Object, _search.Object, _registry.Object);
+    private readonly Mock<IMenuPathService> _menuPaths = new();
+    private readonly Mock<IWindowService> _windowService = new();
+    private MenuPathRequest? _menuRequest;
+
+    private ElementActionTools CreateSut() => new(_actions.Object, _search.Object, _registry.Object, _windowService.Object, _menuPaths.Object);
+
+    private void SetUpMenuPaths() =>
+        _menuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((MenuPathRequest request, CancellationToken _) => _menuRequest = request)
+            .ReturnsAsync(new ElementActionResult(true, "menu_path", "w2e1", Handle, ElementActionStatus.Done, ElementActionMethod.Invoke));
 
     private static FoundElement Element(string elementRef, string name = "Save") =>
         new(elementRef, name, "Button", "SaveBtn", "Button", null, null, true, false, ["Invoke"]);
@@ -208,5 +217,65 @@ public class ElementActionToolTests
         result.ErrorCode.Should().Be(nameof(UIElementErrorCode.OperationTimedOut));
         result.Error.Should().Contain("every window of its scope").And.Contain("WindowLimit");
         _actions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_FromAWindowAlone_StartsInTheWindow_WithTheScope()
+    {
+        SetUpMenuPaths();
+
+        var result = await CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, value: "File > Save As",
+            scope: ElementSearchScope.WindowAndPopups, timeoutMs: 3000);
+
+        result.Success.Should().BeTrue();
+        _menuRequest.Should().BeEquivalentTo(new MenuPathRequest(Handle, null, ["File", "Save As"], ElementSearchScope.WindowAndPopups,
+            false, TimeSpan.FromSeconds(3)));
+        _search.VerifyNoOtherCalls();
+        _actions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_FromARef_StartsBelowItsElement_InItsWindow()
+    {
+        SetUpMenuPaths();
+
+        await CreateSut().ElementAction(ElementActionKind.MenuPath, @ref: "w1e30", value: "File>Save As");
+
+        (_menuRequest!.Window, _menuRequest.StartRef).Should().Be((Handle, "w1e30"));
+    }
+
+    [Fact]
+    public async Task MenuPath_FromAStaleRef_ReportsTheRegistrysError_AndOpensNothing()
+    {
+        SetUpMenuPaths();
+        _registry.Setup(r => r.Lookup("w1e30")).Returns(new ElementLookup("w1e30", 0, null, 0, UIElementErrorCode.ElementStale, "Its window closed."));
+
+        var result = await CreateSut().ElementAction(ElementActionKind.MenuPath, @ref: "w1e30", value: "File>Save As");
+
+        (result.Success, result.Action, result.ErrorCode).Should().Be((false, "menu_path", "ElementStale"));
+        _menuPaths.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_FromCriteria_StartsBelowTheElementTheyFind()
+    {
+        SetUpMenuPaths();
+
+        await CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle, controlType: "MenuBar", value: "File>Save As");
+
+        _query!.ControlTypes.Should().Equal("MenuBar");
+        _menuRequest!.StartRef.Should().Be("w1e7");
+        _actions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MenuPath_WithoutAPath_IsRefusedBeforeAnythingIsSearched()
+    {
+        SetUpMenuPaths();
+
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.MenuPath, handle: Handle));
+
+        error.Message.Should().Contain("menu_path needs value");
+        _menuPaths.VerifyNoOtherCalls();
     }
 }

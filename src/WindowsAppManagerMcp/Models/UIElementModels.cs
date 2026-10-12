@@ -206,7 +206,29 @@ public enum UIElementErrorCode
     /// element_action: earlier actions on the application are still blocked (a dialog they opened is still open), so this
     /// one was not started. Deal with the dialog first.
     /// </summary>
-    ActionsPending = 20
+    ActionsPending = 20,
+
+    // respond_to_dialog and file_dialog (roadmap M3.5, M3.14). They act through element_action, so they also return its
+    // codes and the ones it reuses (PausedByUser, TargetDeniedByPolicy, BlockedByModal, ElementNotFound, AmbiguousElement...).
+
+    /// <summary>
+    /// respond_to_dialog, file_dialog: no dialog was found: the window in front (or the window named) is no dialog box and
+    /// has no open dialog, or (file_dialog) the dialog has no file name box, so it is no Open or Save As dialog. Nothing was done.
+    /// </summary>
+    DialogNotFound = 21,
+
+    /// <summary>
+    /// file_dialog: the path was typed and the dialog's default button pressed, but the dialog did not close: it showed a
+    /// prompt that file_dialog does not answer (the result's prompt has its text and buttons: answer it with
+    /// respond_to_dialog), it navigated into a folder, or it was still open when the timeout passed.
+    /// </summary>
+    DialogNotCompleted = 22,
+
+    /// <summary>
+    /// file_dialog with action save: the file exists and overwrite was not true. Nothing was typed when the server saw the
+    /// file first; when the application asked whether to replace it, the answer was No and the dialog is still open.
+    /// </summary>
+    FileExists = 23
 }
 
 /// <summary>

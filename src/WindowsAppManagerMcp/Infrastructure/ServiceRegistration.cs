@@ -102,6 +102,11 @@ public static class ServiceRegistration
         services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
         services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
         services.AddSingleton<IElementActionService, ElementActionService>();
+        // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): searches and popups to find the elements, and
+        // every action through element_action's service above, so its guards apply to each step
+        services.AddSingleton<IMenuPathService, MenuPathService>();
+        services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IFileDialogService, FileDialogService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -196,6 +201,7 @@ public static class ServiceRegistration
         services.AddSingleton<ElementReadTools>();
         services.AddSingleton<ElementWaitTools>();
         services.AddSingleton<ElementActionTools>();
+        services.AddSingleton<DialogTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -269,6 +275,7 @@ public static class ServiceRegistration
             .WithServerTools<ElementReadTools>()
             .WithServerTools<ElementWaitTools>()
             .WithServerTools<ElementActionTools>()
+            .WithServerTools<DialogTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

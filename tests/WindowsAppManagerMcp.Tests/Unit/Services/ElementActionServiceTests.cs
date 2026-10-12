@@ -1186,6 +1186,8 @@ public sealed class ElementActionServiceTests : IDisposable
     [InlineData(ElementActionKind.Invoke, "x", ElementValueMode.Value, null, "value is for")]
     [InlineData(ElementActionKind.Invoke, null, ElementValueMode.Type, null, "mode is for")]
     [InlineData(ElementActionKind.Invoke, null, ElementValueMode.Value, ElementScrollDirection.Up, "direction is for")]
+    [InlineData(ElementActionKind.MenuPath, null, ElementValueMode.Value, null, "menu_path needs value")]
+    [InlineData(ElementActionKind.MenuPath, "File>>Save", ElementValueMode.Value, null, "empty item")]
     public void ArgumentError_NamesWhatDoesNotFitTheAction(
         ElementActionKind action, string? value, ElementValueMode mode, ElementScrollDirection? direction, string expected)
     {
@@ -1200,6 +1202,18 @@ public sealed class ElementActionServiceTests : IDisposable
             .Should().Contain("fallback mouse");
         ElementActionService.ArgumentError(new ElementActionRequest("w1e1", ElementActionKind.Click, Fallback: ElementActionFallback.Mouse))
             .Should().BeNull();
+    }
+
+    [Fact]
+    public async Task MenuPath_IsNoActionOnOneElement_ForTheService_AndIsRefusedBeforeAnythingIsRead()
+    {
+        ElementActionService.ArgumentError(new ElementActionRequest("w1e1", ElementActionKind.MenuPath, "File>Save As")).Should().BeNull();
+
+        var result = await ActAsync("w1e1", ElementActionKind.MenuPath, "File>Save As");
+
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("item by item");
+        _guard.Verify(g => g.CheckTarget(It.IsAny<InputTarget>()), Times.Never);
     }
 
     [Fact]

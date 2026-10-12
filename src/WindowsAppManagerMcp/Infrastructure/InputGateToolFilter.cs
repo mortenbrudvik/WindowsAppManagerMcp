@@ -66,14 +66,16 @@ public static class InputGateToolFilter
     /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
     /// selector (roadmap M2.4) before they take the gate, and act inside it. element_action (roadmap M3.6) searches for its
     /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
-    /// which takes it again through the input service, and before it waits for the state after the action.
+    /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
+    /// and file_dialog (roadmap M3.5, M3.14) read the dialog without the gate and act only through element_action's service,
+    /// which takes it for each action; they wait for the dialog to close without it.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "kill_process", "close_window", "close_windows_batch", "close_application",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
         "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
-        "element_action"
+        "element_action", "respond_to_dialog", "file_dialog"
     };
 
     /// <summary>

@@ -62,6 +62,15 @@ public sealed class ContractServices : IDisposable
     /// <summary>element_action's service (roadmap M3.6).</summary>
     public Mock<IElementActionService> ElementActions { get; } = new();
 
+    /// <summary>element_action's menu_path (roadmap M3.5).</summary>
+    public Mock<IMenuPathService> MenuPaths { get; } = new();
+
+    /// <summary>respond_to_dialog's service (roadmap M3.5): Notepad's save prompt.</summary>
+    public Mock<IDialogService> Dialogs { get; } = new();
+
+    /// <summary>file_dialog's service (roadmap M3.14): Notepad's Save As dialog.</summary>
+    public Mock<IFileDialogService> FileDialogs { get; } = new();
+
     /// <summary>The element registry (roadmap M3.4): every ref belongs to Notepad's window unless a test arranges otherwise.</summary>
     public Mock<IElementRegistry> ElementRegistry { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
@@ -128,6 +137,9 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Popups.Object);
         services.AddSingleton(ElementReads.Object);
         services.AddSingleton(ElementActions.Object);
+        services.AddSingleton(MenuPaths.Object);
+        services.AddSingleton(Dialogs.Object);
+        services.AddSingleton(FileDialogs.Object);
         services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
@@ -360,6 +372,13 @@ public sealed class ContractServices : IDisposable
                 Element: TypicalDesktop.FoundButtons[0], MatchCount: 1));
         ElementActions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ElementActionRequest request, CancellationToken _) => TypicalDesktop.ElementActionDone(request));
+        // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): File>Save As, the save prompt, the Save As dialog
+        MenuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.MenuPathDone);
+        Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.SavePromptAnswered);
+        FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((FileDialogRequest request, CancellationToken _) => TypicalDesktop.FileSaved(request));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -527,6 +546,16 @@ public sealed class ContractServices : IDisposable
                 false, "set_value", request.Ref, TypicalDesktop.NotepadHandle,
                 Error: "Element ref is stale: its window closed. Find the element again with find_ui_elements.",
                 ErrorCode: nameof(UIElementErrorCode.ElementStale), ElapsedMilliseconds: 1.5));
+        MenuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementActionResult(false, "menu_path", WindowHandle: TypicalDesktop.NotepadHandle,
+                Error: "No visible menu item 'File' (item 1 of 2) was found in the window (or its open popups).",
+                ErrorCode: nameof(UIElementErrorCode.ElementNotFound), ElapsedMilliseconds: 21.5));
+        const string noDialog = "Window 1706796 ('Untitled - Notepad') is no dialog box and has no open dialog. Nothing was done.";
+        Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DialogResponseResult(false, Error: noDialog, ErrorCode: nameof(UIElementErrorCode.DialogNotFound), ElapsedMilliseconds: 0.5));
+        FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FileDialogResult(false, "save", Error: noDialog, ErrorCode: nameof(UIElementErrorCode.DialogNotFound),
+                ElapsedMilliseconds: 0.5));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

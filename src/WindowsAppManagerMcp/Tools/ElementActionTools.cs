@@ -20,18 +20,22 @@ public class ElementActionTools
     private readonly IElementSearchService _search;
     private readonly IElementRegistry _registry;
     private readonly IWindowService? _windowService;
+    private readonly IMenuPathService? _menuPaths;
 
     /// <param name="actions">Acts on the element.</param>
     /// <param name="search">Resolves window and element criteria to one element, as find_ui_elements searches.</param>
     /// <param name="registry">Tells which window a ref belongs to.</param>
     /// <param name="windowService">Resolves the window selector; the server always passes it.</param>
+    /// <param name="menuPaths">Carries out menu_path (roadmap M3.5); the server always passes it.</param>
     public ElementActionTools(
-        IElementActionService actions, IElementSearchService search, IElementRegistry registry, IWindowService? windowService = null)
+        IElementActionService actions, IElementSearchService search, IElementRegistry registry, IWindowService? windowService = null,
+        IMenuPathService? menuPaths = null)
     {
         _actions = actions;
         _search = search;
         _registry = registry;
         _windowService = windowService;
+        _menuPaths = menuPaths;
     }
 
     [McpServerTool(Name = "element_action", Title = "Act on UI Element", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -39,7 +43,9 @@ public class ElementActionTools
                  "invoke, click, toggle, set_value, append_text, select, add_to_selection, remove_from_selection, expand, collapse, " +
                  "scroll_into_view, scroll, set_range_value, realize, focus; double_click and right_click are guarded mouse clicks; " +
                  "window_close, window_minimize and window_maximize are for windows inside an application (a top-level window: " +
-                 "close_window, set_window_state). Name the element by ref (from find_ui_elements or get_ui_elements), or by handle " +
+                 "close_window, set_window_state); menu_path opens the menu path in value, such as 'File>Save As' (each item " +
+                 "expanded, the last invoked, through the submenus they open), from the window or a menu bar's or open menu's ref. " +
+                 "Name the element by ref (from find_ui_elements or get_ui_elements), or by handle " +
                  "or window plus name, automationId, controlType or className (in its open menus and dialogs too while it is in front: " +
                  "scope), which must match exactly one element (else " +
                  "AmbiguousElement or ElementNotFound). Returns method, before and after (value, toggle, expand and selection " +
@@ -53,10 +59,10 @@ public class ElementActionTools
     public async Task<ElementActionResult> ElementAction(
         [Description("What to do: invoke, click, double_click, right_click, focus, set_value, append_text, toggle, select, " +
                      "add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, " +
-                     "window_close, window_minimize, window_maximize.")]
+                     "window_close, window_minimize, window_maximize, menu_path.")]
         ElementActionKind action,
         [Description("The element: a ref from an earlier read, such as 'w4120035e17'. Or leave it out and pass handle or window " +
-                     "with element criteria.")]
+                     "with element criteria (menu_path: or with none, to start from the window).")]
         string? @ref = null,
         [Description("Window handle (as integer) whose element the criteria name. Pass handle or window, with criteria, instead of ref.")]
         long? handle = null,
@@ -75,7 +81,8 @@ public class ElementActionTools
         [Description(UIElementTools.CriteriaScopeDescription)]
         ElementSearchScope? scope = null,
         [Description("set_value and append_text: the text. set_range_value: the number (e.g. '42'). toggle: the state to reach, " +
-                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. Logged as its length only; a password " +
+                     "'on', 'off' or 'indeterminate' (up to three toggles); leave it out to toggle once. menu_path: the menu items " +
+                     "separated by '>', e.g. 'File>Save As' (names ignore case and a trailing '...'). Logged as its length only; a password " +
                      "field's value is never read or returned.")]
         string? value = null,
         [Description("set_value and append_text: 'value' (default: the Value pattern, no keyboard input), 'type' (text fields " +
@@ -127,15 +134,26 @@ public class ElementActionTools
             var normalized = ElementRefs.Normalize(@ref) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 $"ref '{@ref}' is not an element ref: refs look like '{ElementRefs.Example}' and come from find_ui_elements, " +
                 "get_ui_elements, get_focused_element, get_element_at_point or capture_with_elements. Nothing was done.");
-            NoteWindow(_registry.Lookup(normalized).WindowHandle);
+            var lookup = _registry.Lookup(normalized);
+            NoteWindow(lookup.WindowHandle);
+            if (action == ElementActionKind.MenuPath)
+            {
+                // The ref's own window holds the path's first item; a ref the registry no longer knows names no window
+                return lookup.Success
+                    ? await MenuPathAsync(lookup.WindowHandle, normalized, request, scope: null, cancellationToken).ConfigureAwait(false)
+                    : new ElementActionResult(false, "menu_path", normalized, Error: lookup.Error, ErrorCode: lookup.ErrorCode.ToString());
+            }
+
             return await _actions.ActAsync(request with { Ref = normalized }, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!hasCriteria)
+        var menuFromWindow = action == ElementActionKind.MenuPath && !hasCriteria && (handle != null || window != null);
+        if (!hasCriteria && !menuFromWindow)
         {
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "Name the element: pass ref, or handle or window with at least one of name, automationId, controlType and " +
-                "className. Nothing was done.");
+                "className" + (action == ElementActionKind.MenuPath ? " (menu_path: or handle or window alone)" : string.Empty) +
+                ". Nothing was done.");
         }
 
         if (allowHostTarget && handle == null && window is not { Handle: not null })
@@ -143,6 +161,13 @@ public class ElementActionTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "allowHostTarget lifts the guard on the agent's own terminal or chat window only for a window named by its handle " +
                 "(handle, or window.handle) or an element ref, not for a selector that finds windows by name. Nothing was done.");
+        }
+
+        if (menuFromWindow)
+        {
+            var menuWindow = WindowTargeting.Require(_windowService, handle, window);
+            NoteWindow(menuWindow);
+            return await MenuPathAsync(menuWindow, startRef: null, request, scope, cancellationToken).ConfigureAwait(false);
         }
 
         if (nameMatch == ElementNameMatch.Regex && !string.IsNullOrEmpty(name) &&
@@ -172,7 +197,30 @@ public class ElementActionTools
         }
 
         NoteWindow(windowHandle);
+        if (action == ElementActionKind.MenuPath)
+        {
+            // The element the criteria found holds the path's first item (a menu bar, an open menu), in its own window
+            var registered = _registry.Lookup(found.Ref!).WindowHandle;
+            return await MenuPathAsync(registered != nint.Zero ? registered : windowHandle, found.Ref, request, scope: null, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return await _actions.ActAsync(request with { Ref = found.Ref! }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>menu_path (roadmap M3.5): the path's items, each acted on through element_action by the menu path service.</summary>
+    private async Task<ElementActionResult> MenuPathAsync(
+        nint window, string? startRef, ElementActionRequest request, ElementSearchScope? scope, CancellationToken cancellationToken)
+    {
+        if (_menuPaths == null)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, "menu_path is not available in this server. Nothing was done.");
+        }
+
+        var items = MenuPaths.Parse(request.Value, out var error) ??
+                    throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, error + " Nothing was done.");
+        return await _menuPaths.RunAsync(new MenuPathRequest(window, startRef, items, scope, request.AllowHostTarget, request.Timeout),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The ref of the one element the query matches, or the failure: none, several, or a search that did not finish.</summary>
