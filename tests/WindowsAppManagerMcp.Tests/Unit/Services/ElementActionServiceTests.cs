@@ -45,7 +45,7 @@ public sealed class ElementActionServiceTests : IDisposable
             .Returns((InputTarget target, nint window) => InputGuardResult.Allow(target, window, Main, Handle));
         _probe.Setup(p => p.Snapshot(It.IsAny<IReadOnlyCollection<int>>()))
             .Returns((IReadOnlyCollection<int> ids) => new AppWindowSnapshot(ids.ToHashSet(), new HashSet<nint> { Handle }));
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(AppWindowsOpened.None);
         _foreground.Setup(f => f.EnsureForeground(Handle, It.IsAny<int>())).Returns(new FocusOutcome { Target = Handle, IsForeground = true });
     }
 
@@ -747,7 +747,7 @@ public sealed class ElementActionServiceTests : IDisposable
         var combo = RefOf(new FakeUiaNode("ComboBox", "Font") { ActionPatterns = ["ExpandCollapse"], ProcessId = Pid }
             .WithPattern<IUiaExpandCollapsePattern>(new FakeExpandCollapsePattern(UiaExpandCollapseState.Collapsed)));
         var dropdown = new OpenedWindow(0x7700, "", "ComboLBox", Pid, "app");
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([dropdown]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [dropdown]));
 
         // Act
         var result = await ActAsync(combo, ElementActionKind.Expand);
@@ -1068,7 +1068,7 @@ public sealed class ElementActionServiceTests : IDisposable
         _runner.Outcome = UiaActionStatus.Pending;
         var save = RefOf(Button("Save As..."));
         var dialog = new OpenedWindow(0x7800, "Save As", "#32770", Pid, "app");
-        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns([dialog]);
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([dialog], []));
 
         // Act
         var result = await ActAsync(save, ElementActionKind.Invoke);
@@ -1079,6 +1079,43 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OpenedPopup.Should().Be(dialog);
         result.OutcomeVerified.Should().BeNull();
         result.Warnings.Should().Contain(w => w.Contains("Save As"));
+    }
+
+    [Fact]
+    public async Task AnActionStillBlockedAtTheTimeout_WaitsForTheDialog_NotForAWindowAboveIt()
+    {
+        // Arrange - a hover card of the application showed above the dialog the Invoke waits for
+        _runner.Outcome = UiaActionStatus.Pending;
+        var save = RefOf(Button("Save As..."));
+        var card = new OpenedWindow(0x7900, "", "Chrome_WidgetWin_1", Pid, "app");
+        var dialog = new OpenedWindow(0x7800, "Save As", "#32770", Pid, "app");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([dialog], [card]));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.Status.Should().Be(ElementActionStatus.InvokedPendingModal);
+        result.OpenedPopup.Should().Be(dialog);
+        result.Warnings.Should().Contain(w => w.Contains("2 new windows"));
+    }
+
+    [Fact]
+    public async Task AnActionStillBlockedAtTheTimeout_WithOnlyAWindowThatIsNoDialog_IsActionTimedOut()
+    {
+        // Arrange - only a popup appeared (Explorer: a taskbar thumbnail the user hovered while the action was blocked)
+        _runner.Outcome = UiaActionStatus.Pending;
+        var save = RefOf(Button("Save"));
+        var popup = new OpenedWindow(0x7900, "", "TaskListThumbnailWnd", Pid, "explorer");
+        _probe.Setup(p => p.OpenedSince(It.IsAny<AppWindowSnapshot>())).Returns(new AppWindowsOpened([], [popup]));
+
+        // Act
+        var result = await ActAsync(save, ElementActionKind.Invoke);
+
+        // Assert
+        result.ErrorCode.Should().Be("ActionTimedOut");
+        result.Status.Should().BeNull();
+        result.Error.Should().Contain("no new dialog").And.Contain("may still take effect");
     }
 
     [Fact]

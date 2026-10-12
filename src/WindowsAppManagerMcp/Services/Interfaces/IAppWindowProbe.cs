@@ -23,11 +23,26 @@ public interface IAppWindowProbe
     AppWindowSnapshot Snapshot(IReadOnlyCollection<int> processIds);
 
     /// <summary>
-    /// The visible top-level windows of the snapshot's processes that are not in it, in z-order (topmost first), each
-    /// described. Empty when none appeared.
+    /// The visible top-level windows of the snapshot's processes that are not in it, each described, in z-order (topmost
+    /// first): those that can be a dialog an action waits for apart from the others. Windows no action opens for the agent
+    /// are left out: tooltips (whatever shows them, also a thread of the application other than the busy one), windows
+    /// without a size, and disabled or cloaked ones.
     /// </summary>
-    IReadOnlyList<OpenedWindow> OpenedSince(AppWindowSnapshot before);
+    AppWindowsOpened OpenedSince(AppWindowSnapshot before);
 }
 
 /// <summary>The visible top-level windows of some processes at one moment.</summary>
 public sealed record AppWindowSnapshot(IReadOnlySet<int> ProcessIds, IReadOnlySet<nint> Windows);
+
+/// <summary>The windows of an application that appeared during an action (<see cref="IAppWindowProbe.OpenedSince"/>).</summary>
+/// <param name="Dialogs">Those that can be a dialog the action waits for, topmost first: a dialog box (#32770), a window with a
+/// title bar that is no tool window, or a window whose owner is disabled (a modal dialog disables the window that owns it).</param>
+/// <param name="Others">The others (a menu, a dropdown, a hover card), topmost first.</param>
+public sealed record AppWindowsOpened(IReadOnlyList<OpenedWindow> Dialogs, IReadOnlyList<OpenedWindow> Others)
+{
+    /// <summary>No window appeared.</summary>
+    public static AppWindowsOpened None { get; } = new([], []);
+
+    /// <summary>Every window that appeared: the dialogs first, then the others.</summary>
+    public IReadOnlyList<OpenedWindow> All => [.. Dialogs, .. Others];
+}

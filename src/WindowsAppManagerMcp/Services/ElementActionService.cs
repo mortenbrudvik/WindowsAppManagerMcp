@@ -368,29 +368,46 @@ public sealed partial class ElementActionService : IElementActionService
         };
     }
 
-    /// <summary>The action is still running: a new window of the application is the dialog it waits for.</summary>
+    /// <summary>
+    /// The action is still running: a new window of the application that can be a dialog (not a tooltip, a menu or a hover
+    /// card that showed meanwhile) is the dialog it waits for.
+    /// </summary>
     private ElementActionResult Pending(ActionCall call, AppWindowSnapshot windowsBefore, ElementActionMethod method, string what)
     {
         var opened = _probe.OpenedSince(windowsBefore);
-        if (opened.Count == 0)
+        if (opened.Dialogs is not [var dialog, ..])
         {
+            var others = opened.Others.Count == 0
+                ? string.Empty
+                : $" (only {(opened.Others.Count == 1 ? "a new window that is" : $"{opened.Others.Count} new windows that are")} no " +
+                  "dialog: a menu, dropdown or popup, which the action does not wait for)";
             return call.Fail(nameof(UIElementErrorCode.ActionTimedOut),
-                $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms and no new window of the application " +
-                "appeared: it may be busy. The action was sent and may still take effect, so do not repeat it blindly: read the " +
-                "element again (find_ui_elements with detail standard), or wait_for_window for a dialog.") with { Method = method };
+                $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms and no new dialog of the application " +
+                $"appeared{others}: it may be busy. The action was sent and may still take effect, so do not repeat it blindly: read " +
+                "the element again (find_ui_elements with detail standard), or wait_for_window for a dialog.") with
+            {
+                Method = method,
+                OpenedPopup = opened.Others.FirstOrDefault()
+            };
         }
 
         return call.Succeed(method) with
         {
             Status = ElementActionStatus.InvokedPendingModal,
-            OpenedPopup = opened[0],
+            OpenedPopup = dialog,
             Warnings = Warnings(
                 $"{method} {what} after {Timeout(call.Request).TotalMilliseconds:0} ms: it waits for the window it opened " +
-                $"('{opened[0].Title}', handle {opened[0].Handle}). Read and answer it (find_ui_elements with that handle), then " +
+                $"('{dialog.Title}', handle {dialog.Handle}). Read and answer it (find_ui_elements with that handle), then " +
                 "read the element again.",
-                opened.Count > 1 ? $"{opened.Count} new windows of the application appeared; openedPopup is the topmost." : null)
+                SeveralOpened(opened))
         };
     }
+
+    /// <summary>The warning when several windows appeared, or null.</summary>
+    private static string? SeveralOpened(AppWindowsOpened opened) => opened.All.Count > 1
+        ? $"{opened.All.Count} new windows of the application appeared; openedPopup is the topmost that can be a dialog " +
+          "(else the topmost)."
+        : null;
 
     /// <summary>
     /// Verified activation of the element's window, inside the gate; the failure, or null when it is in front. The codes are
@@ -655,7 +672,7 @@ public sealed partial class ElementActionService : IElementActionService
             ? true
             : Verify(request, element, after);
         var opened = _probe.OpenedSince(windowsBefore);
-        var warnings = new List<string?> { after.Warning };
+        var warnings = new List<string?> { after.Warning, SeveralOpened(opened) };
         if (verified == false && method != ElementActionMethod.None)
         {
             // Without an action there is nothing that could still take effect: the plan's own warning says why
@@ -665,11 +682,6 @@ public sealed partial class ElementActionService : IElementActionService
         if (after.Gone && request.Action != ElementActionKind.WindowClose)
         {
             warnings.Add("The element is gone after the action (it closed, or its list or dialog was rebuilt): its ref is stale now.");
-        }
-
-        if (opened.Count > 1)
-        {
-            warnings.Add($"{opened.Count} new windows of the application appeared; openedPopup is the topmost.");
         }
 
         // A toggle asked for a state it did not reach did not do what was asked
@@ -685,7 +697,7 @@ public sealed partial class ElementActionService : IElementActionService
             {
                 Method = method,
                 After = after.State,
-                OpenedPopup = opened.FirstOrDefault()
+                OpenedPopup = opened.All.FirstOrDefault()
             };
         }
 
@@ -694,7 +706,7 @@ public sealed partial class ElementActionService : IElementActionService
             After = after.State,
             OutcomeVerified = verified,
             Scroll = request.Action == ElementActionKind.Scroll ? ScrollPosition(request, element, after) : null,
-            OpenedPopup = opened.FirstOrDefault(),
+            OpenedPopup = opened.All.FirstOrDefault(),
             ReceivingWindow = input,
             Warnings = Warnings([.. warnings, .. element.Warnings])
         };

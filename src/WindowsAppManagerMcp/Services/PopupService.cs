@@ -271,6 +271,9 @@ public sealed class PopupService : IPopupService
         return PopupKind.Popup;
     }
 
+    /// <summary>Whether the class is a tooltip's (element_action's openedPopup leaves tooltips out too).</summary>
+    public static bool IsTooltipClass(string? className) => className != null && TooltipClasses.Contains(className);
+
     /// <summary>A plain popup's kind from the control type of its UI Automation element (a Chromium menu is a Menu).</summary>
     public static PopupKind Sharpen(PopupKind kind, string? controlType) => kind != PopupKind.Popup
         ? kind
