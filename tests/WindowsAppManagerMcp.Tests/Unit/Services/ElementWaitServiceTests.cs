@@ -400,6 +400,36 @@ public class ElementWaitServiceTests
     }
 
     [Fact]
+    public async Task Gone_AWindowWhoseHandleNowNamesAWindowOfAnotherClass_HasClosed_WhileAFailedClassReadTellsNothing()
+    {
+        // Arrange - one wait where the handle comes to name a dialog of the same process, one where the class cannot be read
+        BuildWindow(new FakeUiaNode("ProgressBar", "Loading"));
+        _windows.Setup(w => w.GetClassName(Handle)).Returns("EditorWindow");
+        At(300, () =>
+        {
+            _tree.FromHandleException = FakeUiaTree.Vanished("window");
+            _windows.Setup(w => w.GetClassName(Handle)).Returns("#32770");
+        });
+        var reused = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone);
+        _tree.FromHandleException = null;
+        _windows.Setup(w => w.GetClassName(Handle)).Returns("EditorWindow");
+        At(300, () =>
+        {
+            _tree.FromHandleException = FakeUiaTree.Vanished("window");
+            _windows.Setup(w => w.GetClassName(Handle)).Returns(string.Empty);
+        });
+
+        // Act
+        var unreadable = await WaitAsync(Criteria(name: "Loading"), ElementWaitCondition.Gone, timeoutMs: 800);
+
+        // Assert
+        reused.Satisfied.Should().BeTrue();
+        reused.Warning.Should().Contain("closed");
+        unreadable.Satisfied.Should().BeFalse();
+        unreadable.LastObservedState.Should().StartWith("UI Automation could not read the window");
+    }
+
+    [Fact]
     public async Task AWindowThatCloses_EndsAnyOtherCondition_WithWindowNotFound_NotATimeout()
     {
         BuildWindow(Button("OK", enabled: false));

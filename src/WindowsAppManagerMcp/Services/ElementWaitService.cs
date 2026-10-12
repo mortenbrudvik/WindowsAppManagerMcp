@@ -528,7 +528,8 @@ public sealed class ElementWaitService : IElementWaitService
 
         /// <summary>
         /// Whether Win32 says the window closed: IsWindow is false, or the handle now names a window of another process or
-        /// class than the one the wait picked. Without the window wrapper, true: a failed lookup is taken as a closed window.
+        /// class than the one the wait picked (a read that fails, PID 0 or an empty class, tells nothing). Without the window
+        /// wrapper, true: a failed lookup is taken as a closed window.
         /// </summary>
         private bool WindowClosed()
         {
@@ -539,7 +540,19 @@ public sealed class ElementWaitService : IElementWaitService
 
             try
             {
-                return !windows.IsWindow(_window) || (_identity is { } identity && ReadWindowIdentity() != identity);
+                if (!windows.IsWindow(_window))
+                {
+                    return true;
+                }
+
+                if (_identity is not { } before || ReadWindowIdentity() is not { } now)
+                {
+                    return false;
+                }
+
+                return (before.ProcessId != 0 && now.ProcessId != 0 && before.ProcessId != now.ProcessId) ||
+                       (!string.IsNullOrEmpty(before.ClassName) && !string.IsNullOrEmpty(now.ClassName) &&
+                        !string.Equals(before.ClassName, now.ClassName, StringComparison.Ordinal));
             }
             catch (Exception)
             {
