@@ -451,6 +451,22 @@ public class NativeProcessWrapper : INativeProcessWrapper
 
         public bool HasExited => process.HasExited;
 
+        public int? ExitCode
+        {
+            get
+            {
+                try
+                {
+                    return process.HasExited ? process.ExitCode : null;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+                {
+                    // No handle to read it from, or the process cannot be queried
+                    return null;
+                }
+            }
+        }
+
         public nint RefreshMainWindowHandle()
         {
             process.Refresh();

@@ -148,6 +148,8 @@ public class NativeCallGuardTests
         ["User32.GetWindowLongPtrW"] = "reads a style value of a window",
         ["User32.GetWindow"] = "reads a related window, such as the owner or the enabled popup",
         ["User32.IsHungAppWindow"] = "reads whether the thread of a window is hung",
+        ["User32.SendMessageTimeoutW"] = "sends WM_NULL, which every window ignores, with SMTO_ABORTIFHUNG and a timeout (RespondsWithin): " +
+            "reads whether the window's thread answers; the wrapper sends no other message",
         ["User32.GetDpiForWindow"] = "reads the DPI of a window",
         ["Dwmapi.DwmGetWindowAttribute"] = "reads a DWM attribute such as cloaking or the visible frame (DwmSetWindowAttribute, which changes them, is not listed)",
         ["Kernel32.GetCurrentProcessId"] = "reads the server's own process ID",
@@ -332,8 +334,35 @@ public class NativeCallGuardTests
             .Should().BeEmpty("P/Invoke declarations belong in NativeMethods, where the allow-list sees their callers");
     }
 
+    /// <summary>
+    /// The types that may call UI Automation actions: the browser wrapper, and the two engine adapters behind IUiaTree,
+    /// whose pattern objects (IUiaPattern) the action tools of roadmap M3.6 use. Tests replace all three with mocks or
+    /// FakeUiaTree, and the E2E guard classifies every pattern member (WrapperCatalog: UiaAction, refused in the no-input
+    /// tier, and allowed only on elements of the fixture process in the input tier).
+    /// </summary>
+    private static readonly Type[] UiAutomationActionOwners = [typeof(UIAutomationWrapper), typeof(UiaTree), typeof(Uia3Tree)];
+
     [Fact]
-    public void UiAutomationActions_AreOnlyCalledByUIAutomationWrapper()
+    public void ComInterfaceDeclarations_AreOnlyInTheNativeWrappers_AndCannotMoveAWindowToADesktop()
+    {
+        // Arrange - a [ComImport] interface is a native call the P/Invoke scans above do not see: it belongs to a wrapper in
+        // the Native namespace, behind a seam the tests fake (the virtual desktop manager: INativeVirtualDesktopWrapper)
+        var comInterfaces = ServerTypes()
+            .Where(t => t.IsInterface && t.IsDefined(typeof(System.Runtime.InteropServices.ComImportAttribute), inherit: false))
+            .ToList();
+
+        // Assert
+        comInterfaces.Select(t => t.Name).Should().Contain("IVirtualDesktopManager", "the scan must see the server's own COM interfaces");
+        comInterfaces.Where(t => t.Namespace != typeof(NativeWindowWrapper).Namespace)
+            .Select(t => t.FullName)
+            .Should().BeEmpty("COM interfaces belong to the Native wrappers");
+        comInterfaces.Single(t => t.Name == "IVirtualDesktopManager").GetMethods().Select(m => m.Name)
+            .Should().BeEquivalentTo(["IsWindowOnCurrentVirtualDesktop", "GetWindowDesktopId"],
+                "the server only reads where a window is; MoveWindowToDesktop must stay undeclared");
+    }
+
+    [Fact]
+    public void UiAutomationActions_AreOnlyCalledByTheWrapperAndTheEngineAdapters()
     {
         // Act
         var calls = FindCalls(callee => callee.DeclaringType != null && IsActionCapableUiAutomationType(callee.DeclaringType));
@@ -341,28 +370,56 @@ public class NativeCallGuardTests
         // Assert
         calls.Should().Contain(c => c.Owner == typeof(UiaTree),
             "the scan must see the UI Automation tree adapter's own reads");
+        calls.Should().Contain(c => c.Owner == typeof(UiaTree) && !IsReadOnlyUiAutomationCall(c.Callee),
+            "the scan must see the managed adapter's pattern actions");
         calls
-            .Where(c => c.Owner != typeof(UIAutomationWrapper))
+            .Where(c => !UiAutomationActionOwners.Contains(c.Owner))
             .Where(c => !IsReadOnlyUiAutomationCall(c.Callee))
             .Select(c => c.Description)
             .Should().BeEmpty(
                 "UI Automation actions (Invoke, SetValue, Toggle, Expand, Select, Scroll, Close, SetFocus, ...) must go " +
-                "through IUIAutomationWrapper so tests can mock them; reads must be on ReadOnlyUiAutomationMethods");
+                "through IUIAutomationWrapper or an IUiaTree pattern object so tests can mock them; reads must be on " +
+                "ReadOnlyUiAutomationMethods");
+    }
+
+    [Fact]
+    public void UiAutomationComClient_IsOnlyCalledByTheUia3Adapter()
+    {
+        // Act - any call into the COM client's interop types (IUIAutomation, IUIAutomationElement, the patterns, ...)
+        var calls = FindCalls(callee => IsUiAutomationComType(callee.DeclaringType));
+
+        // Assert - every COM call, reads and actions, stays behind IUiaTree, where FakeUiaTree replaces it in tests
+        calls.Should().Contain(c => c.Owner == typeof(Uia3Tree), "the scan must see the UIA3 adapter's own COM calls");
+        calls.Should().Contain(c => c.Owner == typeof(Uia3Tree) && c.Callee.Name == "Invoke",
+            "the scan must see the UIA3 adapter's pattern actions");
+        calls.Where(c => c.Owner != typeof(Uia3Tree)).Select(c => c.Description).Should().BeEmpty(
+            "only Native/Uia3Tree may call the UI Automation COM client");
     }
 
     [Theory]
     [InlineData(typeof(UIElementService))]
     [InlineData(typeof(ElementInspectionService))]
+    [InlineData(typeof(WindowCloseVerifier))]
+    [InlineData(typeof(ElementRegistry))]
+    [InlineData(typeof(ElementSearch))]
+    [InlineData(typeof(ElementSearchService))]
+    [InlineData(typeof(PopupService))]
+    [InlineData(typeof(ElementReadService))]
+    [InlineData(typeof(ElementWaitService))]
+    [InlineData(typeof(ElementActionService))]
+    [InlineData(typeof(AppWindowProbe))]
     public void UiaTreeServices_ReadUiAutomationOnlyThroughIUiaTree(Type service)
     {
-        // Act - any call into System.Windows.Automation, reads included
+        // Act - any call into System.Windows.Automation or the COM client, reads included
         var calls = FindCalls(callee =>
-            callee.DeclaringType?.Namespace?.StartsWith("System.Windows.Automation", StringComparison.Ordinal) == true);
+            callee.DeclaringType?.Namespace?.StartsWith("System.Windows.Automation", StringComparison.Ordinal) == true ||
+            IsUiAutomationComType(callee.DeclaringType));
 
         // Assert - otherwise the fake-tree unit tests no longer cover what the service does
         calls.Should().Contain(c => c.Owner == typeof(UiaTree), "the scan must see the adapter's own UI Automation calls");
+        calls.Should().Contain(c => c.Owner == typeof(Uia3Tree), "the scan must see the UIA3 adapter's own UI Automation calls");
         calls.Where(c => c.Owner == service).Select(c => c.Description).Should().BeEmpty(
-            "{0} must read UI Automation through IUiaTree (adapter: UiaTree), so its walk and filters stay unit-testable",
+            "{0} must read UI Automation through IUiaTree (adapters: Uia3Tree, UiaTree), so its walk and filters stay unit-testable",
             service.Name);
     }
 
@@ -737,6 +794,9 @@ public class NativeCallGuardTests
                 outer.Name.EndsWith("Pattern", StringComparison.Ordinal));
     }
 
+    /// <summary>A type of the UI Automation COM client's interop assembly (Interop.UIAutomationClient).</summary>
+    private static bool IsUiAutomationComType(Type? type) =>
+        type?.Namespace?.StartsWith("Interop.UIAutomationClient", StringComparison.Ordinal) == true;
     /// <summary>
     /// A constructor, a property getter, or a method on <see cref="ReadOnlyUiAutomationMethods"/>.
     /// </summary>

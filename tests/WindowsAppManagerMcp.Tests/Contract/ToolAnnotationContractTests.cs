@@ -73,7 +73,8 @@ public class ToolAnnotationContractTests
     [Fact]
     public async Task TheToolsThatCanLoseWorkOrActForTheUser_AreDestructive()
     {
-        // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything (scroll:
+        // close*, kill, the layout tools that remove or replace a preset, the input that can click or type anything (and
+        // element_action, which invokes, sets values and closes in-app windows through UI Automation patterns; scroll:
         // the wheel over a combo box, slider or number box changes its value), the launches (any program with any arguments,
         // a shell command included; launch_browser_with_debug opens an unauthenticated debug port on a profile directory
         // the agent chooses), the captures (overwrite:true replaces the image file at outputPath) and set_clipboard (it
@@ -81,7 +82,9 @@ public class ToolAnnotationContractTests
         string[] destructive =
         [
             "close_window", "close_windows_batch", "close_application", "kill_process", "delete_layout", "save_layout",
-            "click", "right_click", "double_click", "scroll", "type_text", "send_keys",
+            "click", "right_click", "double_click", "scroll", "type_text", "send_keys", "element_action",
+            // respond_to_dialog presses a dialog's button (Don't Save loses work); file_dialog can replace a file (roadmap M3.5, M3.14)
+            "respond_to_dialog", "file_dialog",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "take_screenshot", "capture_region", "capture_window", "capture_with_elements",
             "set_clipboard"
@@ -107,7 +110,8 @@ public class ToolAnnotationContractTests
             "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor", "list_screens",
             "get_ui_elements", "get_focused_element", "get_element_at_point", "get_browser_url", "get_active_browser_url",
             "get_browser_content", "list_processes", "list_layouts", "get_layout", "get_control_status", "get_server_info",
-            "get_owned_windows", "get_clipboard", "get_window_info"
+            "get_owned_windows", "get_clipboard", "get_window_info", "wait_for_window", "find_ui_elements", "get_active_popups",
+            "read_element_text", "read_table", "wait_for_element", "get_desktop_state"
         ]);
 
         // The captures can write image files (output 'file' or 'both'), so they are not read-only

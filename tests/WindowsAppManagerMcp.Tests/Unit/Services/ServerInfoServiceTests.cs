@@ -158,6 +158,46 @@ public sealed class ServerInfoServiceTests : IDisposable
     }
 
     [Fact]
+    public void Read_ReportsTheUiAutomationEngine_WithItsTimeouts()
+    {
+        // Act - the default engine (roadmap M3.2)
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, uiaEngine: UiaEngineOptions.Default).Read(Connection, 48);
+
+        // Assert
+        info.UiAutomation.Should().Be(new UiAutomationInfo(UiaEngine.Uia3, "default", 1000, 5000));
+        info.Warnings.Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_ReportsTheManagedEngine_WithoutTimeouts()
+    {
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, uiaEngine: new UiaEngineOptions(UiaEngine.Uia2, UiaEngineOptions.EnvironmentVariable))
+            .Read(Connection, 48);
+
+        info.UiAutomation.Should().Be(new UiAutomationInfo(UiaEngine.Uia2, "WAM_UIA_ENGINE", null, null));
+    }
+
+    [Fact]
+    public void Read_WarnsAboutAnEngineSettingItIgnored()
+    {
+        var options = UiaEngineOptions.FromEnvironment(_ => "managed");
+
+        var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,
+            _layouts.Object, _windows.Object, uiaEngine: options).Read(Connection, 48);
+
+        info.UiAutomation!.Engine.Should().Be(UiaEngine.Uia3);
+        info.Warnings.Should().ContainSingle().Which.Should().Contain("WAM_UIA_ENGINE").And.Contain("'managed'");
+    }
+
+    [Fact]
+    public void Read_WithoutAnEngineSetting_ReportsTheDefault()
+    {
+        CreateSut().Read(Connection, 48).UiAutomation!.Engine.Should().Be(UiaEngine.Uia3);
+    }
+
+    [Fact]
     public void Read_WithoutAnAuditLog_LeavesItsPathOut()
     {
         var info = new ServerInfoService(_system.Object, _probe.Object, _monitors.Object, _safety.Object, _session, _hotkey.Object,

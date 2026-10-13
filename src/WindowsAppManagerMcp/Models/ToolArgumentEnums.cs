@@ -98,6 +98,19 @@ public enum CaptureFormat
     Jpeg
 }
 
+/// <summary>What capture_with_elements reports about its marks besides the image (roadmap M3.11).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "element detail", NullMeans = "legend")]
+public enum CaptureElementDetail
+{
+    /// <summary>The legend only: one compact line per mark with its ref, type, name, automation id and centre.</summary>
+    [JsonStringEnumMemberName("legend")]
+    Legend,
+
+    /// <summary>The legend and the elements list with each mark's imageBounds, screenBounds and overlay color.</summary>
+    [JsonStringEnumMemberName("full")]
+    Full
+}
+
 /// <summary>The browser launch_browser_with_debug starts.</summary>
 [ToolEnum(nameof(BrowserErrorCode.UnsupportedBrowser), "browser", NullMeans = "chrome")]
 public enum DebugBrowser
@@ -147,4 +160,21 @@ public enum WindowDetail
     /// <summary>Standard, plus the visible and client bounds, foreground, z-order, topmost, enabled, responding and DPI.</summary>
     [JsonStringEnumMemberName("full")]
     Full
+}
+
+/// <summary>The shape of get_ui_elements' result (roadmap M3.1).</summary>
+[ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "format", NullMeans = "tree")]
+public enum UIElementFormat
+{
+    /// <summary>Elements nested under the element they are inside (children).</summary>
+    [JsonStringEnumMemberName("tree")]
+    Tree,
+
+    /// <summary>Every element once, in reading order, with its depth and the index of its parent in the list.</summary>
+    [JsonStringEnumMemberName("flat")]
+    Flat,
+
+    /// <summary>One compact line per element in text, indented by depth; elements is left out.</summary>
+    [JsonStringEnumMemberName("text")]
+    Text
 }

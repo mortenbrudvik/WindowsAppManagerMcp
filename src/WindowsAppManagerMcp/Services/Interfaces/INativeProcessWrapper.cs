@@ -107,6 +107,13 @@ public interface IProcessHandle : IDisposable
     bool HasExited { get; }
 
     /// <summary>
+    /// The exit code of the process once it has exited; null while it runs, or when the code cannot be read. Never
+    /// throws. A batch launch reads it to tell a launcher that handed its request to a running instance (0) from one that
+    /// failed.
+    /// </summary>
+    int? ExitCode { get; }
+
+    /// <summary>
     /// Re-reads the process information and returns the handle of its main window, or zero when it
     /// has no main window yet.
     /// </summary>

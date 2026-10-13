@@ -94,6 +94,7 @@ public class AuditRecordTests
     [InlineData("set_clipboard", "text", "my secret token")]
     [InlineData("launch_browser_with_debug", "url", "https://example.com/?token=secret")]
     [InlineData("launch_application", "workingDirectory", @"C:\secret project")]
+    [InlineData("element_action", "name", "secret merger plan.docx")] // an element's name, not a preset's
     public void EveryOtherString_IsRecordedAsItsLength(string tool, string argument, string value)
     {
         var entry = Build(Call(tool, new Dictionary<string, object> { [argument] = value }), null);

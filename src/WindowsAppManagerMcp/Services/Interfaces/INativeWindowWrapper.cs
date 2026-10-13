@@ -165,6 +165,17 @@ public interface INativeWindowWrapper
     bool IsHungAppWindow(nint hWnd);
 
     /// <summary>
+    /// Whether the window's thread answers a message within <paramref name="timeoutMs"/>: SendMessageTimeout with
+    /// WM_NULL, which every window ignores, and SMTO_ABORTIFHUNG, so a thread Windows already reports hung is not
+    /// waited for at all. True when it answered; false only when it did not answer in time (ERROR_TIMEOUT, which is also
+    /// what a thread Windows reports hung gives); null when the message could not be sent for another reason, so nothing
+    /// is known about the thread: the window is gone (ERROR_INVALID_WINDOW_HANDLE), or User Interface Privilege Isolation
+    /// blocks it (ERROR_ACCESS_DENIED, a window of a more privileged process). It blocks the caller for up to
+    /// <paramref name="timeoutMs"/> and changes nothing in the window.
+    /// </summary>
+    bool? RespondsWithin(nint hWnd, uint timeoutMs);
+
+    /// <summary>
     /// Gets the DPI of the window (GetDpiForWindow). The value depends on the window's DPI awareness:
     /// 96 for a DPI-unaware window on any monitor, the system DPI for a system-aware window, and the
     /// DPI of its monitor only for a per-monitor-aware window. Read a monitor's DPI with

@@ -33,6 +33,7 @@ public partial class ServerInstructionsTests
     [InlineData("imageToScreen")]
     [InlineData("never with scaleFactor")]
     [InlineData("get_server_info")]
+    [InlineData("get_server_info once")]
     [InlineData("untrusted")]
     [InlineData("not sleeping")]
     [InlineData("close_window")]
@@ -76,6 +77,15 @@ public partial class ServerInstructionsTests
         }
 
         act.Should().Contain("window selector");
+    }
+
+    [Fact]
+    public void TheActRule_AllowsAnImagePointWithItsCaptureId_AsTheCoordinatesRuleTeaches()
+    {
+        // M3 review: 'not image points' forbade what the coordinates line prescribes
+        var act = Lines.Single(line => line.StartsWith("- Act:", StringComparison.Ordinal));
+
+        act.Should().Contain("captureId").And.NotContain("not image points");
     }
 
     [Fact]

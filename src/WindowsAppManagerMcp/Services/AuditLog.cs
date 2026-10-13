@@ -30,10 +30,10 @@ namespace WindowsAppManagerMcp.Services;
 /// writer that finds the file busy retries for up to about half a second.
 /// </para>
 /// <para>
-/// The lines are written by one background writer, in order; <see cref="End"/> waits for its line at most
-/// <see cref="MaxCallDelay"/>, so a folder on a slow or unreachable share, or a stalled disk, delays a tool call by at most
-/// that and never blocks it. A line still waiting then is written when the writer gets to it; one that would make more than
-/// <see cref="MaxPendingLines"/> wait is dropped.
+/// The lines are written by one background writer on a thread of its own, in order; <see cref="EndAsync"/> waits for its
+/// line at most <see cref="MaxCallDelay"/>, without holding a thread, so a folder on a slow or unreachable share, or a
+/// stalled disk, delays a tool call by at most that and never blocks it or a thread of the pool. A line still waiting then
+/// is written when the writer gets to it; one that would make more than <see cref="MaxPendingLines"/> wait is dropped.
 /// </para>
 /// <para>
 /// A line that cannot be written is dropped: the tool call is never failed. <see cref="LastError"/> keeps the reason,
@@ -69,7 +69,7 @@ public sealed partial class AuditLog : IAuditLog
     /// <param name="windows">Reads the target windows' titles and processes before a call; null reads nothing.</param>
     /// <param name="clock">The clock; defaults to the system clock.</param>
     /// <param name="logger">Gets one warning when lines start failing.</param>
-    /// <param name="maxCallDelay">How long <see cref="End"/> waits for its line; default <see cref="MaxCallDelay"/>.</param>
+    /// <param name="maxCallDelay">How long <see cref="EndAsync"/> waits for its line; default <see cref="MaxCallDelay"/>.</param>
     /// <param name="writeAttempt">
     /// Called on the writer with the attempt's number (1 for the first) before each attempt to write a line; tests use it to
     /// stall the writer or to act when it retries. Null in the server.
@@ -131,19 +131,36 @@ public sealed partial class AuditLog : IAuditLog
         return new AuditCall(tool, copy, requestId, started, timestamp, windows, processes, declaredTypes);
     }
 
-    public void End(AuditCall call, CallToolResult? result, string outcome)
+    public async Task EndAsync(AuditCall call, CallToolResult? result, string outcome)
     {
         ArgumentNullException.ThrowIfNull(call);
 
+        Task? written;
         try
         {
             var durationMs = (long)_clock.GetElapsedTime(call.StartTimestamp).TotalMilliseconds;
             var entry = AuditRecord.Build(call, result, outcome, durationMs, Environment.ProcessId);
-            Enqueue(entry.Ts, AuditRecord.ToJsonLine(entry))?.Wait(_maxCallDelay);
+            written = Enqueue(entry.Ts, AuditRecord.ToJsonLine(entry));
         }
         catch (Exception ex)
         {
             Failed(ex);
+            return;
+        }
+
+        if (written == null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Without a thread: the call's thread goes back to the pool while the writer works
+            await written.WaitAsync(_maxCallDelay).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // The writer writes the line when it gets to it
         }
     }
 
@@ -186,11 +203,27 @@ public sealed partial class AuditLog : IAuditLog
         _pending.Enqueue(pending);
         if (Interlocked.CompareExchange(ref _writerRunning, 1, 0) == 0)
         {
-            // Not on the call's flow: nothing of the call (its audit scope) goes with the writer
-            ThreadPool.UnsafeQueueUserWorkItem(_ => WritePending(), null);
+            StartWriter();
         }
 
         return pending.Written.Task;
+    }
+
+    /// <summary>
+    /// Starts the writer on a thread of its own, so that a pool busy with the server's calls, which wait for their lines,
+    /// does not hold it back. Not on the call's flow (UnsafeStart): nothing of the call (its audit scope) goes with it.
+    /// </summary>
+    private void StartWriter()
+    {
+        try
+        {
+            new Thread(WritePending) { IsBackground = true, Name = "Audit log writer" }.UnsafeStart();
+        }
+        catch (Exception)
+        {
+            // No thread could be started (out of memory): the pool writes the lines instead
+            ThreadPool.UnsafeQueueUserWorkItem(_ => WritePending(), null);
+        }
     }
 
     /// <summary>The writer: writes the waiting lines in order until none is left.</summary>

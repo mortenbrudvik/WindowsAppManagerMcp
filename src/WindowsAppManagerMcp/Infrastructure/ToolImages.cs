@@ -1,5 +1,4 @@
 using System.Text.Json;
-using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using WindowsAppManagerMcp.Models;
 
@@ -26,10 +25,13 @@ public static class ToolImages
 
     /// <summary>
     /// A tool result with an optional image block and a metadata text block. The metadata is
-    /// serialized with the options the SDK uses for ordinary tool results, so it has the same shape
-    /// (camelCase, nulls left out) as the JSON of every other tool.
+    /// serialized with the options the SDK uses for ordinary tool results and the relaxed encoder
+    /// (<see cref="ToolJson.SdkResultOptions"/>), so it has the same shape (camelCase, nulls left out)
+    /// as the JSON of every other tool. A tool whose result carries fixed-value enums passes
+    /// <see cref="ToolJson.SerializerOptions"/>, the options the server's typed results are serialized
+    /// with (get_desktop_state, element_action).
     /// </summary>
-    public static CallToolResult Create<TMetadata>(TMetadata metadata, EncodedImage? image, bool isError)
+    public static CallToolResult Create<TMetadata>(TMetadata metadata, EncodedImage? image, bool isError, JsonSerializerOptions? options = null)
     {
         var content = new List<ContentBlock>(2);
         if (image != null)
@@ -40,7 +42,7 @@ public static class ToolImages
 
         content.Add(new TextContentBlock
         {
-            Text = JsonSerializer.Serialize(metadata, McpJsonUtilities.DefaultOptions)
+            Text = JsonSerializer.Serialize(metadata, options ?? ToolJson.SdkResultOptions)
         });
 
         return new CallToolResult

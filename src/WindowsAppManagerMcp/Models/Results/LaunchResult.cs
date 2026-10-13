@@ -12,6 +12,8 @@ namespace WindowsAppManagerMcp.Models.Results;
 /// <param name="Status">What the launch led to; null when it failed.</param>
 /// <param name="Window">The window of the launch, read when it was found: it can belong to another process than <paramref name="ProcessId"/>.</param>
 /// <param name="LauncherExited">After a window wait: whether the started process had exited (launchers and stubs exit after a handoff).</param>
+/// <param name="ForceAccessibilityApplied">With forceAccessibility (roadmap M3.3): whether the program was started with
+/// --force-renderer-accessibility; null when it was not asked for, or the request was refused.</param>
 public record LaunchResult(
     bool Success,
     int? ProcessId = null,
@@ -21,5 +23,6 @@ public record LaunchResult(
     string? Warning = null,
     LaunchStatus? Status = null,
     WindowInfo? Window = null,
-    bool? LauncherExited = null
+    bool? LauncherExited = null,
+    bool? ForceAccessibilityApplied = null
 );

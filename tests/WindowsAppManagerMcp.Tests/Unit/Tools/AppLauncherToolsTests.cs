@@ -62,7 +62,25 @@ public class AppLauncherToolsTests
 
         // Assert
         _mockProcessService.Verify(p => p.LaunchApplicationAsync(
-            new LaunchRequest("notepad.exe", null, null, null),
+            new LaunchRequest("notepad.exe", null, null, null, false, false),
+            false,
+            5000,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LaunchApplication_PassesForceAccessibility_AndReportsWhetherItWasApplied()
+    {
+        // Arrange - roadmap M3.3
+        LaunchReturns(new LaunchResult(true, 1234, Status: LaunchStatus.Started, ForceAccessibilityApplied: true));
+
+        // Act
+        var result = await CreateSut().LaunchApplication(@"C:\Apps\VS Code\Code.exe", forceAccessibility: true);
+
+        // Assert
+        result.ForceAccessibilityApplied.Should().BeTrue();
+        _mockProcessService.Verify(p => p.LaunchApplicationAsync(
+            It.Is<LaunchRequest>(r => r.ForceAccessibility),
             false,
             5000,
             It.IsAny<CancellationToken>()), Times.Once);

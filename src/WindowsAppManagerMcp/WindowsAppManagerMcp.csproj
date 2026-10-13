@@ -18,6 +18,12 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <!--
+      The UI Automation 3 (COM) client for the default UI Automation engine (Native/Uia3Tree, roadmap M3.2): a
+      prebuilt, MIT-licensed interop assembly of UIAutomationClient.idl, one managed dll with no native code that the
+      single-file publish bundles into the exe. A COMReference would need tlbimp, which dotnet build cannot run.
+    -->
+    <PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
   </ItemGroup>
 
   <!-- Sample layout presets, seeded into the layouts folder on first use (see LayoutStorageOptions) -->

@@ -17,7 +17,13 @@ public interface ICaptureMetadata
 /// pixel. <see cref="OriginalWidth"/> and <see cref="OriginalHeight"/> are set only when the image was
 /// scaled down. <see cref="ScaleFactor"/> is the monitor's DPI scale, for information only: it plays no
 /// part in any coordinate conversion. <see cref="Warnings"/> say why a successful image may not show what the
-/// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say.
+/// agent expects (see <see cref="CaptureWarnings"/>); null when there is nothing to say. <see cref="CaptureId"/> names
+/// the capture for the mouse tools' image space (roadmap M3.11): they convert a point of this image to the screen
+/// themselves, and refuse when the captured window moved since; null when the capture failed or was not registered.
+/// <see cref="Ref"/> is set for capture_window with a ref (roadmap M3.11): the element the image is cropped to, under the
+/// ref it resolved to (the one asked for, or the element's own ref when it was found again under another).
+/// <see cref="RefMoved"/> is true when that ref was moved to a re-created element that alone fits its description (the
+/// element it was given for is gone), with a RefMoved warning; null otherwise.
 /// </summary>
 public record ScreenshotResult(
     bool Success,
@@ -37,7 +43,10 @@ public record ScreenshotResult(
     long? ByteSize = null,
     string? CaptureMethod = null,
     string? CoordinateSpace = null,
-    IReadOnlyList<string>? Warnings = null
+    IReadOnlyList<string>? Warnings = null,
+    string? CaptureId = null,
+    string? Ref = null,
+    bool? RefMoved = null
 ) : ICaptureMetadata;
 
 /// <summary>
@@ -113,6 +122,14 @@ public record VirtualScreenBounds(
 /// <see cref="ElementsError"/> and <see cref="ElementsErrorCode"/> (the get_ui_elements code, for example
 /// OperationTimedOut) and no elements. <see cref="Truncated"/> is true when the element list is incomplete
 /// (the walk failed, timed out or skipped elements), and <see cref="TruncationReason"/> says why.
+/// <see cref="AccessibilityWarmup"/> is set when the window shows web content and the walk waited for it first (roadmap
+/// M3.3), as in get_ui_elements.
+/// <see cref="CaptureId"/> is as for <see cref="ScreenshotResult.CaptureId"/>.
+/// <see cref="Legend"/> (roadmap M3.11) has one line per mark, in the order of <see cref="Elements"/>, for example
+/// <c>[w4120035e17] Button 'Save' #btnSave center=(392,196)</c>: the ref drawn on the mark, the control type, the name,
+/// the automation id and the mark's centre in pixels of the returned image (a click there with <see cref="CaptureId"/>
+/// lands on it); see Tools.ElementMarkLegend. Null when there are no marks. capture_with_elements leaves
+/// <see cref="Elements"/> out unless detail is full.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -141,14 +158,32 @@ public record AnnotatedScreenshotResult(
     string? ElementsError = null,
     string? ElementsErrorCode = null,
     bool? Truncated = null,
-    string? TruncationReason = null
+    string? TruncationReason = null,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    string? CaptureId = null,
+    string? Legend = null
 ) : ICaptureMetadata;
+
+/// <summary>
+/// How capture_with_elements draws its elements (roadmap M3.11). The overlays are drawn on the returned image after it was
+/// scaled, so a 2-pixel box and an 11-pixel tag stay legible at any maxDimension.
+/// </summary>
+/// <param name="Draw">Draw the boxes and tags; false returns the image as captured, with the marks only in the metadata.</param>
+/// <param name="Labels">Draw each mark's ref as a filled tag at its box (an element without a ref gets only its box).</param>
+/// <param name="HighlightInteractable">Dim the boxes of disabled elements.</param>
+public sealed record ElementOverlayOptions(bool Draw = true, bool Labels = true, bool HighlightInteractable = true)
+{
+    /// <summary>Boxes and labelled tags, disabled elements dimmed.</summary>
+    public static ElementOverlayOptions Default { get; } = new();
+}
 
 /// <summary>
 /// An element annotation.
 /// <see cref="ImageBounds"/> are pixels of the output image, scaled when the capture is scaled down.
 /// <see cref="ScreenBounds"/> stay in screen pixels and are not scaled.
 /// </summary>
+/// <param name="Ref">The element's ref (roadmap M3.4), as get_ui_elements reports it; null when it has none. Serialized
+/// first.</param>
 public record AnnotatedElement(
     string? Name,
     string ControlType,
@@ -156,7 +191,8 @@ public record AnnotatedElement(
     BoundsDto ImageBounds,
     BoundsDto ScreenBounds,
     bool IsEnabled,
-    string OverlayColor
+    string OverlayColor,
+    [property: System.Text.Json.Serialization.JsonPropertyOrder(-1)] string? Ref = null
 );
 
 /// <summary>An encoded image: PNG or JPEG bytes and their MIME type.</summary>
@@ -241,6 +277,15 @@ public static class CaptureWarnings
 
     /// <summary>The window could not be minimized again after the capture.</summary>
     public const string ReminimizeFailed = "ReminimizeFailed";
+
+    /// <summary>capture_window's ref was moved to a re-created element: the crop shows that element.</summary>
+    public const string RefMoved = "RefMoved";
+
+    /// <summary>
+    /// capture_with_elements: the window moved or resized while its elements were read, so the marks are offset from the
+    /// image, which then has no captureId.
+    /// </summary>
+    public const string WindowMoved = "WindowMoved";
 
     /// <summary>"Code: text".</summary>
     public static string Format(string code, string text) => $"{code}: {text}";

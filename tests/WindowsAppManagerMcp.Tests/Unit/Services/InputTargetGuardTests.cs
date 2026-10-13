@@ -74,6 +74,7 @@ public class InputTargetGuardTests
         Window(Notepad, NotepadPid, "notepad", "Untitled - Notepad");
         _windows.Setup(w => w.IsWindow(NotepadEdit)).Returns(true);
         _windows.Setup(w => w.GetAncestor(NotepadEdit, WindowAncestor.Root)).Returns(Notepad);
+        _windows.Setup(w => w.GetWindowThreadProcessId(NotepadEdit)).Returns((uint)NotepadPid);
         Window(NotepadDialog, NotepadPid, "notepad", "Save As", owner: Notepad);
         Window(NotepadMenu, NotepadPid, "notepad", "", style: WsPopup | WsVisible, exStyle: WsExToolWindow);
         Window(SecondNotepad, NotepadPid, "notepad", "Other - Notepad");
@@ -492,6 +493,43 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void Policy_AWindowWhoseProcessCannotBeNamed_IsRefused_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the process name cannot be read: the window service reports it as "Unknown", the window wrapper as null
+        Window(0x900, 9001, "Unknown", "Vault");
+        _windows.Setup(w => w.GetProcessName(9001u)).Returns((string?)null);
+        _inFront = 0x900;
+
+        // Act
+        var refused = CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null);
+
+        // Assert - as the UI Automation reads: it cannot be checked, so it is refused
+        refused.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+        refused.Error.Should().Contain("cannot be read");
+        _policy = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null);
+        CreateSut().CheckKeyboard(InputTarget.None, KeyboardInputKind.Text, null).Allowed.Should().BeTrue(
+            "a policy that denies nothing has nothing to check");
+    }
+
+    [Fact]
+    public void Policy_AWindowTheWindowServiceCannotRead_WhoseProcessCannotBeNamed_IsRefused()
+    {
+        // Arrange - a point on a window the window service cannot read, of a process whose name cannot be read either
+        _windows.Setup(w => w.IsWindow(0x910)).Returns(true);
+        _windows.Setup(w => w.GetAncestor(0x910, WindowAncestor.Root)).Returns(0x910);
+        _windows.Setup(w => w.GetWindowThreadProcessId(0x910)).Returns(9101u);
+        Style(0x910, WsOverlappedWindow | WsVisible);
+        _threads.Setup(t => t.GetWindowThreadId(0x910)).Returns(9102u);
+        At(0x910);
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, InputTarget.None);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.TargetDeniedByPolicy);
+    }
+
+    [Fact]
     public void Policy_DenyListWinsOverTheAllowList()
     {
         _policy = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.AllowVariable ? "KeePass, notepad" : null);
@@ -644,6 +682,57 @@ public class InputTargetGuardTests
         ((int)InputErrorCode.HandleMismatch).Should().Be(43);
         ((int)InputErrorCode.PasteNotAllowed).Should().Be(44);
         ((int)InputErrorCode.InvalidArguments).Should().Be(45);
+        ((int)InputErrorCode.StaleCapture).Should().Be(46);
+        ((int)InputErrorCode.CaptureNotFound).Should().Be(47);
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatFails_IsItsCode_WithATarget()
+    {
+        // Arrange - an image-space click: the captured window moved while the call waited for the gate (roadmap M3.11)
+        At(NotepadEdit, root: Notepad);
+        var target = To(Notepad) with { PointRecheck = () => new SelectorRefusal("StaleCapture", "Window 512 moved 40 px since capture c3-abcdef.") };
+
+        // Act
+        var result = CreateSut().CheckMouse(500, 300, target);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+        result.Error.Should().Contain("moved 40 px");
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatFails_IsItsCode_WithoutATarget()
+    {
+        // A screen capture's point: the monitors changed since the capture
+        At(NotepadEdit, root: Notepad);
+        var target = InputTarget.None with { PointRecheck = () => new SelectorRefusal("StaleCapture", "The monitors changed.") };
+
+        CreateSut().CheckMouse(500, 300, target).ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+    }
+
+    [Fact]
+    public void Mouse_PointRecheckThatPasses_IsCheckedAsAnyPoint()
+    {
+        At(NotepadEdit, root: Notepad);
+        var rechecked = 0;
+        var target = To(Notepad) with { PointRecheck = () => { rechecked++; return null; } };
+
+        var result = CreateSut().CheckMouse(500, 300, target);
+
+        result.Allowed.Should().BeTrue(result.Error);
+        rechecked.Should().Be(1);
+    }
+
+    [Fact]
+    public void Mouse_AnInvalidTarget_IsInvalidHandle_BeforeThePointRecheck()
+    {
+        // The target's own checks come first: a closed window is InvalidHandle, as for any windowHandle
+        var rechecked = 0;
+        var target = To(0x7777) with { PointRecheck = () => { rechecked++; return new SelectorRefusal("StaleCapture", "closed"); } };
+
+        CreateSut().CheckMouse(500, 300, target).ErrorCode.Should().Be(InputErrorCode.InvalidHandle);
+        rechecked.Should().Be(0);
     }
 
     [Fact]
@@ -1212,6 +1301,40 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void RecheckMouse_RunsThePointRecheckAgain_EvenWithTheSameWindowAtThePoint()
+    {
+        // Arrange - an image-space double click: the captured window moved between the presses, but is still at the point
+        At(NotepadEdit, root: Notepad);
+        var rechecks = 0;
+        var target = To(Notepad) with
+        {
+            PointRecheck = () => ++rechecks == 1 ? null : new SelectorRefusal("StaleCapture", "Window 512 moved 40 px since capture c3-abcdef.")
+        };
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, target);
+
+        // Act
+        var rechecked = sut.RecheckMouse(500, 300, approved);
+
+        // Assert
+        approved.Allowed.Should().BeTrue(approved.Error);
+        rechecked.ErrorCode.Should().Be(InputErrorCode.StaleCapture);
+        rechecked.Error.Should().Contain("moved 40 px");
+        rechecks.Should().Be(2);
+    }
+
+    [Fact]
+    public void RecheckMouse_APointRecheckThatStillPasses_KeepsTheApproval()
+    {
+        At(Notepad);
+        var target = To(Notepad) with { PointRecheck = () => null };
+        var sut = CreateSut();
+        var approved = sut.CheckMouse(500, 300, target);
+
+        sut.RecheckMouse(500, 300, approved).Should().BeSameAs(approved);
+    }
+
+    [Fact]
     public void RecheckMouse_AnotherWindowAppearedAtThePoint_IsTargetOccluded()
     {
         // Arrange - moving the cursor opened a window of another app over the point
@@ -1490,6 +1613,174 @@ public class InputTargetGuardTests
         _windows.Verify(w => w.BringWindowToTop(It.IsAny<nint>()), Times.Never);
         _windows.Verify(w => w.PostMessage(It.IsAny<nint>(), It.IsAny<uint>(), It.IsAny<nint>(), It.IsAny<nint>()), Times.Never);
         _threads.Verify(t => t.AttachThreadInput(It.IsAny<uint>(), It.IsAny<uint>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    #endregion
+
+    #region CheckTarget: UI Automation pattern actions (roadmap M3.6)
+
+    [Fact]
+    public void CheckTarget_OfAnOrdinaryWindow_IsAllowed_WithoutBringingItToTheFront()
+    {
+        // Act
+        var result = CreateSut().CheckTarget(To(NotepadEdit));
+
+        // Assert - a pattern acts wherever its element is: no activation, no point
+        result.Allowed.Should().BeTrue(result.Error);
+        result.Receiving.Should().Be(Notepad);
+        result.ReceivingWindow!.Title.Should().Be("Untitled - Notepad");
+        _foreground.Verify(f => f.EnsureForeground(It.IsAny<nint>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(0x300, InputErrorCode.TargetDeniedByPolicy)] // KeePass: a password manager on the default deny list
+    [InlineData(0x400, InputErrorCode.TargetElevated)]       // Task Manager, elevated
+    [InlineData(0x100, InputErrorCode.TargetIsAgentHost)]    // the agent host's terminal
+    [InlineData(0x999, InputErrorCode.InvalidHandle)]        // no window
+    public void CheckTarget_RefusesWhatTheInputGuardRefusesForATarget(long handle, InputErrorCode expected)
+    {
+        CreateSut().CheckTarget(To((nint)handle)).ErrorCode.Should().Be(expected);
+    }
+
+    [Fact]
+    public void CheckTarget_OfTheHostWindow_NamedWithAllowHostTarget_IsAllowed()
+    {
+        CreateSut().CheckTarget(To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CheckTarget_OfAWindowAModalDialogDisables_IsBlockedByModal()
+    {
+        // Arrange - a pattern action on it would act behind the dialog's back
+        Style(Notepad, WsOverlappedWindow | WsVisible | WsDisabled);
+        _windows.Setup(w => w.GetWindow(Notepad, GwEnabledPopup)).Returns(NotepadDialog);
+
+        // Act
+        var result = CreateSut().CheckTarget(To(Notepad));
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.BlockedByModal);
+        result.BlockingWindow!.Handle.Should().Be(NotepadDialog);
+    }
+
+    [Fact]
+    public void CheckTarget_WhileTheSessionIsLocked_IsSessionLocked()
+    {
+        _security.Setup(s => s.IsSessionLocked()).Returns(true);
+
+        CreateSut().CheckTarget(To(Notepad)).ErrorCode.Should().Be(InputErrorCode.SessionLocked);
+    }
+
+    [Fact]
+    public void CheckElementWindow_OfAChildWindowOfTheTarget_IsAllowed()
+    {
+        var result = CreateSut().CheckElementWindow(To(Notepad), NotepadEdit);
+
+        result.Allowed.Should().BeTrue(result.Error);
+        result.Receiving.Should().Be(NotepadEdit);
+    }
+
+    [Theory]
+    [InlineData(0x300, InputErrorCode.TargetDeniedByPolicy)] // an element of KeePass's process, found through Notepad's ref
+    [InlineData(0x400, InputErrorCode.TargetElevated)]
+    [InlineData(0x100, InputErrorCode.TargetIsAgentHost)]
+    [InlineData(0x999, InputErrorCode.InvalidHandle)]
+    [InlineData(0, InputErrorCode.InvalidHandle)]
+    public void CheckElementWindow_ChecksTheElementsOwnWindow_NotTheTargets(long elementWindow, InputErrorCode expected)
+    {
+        CreateSut().CheckElementWindow(To(Notepad), (nint)elementWindow).ErrorCode.Should().Be(expected);
+    }
+
+    [Fact]
+    public void CheckElementWindow_AllowHostTarget_LiftsTheHostCheckOnlyForTheTargetsOwnWindow()
+    {
+        // The target is Notepad, so allowHostTarget does not reach the host's terminal
+        CreateSut().CheckElementWindow(To(Notepad, allowHostTarget: true), Terminal).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        CreateSut().CheckElementWindow(To(Terminal, allowHostTarget: true), Terminal).Allowed.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region The server's own process: allowHostTarget never applies
+
+    private static readonly nint SecurityWarning = 0x900; // the Attachment Services prompt a launch shows, drawn in the server's process
+    private const int ServerPid = 9001;
+
+    /// <summary>
+    /// The server's process shows 'Open File - Security Warning' (ShellExecuteEx runs the zone check in the calling
+    /// process). Every window of the server's process is a host window.
+    /// </summary>
+    private void SecurityWarningOfTheServer()
+    {
+        _hostGuard.Setup(g => g.Host).Returns(new HostSnapshot(ServerPid, [new HostProcess(TerminalPid, null)], nint.Zero, null, null, null));
+        Window(SecurityWarning, ServerPid, "WindowsAppManagerMcp", "Open File - Security Warning");
+        _windows.Setup(w => w.GetClassName(SecurityWarning)).Returns("#32770");
+        _hostGuard.Setup(g => g.IsHostWindow(SecurityWarning)).Returns(true);
+    }
+
+    [Fact]
+    public void CheckTarget_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        // Arrange
+        SecurityWarningOfTheServer();
+
+        // Act
+        var result = CreateSut().CheckTarget(To(SecurityWarning, allowHostTarget: true));
+
+        // Assert - only the user answers it, and the refusal does not tell the agent how to get past it
+        result.ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain("this server's own process").And.Contain("ask the user").And.NotContain("allowHostTarget");
+    }
+
+    [Fact]
+    public void Mouse_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+        At(SecurityWarning);
+
+        CreateSut().CheckMouse(500, 300, To(SecurityWarning, allowHostTarget: true)).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void Keyboard_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+
+        CreateSut().CheckKeyboard(To(SecurityWarning, allowHostTarget: true), KeyboardInputKind.Keys, null).ErrorCode
+            .Should().Be(InputErrorCode.TargetIsAgentHost);
+        VerifyNoActivation();
+    }
+
+    [Fact]
+    public void CheckElementWindow_AWindowOfTheServersOwnProcess_IsRefused_EvenWithAllowHostTarget()
+    {
+        SecurityWarningOfTheServer();
+
+        CreateSut().CheckElementWindow(To(SecurityWarning, allowHostTarget: true), SecurityWarning).ErrorCode
+            .Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void AWindowAServerWindowOwns_IsRefused_EvenWithAllowHostTarget()
+    {
+        // Arrange - a dialog of another process owned by a window of the server's process
+        SecurityWarningOfTheServer();
+        var ownedPrompt = new nint(0x910);
+        Window(ownedPrompt, CalculatorPid, "OpenWith", "How do you want to open this file?", owner: SecurityWarning);
+        _hostGuard.Setup(g => g.IsHostWindow(ownedPrompt)).Returns(true);
+
+        // Act & Assert
+        CreateSut().CheckTarget(To(ownedPrompt, allowHostTarget: true)).ErrorCode.Should().Be(InputErrorCode.TargetIsAgentHost);
+    }
+
+    [Fact]
+    public void TheHostsOwnWindow_WithAllowHostTarget_IsStillAllowed_WhenTheServersProcessIsKnown()
+    {
+        SecurityWarningOfTheServer();
+        At(Terminal);
+
+        CreateSut().CheckTarget(To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
+        CreateSut().CheckMouse(500, 300, To(Terminal, allowHostTarget: true)).Allowed.Should().BeTrue();
     }
 
     #endregion

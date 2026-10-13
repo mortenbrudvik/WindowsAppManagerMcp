@@ -22,9 +22,6 @@ public class ScreenshotService : IScreenshotService
     public static readonly string DefaultCaptureFolder =
         Path.Combine(Path.GetTempPath(), "WindowsAppManagerMcp", "captures");
 
-    /// <summary>How wide capture_with_elements' overlay lines are in the returned image, in pixels.</summary>
-    private const float OutputOverlayLineWidth = 2f;
-
     /// <summary>
     /// The WindowMinimized message: Windows does not draw a minimized window, and its rectangle is the icon's at
     /// (-32000, -32000), so a capture would succeed with a tiny or black image.
@@ -69,6 +66,10 @@ public class ScreenshotService : IScreenshotService
     private readonly IWindowCallRunner _windowCalls;
     private readonly TimeSpan _restoreSettleTimeout;
     private readonly TimeSpan _restoreStateTimeout;
+    private readonly ICaptureRegistry? _captureRegistry;
+
+    /// <summary>take_screenshot's monitorIndex for the whole virtual screen: every monitor in one image (roadmap M3.11).</summary>
+    public const int VirtualScreenIndex = -1;
 
     /// <param name="captureWrapper">The pixel capture.</param>
     /// <param name="monitorService">Monitor lookups.</param>
@@ -84,14 +85,20 @@ public class ScreenshotService : IScreenshotService
     /// </param>
     /// <param name="restoreSettleTimeout">How long a restored window may paint; default <see cref="DefaultRestoreSettleTimeout"/>.</param>
     /// <param name="restoreStateTimeout">How long a restore or minimize may take; default <see cref="DefaultRestoreStateTimeout"/>.</param>
+    /// <param name="captureRegistry">
+    /// Where successful captures are registered under their captureId (roadmap M3.11), for the mouse tools' image space.
+    /// Without it captures have no captureId. The server always passes it.
+    /// </param>
     public ScreenshotService(
         IScreenCaptureWrapper captureWrapper,
         IMonitorService monitorService,
         INativeWindowWrapper windows,
         IWindowCallRunner? windowCalls = null,
         TimeSpan? restoreSettleTimeout = null,
-        TimeSpan? restoreStateTimeout = null)
+        TimeSpan? restoreStateTimeout = null,
+        ICaptureRegistry? captureRegistry = null)
     {
+        _captureRegistry = captureRegistry;
         _captureWrapper = captureWrapper;
         _monitorService = monitorService;
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
@@ -136,10 +143,16 @@ public class ScreenshotService : IScreenshotService
         Run("monitor", options, request =>
         {
             var monitors = _monitorService.GetAllMonitors();
+            if (monitorIndex == VirtualScreenIndex)
+            {
+                return CaptureVirtualScreen(request, monitors);
+            }
+
             if (monitorIndex < 0 || monitorIndex >= monitors.Count)
             {
                 throw new CaptureException(ScreenshotErrorCode.InvalidMonitorIndex,
-                    $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}");
+                    $"Monitor index {monitorIndex} is out of range. Available monitors: 0-{monitors.Count - 1}, or " +
+                    $"{VirtualScreenIndex} for all of them in one image");
             }
 
             var monitor = monitors[monitorIndex];
@@ -147,6 +160,35 @@ public class ScreenshotService : IScreenshotService
             var capture = _captureWrapper.CaptureScreenRegion(bounds.X, bounds.Y, bounds.Width, bounds.Height);
             return Complete(capture, request, monitorIndex, monitor.ScaleFactor, []);
         });
+
+    /// <summary>
+    /// The whole virtual screen, every monitor in one image (roadmap M3.11), within the pixel budget: a larger desktop is
+    /// refused before anything is allocated (CaptureFailed). It has no monitor index or scale factor, and warns when
+    /// monitors of different sizes leave parts of the bounding rectangle on no screen (black in the image).
+    /// </summary>
+    private ScreenCapture<ScreenshotResult> CaptureVirtualScreen(CaptureRequest request, IReadOnlyList<MonitorInfo> monitors)
+    {
+        var screen = _captureWrapper.GetVirtualScreenBounds();
+        if ((long)screen.Width * screen.Height > ScreenCaptureWrapper.MaxCapturePixels ||
+            screen.Width > ScreenCaptureWrapper.MaxCaptureSize || screen.Height > ScreenCaptureWrapper.MaxCaptureSize)
+        {
+            throw new CaptureException(ScreenshotErrorCode.CaptureFailed,
+                $"The virtual screen is {screen.Width}x{screen.Height} pixels, more than one capture may hold " +
+                $"({ScreenCaptureWrapper.MaxCapturePixels / (1024 * 1024)} megapixels, {ScreenCaptureWrapper.MaxCaptureSize} " +
+                "pixels on an edge). Nothing was captured. Capture one monitor at a time with take_screenshot, or parts with capture_region.");
+        }
+
+        var warnings = new List<string>();
+        var region = new Rectangle(screen.X, screen.Y, screen.Width, screen.Height);
+        var capture = _captureWrapper.CaptureScreenRegion(screen.X, screen.Y, screen.Width, screen.Height);
+        if (monitors.Count > 0 && CoveredArea(region, monitors) < (long)region.Width * region.Height)
+        {
+            warnings.Add(CaptureWarnings.Format(CaptureWarnings.RegionPartlyOffMonitors,
+                "the monitors do not fill the virtual screen's bounding rectangle; the parts on no monitor are black in the image."));
+        }
+
+        return Complete(capture, request, monitorIndex: null, scaleFactor: null, warnings);
+    }
 
     public ScreenCapture<ScreenshotResult> CaptureRegion(int x, int y, int width, int height, CaptureOptions options) =>
         Run("region", options, request =>
@@ -210,51 +252,110 @@ public class ScreenshotService : IScreenshotService
         Run("window", options, request =>
         {
             ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
             var warnings = new List<string>();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
-            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings);
+            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true,
+                WithClientArea(window, capture));
         });
+
+    public ScreenCapture<ScreenshotResult> CaptureWindowArea(nint windowHandle, bool includeFrame, BoundsDto area, CaptureOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        return Run("window area", options, request =>
+        {
+            ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
+            var warnings = new List<string>();
+            var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
+
+            // The client area before the crop: a click on the crop checks that the client area is still there
+            window = WithClientArea(window, capture);
+
+            // Only what the window capture shows can be cropped to: the visible frame, or the client area without it
+            var crop = Rectangle.Intersect(
+                new Rectangle(area.X, area.Y, area.Width, area.Height),
+                new Rectangle(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height));
+            if (crop.Width <= 0 || crop.Height <= 0)
+            {
+                throw new CaptureException(ScreenshotErrorCode.ElementOffscreen,
+                    $"The element's area ({area.X}, {area.Y}, {area.Width}x{area.Height}) is outside the captured " +
+                    $"{(includeFrame ? "window" : "client area")} ({capture.ScreenOriginX}, {capture.ScreenOriginY}, " +
+                    $"{capture.Width}x{capture.Height}), so nothing was captured. Scroll it into view (element_action " +
+                    "scroll_into_view), or capture the whole window" + (includeFrame ? "." : ", or pass includeFrame: true."));
+            }
+
+            if (crop.Width != capture.Width || crop.Height != capture.Height)
+            {
+                capture = Crop(capture, crop);
+            }
+
+            var monitor = _monitorService.GetMonitorForWindow(windowHandle);
+            AddDpiWarning(windowHandle, monitor, warnings);
+            return Complete(capture, request, monitor?.Index, monitor?.ScaleFactor ?? 1.0, warnings, windowCapture: true, window);
+        });
+    }
 
     public ScreenCapture<AnnotatedScreenshotResult> CaptureWindowWithElements(
         nint windowHandle,
         string? windowTitle,
         IReadOnlyList<UIElementInfo> elements,
         bool includeFrame,
-        bool highlightInteractable,
-        CaptureOptions options)
+        ElementOverlayOptions overlays,
+        CaptureOptions options,
+        CapturedWindow? walkedWindow = null)
     {
+        ArgumentNullException.ThrowIfNull(overlays);
         try
         {
             var request = CaptureRequest.Resolve(options);
             ThrowIfRefused(CheckWindow(windowHandle));
+            var window = ReadCapturedWindow(windowHandle, includeFrame);
 
             var warnings = new List<string>();
             var captureStopwatch = Stopwatch.StartNew();
             var capture = CaptureWindowPixels(windowHandle, includeFrame, warnings);
             var captureMs = captureStopwatch.Elapsed.TotalMilliseconds;
+            window = WithClientArea(window, capture);
+
+            // The elements were read before the pixels: a window that moved or resized meanwhile shows them elsewhere than
+            // their bounds say, so a click at a mark would land beside its element. No captureId then (roadmap M3.11)
+            if (walkedWindow != null && window != null &&
+                (walkedWindow.ProcessId != window.ProcessId || !CoordinateSpaceResolver.WithinTolerance(walkedWindow.WindowRect, window.WindowRect)))
+            {
+                warnings.Add(CaptureWarnings.Format(CaptureWarnings.WindowMoved,
+                    $"the window moved or resized while its elements were read (its rectangle was {Describe(walkedWindow.WindowRect)}, " +
+                    $"then {Describe(window.WindowRect)}), so the marks and the legend are offset from the controls in the image, and " +
+                    "the capture has no captureId. Capture it again, or act by ref with element_action."));
+                window = null;
+            }
             var monitor = _monitorService.GetMonitorForWindow(windowHandle);
             AddDpiWarning(windowHandle, monitor, warnings);
             AddBlankWarning(capture, warnings);
 
+            // Element bounds are screen pixels; the image starts at the capture's screen origin, which is the client
+            // area's corner when the frame is left out. The marks are placed in the returned image's pixels and drawn on
+            // it after it was scaled (roadmap M3.11), so their lines and tags keep their size.
             var annotationStopwatch = Stopwatch.StartNew();
-            var annotations = new List<AnnotatedElement>();
-            var penWidth = OverlayPenWidth(capture, request);
-            var rendered = Render(capture, request, bitmap =>
-            {
-                using var graphics = Graphics.FromImage(bitmap);
-                graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
+            var colored = new List<(AnnotatedElement Element, Color Color)>();
+            CollectAnnotations(elements, capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height,
+                overlays.HighlightInteractable, colored);
+            var finalAnnotations = outputWidth != capture.Width || outputHeight != capture.Height
+                ? ScaleAnnotations(colored.Select(c => c.Element).ToList(), outputWidth, outputHeight, capture.Width, capture.Height)
+                : colored.Select(c => c.Element).ToList();
+            var marks = finalAnnotations
+                .Select((annotation, i) => new ElementMark(
+                    new Rectangle(annotation.ImageBounds.X, annotation.ImageBounds.Y, annotation.ImageBounds.Width, annotation.ImageBounds.Height),
+                    colored[i].Color,
+                    annotation.Ref))
+                .ToList();
 
-                // Element bounds are screen pixels; the image starts at the capture's screen origin,
-                // which is the client area's corner when the frame is left out.
-                DrawElementOverlays(graphics, elements, capture.ScreenOriginX, capture.ScreenOriginY,
-                    capture.Width, capture.Height, highlightInteractable, penWidth, annotations);
-            });
-
-            IReadOnlyList<AnnotatedElement> finalAnnotations = rendered.IsScaled
-                ? ScaleAnnotations(annotations, rendered.Width, rendered.Height, capture.Width, capture.Height)
-                : annotations;
+            var rendered = Render(capture, request, overlays.Draw
+                ? bitmap => ElementMarkRenderer.Draw(bitmap, marks, overlays.Labels)
+                : null);
             var annotationMs = annotationStopwatch.Elapsed.TotalMilliseconds;
 
             var metadata = new AnnotatedScreenshotResult(
@@ -279,6 +380,10 @@ public class ScreenshotService : IScreenshotService
                 CaptureMethod: capture.Method,
                 CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
                 Warnings: warnings.Count > 0 ? warnings : null);
+            metadata = metadata with
+            {
+                CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture: true, window)
+            };
 
             return new ScreenCapture<AnnotatedScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
         }
@@ -608,12 +713,18 @@ public class ScreenshotService : IScreenshotService
         }
     }
 
-    private static ScreenCapture<ScreenshotResult> Complete(
+    /// <summary>
+    /// The metadata and image of a successful capture, registered under its captureId. <paramref name="window"/> is the
+    /// captured window as it was before the capture (<see cref="ReadCapturedWindow"/>) when <paramref name="windowCapture"/>.
+    /// </summary>
+    private ScreenCapture<ScreenshotResult> Complete(
         CaptureResult capture,
         CaptureRequest request,
         int? monitorIndex,
         double? scaleFactor,
-        List<string> warnings)
+        List<string> warnings,
+        bool windowCapture = false,
+        CapturedWindow? window = null)
     {
         ThrowIfIncomplete(capture);
         AddBlankWarning(capture, warnings);
@@ -636,8 +747,62 @@ public class ScreenshotService : IScreenshotService
             CaptureMethod: capture.Method,
             CoordinateSpace: CoordinateSpaces.PhysicalVirtualScreen,
             Warnings: warnings.Count > 0 ? warnings : null);
+        metadata = metadata with
+        {
+            CaptureId = Register(metadata.Width, metadata.Height, metadata.ImageToScreen!, metadata.CapturedRegion!, windowCapture, window)
+        };
 
         return new ScreenCapture<ScreenshotResult>(metadata, request.ReturnsImage ? rendered.Image : null);
+    }
+
+    /// <summary>
+    /// The window a capture is of, read right before its pixels (roadmap M3.11), as the wrapper reads the capture's
+    /// origin then: its process and rectangle. Null when the rectangle cannot be read; the capture then gets no
+    /// captureId, because a click could not tell whether the window moved since.
+    /// </summary>
+    public CapturedWindow? ReadCapturedWindow(nint windowHandle, bool includeFrame)
+    {
+        if (_captureRegistry == null || _windows.GetWindowRect(windowHandle) is not { } rect)
+        {
+            return null;
+        }
+
+        return new CapturedWindow((long)windowHandle, (int)_windows.GetWindowThreadProcessId(windowHandle),
+            WindowRect.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom), includeFrame);
+    }
+
+    /// <summary>
+    /// <paramref name="window"/> with the client area on screen that a client-area capture shows (its origin and size, read
+    /// with the pixels, before any crop), which a click with its captureId checks; a frame capture is left as it is.
+    /// </summary>
+    private static CapturedWindow? WithClientArea(CapturedWindow? window, CaptureResult capture) =>
+        window is { IncludeFrame: false }
+            ? window with { ClientArea = new WindowRect(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height) }
+            : window;
+
+    /// <summary>
+    /// Registers a successful capture (roadmap M3.11) and returns its captureId: a screen capture with the virtual
+    /// screen and the monitors as they are now, a window capture with <paramref name="window"/>. Null without a registry, and for a window
+    /// capture whose window could not be read.
+    /// </summary>
+    private string? Register(int width, int height, ImageToScreenTransform transform, CapturedRegion region, bool windowCapture,
+        CapturedWindow? window)
+    {
+        if (_captureRegistry == null || (windowCapture && window == null))
+        {
+            return null;
+        }
+
+        VirtualScreenBounds? virtualScreen = null;
+        IReadOnlyList<CapturedMonitor>? monitors = null;
+        if (!windowCapture)
+        {
+            var screen = _captureWrapper.GetVirtualScreenBounds();
+            virtualScreen = new VirtualScreenBounds(screen.X, screen.Y, screen.Width, screen.Height);
+            monitors = ReadMonitors();
+        }
+
+        return _captureRegistry.Register(new CaptureGeometry(width, height, transform, region, window, virtualScreen, monitors)).CaptureId;
     }
 
     /// <summary>The encoded output image and where it was written.</summary>
@@ -650,9 +815,10 @@ public class ScreenshotService : IScreenshotService
         string? FilePath);
 
     /// <summary>
-    /// Turns raw pixels into the output image: optional overlays at full resolution, scaling to the size limit,
-    /// encoding, and the file write when the output includes a file. A failure to build, scale or encode the image is
-    /// <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file write reports its own codes.
+    /// Turns raw pixels into the output image: scaling to the size limit, optional overlays drawn on the scaled image (so
+    /// they keep their size in pixels of the returned image), encoding, and the file write when the output includes a
+    /// file. A failure to build, scale or encode the image is <see cref="ScreenshotErrorCode.EncodeFailed"/>; the file
+    /// write reports its own codes.
     /// </summary>
     private static RenderedImage Render(CaptureResult capture, CaptureRequest request, Action<Bitmap>? annotate)
     {
@@ -665,9 +831,10 @@ public class ScreenshotService : IScreenshotService
         {
             data = WithBitmap(capture, bitmap =>
             {
-                annotate?.Invoke(bitmap);
                 using var scaled = isScaled ? ResizeImage(bitmap, width, height) : null;
-                return Encode(scaled ?? bitmap, encoding, request.Quality);
+                var output = scaled ?? bitmap;
+                annotate?.Invoke(output);
+                return Encode(output, encoding, request.Quality);
             });
         }
         catch (Exception ex) when (ex is not CaptureException)
@@ -687,17 +854,21 @@ public class ScreenshotService : IScreenshotService
             filePath);
     }
 
-    /// <summary>
-    /// The overlay pen width at full resolution. Overlays are drawn before the image is scaled down,
-    /// so the pen is widened by the scale factor (the larger of the two axes) to stay about
-    /// <see cref="OutputOverlayLineWidth"/> pixels wide in the returned image instead of a faint pixel.
-    /// </summary>
-    private static float OverlayPenWidth(CaptureResult capture, CaptureRequest request)
+    /// <summary>The monitors a screen capture registers, or null when they cannot be read (only the virtual screen is compared then).</summary>
+    private IReadOnlyList<CapturedMonitor>? ReadMonitors()
     {
-        var (outputWidth, outputHeight) = request.OutputSize(capture.Width, capture.Height);
-        var scale = Math.Max((float)capture.Width / outputWidth, (float)capture.Height / outputHeight);
-        return OutputOverlayLineWidth * Math.Max(1f, scale);
+        try
+        {
+            return CapturedMonitors.Of(_monitorService.GetAllMonitors());
+        }
+        catch (Exception)
+        {
+            // The capture itself does not depend on them
+            return null;
+        }
     }
+
+    private static string Describe(WindowRect rect) => $"({rect.X}, {rect.Y}, {rect.Width}x{rect.Height})";
 
     private static CapturedRegion CapturedRegionOf(CaptureResult capture) =>
         new(capture.ScreenOriginX, capture.ScreenOriginY, capture.Width, capture.Height);
@@ -858,63 +1029,47 @@ public class ScreenshotService : IScreenshotService
         return Math.Min(scaled, room);
     }
 
-    private static void DrawElementOverlays(
-        Graphics graphics,
+    /// <summary>
+    /// The marks of <paramref name="elements"/> and their children, in reading order (an element, then the elements inside
+    /// it), with their positions in the full-resolution capture (clipped to it) and their colors. Elements smaller than 2
+    /// pixels, without bounds or outside the image get no mark; their children still can.
+    /// </summary>
+    private static void CollectAnnotations(
         IReadOnlyList<UIElementInfo> elements,
         int originX,
         int originY,
         int imageWidth,
         int imageHeight,
         bool highlightInteractable,
-        float penWidth,
-        List<AnnotatedElement> annotations)
+        List<(AnnotatedElement Element, Color Color)> annotations)
     {
         foreach (var element in elements)
         {
-            DrawElementOverlay(graphics, element, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
-        }
-    }
-
-    private static void DrawElementOverlay(
-        Graphics graphics,
-        UIElementInfo element,
-        int originX,
-        int originY,
-        int imageWidth,
-        int imageHeight,
-        bool highlightInteractable,
-        float penWidth,
-        List<AnnotatedElement> annotations)
-    {
-        // Elements smaller than 2 pixels, or without bounds, get no overlay; their children still can.
-        if (element.Bounds is { Width: >= 2, Height: >= 2 } screenBounds)
-        {
-            // The element's position in the image, clipped to the image
-            var visible = Rectangle.Intersect(
-                new Rectangle(screenBounds.X - originX, screenBounds.Y - originY, screenBounds.Width, screenBounds.Height),
-                new Rectangle(0, 0, imageWidth, imageHeight));
-
-            if (visible.Width > 0 && visible.Height > 0)
+            if (element.Bounds is { Width: >= 2, Height: >= 2 } screenBounds)
             {
-                var (color, colorName) = GetOverlayColor(element.ControlType, element.IsEnabled, highlightInteractable);
-                using var pen = new Pen(color, penWidth);
-                graphics.DrawRectangle(pen, visible);
+                var visible = Rectangle.Intersect(
+                    new Rectangle(screenBounds.X - originX, screenBounds.Y - originY, screenBounds.Width, screenBounds.Height),
+                    new Rectangle(0, 0, imageWidth, imageHeight));
 
-                annotations.Add(new AnnotatedElement(
-                    Name: element.Name,
-                    ControlType: element.ControlType,
-                    AutomationId: element.AutomationId,
-                    ImageBounds: new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
-                    ScreenBounds: screenBounds,
-                    IsEnabled: element.IsEnabled,
-                    OverlayColor: colorName
-                ));
+                if (visible.Width > 0 && visible.Height > 0)
+                {
+                    var (color, colorName) = GetOverlayColor(element.ControlType, element.IsEnabled, highlightInteractable);
+                    annotations.Add((new AnnotatedElement(
+                        Name: element.Name,
+                        ControlType: element.ControlType,
+                        AutomationId: element.AutomationId,
+                        ImageBounds: new BoundsDto(visible.X, visible.Y, visible.Width, visible.Height),
+                        ScreenBounds: screenBounds,
+                        IsEnabled: element.IsEnabled,
+                        OverlayColor: colorName,
+                        Ref: element.Ref), color));
+                }
             }
-        }
 
-        if (element.Children != null)
-        {
-            DrawElementOverlays(graphics, element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, penWidth, annotations);
+            if (element.Children != null)
+            {
+                CollectAnnotations(element.Children, originX, originY, imageWidth, imageHeight, highlightInteractable, annotations);
+            }
         }
     }
 

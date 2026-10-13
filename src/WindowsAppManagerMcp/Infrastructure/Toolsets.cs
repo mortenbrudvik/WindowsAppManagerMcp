@@ -95,12 +95,12 @@ public static class Toolsets
                 "paused, resuming it with the user's consent, releasing stuck keys.",
                 ["get_server_info", "get_control_status", "resume_input", "release_all_input"]),
             new("windows", OnByDefault: true,
-                "Find, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches.",
+                "Find, wait for, focus, move, resize, snap, minimize, maximize and close windows, one at a time or in batches.",
                 [
                     "find_windows", "get_all_windows", "get_foreground_window", "focus_window", "move_window", "resize_window",
                     "set_window_bounds", "set_window_state", "snap_window", "move_window_to_monitor", "close_window",
                     "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch", "close_windows_batch",
-                    "get_owned_windows", "get_window_info"
+                    "get_owned_windows", "get_window_info", "wait_for_window"
                 ]),
             new("monitors", OnByDefault: true,
                 "The monitors: bounds, work areas, scale factors.",
@@ -109,11 +109,16 @@ public static class Toolsets
                 "Screenshots of monitors, regions and windows, as image content.",
                 ["take_screenshot", "capture_region", "capture_window", "capture_with_elements"]),
             new("elements", OnByDefault: true,
-                "UI Automation: element trees, the focused element, the element at a point.",
-                ["get_ui_elements", "get_focused_element", "get_element_at_point"]),
+                "UI Automation: one-call desktop observations, element trees, searches that return element refs (also in menus, " +
+                "dropdowns and dialogs), waits for elements, the focused element, the element at a point, an app's open popups, " +
+                "an element's text and a table's cells.",
+                ["get_desktop_state", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
+                    "get_active_popups", "read_element_text", "read_table", "wait_for_element"]),
             new("input", OnByDefault: true,
-                "Guarded mouse and keyboard input to a named window.",
-                ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys"]),
+                "Guarded mouse and keyboard input to a named window, and actions on UI elements through UI Automation patterns: " +
+                "menu paths, answering dialogs, completing Open and Save As dialogs.",
+                ["click", "right_click", "double_click", "mouse_move", "scroll", "type_text", "send_keys", "element_action",
+                    "respond_to_dialog", "file_dialog"]),
             new("clipboard", OnByDefault: true,
                 "Read what the agent copied, put text on the clipboard to paste it; the user's own clipboard only with their consent.",
                 ["get_clipboard", "set_clipboard"]),

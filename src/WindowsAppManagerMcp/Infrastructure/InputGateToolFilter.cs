@@ -64,13 +64,18 @@ public static class InputGateToolFilter
     /// close, and kill_process sends its close request or termination inside it and releases it before it waits for the
     /// process to exit: a slow app or a prompt must not hold up every input and window call for the whole wait. The window tools
     /// (move, resize, bounds, state, focus, snap, move to a monitor and the three window batches) resolve their window
-    /// selector (roadmap M2.4) before they take the gate, and act inside it.
+    /// selector (roadmap M2.4) before they take the gate, and act inside it. element_action (roadmap M3.6) searches for its
+    /// element before it takes the gate, acts on it inside the gate, and releases the gate before its mouse or keyboard path,
+    /// which takes it again through the input service, and before it waits for the state after the action. respond_to_dialog
+    /// and file_dialog (roadmap M3.5, M3.14) read the dialog without the gate and act only through element_action's service,
+    /// which takes it for each action; they wait for the dialog to close without it.
     /// </summary>
     public static IReadOnlySet<string> SelfGatedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "kill_process", "close_window", "close_windows_batch", "close_application",
         "move_window", "resize_window", "set_window_bounds", "set_window_state", "focus_window",
-        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch"
+        "snap_window", "move_window_to_monitor", "set_windows_bounds_batch", "snap_windows_batch", "set_windows_state_batch",
+        "element_action", "respond_to_dialog", "file_dialog"
     };
 
     /// <summary>
@@ -84,8 +89,15 @@ public static class InputGateToolFilter
         "find_windows", "get_all_windows", "get_foreground_window", "get_monitors", "get_primary_monitor",
         "list_processes", "list_layouts", "get_layout", "save_layout", "delete_layout", "get_browser_url",
         "get_browser_content", "get_active_browser_url", "list_screens", "take_screenshot", "capture_region",
-        "capture_window", "capture_with_elements", "get_ui_elements", "get_focused_element", "get_element_at_point",
-        "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info"
+        "capture_window", "capture_with_elements", "get_ui_elements", "find_ui_elements", "get_focused_element", "get_element_at_point",
+        "get_active_popups",
+        "get_control_status", "get_server_info", "get_owned_windows", "get_clipboard", "get_window_info",
+        // Wait up to a minute; holding the gate meanwhile would stall every window and input call (roadmap M3.7, M3.8)
+        "wait_for_window", "wait_for_element",
+        // Read an element's text and a table's cells (roadmap M3.9)
+        "read_element_text", "read_table",
+        // One observation of the desktop: windows, focus, popups, elements and an optional capture (roadmap M3.12)
+        "get_desktop_state"
     };
 
     /// <summary>

@@ -4,25 +4,31 @@
 [![Test](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml/badge.svg)](https://github.com/mortenbrudvik/WindowsAppManagerMcp/actions/workflows/test.yml)
 ![Coverage](https://img.shields.io/badge/coverage-75%25-green)
 
-An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts.
+An MCP (Model Context Protocol) server that enables AI assistants like Claude to manage Windows applications, windows, and desktop layouts, and to operate the controls inside them.
 
 ## Features
 
+- **Desktop State** - `get_desktop_state` returns in one call the window in front, the windows, the focused element, the cursor, held keys, the pause, and a window's open popups and interactive elements as compact text lines with refs; optionally a capture
+- **Find Controls** - Find controls by name, automation id, control type or class at any depth in one call (`find_ui_elements`), also in a window's open menus, dropdowns and dialogs and, with `searchVirtualized`, among the rows a long list has not created yet; each element gets a ref (`w4120035e17`) that names it in every later call and never silently names another element
+- **Act on Controls** - `element_action` acts through UI Automation patterns without moving the mouse: invoke, toggle, set a value, select, expand, scroll, realize a list row, focus, and open a menu path such as `File>Save As`, with the element's state before and after; the same checks as input (target policy, the agent's own window, elevated apps, modal dialogs, the pause)
+- **Dialogs** - Read a dialog's text and buttons, then press a button by its standard name in any language or by its text, only in the dialog the agent named (`respond_to_dialog`; only cancel may go to the dialog in front unnamed); complete an Open or Save As dialog with a full path, confirming a save by the file written (`file_dialog`)
+- **Waits** - Wait on the server for a window to open, close, come to the front or change its title (`wait_for_window`), or for a control to appear, go, become enabled or show a text (`wait_for_element`), instead of sleeping
+- **Read Text and Tables** - Read a document's, field's or label's text a page at a time (`read_element_text`) and a grid's or list's headers and cells (`read_table`); password fields are never read
 - **Window Discovery** - Find and list app windows by title, process name, class name, or handle, without hidden cloaked, tool or shell windows; UWP apps are reported under their own process
 - **Window Selectors** - Every tool that acts on a window can name it with a selector (`{"processName": "notepad"}`) instead of a handle; a selector that matches no window or several does nothing and says so, with the candidates
 - **Window Control** - Move, resize, minimize, maximize, snap, and close windows, placing the visible frame and reporting the window as it is afterwards; closes are verified and report a "Save changes?" prompt instead of answering it
 - **Multi-Monitor Support** - Move windows between monitors, get display information
-- **Screenshot Capture** - Capture screens, regions, or windows with optional UI element overlays; captures come back as images the model sees, sized for vision, with an image-to-screen transform for clicking
-- **UI Automation** - Retrieve UI element trees with bounding boxes, and check which element has keyboard focus or sits at a screen point
+- **Screenshot Capture** - Capture screens, regions, windows or one element of a window; Set-of-Marks captures box each control with its ref and list it in a legend; captures come back as images the model sees, sized for vision, with a `captureId` that the mouse tools take to click a point seen in the image
+- **UI Automation** - Retrieve UI element trees with bounding boxes and refs, list a window's open menus, dropdowns and dialogs, and check which element has keyboard focus or sits at a screen point; read through the UI Automation 3 COM client with per-call timeouts by default (`WAM_UIA_ENGINE`); the first read of a page in a Chromium browser or an Electron app waits briefly for its accessibility tree (`launch_application` `forceAccessibility` builds it from the start)
 - **Input Simulation** - Click, right-click, double-click, move the mouse cursor, scroll, type text and send key combinations, aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
-- **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it
+- **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open
 - **Process Management** - List running processes, close a whole application gracefully, terminate processes safely
 - **Layout Presets** - Save and restore window arrangements
 - **Server Info and Instructions** - `get_server_info` reports the build, the DPI awareness, the desktop state, the agent's host windows, the pause and the toolsets in force, with warnings; every MCP client gets usage instructions in the handshake, with or without the plugin skill
 - **Toolsets** - Serve only the tools you want (`WAM_TOOLSETS`, `WAM_EXCLUDE_TOOLS`), or only tools that read (`WAM_READ_ONLY=1`); see [Toolsets](docs/TOOLS.md#toolsets)
-- **Audit Log** - Every input, close, kill, launch, layout-write (apply, save, delete) and clipboard call is recorded, without typed text or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
+- **Audit Log** - Every input, element action, dialog answer, close, kill, launch, layout-write (apply, save, delete) and clipboard call is recorded, without typed text, values or clipboard content, so you can see afterwards what was sent where; see [Audit log](docs/TOOLS.md#audit-log)
 
 ## Installation
 
@@ -30,7 +36,8 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 - Windows 10/11 (x64)
 - [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0) (the "Windows Desktop Runtime" download).
-  The server exe is framework-dependent and uses WPF UI Automation, so the base .NET Runtime alone is not enough:
+  The server exe is framework-dependent and uses WPF's UI Automation client (for browser reading, the close prompts and
+  the `uia2` engine), so the base .NET Runtime alone is not enough:
   without the Desktop Runtime the server exits at startup and no windows-app-manager tools appear.
   Check with `dotnet --list-runtimes`, which should list `Microsoft.WindowsDesktop.App 8.x`.
 
@@ -96,16 +103,16 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (54)
+## Available Tools (64)
 
 | Category | Tools |
 |----------|-------|
-| Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window`, `get_owned_windows`, `get_window_info` |
+| Window Discovery | `find_windows`, `get_all_windows`, `get_foreground_window`, `get_owned_windows`, `get_window_info`, `wait_for_window` |
 | Window Control | `move_window`, `resize_window`, `set_window_bounds`, `set_window_state`, `focus_window`, `close_window`, `snap_window`, `move_window_to_monitor` |
 | Batch Operations | `set_windows_bounds_batch`, `snap_windows_batch`, `set_windows_state_batch`, `close_windows_batch`, `launch_applications_batch` |
 | Monitor Info | `get_monitors`, `get_primary_monitor` |
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
-| UI Automation | `get_ui_elements`, `get_focused_element`, `get_element_at_point` |
+| UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
 | Input Simulation | `click`, `right_click`, `double_click`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
@@ -125,16 +132,17 @@ server configuration). No tool argument can change them.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `WAM_PAUSE_HOTKEY` | `Ctrl+Alt+Shift+Pause` | The [pause hotkey](docs/TOOLS.md#pause-hotkey) chord, such as `Ctrl+Alt+F12`; `none` turns it off |
-| `WAM_DENY_PROCESSES` | common password managers, `CredentialUIBroker`, `consent` | Apps the agent may not act on: no input, window changes, closing, killing or window captures (`TargetDeniedByPolicy`). A value replaces the default list; `default` puts it back in, `none` alone turns it off. See [Target policy](docs/TOOLS.md#target-policy) |
+| `WAM_DENY_PROCESSES` | common password managers, the Windows credential prompts (`CredentialUIBroker`, `CredDialogHost`), the elevation prompt (`consent`), the SmartScreen prompt (`CHXSmartScreen`, `smartscreen`) and Windows Security (`SecHealthUI`) | Apps the agent may not act on or read: no input, element actions, dialog answers, window changes, closing, killing, window captures or UI Automation reads (`TargetDeniedByPolicy`; the browser reading tools, take_screenshot and capture_region are not covered). A value replaces the default list; `default` puts it back in, `none` alone turns it off. See [Target policy](docs/TOOLS.md#target-policy) |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only apps the agent may act on; the deny list still wins |
 | `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | `send_keys` chords that need `windowHandle` (`DestructiveChordNeedsTarget`) |
 | `WAM_LAYOUTS_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\layouts` | Folder of the [layout presets](docs/TOOLS.md#layout-presets) |
-| `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, close, kill, launch or layout-write (apply, save, delete) call and per clipboard read or write, one file per day, kept 7 days |
+| `WAM_AUDIT_PATH` | `%LOCALAPPDATA%\WindowsAppManagerMcp\audit` | Folder of the [audit log](docs/TOOLS.md#audit-log): one JSON line per input, element action, dialog answer, file dialog, close, kill, launch or layout-write (apply, save, delete) call and per clipboard read or write, one file per day, kept 7 days |
 | `WAM_TOOLSETS` | the default toolsets (today: all) | The [toolsets](docs/TOOLS.md#toolsets) to serve, such as `windows,monitors,layouts`; `all`, `default`, `+name` and `-name` (`-browser`) also work. The `server` toolset is always served. A name that is not a toolset never serves more than you asked for: an unknown `-name`, or unknown plain names with no valid one, serve only the `server` toolset (an unknown `+name` is just ignored) |
 | `WAM_EXCLUDE_TOOLS` | not set | Tools to leave out by name, such as `kill_process`, or every tool of a toolset by the toolset's name (`process`). `get_server_info` is always served. A name that is neither a tool nor a toolset serves only the `server` toolset, so a typo never leaves on a tool you meant to turn off |
-| `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, window changes, captures, layout writes, clipboard writes or process control) |
+| `WAM_READ_ONLY` | not set | `1` serves only the tools annotated read-only (an observer profile: no input, element actions, dialog answers, window changes, captures, layout writes, clipboard writes or process control) |
 | `WAM_ALLOWED_PROTOCOLS` | not set | More URI schemes `launch_application` may open, such as `vscode,ms-teams,spotify` (built in: `http`, `https`, `mailto`, `tel`, `ms-settings` and `shell:AppsFolder\<AppUserModelID>`). Listing a scheme trusts its app with whatever the agent puts in the URI. `javascript`, `vbscript`, `data`, `mshta`, the shells, `shell:`, `ms-appinstaller`, `ms-officecmd` and the help schemes stay blocked. See [launch_application](docs/TOOLS.md#launch_application) |
 | `WAM_ALLOW_USER_CLIPBOARD` | not set (off) | `1` lets `get_clipboard` return what you copied, without asking you each time. Off, it returns only what the agent copied or set, and asks you (when the client can) before reading your clipboard; content password managers mark as private is never returned. See [Clipboard](docs/TOOLS.md#clipboard) |
+| `WAM_UIA_ENGINE` | `uia3` | The UI Automation engine of the element tools: `uia3`, the COM client with per-call timeouts, or `uia2`, the managed client of earlier versions (1.14.0 and before), as a fallback if an app reads wrongly with `uia3`. Any other value keeps `uia3`, with a warning in `get_server_info`. See [UI Automation](docs/TOOLS.md#ui-automation) |
 
 The server logs the deny list, the allow list, the chords, the toolsets, the clipboard setting and the URI schemes in
 force to stderr when it starts, with a warning for every entry it ignored; `get_server_info` reports them too. The test opt-ins `WAM_ALLOW_DESKTOP_TESTS` and
@@ -156,6 +164,16 @@ Once configured, you can ask Claude to:
 - "Open Notepad"
 - "Launch Chrome and go to github.com"
 - "Open VS Code in C:\Projects\MyApp"
+- "Open Calculator on the right half of monitor 2"
+
+### Controls, Menus and Dialogs
+- "What is on my screen?"
+- "Press Save in the Settings window" / "Tick 'Remember me'"
+- "Choose File > Save As in Paint and save the picture as C:\Pictures\chart.png"
+- "Close Notepad, and tell me what its 'Save changes?' prompt asks"
+- "Wait until the installer's Next button is enabled, then press it"
+- "Read the e-mail in the reading pane" / "List the processes Task Manager shows"
+- "Find report.txt in the Explorer window and select it"
 
 ### Layout Management
 - "Save my current window arrangement as 'work-setup'"
@@ -173,7 +191,7 @@ Once configured, you can ask Claude to:
 - "Capture the VS Code window"
 - "Take a screenshot of monitor 0"
 - "Capture a 800x600 region at position 100, 200"
-- "Capture the Notepad window with UI element overlays"
+- "Capture the Notepad window with numbered marks on its controls"
 - "Get all buttons and text inputs from the Settings window"
 - "Which control has keyboard focus?" / "What is at position 640, 480?"
 
@@ -190,7 +208,7 @@ Once configured, you can ask Claude to:
 
 > **Input is guarded.** Every input tool takes an optional `windowHandle`: keys are sent only after the server has brought that window to the front and only while it (or its dialog) is in front, and clicks only when the point is on that window or a popup of it. Without `windowHandle`, input goes to the foreground window or the window at the point, but never to the agent's own terminal, editor or chat app (`TargetIsAgentHost`), to windows of apps running as administrator (`TargetElevated`) or to apps the user denies through `WAM_DENY_PROCESSES` (`TargetDeniedByPolicy`, password managers by default). Chords that close, quit or lock, such as Alt+F4, need `windowHandle`, and a chord that switches windows, such as Alt+Tab, must be the last key of a `send_keys` call. A paste (Ctrl+V, Shift+Insert, a right click in a terminal) is sent only when the clipboard holds what the agent put there or copied, or what you let it read (`PasteNotAllowed`). A click is pressed exactly at the point the guard checked. Every result reports `receivingWindow` and `foregroundAfter`. Close windows with `close_window`, never with Alt+F4. See [Input guard](docs/TOOLS.md#input-guard) and the safety rules in [SKILL.md](skills/using-windows-app-manager/SKILL.md).
 
-> **Pause hotkey.** Press **Ctrl+Alt+Shift+Pause** at any time to pause the input of every Windows App Manager server on your desktop (each MCP client session runs its own server, and they share the pause): running input stops, keys the servers hold are released, and every input tool and every tool that changes windows or starts or stops processes returns `PausedByUser` until you press it again (or confirm an agent's `resume_input` request, which resumes them all). A second press within 2 seconds of the pause is ignored. The agent cannot resume itself. Set another chord with the `WAM_PAUSE_HOTKEY` environment variable (for example `Ctrl+Alt+F12`, or `none` to turn it off). See [Pause hotkey](docs/TOOLS.md#pause-hotkey).
+> **Pause hotkey.** Press **Ctrl+Alt+Shift+Pause** at any time to pause the input of every Windows App Manager server on your desktop (each MCP client session runs its own server, and they share the pause): running input stops, keys the servers hold are released, and every input tool, element action and dialog answer and every tool that changes windows or starts or stops processes returns `PausedByUser` until you press it again (or confirm an agent's `resume_input` request, which resumes them all). A second press within 2 seconds of the pause is ignored. The agent cannot resume itself. Set another chord with the `WAM_PAUSE_HOTKEY` environment variable (for example `Ctrl+Alt+F12`, or `none` to turn it off). See [Pause hotkey](docs/TOOLS.md#pause-hotkey).
 
 ### Browser Reading
 - "What page is open in Chrome?"
@@ -282,7 +300,7 @@ dotnet test --filter "Category!=Desktop"
 dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage"
 ```
 
-- **About 4,700 tests**: about 4,500 unit, contract and integration tests and about 180 end-to-end harness tests, about 75% line coverage
+- **About 6,700 tests**: about 6,450 unit, contract and integration tests and about 250 in the end-to-end project (about 200 tests of the harness itself and 55 gated desktop scenarios), about 75% line coverage
 - **Contract tests** call every tool over MCP through an in-process server, hold each typical result to a
   token budget, and compare the tools/list the server sends with a checked-in snapshot
   (`tests/WindowsAppManagerMcp.Tests/Contract/tools.snapshot.json`). The tool tables in this README,
@@ -347,15 +365,16 @@ WindowsAppManagerMcp/
 - **Launch Validation** - `launch_application` rejects path traversal, resolves bare program names in system folders, `PATH` and App Paths before the working directory can shadow them, and refuses arguments that `cmd.exe` would run as commands. It protects against data being turned into commands, not against an agent that runs `cmd` or PowerShell on purpose
 - **Untrusted Content** - Web page text, window titles and UI element names come from other apps and websites and can contain prompt-injection text. The skill and [docs/TOOLS.md](docs/TOOLS.md#untrusted-content) tell agents to treat them as data, never as instructions
 - **Input Guard** - Every keyboard and mouse batch is checked first. Input never reaches the agent's own terminal, editor or chat app (unless the call names it as `windowHandle` with `allowHostTarget`, which agents are told to pass only when the user asked), windows of elevated or denied apps, a locked session or a UAC prompt. With `windowHandle`, keys go only to that window (or its dialog) and stop when another window comes to the front, and clicks go only to a point on that window. See [Input guard](docs/TOOLS.md#input-guard)
-- **Target Policy** - The user denies apps to the agent with `WAM_DENY_PROCESSES` (password managers and credential prompts by default) or allows only some with `WAM_ALLOW_PROCESSES`; no tool argument overrides it (see [Configuration](#configuration))
+- **Target Policy** - The user denies apps to the agent with `WAM_DENY_PROCESSES` (by default password managers, the credential, elevation and SmartScreen prompts, and Windows Security) or allows only some with `WAM_ALLOW_PROCESSES`. A denied app gets no input, element action or dialog answer, its windows are not changed, closed, killed or captured by capture_window, and its UI Automation elements are not read, even for a window the agent names (not covered: the browser reading tools, and take_screenshot and capture_region, which black nothing out); no tool argument overrides it (see [Configuration](#configuration) and [Target policy](docs/TOOLS.md#target-policy))
+- **Element Actions and Dialogs** - `element_action`, `respond_to_dialog` and `file_dialog` act through the same checks as input. A stale or ambiguous element ref is refused rather than resolved to a look-alike, and a ref the server moved to a re-created element is not acted on until find_ui_elements (or another read that lists elements) returns it again. A dialog button is pressed only in the dialog the agent named (only cancel goes to the dialog in front), and a password field's value is never read or returned. These tools, like the input, close and kill tools, refuse an argument they do not declare, so a misspelled criterion cannot widen what they act on (see [Undeclared arguments](docs/TOOLS.md#undeclared-arguments))
 - **Protected Processes** - System-critical processes and the agent's own host (its terminal or editor and that terminal's console processes) cannot be terminated; a forced kill checks the whole process tree first
 - **Confirmation Required** - Process termination requires explicit confirmation: when your MCP client supports elicitation, the server asks you directly (process name, PID, windows, and for a forced kill the child processes) and does nothing unless you confirm; otherwise the agent must pass `confirm: true`. A process that took the PID while you read the question is never touched
 - **Graceful Shutdown** - Windows are closed gracefully (WM_CLOSE)
 - **Pause Hotkey** - Ctrl+Alt+Shift+Pause (`WAM_PAUSE_HOTKEY`) pauses and resumes the input and window changes of every server on the desktop; only the user can resume, and no key or mouse button the server presses stays down after a call, an interrupted batch or a shutdown
-- **Protected Windows** - `close_window`, `close_windows_batch` and `close_application` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in (the window tools unless `force` is true, which the server confirms with you first when the client can ask; `close_application` always), and closing more than 3 windows at once requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`). Closes are verified: the result says whether the window closed or an app is waiting behind a "Save changes?" prompt, which the agent never answers on its own
+- **Protected Windows** - `close_window`, `close_windows_batch` and `close_application` refuse the desktop shell (Program Manager, the taskbars) and the terminal, editor or chat app the agent runs in (the window tools unless `force` is true, which the server confirms with you first when the client can ask, and which otherwise needs `confirm` too; `close_application` always), and closing more than 3 windows at once requires your confirmation (asked through the client when it supports elicitation, otherwise `confirm`). Closes are verified: the result says whether the window closed or an app is waiting behind a "Save changes?" prompt, which the agent never answers on its own
 - **Clipboard Privacy** - `get_clipboard` returns only what the agent put on the clipboard or copied itself; your own clipboard only after you allow it (asked through the client, or `WAM_ALLOW_USER_CLIPBOARD`), and content password managers mark as private never. Input that pastes follows the same rule (`PasteNotAllowed`), so a paste cannot put your clipboard where the agent can read it. Menu paste, drag and drop and custom paste shortcuts are not covered (see [Clipboard](docs/TOOLS.md#clipboard))
-- **Audit Log** - Every input, close, kill, launch, layout-write (apply, save, delete) and clipboard-write call, and every clipboard read, is appended to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, clipboard text, command-line arguments and the paths, queries and credentials of URLs are never logged, only their lengths; a launched URL keeps only its scheme and host. Files are kept 7 days, and the log cannot be turned off (see [Audit log](docs/TOOLS.md#audit-log))
-- **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), so a hung app cannot block the other tools
+- **Audit Log** - Every input, element action, dialog answer, file dialog, close, kill, launch, layout-write (apply, save, delete) and clipboard-write call, and every clipboard read, is appended to `%LOCALAPPDATA%\WindowsAppManagerMcp\audit\<date>.jsonl` (`WAM_AUDIT_PATH`) with its target window, the window the input went to, its outcome and error code. Typed text, keys, element values, the element names element_action searches by, file dialog paths, clipboard text, command-line arguments and the paths, queries and credentials of URLs are never logged, only their lengths (respond_to_dialog's `button` is kept as given); a launched URL keeps only its scheme and host. Files are kept 7 days, and the log cannot be turned off (see [Audit log](docs/TOOLS.md#audit-log))
+- **Hung Applications** - The window tools give up on an application that does not answer within 5 seconds (`NotResponding`), the UI Automation tools do not read a window that does not respond (`NotResponding`) and run every read under a timeout, so a hung app cannot block the other tools
 - **Read-Only Mode** - `WAM_READ_ONLY=1` serves only the tools annotated read-only, and `WAM_TOOLSETS`/`WAM_EXCLUDE_TOOLS` leave out whole groups or single tools; a tool that is not served cannot be called (see [Toolsets](docs/TOOLS.md#toolsets))
 - **Browser Debug Port** - `launch_browser_with_debug` opens a Chrome DevTools port on localhost with no authentication. Any local program can control that browser until it is closed. The browser uses a new, empty temporary profile unless `userDataDir` is given; never point it at your real profile (a folder inside a browser's `User Data` folder is refused, and so is a `url` that would be read as a command-line switch).
 

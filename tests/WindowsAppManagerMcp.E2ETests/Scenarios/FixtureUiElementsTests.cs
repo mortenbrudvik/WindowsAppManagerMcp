@@ -4,14 +4,20 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// get_ui_elements against the fixture: the server's UI Automation walk must see the fixture's
 /// AutomationIds, control types and positions. No-input tier.
 /// </summary>
+/// <remarks>
+/// Every test runs with both UI Automation engines (roadmap M3.2), whatever WAM_UIA_ENGINE says, so one gated run reads
+/// the fixture with each: these are among the scenarios of the engine release gate (TESTING.md).
+/// </remarks>
 public class FixtureUiElementsTests
 {
     /// <summary>UI Automation bounds may be off by rounding (the server truncates to whole pixels).</summary>
     private const int BoundsTolerance = 2;
 
-    private static readonly IReadOnlyDictionary<string, string> MainWindowControlTypes = new Dictionary<string, string>
+    /// <summary>The control type of each element of the main window that the ready event reports.</summary>
+    internal static readonly IReadOnlyDictionary<string, string> MainWindowControlTypes = new Dictionary<string, string>
     {
         [FixtureContract.Ids.EditBox] = "Edit",
+        [FixtureContract.Ids.PasswordBox] = "Edit",
         [FixtureContract.Ids.CheckBox] = "CheckBox",
         [FixtureContract.Ids.ComboBox] = "ComboBox",
         [FixtureContract.Ids.OpenModalButton] = "Button",
@@ -31,11 +37,14 @@ public class FixtureUiElementsTests
         _output = output;
     }
 
-    [DesktopNoInputFact]
-    public async Task GetUIElements_ReportsTheFixtureAutomationIdsAndControlTypes()
+    [DesktopNoInputTheory]
+    [InlineData(UiaEngine.Uia3)]
+    [InlineData(UiaEngine.Uia2)]
+    public async Task GetUIElements_ReportsTheFixtureAutomationIdsAndControlTypes(UiaEngine engine)
     {
         // Arrange
-        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
+        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: engine);
+        e2e.Server.Get<IUiaTree>().Engine.Should().Be(engine);
 
         // Act
         var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
@@ -54,11 +63,44 @@ public class FixtureUiElementsTests
         }
     }
 
-    [DesktopNoInputFact]
-    public async Task GetUIElements_BoundsMatchWhereTheFixtureDrawsItsElements()
+    [DesktopNoInputTheory]
+    [InlineData(UiaEngine.Uia3)]
+    [InlineData(UiaEngine.Uia2)]
+    public async Task GetUIElements_NamesTheWpfFramework_AndWarmsNothingUpInANativeWindow(UiaEngine engine)
+    {
+        // Arrange - roadmap M3.3: the fixture is a WPF window without web content
+        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: engine);
+        e2e.Server.Get<IUiaTree>().Engine.Should().Be(engine);
+        var fixtureIds = e2e.Fixture.Ready.Elements.Keys.ToHashSet();
+
+        // Act
+        var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
+
+        // Assert - the fixture's own elements inherit the window's framework, so they name none of their own. Not every
+        // element is the fixture's: UI Automation adds the window's title bar and its buttons (the non-client area, from
+        // the window's Win32 proxy), which can name a framework of their own (Win32)
+        result.Success.Should().BeTrue(result.Error);
+        result.FrameworkId.Should().Be("WPF");
+        result.AccessibilityWarmup.Should().BeNull("a native window has no web content to wait for");
+        var elements = UiaReads.Flatten(result.Elements).ToList();
+        foreach (var other in elements.Where(e => e.FrameworkId != null))
+        {
+            _output.WriteLine($"{other.ControlType} '{other.Name}' aid={other.AutomationId} names its framework: {other.FrameworkId}");
+        }
+
+        var fixtureElements = elements.Where(e => e.AutomationId != null && fixtureIds.Contains(e.AutomationId)).ToList();
+        fixtureElements.Select(e => e.AutomationId).Distinct().Should().BeEquivalentTo(fixtureIds);
+        fixtureElements.Should().OnlyContain(e => e.FrameworkId == null);
+    }
+
+    [DesktopNoInputTheory]
+    [InlineData(UiaEngine.Uia3)]
+    [InlineData(UiaEngine.Uia2)]
+    public async Task GetUIElements_BoundsMatchWhereTheFixtureDrawsItsElements(UiaEngine engine)
     {
         // Arrange
-        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
+        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: engine);
+        e2e.Server.Get<IUiaTree>().Engine.Should().Be(engine);
         var ready = e2e.Fixture.Ready;
 
         // Act
@@ -83,11 +125,14 @@ public class FixtureUiElementsTests
         }
     }
 
-    [DesktopNoInputFact]
-    public async Task GetUIElements_VirtualizedList_ExposesOnlyTheRealizedItems()
+    [DesktopNoInputTheory]
+    [InlineData(UiaEngine.Uia3)]
+    [InlineData(UiaEngine.Uia2)]
+    public async Task GetUIElements_VirtualizedList_ExposesOnlyTheRealizedItems(UiaEngine engine)
     {
         // Arrange
-        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
+        using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: engine);
+        e2e.Server.Get<IUiaTree>().Engine.Should().Be(engine);
 
         // Act
         var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);

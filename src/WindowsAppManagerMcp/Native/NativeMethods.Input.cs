@@ -24,5 +24,12 @@ internal static partial class NativeMethods
         /// </summary>
         [LibraryImport("user32.dll")]
         public static partial short GetAsyncKeyState(int vKey);
+
+        /// <summary>
+        /// The state of a key in the calling thread's input state: the low bit is set while a toggle key (Caps Lock) is on.
+        /// Only reads.
+        /// </summary>
+        [LibraryImport("user32.dll")]
+        public static partial short GetKeyState(int nVirtKey);
     }
 }

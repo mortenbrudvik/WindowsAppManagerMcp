@@ -3,10 +3,13 @@ using System.Text.RegularExpressions;
 namespace WindowsAppManagerMcp.Models;
 
 /// <summary>
-/// The server-enforced target policy (roadmap M1.12): the processes whose windows the agent may not send
-/// input to, close, kill or capture, and optionally the only processes it may. The user sets it in the
-/// server's environment; no tool argument can change it, because the agent acts on untrusted screen and
-/// web content and sets its own confirm flags.
+/// The server-enforced target policy (roadmap M1.12): the processes whose windows the agent may not act on or read, and
+/// optionally the only processes it may. It covers input (with element_action, respond_to_dialog and file_dialog, which
+/// the input guard checks), the window changes (focus, move, resize, state, snap, their batches and apply_layout), close,
+/// kill, the captures (capture_window, capture_with_elements), the UI Automation reads, and the launch tools' placement and
+/// reuseExisting. While it denies anything, a window whose process cannot be named is refused as well, since it cannot be
+/// checked (it fails closed). The user sets it in the server's environment; no tool argument can change it, because the
+/// agent acts on untrusted screen and web content and sets its own confirm flags.
 /// </summary>
 /// <param name="DeniedProcesses">
 /// Image names (without ".exe") that are always refused. Default: <see cref="DefaultDeniedProcesses"/>.
@@ -43,15 +46,20 @@ public sealed record TargetPolicySettings(
     private const string NoneToken = "none";
 
     /// <summary>
-    /// The default deny list: common password managers, whose windows show and type secrets, and the
-    /// Windows credential and elevation prompts (CredentialUIBroker.exe, consent.exe on a desktop without
-    /// the secure desktop). A browser extension password manager runs inside the browser and cannot be
-    /// told apart by process.
+    /// The default deny list: common password managers, whose windows show and type secrets; the Windows
+    /// credential and elevation prompts (CredentialUIBroker.exe and CredDialogHost.exe, consent.exe on a
+    /// desktop without the secure desktop); the SmartScreen prompt "Windows protected your PC"
+    /// (CHXSmartScreen.exe, a UWP app, and smartscreen.exe, the reputation broker that starts it); and the
+    /// Windows Security app (SecHealthUI.exe). The UWP ones are matched through the app that their
+    /// ApplicationFrameHost frame hosts. A browser extension password manager runs inside the browser and
+    /// cannot be told apart by process, and neither can a security prompt that runs inside a shared process
+    /// (such as Explorer's "Open File - Security Warning").
     /// </summary>
     public static IReadOnlyList<string> DefaultDeniedProcesses { get; } =
     [
         "1Password", "Bitwarden", "KeePass", "KeePassXC", "LastPass", "Dashlane", "Keeper", "KeeperPasswordManager",
-        "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "consent"
+        "Enpass", "NordPass", "ProtonPass", "Proton Pass", "RoboForm", "pwsafe", "CredentialUIBroker", "CredDialogHost",
+        "consent", "CHXSmartScreen", "smartscreen", "SecHealthUI"
     ];
 
     /// <summary>
@@ -144,4 +152,11 @@ public sealed record TargetPolicyVerdict(bool Allowed, string? ProcessName, stri
 
     /// <summary>The target is refused.</summary>
     public static TargetPolicyVerdict Deny(string? processName, string reason) => new(false, processName, reason);
+
+    /// <summary>
+    /// The target is refused because its process name cannot be read, so it cannot be checked against a policy that
+    /// denies anything (see <see cref="Services.Interfaces.TargetPolicyExtensions.EvaluateFailClosed(Services.Interfaces.ITargetPolicy, WindowInfo)"/>).
+    /// </summary>
+    public static TargetPolicyVerdict Unreadable { get; } =
+        Deny(null, "its process name cannot be read, so the window cannot be checked against the policy");
 }

@@ -53,6 +53,30 @@ public class ToolDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_move")]
+    public void MouseToolDescription_PointsToRefsAndImagePoints_NotToScreenBoundsTheLegendLeavesOut(string toolName)
+    {
+        // capture_with_elements returns screenBounds only with detail full; its legend centres are image points
+        var description = ServerToolCatalog.Description(toolName);
+
+        description.Should().NotContain("screenBounds");
+        description.Should().Contain("captureId", "a point seen on a capture is passed with its captureId");
+        if (toolName != "mouse_move")
+        {
+            description.Should().Contain("element_action", "acting on a ref needs no point at all");
+        }
+    }
+
+    [Fact]
+    public void GetUiElementsDescription_SaysItReturnsRefs()
+    {
+        ServerToolCatalog.Description("get_ui_elements").Should().Contain("ref");
+    }
+
+    [Theory]
+    [InlineData("click")]
+    [InlineData("right_click")]
+    [InlineData("double_click")]
     public void ClickToolDescription_SaysToConfirmTheTargetWindowFirst(string toolName)
     {
         ServerToolCatalog.Description(toolName).Should().Contain("get_foreground_window",
@@ -169,6 +193,22 @@ public class ToolDescriptionTests
         // visibleOnly is the one filter that leaves out everything inside an offscreen element, so a
         // client that only sees tools/list must know to pass false for scrolled-out controls.
         ParameterDescription(toolName, "visibleOnly").Should().Contain("drops whole subtrees");
+    }
+
+    [Fact]
+    public void FindWindowsDescription_SaysForceOnTheHostNeedsConfirmWhenTheClientCannotAsk()
+    {
+        // Since M2.F1 force alone no longer closes a protected window: the user answers, or confirm stands in when the
+        // client cannot ask (close_window's ConfirmationRequired)
+        ServerToolCatalog.Description("find_windows").Should().Contain("unless force=true").And.Contain("confirm=true");
+    }
+
+    [Fact]
+    public void ExpectWindowDescription_SaysReuseExistingMatchesItToo()
+    {
+        // The hint is not only the window wait's: reuseExisting reuses only an open window that matches it, and a web address
+        // can only be reused by its titleContains
+        ParameterDescription("launch_application", "expectWindow").Should().Contain("With reuseExisting").And.Contain("titleContains");
     }
 
     [Fact]

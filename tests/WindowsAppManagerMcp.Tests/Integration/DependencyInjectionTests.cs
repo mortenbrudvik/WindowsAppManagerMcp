@@ -77,6 +77,102 @@ public class DependencyInjectionTests : IDisposable
         browserReadingService.Should().NotBeNull();
     }
 
+    [Fact]
+    public void ThePopupService_IsASingleton_AndTheElementSearchUsesIt()
+    {
+        // Resolving constructs them only: nothing is enumerated and no UI Automation client starts (roadmap M3.5)
+        var popups = _serviceProvider.GetRequiredService<IPopupService>();
+        var search = _serviceProvider.GetRequiredService<IElementSearchService>();
+
+        popups.Should().BeOfType<PopupService>().And.BeSameAs(_serviceProvider.GetRequiredService<IPopupService>());
+        typeof(ElementSearchService).GetField("_popups", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(search)
+            .Should().BeSameAs(popups, "find_ui_elements' popup and desktop scopes need it");
+    }
+
+    [Fact]
+    public void EveryUiAutomationRead_GetsTheTargetPolicy()
+    {
+        // The user's target policy refuses the reads of a window of an app it denies: a read service built without it would
+        // read every window
+        var policy = _serviceProvider.GetRequiredService<ITargetPolicy>();
+
+        foreach (var service in new object[]
+                 {
+                     _serviceProvider.GetRequiredService<IUIElementService>(),
+                     _serviceProvider.GetRequiredService<IElementInspectionService>(),
+                     _serviceProvider.GetRequiredService<IElementSearchService>(),
+                     _serviceProvider.GetRequiredService<IElementReadService>(),
+                     _serviceProvider.GetRequiredService<IElementWaitService>(),
+                     _serviceProvider.GetRequiredService<IPopupService>(),
+                     _serviceProvider.GetRequiredService<IDesktopStateService>()
+                 })
+        {
+            service.GetType().GetField("_policy", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service)
+                .Should().BeSameAs(policy, "{0} reads UI Automation", service.GetType().Name);
+        }
+    }
+
+    [Fact]
+    public void TheDialogAndMenuPathServices_ActOnlyThroughTheOneElementActionService_AndTheirToolsResolve()
+    {
+        // respond_to_dialog, file_dialog and menu_path (roadmap M3.5, M3.14) press, set and expand through element_action's
+        // service, so its guards apply; resolving starts no UI Automation client
+        var actions = _serviceProvider.GetRequiredService<IElementActionService>();
+        var dialogs = _serviceProvider.GetRequiredService<IDialogService>();
+        var fileDialogs = _serviceProvider.GetRequiredService<IFileDialogService>();
+        var menuPaths = _serviceProvider.GetRequiredService<IMenuPathService>();
+
+        foreach (var service in new object[] { dialogs, fileDialogs, menuPaths })
+        {
+            service.GetType().GetField("_actions", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(service)
+                .Should().BeSameAs(actions, "{0} acts only through element_action's service", service.GetType().Name);
+        }
+
+        typeof(FileDialogService).GetField("_dialogs", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(fileDialogs)
+            .Should().BeSameAs(dialogs, "the replace prompt is answered as respond_to_dialog answers it");
+        _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.DialogTools>().Should().NotBeNull();
+        var tools = _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.ElementActionTools>();
+        typeof(WindowsAppManagerMcp.Tools.ElementActionTools).GetField("_menuPaths", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(tools).Should().BeSameAs(menuPaths, "element_action's menu_path needs it");
+    }
+
+    [Fact]
+    public void TheElementReads_AreASingleton_AndTheirToolsResolve()
+    {
+        // read_element_text and read_table (roadmap M3.9); resolving starts no UI Automation client
+        var reads = _serviceProvider.GetRequiredService<IElementReadService>();
+
+        reads.Should().BeOfType<ElementReadService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementReadService>());
+        _serviceProvider.GetRequiredService<WindowsAppManagerMcp.Tools.ElementReadTools>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TheElementRegistryAndSearch_AreSingletons_BuiltWithTheProductionConstructor()
+    {
+        // Resolving constructs them only: neither UI Automation engine starts a client before its first read
+        var registry = _serviceProvider.GetRequiredService<IElementRegistry>();
+        var search = _serviceProvider.GetRequiredService<IElementSearchService>();
+
+        registry.Should().BeOfType<ElementRegistry>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementRegistry>());
+        search.Should().BeOfType<ElementSearchService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementSearchService>());
+        registry.Count.Should().Be(0);
+
+        // The production constructor numbers windows from a random start in eight million (the test-only one takes it)
+        var production = typeof(ElementRegistry).GetConstructors()
+            .Single(c => c.GetParameters().Length == 3);
+        production.GetParameters().Select(p => p.ParameterType).Should()
+            .Equal(typeof(IUiaTree), typeof(IUiaWorker), typeof(INativeWindowWrapper));
+    }
+
+    [Fact]
+    public void TheElementWait_IsASingleton()
+    {
+        // wait_for_element (roadmap M3.8); resolving it starts no UI Automation client
+        var wait = _serviceProvider.GetRequiredService<IElementWaitService>();
+
+        wait.Should().BeOfType<ElementWaitService>().And.BeSameAs(_serviceProvider.GetRequiredService<IElementWaitService>());
+    }
+
     #endregion
 
     #region T7.3.2: INativeWindowWrapper Singleton
@@ -370,8 +466,19 @@ public class DependencyInjectionTests : IDisposable
         // Assert - added right after the audit log's: the SDK runs the first filter added as the outermost
         // (ServerFilterPipelineTests), so it also logs the input gate filter's wait and the calls that filter refuses
         // while input is paused
-        options.Filters.Request.CallToolFilters.Should().HaveCount(3);
+        options.Filters.Request.CallToolFilters.Should().HaveCount(4);
         options.Filters.Request.CallToolFilters[1].Method.Should().BeSameAs(filter);
+    }
+
+    [Fact]
+    public void AddWindowsAppManagerTools_RegistersTheUndeclaredArgumentFilter_InsideTheErrorFilter_OutsideTheGate()
+    {
+        // M3 review: inside the audit log and the error filter, so the refusal is audited and reported as a tool error;
+        // outside the input gate filter, so it never waits for the gate or a pause
+        var filters = _serviceProvider.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.Request.CallToolFilters;
+
+        filters[2].Method.Should().BeSameAs(typeof(UndeclaredArgumentToolFilter).GetMethod(nameof(UndeclaredArgumentToolFilter.Filter)));
+        filters[3].Method.Should().BeSameAs(typeof(InputGateToolFilter).GetMethod(nameof(InputGateToolFilter.Filter)));
     }
 
     [Fact]

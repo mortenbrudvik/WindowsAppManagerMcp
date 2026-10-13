@@ -13,11 +13,12 @@ namespace WindowsAppManagerMcp.Tools;
 public class ScreenshotTools
 {
     internal const string ImageResultDescription =
-        "Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath). " +
+        "Returns the image as image content you can see, followed by JSON metadata (size, capturedRegion, imageToScreen, filePath, captureId). " +
         "By default the image is JPEG (PNG when its long edge is at most 512 pixels) scaled to at most 1568 pixels on the long edge. ";
 
     internal const string ImageToScreenDescription =
-        "Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, use " +
+        "Image pixels are not screen pixels: to click a point (imageX, imageY) seen in the image, pass it to the mouse tools with " +
+        "this captureId (valid 10 minutes; refused with StaleCapture once a captured window moved), or convert it yourself: " +
         "screenX = imageToScreen.offsetX + imageX * imageToScreen.scaleX and screenY = imageToScreen.offsetY + imageY * imageToScreen.scaleY. " +
         "scaleFactor is the monitor's DPI scale, for information only; never multiply by it.";
 
@@ -61,11 +62,30 @@ public class ScreenshotTools
         "denies a window the restore would show. A hidden or cloaked window is not restored. A window that was maximized " +
         "before it was minimized is captured at its normal size and may restore un-maximized afterwards.";
 
+    internal const string ActionableOnlyDescription =
+        "Only mark elements an agent can act on: those with an Invoke, Toggle, Value, SelectionItem, ExpandCollapse or " +
+        "RangeValue pattern, enabled or not (a disabled one is dimmed and flagged [disabled] in the legend). Labels and " +
+        "containers are left out, but the elements inside them are still marked. Default: true when controlTypes is empty, " +
+        "false with controlTypes.";
+
+    /// <summary>capture_with_elements' default maxElements: enough marks for a dense window, few enough to stay legible.</summary>
+    public const int DefaultMaxMarks = 80;
+
+    /// <summary>capture_window's default padding around a ref's element, in screen pixels.</summary>
+    public const int DefaultRefPadding = 8;
+
+    /// <summary>The largest padding capture_window takes around a ref's element.</summary>
+    public const int MaxRefPadding = 500;
+
+    /// <summary>How long capture_window waits for a ref's element to be found again (its live bounds).</summary>
+    public static readonly TimeSpan RefResolveTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IScreenshotService _screenshotService;
     private readonly IUIElementService _uiElementService;
     private readonly IWindowService _windowService;
     private readonly ITargetPolicy _targetPolicy;
     private readonly IInputSession? _session;
+    private readonly IElementRegistry? _elementRegistry;
 
     /// <param name="screenshotService">The captures.</param>
     /// <param name="uiElementService">The UI Automation walk of capture_with_elements.</param>
@@ -74,18 +94,24 @@ public class ScreenshotTools
     /// <param name="session">
     /// The input session: restoreIfMinimized takes the input gate through it, and refuses while input is paused.
     /// </param>
+    /// <param name="elementRegistry">
+    /// The element refs (roadmap M3.4): capture_window's ref is resolved through it to the element it crops to (roadmap
+    /// M3.11). The server always passes it; without it capture_window refuses a ref.
+    /// </param>
     public ScreenshotTools(
         IScreenshotService screenshotService,
         IUIElementService uiElementService,
         IWindowService windowService,
         ITargetPolicy targetPolicy,
-        IInputSession? session = null)
+        IInputSession? session = null,
+        IElementRegistry? elementRegistry = null)
     {
         _screenshotService = screenshotService;
         _uiElementService = uiElementService;
         _windowService = windowService;
         _targetPolicy = targetPolicy ?? throw new ArgumentNullException(nameof(targetPolicy));
         _session = session;
+        _elementRegistry = elementRegistry;
     }
 
     [McpServerTool(Name = "list_screens", Title = "List Screens", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -96,11 +122,11 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "take_screenshot", Title = "Capture Monitor", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture a specific monitor. " + ImageResultDescription + ImageToScreenDescription +
-                 " Use list_screens to get available monitor indices.")]
+    [Description("Capture a specific monitor, or with monitorIndex -1 every monitor in one image (the virtual screen, at most 64 megapixels). " +
+                 ImageResultDescription + ImageToScreenDescription + " Use list_screens to get available monitor indices.")]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public CallToolResult TakeScreenshot(
-        [Description("Monitor index to capture (0-based). Use list_screens to see available monitors. Defaults to primary monitor.")]
+        [Description("Monitor index to capture (0-based), or -1 for the whole virtual screen (all monitors; areas between monitors of different sizes are black). Use list_screens to see available monitors. Defaults to primary monitor.")]
         int? monitorIndex = null,
         [Description(FormatDescription)]
         CaptureFormat format = CaptureFormat.Auto,
@@ -166,13 +192,20 @@ public class ScreenshotTools
                  "is copied from the screen (captureMethod ScreenBitBlt, warning WindowNotResponding). " +
                  ImageResultDescription + WarningsDescription +
                  "capturedRegion and imageToScreen use the window's real screen position: the visible frame's corner, or the client area's corner when includeFrame is false. " +
+                 "With ref, the image is cropped to that element (plus padding) for a small, sharp view of one control; the crop's corner is its origin. " +
                  ImageToScreenDescription)]
     [ToolResultPayload(typeof(ScreenshotResult))]
     public async Task<CallToolResult> CaptureWindow(
-        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both.")]
+        [Description("Window handle (as integer) from find_windows or get_all_windows. Pass handle or window, not both; with ref both may be left out.")]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
+        [Description("The element to crop the image to: a ref from an earlier read, such as 'w4120035e17' (its bounds are read again now), " +
+                     "plus padding, clipped to the window. The window is the ref's own; a handle or window that names another fails " +
+                     "with InvalidArguments. ElementStale or AmbiguousElement when the element is gone, ElementOffscreen when it is offscreen or outside the window.")]
+        string? @ref = null,
+        [Description("Pixels of the window kept around the ref's element on every side (0-500). Default: 8. Only with ref.")]
+        int? padding = null,
         [Description("Whether to include the window frame/decoration (title bar, borders). Default: true")]
         bool includeFrame = true,
         [Description(FormatDescription)]
@@ -195,7 +228,14 @@ public class ScreenshotTools
         bool restoreIfMinimized = false,
         CancellationToken cancellationToken = default)
     {
-        var windowHandle = WindowTargeting.Require(_windowService, handle, window);
+        var element = ElementToCrop(@ref, padding);
+        if (element?.Lookup is { Success: false } unknown)
+        {
+            return WindowFailure(unknown.ErrorCode.ToString(), (unknown.Error ?? $"ref '{element.Ref}' names no element.") +
+                " Nothing was captured; capture_with_elements or find_ui_elements gives current refs.");
+        }
+
+        var windowHandle = WindowForCapture(handle, window, element);
         if (PolicyRefusal(windowHandle) is { } refusal)
         {
             return WindowFailure(nameof(ScreenshotErrorCode.TargetDeniedByPolicy), refusal);
@@ -212,7 +252,44 @@ public class ScreenshotTools
         ScreenCapture<ScreenshotResult> capture;
         using (restore)
         {
-            capture = _screenshotService.CaptureWindow(windowHandle, includeFrame, options);
+            if (element == null)
+            {
+                capture = _screenshotService.CaptureWindow(windowHandle, includeFrame, options);
+            }
+            else
+            {
+                // The window first: the ref's element is read only when the window can be captured at all
+                if (_screenshotService.CheckWindow(windowHandle) is { } unavailable)
+                {
+                    return WindowFailure(unavailable.Code.ToString(), unavailable.Message);
+                }
+
+                var area = await ElementAreaAsync(element, cancellationToken).ConfigureAwait(false);
+                if (area.Failure is { } failure)
+                {
+                    return failure;
+                }
+
+                capture = _screenshotService.CaptureWindowArea(windowHandle, includeFrame, area.Bounds!, options);
+                if (capture.Metadata.Success)
+                {
+                    capture = capture with { Metadata = capture.Metadata with { Ref = area.Ref } };
+                }
+
+                // The crop shows the element the ref was moved to: say so
+                if (capture.Metadata.Success && area.Moved)
+                {
+                    capture = capture with
+                    {
+                        Metadata = capture.Metadata with
+                        {
+                            RefMoved = true,
+                            Warnings = Merge([CaptureWarnings.Format(CaptureWarnings.RefMoved, ElementRefs.MovedWarning(area.Ref!))],
+                                capture.Metadata.Warnings)
+                        }
+                    };
+                }
+            }
         }
 
         // Read after the window was minimized again: a failed minimize adds a warning
@@ -225,10 +302,13 @@ public class ScreenshotTools
     }
 
     [McpServerTool(Name = "capture_with_elements", Title = "Capture Window with Element Boxes", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Capture a window with UI element bounding boxes drawn on it. " + ImageResultDescription +
-                 "The metadata lists each element with imageBounds (pixels of the returned image) and screenBounds (screen pixels: use these to click). " +
-                 "Elements are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +
-                 "The overlays line up with or without the frame. The image is returned even when the UI Automation walk fails or times out: " +
+    [Description("Capture a window with its UI elements drawn on it as numbered marks (Set-of-Marks): a box per element and a filled tag with " +
+                 "the element's ref, such as w4120035e17. Pick a target in the image, then act on it with element_action(ref) (no coordinates), " +
+                 "or click the legend's center with this captureId. " + ImageResultDescription +
+                 "The metadata's legend has one line per mark: '[ref] Type 'Name' #automationId center=(x,y)', center in pixels of the returned image. " +
+                 "By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80; " +
+                 "detail 'full' adds the elements list with imageBounds and screenBounds. " +
+                 "The image is returned even when the UI Automation walk fails or times out: " +
                  "then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. " +
                  "A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). " +
                  WarningsDescription + ImageToScreenDescription)]
@@ -250,12 +330,23 @@ public class ScreenshotTools
         string? controlTypes = null,
         [Description("Only include interactable elements. Default: false. " + UIElementTools.InteractableOnlyCaution)]
         bool interactableOnly = false,
+        [Description(ActionableOnlyDescription)]
+        bool? actionableOnly = null,
         [Description("Only include elements that are not offscreen. Default: true. " + UIElementTools.VisibleOnlyCaution)]
         bool visibleOnly = true,
         [Description("Use brighter colors for enabled elements. Default: true")]
         bool highlightInteractable = true,
         [Description("Timeout for UI element retrieval in ms (1000-30000). When it passes, the elements found so far are drawn (truncated: true); with none found, the image comes without elements and elementsErrorCode OperationTimedOut. Default: 5000")]
         int timeoutMs = 5000,
+        [Description("Stop the walk once this many elements are found (default: 80, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. " +
+                     "An element without bounds or outside the image gets no mark, so there can be fewer marks. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes or a smaller maxDepth rather than raising this.")]
+        int maxElements = DefaultMaxMarks,
+        [Description("Draw each mark's ref as a filled tag at its box. Default: true. false draws the boxes only.")]
+        bool labels = true,
+        [Description("Draw the marks on the image. Default: true. false returns the clean image, with the marks only in the legend.")]
+        bool drawOverlays = true,
+        [Description("What the metadata says about the marks: 'legend' (default: one compact line per mark) or 'full' (also the elements list with imageBounds, screenBounds and overlayColor).")]
+        CaptureElementDetail detail = CaptureElementDetail.Legend,
         [Description(MaxDimensionDescription + " imageBounds are scaled with the image; screenBounds stay in screen pixels.")]
         int? maxDimension = null,
         [Description(OutputDescription)]
@@ -290,12 +381,16 @@ public class ScreenshotTools
                 "Window not found or handle is invalid");
         }
 
-        // The title is informational: untitled windows (popups, menus) are still captured.
+        // The title is informational: untitled windows (popups, menus) are still captured, with the walk's title
         var windowInfo = _windowService.GetWindowInfo(windowHandle);
-        var windowTitle = windowInfo?.Title;
+        var windowTitle = string.IsNullOrEmpty(windowInfo?.Title) ? null : windowInfo.Title;
+        if (windowInfo == null && !_windowService.IsValidWindow(windowHandle))
+        {
+            return AnnotatedFailure(reported, null, ScreenshotErrorCode.InvalidHandle.ToString(), "Window not found or handle is invalid");
+        }
 
-        // Neither the pixels nor the element texts of a window the user's policy denies
-        if (windowInfo != null && _targetPolicy.Evaluate(windowInfo) is { Allowed: false } verdict)
+        // Neither the pixels nor the element texts of a window the user's policy denies, or that it cannot check
+        if (CaptureVerdict(windowInfo) is { Allowed: false } verdict)
         {
             return AnnotatedFailure(reported, windowTitle, nameof(ScreenshotErrorCode.TargetDeniedByPolicy), PolicyMessage(verdict));
         }
@@ -316,11 +411,19 @@ public class ScreenshotTools
                 return AnnotatedFailure(reported, windowTitle, unavailable.Code.ToString(), unavailable.Message);
             }
 
-            // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync)
+            // Where the window is while its elements are read: the capture compares it with where the window is when its
+            // pixels are read, and gives no captureId when it moved meanwhile
+            var walkedWindow = _screenshotService.ReadCapturedWindow(windowHandle, includeFrame);
+
+            // The walk stops at timeoutMs with what it has, or when the client cancels the call (UIElementTools.ReadTreeAsync).
+            // Without controlTypes only the elements an agent can act on are marked (roadmap M3.11)
+            var types = UIElementTools.ParseControlTypes(controlTypes);
             var filter = new UIElementFilter(
-                ControlTypes: UIElementTools.ParseControlTypes(controlTypes),
+                ControlTypes: types,
                 InteractableOnly: interactableOnly,
-                VisibleOnly: visibleOnly);
+                VisibleOnly: visibleOnly,
+                MaxElements: Math.Clamp(maxElements, 1, UIElementTools.MaxElementsLimit),
+                ActionableOnly: actionableOnly ?? types == null);
             var elementsResult = await UIElementTools.ReadTreeAsync(
                 _uiElementService, windowHandle, maxDepth, filter, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
 
@@ -337,12 +440,13 @@ public class ScreenshotTools
                 windowTitle ?? elementsResult.WindowTitle,
                 walked ? elementsResult.Elements! : [],
                 includeFrame,
-                highlightInteractable,
-                options);
+                new ElementOverlayOptions(Draw: drawOverlays, Labels: labels, HighlightInteractable: highlightInteractable),
+                options,
+                walkedWindow);
 
             if (capture.Metadata.Success)
             {
-                capture = capture with { Metadata = WithWalk(capture.Metadata, elementsResult, walked) };
+                capture = capture with { Metadata = WithMarks(WithWalk(capture.Metadata, elementsResult, walked), detail) };
             }
         }
 
@@ -354,6 +458,107 @@ public class ScreenshotTools
 
         return ToolImages.ToCallToolResult(capture);
     }
+
+    /// <summary>capture_window's ref (roadmap M3.11): the ref normalized, what the registry knows of it, and the padding.</summary>
+    private sealed record RefCrop(string Ref, ElementLookup Lookup, int Padding);
+
+    /// <summary>The element capture_window crops to, or null without a ref.</summary>
+    /// <exception cref="ToolErrorException">padding without ref, a padding out of range, or a ref that is not one (InvalidArguments).</exception>
+    private RefCrop? ElementToCrop(string? elementRef, int? padding)
+    {
+        if (elementRef == null)
+        {
+            return padding == null ? null : throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                "padding applies only with ref (the element to crop the image to). Nothing was captured.");
+        }
+
+        var pad = padding ?? DefaultRefPadding;
+        if (pad is < 0 or > MaxRefPadding)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"padding must be 0-{MaxRefPadding} pixels; it was {pad}. Nothing was captured.");
+        }
+
+        var normalized = ElementRefs.Normalize(elementRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+            $"ref '{elementRef}' is not an element ref: refs look like '{ElementRefs.Example}' and come from capture_with_elements, " +
+            "find_ui_elements, get_ui_elements, get_focused_element or get_element_at_point. Nothing was captured.");
+        var registry = _elementRegistry ?? throw new ToolErrorException(nameof(UIElementErrorCode.AutomationUnavailable),
+            "Element refs are not available in this server. Nothing was captured.");
+        return new RefCrop(normalized, registry.Lookup(normalized), pad);
+    }
+
+    /// <summary>
+    /// The window capture_window captures: the one named, or with a ref and none named, the ref's own window. A named
+    /// window that is not the ref's is refused: the element would not be in its image.
+    /// </summary>
+    /// <exception cref="ToolErrorException">No window named and no ref, or a named window that is not the ref's (InvalidArguments).</exception>
+    private nint WindowForCapture(long? handle, WindowSelector? window, RefCrop? element)
+    {
+        if (element == null)
+        {
+            return WindowTargeting.Require(_windowService, handle, window);
+        }
+
+        if (WindowTargeting.Optional(_windowService, handle, window) is not { } named)
+        {
+            return element.Lookup.WindowHandle;
+        }
+
+        if (named != element.Lookup.WindowHandle)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"ref '{element.Ref}' is an element of window {(long)element.Lookup.WindowHandle}, not of window {(long)named}, so it " +
+                "is not in that window's image. Leave handle and window out to capture the ref's own window. Nothing was captured.");
+        }
+
+        return named;
+    }
+
+    /// <summary>
+    /// The area capture_window crops to: the element's bounds, read now, plus padding; or why there is none.
+    /// <paramref name="Moved"/>: the ref was moved to a re-created element (<see cref="ResolvedElement.Moved"/>).
+    /// </summary>
+    private sealed record ElementArea(BoundsDto? Bounds, string? Ref, CallToolResult? Failure, bool Moved = false);
+
+    /// <summary>
+    /// Resolves the ref (its live element, found again if it was re-created; otherwise the resolution's code: ElementStale,
+    /// AmbiguousElement, WindowNotFound when UI Automation cannot read the window, NotResponding, OperationTimedOut or
+    /// OperationException) and returns its bounds with the padding. An offscreen element, or one without bounds,
+    /// is ElementOffscreen.
+    /// </summary>
+    private async Task<ElementArea> ElementAreaAsync(RefCrop element, CancellationToken cancellationToken)
+    {
+        var resolution = await _elementRegistry!.ResolveAsync(element.Ref, RefResolveTimeout, cancellationToken).ConfigureAwait(false);
+        if (resolution.Element is not { } resolved)
+        {
+            return new ElementArea(null, null, WindowFailure(resolution.ErrorCode.ToString(),
+                (resolution.Error ?? $"ref '{element.Ref}' could not be resolved.") + " Nothing was captured."));
+        }
+
+        var properties = resolved.Element.Properties;
+        if (properties.IsOffscreen || properties.Bounds.ToBounds() is not { Width: > 0, Height: > 0 } bounds)
+        {
+            return new ElementArea(null, null, WindowFailure(nameof(ScreenshotErrorCode.ElementOffscreen),
+                $"The element of ref '{resolved.Ref}' is offscreen (scrolled out of view, collapsed or hidden), so there is " +
+                "nothing of it to capture. Scroll it into view first (element_action scroll_into_view), or capture the whole window."));
+        }
+
+        var pad = element.Padding;
+        return new ElementArea(
+            new BoundsDto(bounds.X - pad, bounds.Y - pad, bounds.Width + 2 * pad, bounds.Height + 2 * pad), resolved.Ref, null,
+            resolved.Moved);
+    }
+
+    /// <summary>
+    /// The legend of the marks (roadmap M3.11), and the elements list only for detail full: the legend names every mark
+    /// with its ref and centre in a fraction of the list's tokens.
+    /// </summary>
+    private static AnnotatedScreenshotResult WithMarks(AnnotatedScreenshotResult metadata, CaptureElementDetail detail) =>
+        metadata with
+        {
+            Legend = ElementMarkLegend.Build(metadata),
+            Elements = detail == CaptureElementDetail.Full ? metadata.Elements : null
+        };
 
     /// <summary>
     /// Adds what the UI Automation walk left out to a successful capture: the walk's error and code when it failed
@@ -368,6 +573,7 @@ public class ScreenshotTools
             {
                 ElementsError = $"The UI elements could not be read, so the image has no overlays: {walk.Error ?? "unknown error"}",
                 ElementsErrorCode = code,
+                AccessibilityWarmup = walk.AccessibilityWarmup,
                 Truncated = true,
                 TruncationReason = walk.ErrorCode == UIElementErrorCode.OperationTimedOut
                     ? nameof(UIElementTruncationReason.Timeout)
@@ -375,6 +581,7 @@ public class ScreenshotTools
             };
         }
 
+        metadata = metadata with { AccessibilityWarmup = walk.AccessibilityWarmup };
         return walk.Truncated
             ? metadata with { Truncated = true, TruncationReason = walk.TruncationReason?.ToString() }
             : metadata;
@@ -479,13 +686,29 @@ public class ScreenshotTools
         second == null ? first : [.. first, .. second];
 
     /// <summary>
-    /// Why the target policy refuses capturing the window, or null. A window that cannot be read is left to
-    /// the capture, which reports InvalidHandle.
+    /// Why the target policy refuses capturing the window, or null. A handle that is no window is left to the capture,
+    /// which reports InvalidHandle.
     /// </summary>
-    private string? PolicyRefusal(nint handle) =>
-        _windowService.GetWindowInfo(handle) is { } window && _targetPolicy.Evaluate(window) is { Allowed: false } verdict
-            ? PolicyMessage(verdict)
-            : null;
+    private string? PolicyRefusal(nint handle)
+    {
+        var window = _windowService.GetWindowInfo(handle);
+        if (window == null && !_windowService.IsValidWindow(handle))
+        {
+            return null;
+        }
+
+        return CaptureVerdict(window) is { Allowed: false } verdict ? PolicyMessage(verdict) : null;
+    }
+
+    /// <summary>
+    /// The target policy's verdict on capturing a window. It fails closed as the UI Automation reads do
+    /// (<see cref="UiaTargets.ReadVerdict"/>): a window whose process cannot be named, or that the window service cannot read
+    /// at all (<paramref name="window"/> null), is refused while the policy denies anything.
+    /// </summary>
+    private TargetPolicyVerdict CaptureVerdict(WindowInfo? window) =>
+        window != null ? _targetPolicy.EvaluateFailClosed(window)
+        : _targetPolicy.DeniesAnything() ? TargetPolicyVerdict.Unreadable
+        : TargetPolicyVerdict.Allow;
 
     private static string PolicyMessage(TargetPolicyVerdict verdict) =>
         $"The window is refused by the server's target policy: {verdict.Reason}. Nothing was captured. The policy is set by " +

@@ -140,6 +140,7 @@ public class CaptureToolResultContractTests
         {
             ["handle"] = 12345,
             ["maxDimension"] = 800,
+            ["detail"] = "full",
         });
 
         // Assert
@@ -147,6 +148,8 @@ public class CaptureToolResultContractTests
         result.Content.Select(c => c.Type).Should().Equal("image", "text");
         var metadata = Metadata(result);
         metadata.GetProperty("width").GetInt32().Should().Be(800);
+        metadata.GetProperty("legend").GetString().Should().Be("[-] Button 'OK' #ok center=(70,48)",
+            "the button's middle, (-1560, 315), in the image scaled by half from (-1700, 220)");
         var element = metadata.GetProperty("elements").EnumerateArray().Should().ContainSingle().Subject;
         var imageBounds = element.GetProperty("imageBounds");
         imageBounds.GetProperty("x").GetInt32().Should().Be(50, "(-1600 - -1700) / 2");

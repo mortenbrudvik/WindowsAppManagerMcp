@@ -30,7 +30,15 @@ public static class UwpFrames
     /// The process of the CoreWindow child that <paramref name="frame"/> hosts while its app runs, or null
     /// when it has none in a process other than <paramref name="frameProcessId"/> (the frame host).
     /// </summary>
-    public static uint? FindHostedAppProcessId(INativeWindowWrapper native, nint frame, uint frameProcessId)
+    public static uint? FindHostedAppProcessId(INativeWindowWrapper native, nint frame, uint frameProcessId) =>
+        FindHostedCoreWindow(native, frame, frameProcessId)?.ProcessId;
+
+    /// <summary>
+    /// The CoreWindow child that <paramref name="frame"/> hosts while its app runs, with its process, or null when it has
+    /// none in a process other than <paramref name="frameProcessId"/> (the frame host). Its thread is the app's UI thread,
+    /// which serves the app's UI Automation provider.
+    /// </summary>
+    public static (nint Window, uint ProcessId)? FindHostedCoreWindow(INativeWindowWrapper native, nint frame, uint frameProcessId)
     {
         // Collect first, so no window is read inside the native enumeration callback
         var children = new List<nint>();
@@ -47,7 +55,7 @@ public static class UwpFrames
 
             var childProcessId = native.GetWindowThreadProcessId(child);
             if (childProcessId != 0 && childProcessId != frameProcessId)
-                return childProcessId;
+                return (child, childProcessId);
         }
 
         return null;

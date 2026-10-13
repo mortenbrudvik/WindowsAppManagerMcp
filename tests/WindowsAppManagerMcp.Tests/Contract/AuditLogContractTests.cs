@@ -54,7 +54,7 @@ public class AuditLogContractTests
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
             "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
-            "close_window", "close_windows_batch", "close_application", "kill_process",
+            "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");
     }
@@ -141,6 +141,136 @@ public class AuditLogContractTests
     }
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
+
+    [Fact]
+    public async Task ElementAction_RecordsTheRefActionAndElementsWindow_AndTheValuesLengthOnly()
+    {
+        // Act
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["ref"] = "w4120035e17", ["action"] = "set_value", ["value"] = "hunter2 is the password", ["mode"] = "type"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2");
+        var args = line.GetProperty("args");
+        args.GetProperty("valueLength").GetInt32().Should().Be(23);
+        args.GetProperty("ref").GetString().Should().Be("w4120035e17");
+        args.GetProperty("action").GetString().Should().Be("set_value");
+        args.GetProperty("mode").GetString().Should().Be("type");
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.NotepadHandle);
+        line.GetProperty("target").GetProperty("process").GetString().Should().Be("notepad", "the tool notes the element's window before it acts");
+        line.GetProperty("result").GetProperty("outcomeVerified").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("method").GetString().Should().BeEquivalentTo("value",
+            "an audit reader sees whether the call used a pattern or moved the pointer or typed");
+        line.GetProperty("result").GetProperty("status").GetString().Should().BeEquivalentTo("done");
+        line.GetRawText().Should().NotContain("window layout", "the values in before and after are never logged");
+    }
+
+    [Fact]
+    public async Task ElementAction_RecordsTheNameCriterionsLengthOnly_WhileALayoutsNameIsKept()
+    {
+        // Act - an element's name is UI content (a file, an email subject, a contact); a layout preset's name is the user's label
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["handle"] = TypicalDesktop.NotepadHandle, ["name"] = "meeting-notes.docx", ["action"] = "invoke"
+        });
+        var (_, layoutLines) = await CallAsync("apply_layout", new Dictionary<string, object?> { ["name"] = "layout-1" });
+
+        // Assert
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("meeting-notes", "an element's name can say what the user works on");
+        line.GetProperty("args").GetProperty("nameLength").GetInt32().Should().Be(18);
+        line.GetProperty("args").GetProperty("action").GetString().Should().Be("invoke");
+        layoutLines.Single().GetProperty("args").GetProperty("name").GetString().Should().Be("layout-1");
+    }
+
+    [Fact]
+    public async Task ElementAction_RecordsObserve_ButNotTheObservation()
+    {
+        // Act - roadmap M3.12: the observation after the action holds window titles and element names
+        var (_, lines) = await CallAsync("element_action", new Dictionary<string, object?>
+        {
+            ["ref"] = "w4120035e17", ["action"] = "invoke", ["observe"] = "state"
+        });
+
+        // Assert
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("observe").GetString().Should().Be("state");
+        line.GetRawText().Should().NotContain("Problems").And.NotContain("Google Chrome", "the observed elements and windows are never logged");
+    }
+
+    [Fact]
+    public async Task RespondToDialog_RecordsTheButton_AndWhetherTheDialogClosed()
+    {
+        var (_, lines) = await CallAsync("respond_to_dialog", EveryToolContractTests.ArgumentsFor("respond_to_dialog"), NoteTheDialogs);
+
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("button").GetString().Should().Be("no");
+        line.GetProperty("target").GetProperty("handle").GetInt64().Should().Be(TypicalDesktop.SavePromptAnswered.DialogHandle,
+            "the handle named Notepad, and the line names the dialog of it that was answered");
+        line.GetProperty("target").GetProperty("process").GetString().Should().Be("notepad");
+        line.GetProperty("result").GetProperty("dialogClosed").GetBoolean().Should().BeTrue();
+        line.GetRawText().Should().NotContain("save changes", "the dialog's text is never logged");
+    }
+
+    /// <summary>The save prompt and the Save As dialog of the typical desktop, as the dialog services note them before acting.</summary>
+    private static readonly WindowInfo SavePrompt =
+        TestDataFactory.CreateWindowInfo((int)TypicalDesktop.SavePromptAnswered.DialogHandle, "Notepad", "notepad", TypicalDesktop.Notepad.ProcessId);
+
+    private static readonly WindowInfo SaveAsDialog =
+        TestDataFactory.CreateWindowInfo(0x1A0C00, "Save As", "notepad", TypicalDesktop.Notepad.ProcessId);
+
+    /// <summary>The dialog services' mocks note the dialog they found, as the real services do (AuditScope).</summary>
+    private static void NoteTheDialogs(ContractServices services)
+    {
+        services.Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => AuditScope.NoteWindow(SavePrompt))
+            .ReturnsAsync(TypicalDesktop.SavePromptAnswered);
+        services.FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => AuditScope.NoteWindow(SaveAsDialog))
+            .ReturnsAsync((FileDialogRequest request, CancellationToken _) => TypicalDesktop.FileSaved(request));
+    }
+
+    public static TheoryData<string, string> DialogCallsWithoutAHandle() => new()
+    {
+        { "respond_to_dialog", """{ "window": { "processName": "notepad" }, "button": "no" }""" },
+        { "respond_to_dialog", """{ "button": "no" }""" },
+        { "file_dialog", $$"""{ "window": { "processName": "notepad" }, "path": {{JsonSerializer.Serialize(TypicalDesktop.SavePath)}}, "action": "save" }""" },
+        { "file_dialog", $$"""{ "path": {{JsonSerializer.Serialize(TypicalDesktop.SavePath)}}, "action": "save" }""" }
+    };
+
+    [Theory]
+    [MemberData(nameof(DialogCallsWithoutAHandle))]
+    public async Task ADialogAnswered_IsTheTarget_AlsoWhenTheCallNamedNoHandle(string tool, string json)
+    {
+        // Act - a selector, or the dialog in front: the arguments hold no handle, and the result names the dialog as dialogHandle
+        var arguments = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!.ToDictionary(a => a.Key, a => (object?)a.Value);
+        var (_, lines) = await CallAsync(tool, arguments, NoteTheDialogs);
+
+        // Assert
+        var target = lines.Single().GetProperty("target");
+        var dialog = tool == "file_dialog" ? SaveAsDialog : SavePrompt;
+        target.GetProperty("handle").GetInt64().Should().Be(dialog.Handle);
+        target.GetProperty("title").GetString().Should().Be(dialog.Title);
+        target.GetProperty("process").GetString().Should().Be("notepad");
+    }
+
+    [Fact]
+    public async Task FileDialog_RecordsThePathsLengthOnly_AndWhetherItCompleted()
+    {
+        var (_, lines) = await CallAsync("file_dialog", EveryToolContractTests.ArgumentsFor("file_dialog"));
+
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("meeting-notes", "a file name can say what the user works on");
+        var args = line.GetProperty("args");
+        args.GetProperty("pathLength").GetInt32().Should().Be(TypicalDesktop.SavePath.Length);
+        args.GetProperty("action").GetString().Should().Be("save");
+        args.GetProperty("overwrite").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("completed").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("promptHandled").GetBoolean().Should().BeTrue();
+    }
 
     [Fact]
     public async Task TypeText_RecordsTheTargetAndReceivingWindow_AndTheTextsLengthOnly()
@@ -237,15 +367,20 @@ public class AuditLogContractTests
     }
 
     [Fact]
-    public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted()
+    public async Task AnArgumentTheToolDoesNotDeclare_IsOnlyCounted_AndTheRefusalIsRecorded()
     {
         var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor("click")) { ["password=hunter2"] = 1 };
 
-        var (_, lines) = await CallAsync("click", arguments);
+        var (result, lines) = await CallAsync("click", arguments);
 
+        // An acting tool refuses it (M3 review), without repeating a name that is no parameter name; the line records the
+        // refusal, with the name left out
+        result.Content.OfType<TextContentBlock>().Single().Text.Should().NotContain("hunter2");
         var line = lines.Single();
         line.GetRawText().Should().NotContain("hunter2").And.NotContain("password");
         line.GetProperty("args").GetProperty("unknownArgumentsCount").GetInt32().Should().Be(1);
+        line.GetProperty("outcome").GetString().Should().Be(AuditOutcome.Error);
+        line.GetProperty("errorCode").GetString().Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
     }
 
     [Fact]
@@ -260,6 +395,80 @@ public class AuditLogContractTests
         line.GetProperty("args").GetProperty("executable").GetString().Should().Be("https://hooks.example.com");
         line.GetProperty("args").GetProperty("executableLength").GetInt32().Should().Be(webhook.Length);
         line.GetProperty("target").GetProperty("executable").GetString().Should().Be("https://hooks.example.com");
+    }
+
+    /// <summary>The placement service places every window at the left half and reports it in front (roadmap M3.13).</summary>
+    private static void PlacesAtTheLeftHalf(ContractServices services) =>
+        services.Placement.Setup(p => p.PlaceAsync(It.IsAny<IReadOnlyList<(nint, LaunchPlacementPlan)>>(), It.IsAny<CancellationToken>()))
+            .Returns<IReadOnlyList<(nint Handle, LaunchPlacementPlan Plan)>, CancellationToken>((placements, _) =>
+                Task.FromResult<IReadOnlyList<LaunchPlacementOutcome>>(placements.Select(p => new LaunchPlacementOutcome(p.Handle,
+                    TypicalDesktop.Notepad with { Handle = p.Handle, VisibleBounds = new WindowRect(0, 0, 960, 1040) },
+                    Focused: true, Reapplied: true)).ToList()));
+
+    [Fact]
+    public async Task ALaunchsPlacement_IsAudited_WithWhatWasAskedAndWhatItDid()
+    {
+        var (_, lines) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["reuseExisting"] = true,
+            ["placement"] = new Dictionary<string, object?> { ["snap"] = "Left-Half", ["monitorIndex"] = 0, ["focus"] = true }
+        }, PlacesAtTheLeftHalf);
+
+        var line = lines.Single();
+        line.GetProperty("args").GetProperty("reuseExisting").GetBoolean().Should().BeTrue();
+        line.GetProperty("result").GetProperty("launchStatus").GetString().Should().Be("windowObserved");
+        var placement = line.GetProperty("target").GetProperty("placement");
+        placement.GetProperty("snap").GetString().Should().Be("left_half", "the canonical name, never the text as sent");
+        placement.GetProperty("monitorIndex").GetInt32().Should().Be(0);
+        placement.GetProperty("focus").GetBoolean().Should().BeTrue();
+        placement.GetProperty("finalBounds").GetProperty("width").GetInt32().Should().Be(960);
+        placement.GetProperty("finalState").GetString().Should().Be("normal");
+        placement.GetProperty("focused").GetBoolean().Should().BeTrue();
+        placement.GetProperty("reapplied").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ABatchItemsPlacement_IsAuditedWithTheItem_AndItsLaunchStatus()
+    {
+        var (_, lines) = await CallAsync("launch_applications_batch", new Dictionary<string, object?>
+        {
+            ["applications"] = new object?[]
+            {
+                new Dictionary<string, object?> { ["executable"] = "notepad" },
+                new Dictionary<string, object?>
+                {
+                    ["executable"] = "code",
+                    ["placement"] = new Dictionary<string, object?>
+                    {
+                        ["bounds"] = new Dictionary<string, object?> { ["x"] = 0, ["y"] = 0, ["width"] = 960, ["height"] = 1040 }
+                    }
+                }
+            }
+        }, PlacesAtTheLeftHalf);
+
+        var items = lines.Single().GetProperty("items").EnumerateArray().ToList();
+        items.Should().HaveCount(2);
+        items[0].TryGetProperty("placement", out _).Should().BeFalse();
+        items[0].GetProperty("status").GetString().Should().Be("windowObserved");
+        items[1].GetProperty("placement").GetProperty("bounds").GetProperty("height").GetInt32().Should().Be(1040);
+        items[1].GetProperty("placement").GetProperty("reapplied").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ARefusedPlacement_KeepsNoTextItWasGiven()
+    {
+        var (result, lines) = await CallAsync("launch_application", new Dictionary<string, object?>
+        {
+            ["executable"] = "notepad",
+            ["placement"] = new Dictionary<string, object?> { ["state"] = "hunter2", ["snap"] = "left_half" }
+        });
+
+        result.IsError.Should().BeTrue();
+        var line = lines.Single();
+        line.GetRawText().Should().NotContain("hunter2");
+        line.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.InvalidState));
+        line.GetProperty("target").GetProperty("placement").GetProperty("snap").GetString().Should().Be("left_half");
     }
 
     [Fact]
@@ -323,7 +532,7 @@ public class AuditLogContractTests
         {
             begin.Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
                 new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
-            audit.Setup(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
+            audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>())).Throws(new IOException("end"));
         }
 
         await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(),
@@ -338,8 +547,39 @@ public class AuditLogContractTests
 
         // Assert
         result.IsError.Should().NotBe(true);
-        audit.Verify(a => a.End(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()),
+        audit.Verify(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()),
             beginThrows ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnAuditLogWhoseEndFaultsOrNeverFinishes_HoldsUpTheCall_AtMostTheCallDelay(bool neverFinishes)
+    {
+        // Arrange - an IAuditLog that breaks its contract: its wait faults, or never ends
+        using var services = new ContractServices(ContractMode.Typical);
+        var audit = new Mock<IAuditLog>();
+        audit.Setup(a => a.Begin(It.IsAny<string>(), It.IsAny<IEnumerable<KeyValuePair<string, JsonElement>>?>(),
+                It.IsAny<string?>(), It.IsAny<JsonElement?>()))
+            .Returns(new AuditCall("click", new Dictionary<string, JsonElement>(), null, DateTimeOffset.Now, 0,
+                new Dictionary<long, AuditTarget>(), new Dictionary<int, string?>()));
+        audit.Setup(a => a.EndAsync(It.IsAny<AuditCall>(), It.IsAny<CallToolResult?>(), It.IsAny<string>()))
+            .Returns(neverFinishes ? new TaskCompletionSource().Task : Task.FromException(new IOException("end")));
+
+        await using var server = await InProcessMcpServer.StartAsync([], builder => builder.AddWindowsAppManagerTools(),
+            configureServices: s =>
+            {
+                services.Register(s);
+                s.AddSingleton(audit.Object);
+            });
+
+        // Act
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var result = await server.CallToolAsync("click", EveryToolContractTests.ArgumentsFor("click"));
+
+        // Assert
+        result.IsError.Should().NotBe(true);
+        watch.Elapsed.Should().BeLessThan(AuditLog.MaxCallDelay + TimeSpan.FromSeconds(10), "the filter bounds the wait");
     }
 
     [Fact]

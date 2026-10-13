@@ -9,8 +9,14 @@ namespace WindowsAppManagerMcp.Services;
 /// <see cref="IUiaTree"/>, on an <see cref="IUiaWorker"/> thread with a hard deadline.
 /// </summary>
 /// <remarks>
-/// Elements are returned as snapshots. Once the element registry exists (M3.4), the results can
-/// also carry a ref that later calls can act on.
+/// Elements are returned as snapshots, with a ref (roadmap M3.4) that later calls can name them by: registered under the
+/// top-level window the result reports, so the registry can find the element again in it. A window that shows web content
+/// (Chromium, Electron, WebView2) is warmed up first (<see cref="IAccessibilityWarmup"/>, roadmap M3.3), within a third of
+/// the timeout: the foreground window for the focused element, the window at the point for the element at a point.
+/// Otherwise the first read of such a window finds only its frame, because its page's tree is built only once asked for.
+/// An element in a window of an app the user's target policy denies is not read (TargetDeniedByPolicy, see
+/// <see cref="UiaTargets.ReadVerdict"/>): the foreground window, or the window at the point, is checked before the warm-up and
+/// any read; the element's own window and process (the focus can be in a prompt of another app) before its details are read.
 /// </remarks>
 public class ElementInspectionService : IElementInspectionService
 {
@@ -28,19 +34,33 @@ public class ElementInspectionService : IElementInspectionService
     private readonly INativeHitTestWrapper _hitTest;
     private readonly INativeWindowWrapper _windows;
     private readonly IMonitorService _monitors;
+    private readonly IAccessibilityWarmup? _warmup;
+    private readonly IElementRegistry? _registry;
+    private readonly ITargetPolicy? _policy;
 
+    /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
+    /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
+    /// <param name="registry">Gives the element its ref (roadmap M3.4); without it the element has none.</param>
+    /// <param name="policy">The user's target policy, which refuses reads of a window of an app it denies. The server always
+    /// passes it; without it no window is refused.</param>
     public ElementInspectionService(
         IUiaTree tree,
         IUiaWorker worker,
         INativeHitTestWrapper hitTest,
         INativeWindowWrapper windows,
-        IMonitorService monitors)
+        IMonitorService monitors,
+        IAccessibilityWarmup? warmup = null,
+        IElementRegistry? registry = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
         _hitTest = hitTest;
         _windows = windows;
         _monitors = monitors;
+        _warmup = warmup;
+        _registry = registry;
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -53,35 +73,49 @@ public class ElementInspectionService : IElementInspectionService
 
         // Keyboard focus is in the foreground window, so a hung foreground application is the one
         // that can block this read
-        var targetProcessId = AppProcessOf(SafeRead(_windows.GetForegroundWindow));
+        var foreground = SafeRead(_windows.GetForegroundWindow);
+        if (UiaTargets.PolicyRefusal(_windows, _policy, foreground) is { } denied)
+        {
+            return Task.FromResult(Failure(denied, UIElementErrorCode.TargetDeniedByPolicy));
+        }
+
+        var targetProcessId = AppProcessOf(foreground);
 
         return ReadAsync(
             targetProcessId,
-            () =>
+            token =>
             {
                 if (!_tree.IsAvailable())
                 {
                     return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
                 }
 
+                var warmup = WarmUp(foreground, timeout, token);
                 var node = _tree.GetFocusedElement();
                 if (node == null)
                 {
-                    return Failure("No element has keyboard focus.", UIElementErrorCode.ElementNotFound);
+                    return Failure("No element has keyboard focus.", UIElementErrorCode.ElementNotFound)
+                        with { AccessibilityWarmup = warmup };
                 }
 
-                var (details, identity) = ReadDetails(node);
+                var identity = _tree.ReadIdentity(node);
                 var window = FindOwningWindow(node, identity);
                 var (processId, processName) = DescribeProcess(identity, window);
+                if (ElementRefusal(window, foreground, processName) is { } refused)
+                {
+                    return Failure(refused, UIElementErrorCode.TargetDeniedByPolicy) with { AccessibilityWarmup = warmup };
+                }
 
+                var (details, element) = ReadDetails(node, identity);
                 return new FocusedElementResult(
                     Success: true,
-                    Element: details,
+                    Element: details with { Ref = Register(window, element) },
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
                     ProcessName: processName,
-                    ElapsedMilliseconds: Elapsed(stopwatch));
+                    ElapsedMilliseconds: Elapsed(stopwatch),
+                    AccessibilityWarmup: warmup);
             },
             Failure,
             "The focused element",
@@ -115,42 +149,55 @@ public class ElementInspectionService : IElementInspectionService
         // for the window's application, so this runs before the read, and the application that the
         // window shows (for a UWP frame, the app it hosts) is the one that can block it.
         var hitWindow = SafeRead(() => _hitTest.GetRootWindow(_hitTest.WindowFromPoint(x, y)));
+        if (UiaTargets.PolicyRefusal(_windows, _policy, hitWindow) is { } denied)
+        {
+            return Task.FromResult(Failure(denied, UIElementErrorCode.TargetDeniedByPolicy));
+        }
 
         return ReadAsync(
             AppProcessOf(hitWindow),
-            () =>
+            token =>
             {
                 if (!_tree.IsAvailable())
                 {
                     return Failure("UI Automation is not available on this system", UIElementErrorCode.AutomationUnavailable);
                 }
 
+                // Before the hit test: a page whose tree is not built yet answers with its render widget's pane
+                var warmup = WarmUp(hitWindow, timeout, token);
                 var node = _tree.FromPoint(x, y);
                 if (node == null)
                 {
-                    return Failure($"There is no UI Automation element at ({x}, {y}).", UIElementErrorCode.ElementNotFound);
+                    return Failure($"There is no UI Automation element at ({x}, {y}).", UIElementErrorCode.ElementNotFound)
+                        with { AccessibilityWarmup = warmup };
                 }
-
-                var (details, identity) = ReadDetails(node);
-                var chain = ReadAncestors(node, ancestorCount);
 
                 // WindowFromPoint skips hidden windows and disabled child windows. It practically
                 // always hits a window (the desktop is under everything); the element's own window is
                 // only a fallback for when it hit none
+                var identity = _tree.ReadIdentity(node);
                 var window = hitWindow != nint.Zero ? hitWindow : FindOwningWindow(node, identity);
                 var (processId, processName) = DescribeProcess(identity, window);
+                if (ElementRefusal(window, hitWindow, processName) is { } refused)
+                {
+                    return Failure(refused, UIElementErrorCode.TargetDeniedByPolicy) with { AccessibilityWarmup = warmup };
+                }
+
+                var (details, element) = ReadDetails(node, identity);
+                var chain = ReadAncestors(node, ancestorCount);
 
                 return new ElementAtPointResult(
                     Success: true,
                     X: x,
                     Y: y,
-                    Element: details,
+                    Element: details with { Ref = Register(window, element) },
                     Ancestors: chain,
                     WindowHandle: window == nint.Zero ? null : window,
                     WindowTitle: WindowTitle(window),
                     ProcessId: processId,
                     ProcessName: processName,
-                    ElapsedMilliseconds: Elapsed(stopwatch));
+                    ElapsedMilliseconds: Elapsed(stopwatch),
+                    AccessibilityWarmup: warmup);
             },
             Failure,
             "The element at the point",
@@ -164,7 +211,7 @@ public class ElementInspectionService : IElementInspectionService
     /// </summary>
     private async Task<T> ReadAsync<T>(
         int targetProcessId,
-        Func<T> read,
+        Func<CancellationToken, T> read,
         Func<string, UIElementErrorCode, T> failure,
         string subject,
         TimeSpan timeout,
@@ -175,7 +222,7 @@ public class ElementInspectionService : IElementInspectionService
 
         try
         {
-            return await _worker.RunAsync(targetProcessId, _ => read(), deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
+            return await _worker.RunAsync(targetProcessId, read, deadline.Token, TimeSpan.Zero).ConfigureAwait(false);
         }
         catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
         {
@@ -208,6 +255,13 @@ public class ElementInspectionService : IElementInspectionService
     }
 
     /// <summary>
+    /// Warms up the web content of <paramref name="window"/> (roadmap M3.3) within a third of <paramref name="timeout"/>, so
+    /// the read keeps most of it; null when there is no window, nothing to warm up, or no warm-up service.
+    /// </summary>
+    private AccessibilityWarmupInfo? WarmUp(nint window, TimeSpan timeout, CancellationToken cancellationToken) =>
+        window == nint.Zero ? null : _warmup?.WarmUp(window, AccessibilityWarmup.BudgetFor(timeout), cancellationToken);
+
+    /// <summary>
     /// The process of the application that <paramref name="window"/> (a top-level window) shows, or 0
     /// when there is none or it cannot be read. For a UWP app that is the app's own process, not the
     /// ApplicationFrameHost that owns the frames of every UWP app: stuck reads are counted per process,
@@ -232,10 +286,57 @@ public class ElementInspectionService : IElementInspectionService
         }
     }
 
-    private (UIElementDetails Details, UiaNodeIdentity Identity) ReadDetails(IUiaNode node)
+    /// <summary>
+    /// The element's ref under <paramref name="window"/>, or null without a window or a registry, or when the element has
+    /// no runtime id. Makes no UI Automation call.
+    /// </summary>
+    private string? Register(nint window, UiaElement? element)
+    {
+        if (_registry == null || window == nint.Zero || element == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return _registry.Register(window, element, new ElementOrigin(_registry.NextGeneration()));
+        }
+        catch (Exception)
+        {
+            // The element is returned without a ref
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Why the element read is not returned: its window, unless that is <paramref name="checkedWindow"/> (checked before the
+    /// read), or its own process belongs to an app the user's target policy denies, or cannot be named while the policy denies
+    /// anything (as <see cref="UiaTargets.ReadVerdict"/> refuses a window). Null when it is allowed.
+    /// </summary>
+    private string? ElementRefusal(nint window, nint checkedWindow, string? processName)
+    {
+        if (_policy == null)
+        {
+            return null;
+        }
+
+        if (window != checkedWindow && UiaTargets.PolicyRefusal(_windows, _policy, window) is { } denied)
+        {
+            return denied;
+        }
+
+        return _policy.EvaluateFailClosed([processName]) is { Allowed: false } verdict
+            ? UiaTargets.PolicyRefusalMessage(window != nint.Zero ? window : checkedWindow, verdict)
+            : null;
+    }
+
+    /// <summary>
+    /// The element's details from its <paramref name="identity"/> (who provides it) and its other properties, and, for the
+    /// registry, the element with its runtime id (null when it has none, or the registry is not used).
+    /// </summary>
+    private (UIElementDetails Details, UiaElement? Element) ReadDetails(IUiaNode node, UiaNodeIdentity identity)
     {
         var properties = _tree.Read(node);
-        var identity = _tree.ReadIdentity(node);
         var interaction = _tree.ReadInteraction(node);
 
         // A password field's value is never read, not even to mask it
@@ -259,7 +360,31 @@ public class ElementInspectionService : IElementInspectionService
             Value: value,
             ValueTruncated: truncated);
 
-        return (details, identity);
+        var element = _registry == null
+            ? null
+            : new UiaElement(
+                node,
+                properties,
+                identity.ClassName,
+                interaction.IsKeyboardFocusable,
+                interaction.ActionPatterns.Aggregate(UiaPatterns.None, (all, name) =>
+                    Enum.TryParse<UiaPatterns>(name, out var pattern) ? all | pattern : all),
+                TryReadRuntimeId(node),
+                ControlTypeId: null);
+        return (details, element);
+    }
+
+    private IReadOnlyList<int>? TryReadRuntimeId(IUiaNode node)
+    {
+        try
+        {
+            return _tree.GetRuntimeId(node);
+        }
+        catch (Exception)
+        {
+            // Without a runtime id the element has no ref
+            return null;
+        }
     }
 
     private string? TryReadValue(IUiaNode node)
@@ -276,7 +401,7 @@ public class ElementInspectionService : IElementInspectionService
     }
 
     /// <summary>Cuts a value to <see cref="MaxValueLength"/>, never inside a surrogate pair.</summary>
-    private static (string? Value, bool Truncated) Truncate(string? value)
+    internal static (string? Value, bool Truncated) Truncate(string? value)
     {
         if (value == null || value.Length <= MaxValueLength)
         {
@@ -307,7 +432,8 @@ public class ElementInspectionService : IElementInspectionService
                     ControlType: properties.ControlType,
                     AutomationId: EmptyToNull(properties.AutomationId),
                     ClassName: EmptyToNull(identity.ClassName),
-                    Bounds: properties.Bounds.ToBounds()));
+                    Bounds: properties.Bounds.ToBounds(),
+                    FrameworkId: EmptyToNull(identity.FrameworkId)));
                 current = parent;
             }
         }

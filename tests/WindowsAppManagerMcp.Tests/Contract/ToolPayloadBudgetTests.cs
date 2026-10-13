@@ -38,11 +38,12 @@ public class ToolPayloadBudgetTests
     private static readonly IReadOnlyDictionary<string, int> TextTokenBudgets = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         // Window Discovery: 15 windows
-        ["find_windows"] = 1_500, // 989
-        ["get_all_windows"] = 1_500, // 989
-        ["get_foreground_window"] = 100, // 58
+        ["find_windows"] = 1_850, // 1,213: each window with visibleBounds
+        ["get_all_windows"] = 1_850, // 1,213
+        ["get_foreground_window"] = 110, // 72
         ["get_owned_windows"] = 150, // 76: one Save As dialog
-        ["get_window_info"] = 150, // 86: detail full, by a window selector (roadmap M2.4)
+        ["get_window_info"] = 150, // 100: detail full, by a window selector (roadmap M2.4)
+        ["wait_for_window"] = 150, // 95: the Save As dialog that appeared (roadmap M3.7)
 
         // Window Control
         ["move_window"] = 100, // 43: handle (roadmap M2.4), bounds, outerBounds, state, monitorIndex (roadmap M2.3)
@@ -59,7 +60,7 @@ public class ToolPayloadBudgetTests
         ["snap_windows_batch"] = 160, // 104
         ["set_windows_state_batch"] = 160, // 104
         ["close_windows_batch"] = 100, // 41: each window with its status
-        ["launch_applications_batch"] = 320, // 212 (with each window found)
+        ["launch_applications_batch"] = 370, // 242 (with each window found)
 
         // Monitor Info: 2 monitors
         ["get_monitors"] = 150, // 98
@@ -67,15 +68,24 @@ public class ToolPayloadBudgetTests
 
         // Screenshot: metadata only; the image is checked against ImageTokenBudget
         ["list_screens"] = 200, // 116
-        ["take_screenshot"] = 150, // 97
-        ["capture_region"] = 150, // 79
-        ["capture_window"] = 150, // 94
-        ["capture_with_elements"] = 9_500, // 6,026: the 120 elements, each with imageBounds and screenBounds
+        ["take_screenshot"] = 150, // 131
+        ["capture_region"] = 150, // 118
+        ["capture_window"] = 150, // 126
+        ["capture_with_elements"] = 2_150, // 1,410: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full)
 
         // UI Automation
-        ["get_ui_elements"] = 8_500, // 5,397: 120 elements at the default depth (roadmap M6 aims for at most 4,000)
+        ["get_desktop_state"] = 3_200, // 2,129: 15 window rows, the focus, 2 popups and 80 element lines with refs (roadmap M3.12)
+        ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
+        ["find_ui_elements"] = 250, // 170: two Save buttons with refs and click points (roadmap M3.4)
+        ["read_element_text"] = 1_200, // 802: the first page of a 3,000-character e-mail in the reading pane (roadmap M3.9)
+        ["read_table"] = 1_000, // 643: the first 50 of Task Manager's processes, 5 columns with headers (roadmap M3.9)
+        ["element_action"] = 150, // 99: a set_value with the state before and after (roadmap M3.6)
+        ["respond_to_dialog"] = 220, // 141: a save prompt's text and three buttons with refs, the one pressed (roadmap M3.5)
+        ["file_dialog"] = 100, // 49: completed, the path typed (roadmap M3.14)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
+        ["get_active_popups"] = 300, // 152: a context menu and a Save As dialog with refs (roadmap M3.5)
+        ["wait_for_element"] = 140, // 92: the Save button that became enabled, with its ref (roadmap M3.8)
 
         // Browser Reading
         ["get_browser_url"] = 100, // 56
@@ -97,12 +107,12 @@ public class ToolPayloadBudgetTests
         ["set_clipboard"] = 100, // 19
 
         // Input Control
-        ["get_control_status"] = 150, // 72
+        ["get_control_status"] = 150, // 65
         ["resume_input"] = 100, // 14
         ["release_all_input"] = 100, // 21
 
         // App Launch
-        ["launch_application"] = 140, // 89 (with the window it found)
+        ["launch_application"] = 160, // 103 (with the window it found)
         ["list_processes"] = 2_000, // 1,328: 40 processes
         ["kill_process"] = 100, // 28
         ["close_application"] = 100, // 49: one Notepad window
@@ -115,10 +125,33 @@ public class ToolPayloadBudgetTests
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors
-        ["get_server_info"] = 850, // 543
+        ["get_server_info"] = 850, // 634
     };
 
+    /// <summary>
+    /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
+    /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
+    /// measured size (51,364 tokens, 205,453 bytes for 64 tools, October 2026), so every addition to the surface is a decision. When a change
+    /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
+    /// trims descriptions, lower it.
+    /// </summary>
+    public const int ToolListTokenBudget = 51_400;
+
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
+
+    [Fact]
+    public async Task ToolList_StaysWithinItsBudget()
+    {
+        // Act - the tools as a client receives them, serialized as the SDK writes them
+        var tools = await ToolSurface.ListToolsAsync();
+        var bytes = Encoding.UTF8.GetByteCount(tools.ToJsonString(ModelContextProtocol.McpJsonUtilities.DefaultOptions));
+        var tokens = (bytes + BytesPerToken - 1) / BytesPerToken;
+
+        // Assert
+        tokens.Should().BeLessThanOrEqualTo(ToolListTokenBudget,
+            "tools/list is about {0} tokens ({1} bytes, {2} tools; budget {3}); if the surface grew on purpose, raise the budget",
+            tokens, bytes, tools.Count, ToolListTokenBudget);
+    }
 
     [Fact]
     public void EveryServedTool_HasATextBudget()

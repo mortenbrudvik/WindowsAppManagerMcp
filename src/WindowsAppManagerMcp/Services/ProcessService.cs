@@ -23,6 +23,7 @@ public class ProcessService : IProcessService
     private readonly ITargetPolicy? _targetPolicy;
     private readonly IHostGuard? _hostGuard;
     private readonly IWindowWaitService _windowWait;
+    private readonly ChromiumPrograms _chromiumPrograms;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -37,6 +38,8 @@ public class ProcessService : IProcessService
     /// Finds the window a launch opens (roadmap M2.6). The server always passes it; without it a wait reads the real
     /// desktop through a <see cref="NativeWindowWrapper"/> created here (eagerly, so that the E2E reference walk sees it).
     /// </param>
+    /// <param name="chromiumPrograms">Tells which programs forceAccessibility may add --force-renderer-accessibility to
+    /// (roadmap M3.3); default the real file system.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -45,7 +48,8 @@ public class ProcessService : IProcessService
         INativeProcessWrapper? processWrapper = null,
         ITargetPolicy? targetPolicy = null,
         IHostGuard? hostGuard = null,
-        IWindowWaitService? windowWait = null)
+        IWindowWaitService? windowWait = null,
+        ChromiumPrograms? chromiumPrograms = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -55,6 +59,7 @@ public class ProcessService : IProcessService
         _targetPolicy = targetPolicy;
         _hostGuard = hostGuard;
         _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
+        _chromiumPrograms = chromiumPrograms ?? new ChromiumPrograms();
     }
 
     /// <summary>
@@ -87,7 +92,7 @@ public class ProcessService : IProcessService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+        var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
         if (!plan.IsValid)
         {
             return Rejected(plan);
@@ -96,10 +101,22 @@ public class ProcessService : IProcessService
         // A call cancelled before the start starts nothing
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.ReuseExisting)
+        {
+            var reuse = FindOpenWindow(plan, request, taken: null, openBefore: null);
+            if (reuse.Result is { } alreadyOpen)
+            {
+                return WithForceAccessibility(alreadyOpen, plan);
+            }
+
+            plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
+        }
+
+        plan = plan with { RunningInstance = RunningInstanceOf(plan) };
         var launch = await StartAsync(plan, waitForWindow, cancellationToken).ConfigureAwait(false);
         if (launch.Outcome is { } ended)
         {
-            return ended;
+            return WithForceAccessibility(ended, plan);
         }
 
         using (launch.Process)
@@ -107,17 +124,269 @@ public class ProcessService : IProcessService
             // Cancelled while waiting for the window: the program was started and keeps running, and the call throws
             if (!waitForWindow)
             {
-                return StartedWithoutWait(launch);
+                return WithForceAccessibility(StartedWithoutWait(launch), plan);
             }
 
             var owner = OwnerOf(launch, request);
-            return await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
-                .ConfigureAwait(false);
+            return WithForceAccessibility(
+                await WaitForWindowAsync(launch, request, owner, owner.Matches, waitTimeoutMs, tryClaim: null, cancellationToken)
+                    .ConfigureAwait(false),
+                plan);
         }
+    }
+
+    /// <summary>What to do so that --force-renderer-accessibility takes effect, when an instance of the app runs.</summary>
+    private const string ForceAccessibilityAdvice =
+        "To apply it, no process of the app may be left, not only no window: Edge's Startup boost and Chrome's background " +
+        "apps keep one running without a window (list_processes with includeWindowless: true lists them; ask the user " +
+        "before ending one). Then launch it again.";
+
+    /// <summary>
+    /// Says whether forceAccessibility took effect (roadmap M3.3), when it was asked for and the request was valid: false
+    /// when nothing was started (reuseExisting found an open window) or the start failed. The flag only matters when the
+    /// app's main process starts with it: when the launch went to an instance that was already running (a handoff, a
+    /// reused window or a new tab, or a launcher that exited), that instance keeps the mode it started with, and the result
+    /// warns about it. A launch that did not wait cannot tell yet, so it warns when a process of the program was running
+    /// before the start (<see cref="LaunchPlan.RunningInstance"/>): the new process most likely hands off to it.
+    /// </summary>
+    private static LaunchResult WithForceAccessibility(LaunchResult result, LaunchPlan plan)
+    {
+        if (plan.ForceAccessibilityApplied is not { } applied)
+        {
+            return result;
+        }
+
+        if (!applied || !result.Success)
+        {
+            return result with { ForceAccessibilityApplied = false };
+        }
+
+        if (result.Status == LaunchStatus.AlreadyOpen)
+        {
+            return result with
+            {
+                ForceAccessibilityApplied = false,
+                Warning = CombineWarnings(result.Warning,
+                    "forceAccessibility was not applied: reuseExisting used an open window, so nothing was started.")
+            };
+        }
+
+        var handedOff = result.Status is LaunchStatus.PossibleHandoff or LaunchStatus.ReusedExistingWindow or LaunchStatus.OpenedInTab ||
+                        result.LauncherExited == true;
+        var note = handedOff
+            ? $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the launch went to an instance of the app that was " +
+              $"already running, which keeps the accessibility mode it started with. {ForceAccessibilityAdvice}"
+            : result.Status == LaunchStatus.Started && plan.RunningInstance is { } running
+                ? $"{ChromiumPrograms.ForceRendererAccessibility} was passed, but the app was already running (process {running}, " +
+                  "with or without a window), so the new process most likely hands its request to that instance and exits, and " +
+                  $"the instance keeps the accessibility mode it started with. {ForceAccessibilityAdvice}"
+                : null;
+        return result with
+        {
+            ForceAccessibilityApplied = true,
+            Warning = CombineWarnings(result.Warning, note)
+        };
+    }
+
+    /// <summary>
+    /// With forceAccessibility applied: a process of the program that is running before the start (its image path is the
+    /// program's), from one process snapshot, or null when none is or the list cannot be read. Only reads.
+    /// </summary>
+    private int? RunningInstanceOf(LaunchPlan plan)
+    {
+        if (plan.ForceAccessibilityApplied != true || plan.Target is not { } target || !Path.IsPathFullyQualified(target.FileName))
+            return null;
+
+        var imageName = Path.GetFileName(target.FileName);
+        foreach (var (processId, entry) in _processWrapper.GetProcessList() ?? new Dictionary<int, (int, string)>())
+        {
+            if (string.Equals(entry.ImageName, imageName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(_processWrapper.GetProcessImagePath(processId), target.FileName, StringComparison.OrdinalIgnoreCase))
+                return processId;
+        }
+
+        return null;
     }
 
     private static LaunchResult Rejected(LaunchPlan plan) =>
         new(false, ErrorMessage: plan.ErrorMessage, ErrorCode: plan.ErrorCode, Warning: plan.Warning);
+
+    /// <summary>
+    /// reuseExisting (roadmap M3.13): the open window to use instead of starting the program, as an
+    /// <see cref="LaunchStatus.AlreadyOpen"/> result, or, when there is none, a note for the launch's warning (null when the
+    /// server looked and no window of the app was open). A window counts when it is:
+    /// <list type="bullet">
+    /// <item>an application window the user can switch to (<see cref="IWindowService.GetApplicationWindows"/>: visible,
+    /// not cloaked, so on the current virtual desktop, unowned, not a tool or shell window, not the server's own), minimized
+    /// or not, that is not the agent's own host, not refused by the user's target policy, open before the batch started
+    /// anything (<paramref name="openBefore"/>, null for a single launch) and not already used by an earlier item of the
+    /// batch (<paramref name="taken"/>);</item>
+    /// <item>of the same app: its process has the started program's path or name, or the name of the same app it hands
+    /// off to (<see cref="LaunchWindowOwner.SameAppProcessNames"/>; never a terminal for a console program or a browser for
+    /// a web address), and, when expectWindow names a process, that process (part of the name, also the frame host's). A
+    /// launch whose app is not known (a document, a Store app, a web address) needs expectWindow.processName;</item>
+    /// <item>showing what the launch opens: its title contains expectWindow.titleContains when that is set; otherwise it
+    /// shows every file and folder the launch opens (<see cref="ReuseTitleNames"/>) as <see cref="LaunchTitles.Shows"/>
+    /// tells: as a whole name, so todo.txt is not shown by old-todo.txt or todo.txt.bak, and never after another path, so
+    /// C:\notes\todo.txt is not shown by "C:\other\todo.txt - Notepad++". Starting an app (shell:AppsFolder\&lt;AUMID&gt;, a
+    /// bare scheme such as ms-settings:) opens nothing; a launch that opens something whose name a title would not show (an
+    /// ms-settings: page, a mailto: address) is never reused, nor is a web address: a page sets its own title, so a host
+    /// name in it proves nothing.</item>
+    /// </list>
+    /// A window whose title shows the launched full paths goes before one that shows only their names; of several, the
+    /// front-most in z-order (the one used last) is used, and the warning says how many matched. A window matched by the
+    /// names alone, or by expectWindow.titleContains for a web address (a title the page sets), is used with a warning that
+    /// says so and tells the agent to check it before acting.
+    /// </summary>
+    private (LaunchResult? Result, string? Note) FindOpenWindow(
+        LaunchPlan plan, LaunchRequest request, IReadOnlySet<nint>? taken, IReadOnlySet<nint>? openBefore)
+    {
+        var target = plan.Target!;
+        var hint = request.ExpectWindow is { IsEmpty: false } expected ? expected : null;
+        var names = LaunchWindowOwner.SameAppProcessNames(target);
+        var imagePath = target.Kind == LaunchTargetKind.NativeExecutable && Path.IsPathFullyQualified(target.FileName) ? target.FileName : null;
+        var wantedProcess = string.IsNullOrWhiteSpace(hint?.ProcessName) ? null : StripExe(hint.ProcessName.Trim());
+        if (names.Count == 0 && imagePath == null && wantedProcess == null)
+        {
+            return (null, "reuseExisting: the server cannot tell which app opens this target, so it did not look for an open window " +
+                          "and started it. Pass expectWindow.processName to reuse a window of that app.");
+        }
+
+        var titleContains = string.IsNullOrWhiteSpace(hint?.TitleContains) ? null : hint.TitleContains.Trim();
+        var webAddress = WebAddressOf(target, request.Arguments);
+        IReadOnlyList<DocumentHint> titleNames = [];
+        if (titleContains == null)
+        {
+            if (webAddress != null)
+            {
+                return (null, "reuseExisting: the launch opens a web address, and a web page sets its own title, so a browser window " +
+                              "is never reused because its title shows the host; it was started. Pass expectWindow.titleContains to " +
+                              "name the window to reuse.");
+            }
+
+            if (ReuseTitleNames(target, request.Arguments, plan.StartInfo!.WorkingDirectory) is not { } shownNames)
+            {
+                return (null, "reuseExisting: the launch opens something whose name a window title would not show, so no open window " +
+                              "was reused and it was started. Pass expectWindow.titleContains to name the window to reuse.");
+            }
+
+            titleNames = shownNames;
+        }
+
+        var nameSet = new HashSet<string>(names.Select(StripExe), StringComparer.OrdinalIgnoreCase);
+        var appWindows = _windowService.GetApplicationWindows()
+            .Where(w => !w.IsAgentHost && taken?.Contains(w.Handle) != true && openBefore?.Contains(w.Handle) != false)
+            .Where(w => (names.Count == 0 && imagePath == null) || nameSet.Contains(StripExe(w.ProcessName)) ||
+                        (imagePath != null && string.Equals(_processWrapper.GetProcessImagePath(w.ProcessId), imagePath, StringComparison.OrdinalIgnoreCase)))
+            .Where(w => wantedProcess == null || w.ProcessName.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) ||
+                        w.HostProcessName?.Contains(wantedProcess, StringComparison.OrdinalIgnoreCase) == true)
+            .Where(w => _windowService.EvaluateTargetPolicy(w.Handle) is not { Allowed: false })
+            .ToList();
+
+        // Each window that shows what the launch opens, with the names its title shows without their paths
+        var matches = new List<(WindowInfo Window, List<DocumentHint> NameOnly)>();
+        foreach (var w in appWindows)
+        {
+            if (titleContains != null)
+            {
+                if (w.Title.Contains(titleContains, StringComparison.OrdinalIgnoreCase))
+                    matches.Add((w, []));
+                continue;
+            }
+
+            var shows = titleNames.Select(name => (Name: name, Shows: LaunchTitles.Shows(w.Title, name))).ToList();
+            if (shows.All(s => s.Shows is TitleShows.FullPath or TitleShows.NameOnly))
+                matches.Add((w, shows.Where(s => s.Shows == TitleShows.NameOnly).Select(s => s.Name).ToList()));
+        }
+
+        if (matches.Count == 0)
+        {
+            var wanted = titleContains != null ? $"'{titleContains}'" : string.Join(" and ", titleNames.Select(n => $"'{n.Name}'"));
+            return (null, appWindows.Count == 0 ? null :
+                $"reuseExisting: {appWindows.Count} open window(s) of the app were found, but no title shows {wanted}, so none was " +
+                "reused and it was started.");
+        }
+
+        // A window that shows the launched paths is that file or folder; one that shows only the names may be another
+        var best = matches.Any(m => m.NameOnly.Count == 0) ? matches.Where(m => m.NameOnly.Count == 0).ToList() : matches;
+        var (window, nameOnly) = best[0];
+        var check = nameOnly.Count > 0
+            ? $"reuseExisting: only the name was matched: the title '{window.Title}' shows " +
+              $"{string.Join(" and ", nameOnly.Select(n => $"'{n.Name}'"))} but not the path, so the window may show another file " +
+              $"or folder of the same name. Check that it shows {string.Join(" and ", nameOnly.Select(n => n.FullPath ?? n.Name))} " +
+              "before acting on it."
+            : webAddress != null
+                ? $"reuseExisting: the window '{window.Title}' was matched by expectWindow.titleContains against a title the page " +
+                  $"controls: check that it shows {webAddress} before acting on it."
+                : null;
+        return (new LaunchResult(
+            Success: true,
+            WindowHandle: window.Handle,
+            Warning: CombineWarnings(CombineWarnings(plan.Warning, check), best.Count == 1 ? null :
+                $"reuseExisting: {best.Count} open windows matched; the front-most one was used. Nothing was started."),
+            Status: LaunchStatus.AlreadyOpen,
+            Window: window), null);
+    }
+
+    /// <summary>
+    /// The files and folders an open window's title must show for reuseExisting to count it as showing what the launch
+    /// opens: those (as <see cref="DocumentHints"/> takes them) of the arguments that are not options and of a document
+    /// launched directly, with their full paths (a relative path taken in <paramref name="workingDirectory"/>). Empty when
+    /// the launch opens nothing: no such argument, and a target that only starts an app (shell:AppsFolder\&lt;AUMID&gt;, or
+    /// a scheme alone such as ms-settings:). Null when it opens something no title can be trusted to show: a URI
+    /// (ms-settings:display, mailto:...), a web address (a page sets its own title), or arguments none of which names a
+    /// file or folder.
+    /// </summary>
+    public static IReadOnlyList<DocumentHint>? ReuseTitleNames(
+        ResolvedLaunchTarget target, IEnumerable<string>? arguments, string? workingDirectory = null)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
+        if (target.Kind == LaunchTargetKind.Other && !StartsAppOnly(target.FileName))
+        {
+            if (IsUri(target.FileName, out var scheme) && !IsWebScheme(scheme))
+                return null;
+
+            values.Add(target.FileName);
+        }
+
+        if (values.Count == 0)
+            return [];
+
+        if (values.Any(IsWebAddress))
+            return null;
+
+        var hints = FileHints(values, workingDirectory);
+        return hints.Count == 0 ? null : hints;
+    }
+
+    /// <summary>The first web address (http or https) the launch opens, as an argument or launched directly; null when none.</summary>
+    private static string? WebAddressOf(ResolvedLaunchTarget target, IEnumerable<string>? arguments) =>
+        (arguments ?? []).Append(target.Kind == LaunchTargetKind.Other ? target.FileName : string.Empty).FirstOrDefault(IsWebAddress);
+
+    private static bool IsWebAddress(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    /// <summary>A target that starts an app and opens nothing in it: shell:AppsFolder\&lt;AUMID&gt;, or a scheme alone (ms-settings:).</summary>
+    private static bool StartsAppOnly(string fileName) =>
+        fileName.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase) ||
+        (IsUri(fileName, out var scheme) && !IsWebScheme(scheme) && fileName.AsSpan(scheme.Length + 1).TrimStart('/').IsWhiteSpace());
+
+    /// <summary>A URI: a scheme of two or more characters (not a drive letter) before a colon, other than file:.</summary>
+    private static bool IsUri(string value, out string scheme)
+    {
+        var colon = value.IndexOf(':');
+        scheme = colon > 1 ? value[..colon] : string.Empty;
+        return colon > 1 && !scheme.Equals("file", StringComparison.OrdinalIgnoreCase) &&
+               scheme.All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.');
+    }
+
+    private static bool IsWebScheme(string scheme) =>
+        scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) || scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    private static string StripExe(string name) =>
+        name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
 
     /// <summary>
     /// A launch whose start was requested: the started process (null when Windows started none), the windows before the
@@ -224,7 +493,8 @@ public class ProcessService : IProcessService
         var options = new WindowWaitOptions
         {
             TimeoutMs = waitTimeoutMs,
-            DocumentHints = DocumentHints(target, request.Arguments),
+            DocumentHints = DocumentHints(target, request.Arguments, launch.Plan.StartInfo!.WorkingDirectory),
+            TitleContains = string.IsNullOrWhiteSpace(request.ExpectWindow?.TitleContains) ? null : request.ExpectWindow.TitleContains.Trim(),
             TryClaim = tryClaim
         };
 
@@ -269,18 +539,59 @@ public class ProcessService : IProcessService
     /// A batch launch's owner check: <paramref name="owner"/>'s match, except for a window whose process another launch of
     /// the batch started (or a child of it) and this one did not. Two launches of the same program both match each
     /// other's windows by name and path; the started process decides between them. Such a window is this launch's after
-    /// all once that other launch has its window and this launch's own process is gone (<paramref name="handedOff"/>): a
-    /// single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
+    /// all once that other launch has its window and this launch's launcher really handed off (<paramref name="handoff"/>):
+    /// a single-instance app whose launcher handed the request to the instance an earlier item started (two Code or
     /// Terminal launches) opens its window in that instance. The shared claim still gives each window to one launch.
     /// </summary>
     private static Func<WindowCandidate, bool> BatchOwner(
-        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, Func<bool> handedOff) =>
-        window => owner.Matches(window) &&
-                  (owner.StartedProcess(window.ProcessId) ||
-                   !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff())));
+        LaunchWindowOwner owner, IReadOnlyList<(LaunchWindowOwner Owner, Func<bool> HasWindow)> others, LauncherHandoff handoff) =>
+        window =>
+        {
+            if (!owner.Matches(window))
+                return false;
 
-    /// <summary>True when the launch started no process, or the process it started has exited.</summary>
-    private static bool LauncherGone(StartedLaunch launch) => launch.Process == null || HasExitedSafe(launch.Process);
+            if (owner.StartedProcess(window.ProcessId))
+                return true;
+
+            // Read for every candidate, so the handoff sees which windows were there while the launcher still ran
+            var handedOff = handoff.HandedOff(window.Handle);
+            return !others.Any(other => other.Owner.StartedProcess(window.ProcessId) && !(other.HasWindow() && handedOff));
+        };
+
+    /// <summary>
+    /// Whether a batch launch's launcher handed its request to a running instance, so that a window of that instance can
+    /// be the launch's (M2 follow-up F3). A launch that started no process has no launcher to judge (Windows handed it
+    /// over). Otherwise the launcher must have exited: with exit code 0, which a single-instance launcher returns once it
+    /// handed off; a non-zero code means it failed, and nothing it did opens a window. When the code cannot be read, only
+    /// a window that was not there while the launcher still ran counts.
+    /// </summary>
+    private sealed class LauncherHandoff(IProcessHandle? launcher)
+    {
+        private readonly HashSet<nint> _seenWhileRunning = [];
+
+        /// <summary>True when the launcher handed off and <paramref name="window"/> can be what it handed off.</summary>
+        public bool HandedOff(nint window)
+        {
+            if (launcher == null)
+                return true;
+
+            lock (_seenWhileRunning)
+            {
+                if (!HasExitedSafe(launcher))
+                {
+                    _seenWhileRunning.Add(window);
+                    return false;
+                }
+
+                return launcher.ExitCode switch
+                {
+                    0 => true,
+                    null => !_seenWhileRunning.Contains(window),
+                    _ => false
+                };
+            }
+        }
+    }
 
     /// <summary>The visible main window of the started process, or null (it has none, or it exited).</summary>
     private WindowInfo? MainWindowOf(IProcessHandle process)
@@ -314,40 +625,71 @@ public class ProcessService : IProcessService
     };
 
     /// <summary>
-    /// The texts that show a launched document or URL in an existing window's title: the file or folder names among the
-    /// arguments (and a document launched directly), and the host names of web addresses. Options (-x, --x) are skipped.
+    /// The files and folders that show a launched document in an existing window's title: those among the arguments (and
+    /// a document launched directly), with their full paths (a relative path taken in <paramref name="workingDirectory"/>,
+    /// where the app takes it). Options (-x, --x) are skipped, and so are web addresses: a web page sets its own title, so
+    /// a host name in it is no sign of the launch.
     /// </summary>
-    public static IReadOnlyList<string> DocumentHints(ResolvedLaunchTarget target, IEnumerable<string>? arguments)
+    public static IReadOnlyList<DocumentHint> DocumentHints(
+        ResolvedLaunchTarget target, IEnumerable<string>? arguments, string? workingDirectory = null)
     {
         var values = (arguments ?? []).Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith('-')).ToList();
         if (target.Kind == LaunchTargetKind.Other)
             values.Add(target.FileName);
 
-        var hints = new List<string>();
+        return FileHints(values, workingDirectory);
+    }
+
+    /// <summary>
+    /// The file or folder of each path among <paramref name="values"/> that is not a web address: its name, of 3
+    /// characters or more and listed once, and its full path when it can be told.
+    /// </summary>
+    private static List<DocumentHint> FileHints(IEnumerable<string> values, string? workingDirectory)
+    {
+        var hints = new List<DocumentHint>();
         foreach (var value in values)
         {
-            string? hint = null;
-            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            if (IsWebAddress(value) || (value.IndexOfAny(['\\', '/']) < 0 && !Path.HasExtension(value)))
+                continue;
+
+            string name;
+            try
             {
-                hint = uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? uri.Host[4..] : uri.Host;
+                name = Path.GetFileName(value.TrimEnd('\\', '/'));
             }
-            else if (value.IndexOfAny(['\\', '/']) >= 0 || Path.HasExtension(value))
+            catch (ArgumentException)
             {
-                try
-                {
-                    hint = Path.GetFileName(value.TrimEnd('\\', '/'));
-                }
-                catch (ArgumentException)
-                {
-                    hint = null;
-                }
+                continue;
             }
 
-            if (hint is { Length: >= 3 } && !hints.Contains(hint, StringComparer.OrdinalIgnoreCase))
-                hints.Add(hint);
+            if (name.Length >= 3 && !hints.Any(h => h.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                hints.Add(new DocumentHint(name, FullPathOf(value, workingDirectory)));
         }
 
         return hints;
+    }
+
+    /// <summary>
+    /// The full path of a file or folder argument, without a trailing separator: a file: URI's local path, a fully
+    /// qualified path, or a relative one in <paramref name="workingDirectory"/>; null when it cannot be told. Only the text
+    /// is read; the file system is not.
+    /// </summary>
+    private static string? FullPathOf(string value, string? workingDirectory)
+    {
+        try
+        {
+            var path = value.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile
+                ? uri.LocalPath
+                : value;
+            var full = Path.IsPathFullyQualified(path) ? Path.GetFullPath(path)
+                : !string.IsNullOrEmpty(workingDirectory) && Path.IsPathFullyQualified(workingDirectory) ? Path.GetFullPath(path, workingDirectory)
+                : null;
+            return full == null ? null : Path.TrimEndingDirectorySeparator(full);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -361,9 +703,13 @@ public class ProcessService : IProcessService
     /// <item>When the target is a batch file (ShellExecute runs it through cmd.exe) or cannot be verified to
     /// be a native executable, arguments containing cmd.exe metacharacters are rejected, because cmd.exe
     /// ignores \" escaping and expands %VAR% even inside quotes.</item>
+    /// <item><paramref name="forceAccessibility"/> (roadmap M3.3) puts --force-renderer-accessibility in front of the
+    /// arguments, only for a program <see cref="ChromiumPrograms"/> recognizes (a Chromium browser, an Electron or a CEF
+    /// app, started by its .exe) and only once; for any other target nothing is added and the plan's warning says why. In
+    /// front, because Chromium reads no switch after a "--" argument.</item>
     /// </list>
     /// </remarks>
-    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null)
+    public LaunchPlan PlanLaunch(string executable, string[]? arguments = null, string? workingDirectory = null, bool forceAccessibility = false)
     {
         // Validate executable path
         var executableValidation = _validationService.ValidateExecutable(executable);
@@ -438,6 +784,28 @@ public class ProcessService : IProcessService
             }
         }
 
+        bool? forceAccessibilityApplied = null;
+        if (forceAccessibility)
+        {
+            var whyNot = isNativeExecutable
+                ? _chromiumPrograms.WhyNot(target.FileName)
+                : target.Kind == LaunchTargetKind.BatchFile
+                    ? $"it resolves to the batch file '{target.FileName}'"
+                    : "it is not a program's .exe (a URI, document, shortcut or Store app)";
+            forceAccessibilityApplied = whyNot == null;
+            if (whyNot != null)
+            {
+                warning = CombineWarnings(warning,
+                    $"forceAccessibility was not applied to '{executable}': {whyNot}. {ChromiumPrograms.ForceRendererAccessibility} " +
+                    "is added only to a Chromium browser, an Electron or a CEF app started by its .exe (for VS Code, Code.exe, " +
+                    "not code.cmd).");
+            }
+            else if (arguments?.Any(ChromiumPrograms.IsForceAccessibilityArgument) != true)
+            {
+                arguments = [ChromiumPrograms.ForceRendererAccessibility, .. arguments ?? []];
+            }
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = target.FileName,
@@ -450,7 +818,7 @@ public class ProcessService : IProcessService
             startInfo.Arguments = CommandLineBuilder.JoinArguments(arguments, quoteCmdDelimiters: !isNativeExecutable);
         }
 
-        return new LaunchPlan(startInfo, target.Kind, warning, Target: target);
+        return new LaunchPlan(startInfo, target.Kind, warning, Target: target, ForceAccessibilityApplied: forceAccessibilityApplied);
     }
 
     /// <summary>
@@ -666,7 +1034,13 @@ public class ProcessService : IProcessService
         ArgumentNullException.ThrowIfNull(applications);
 
         var results = new LaunchResult?[applications.Count];
+        var plans = new LaunchPlan?[applications.Count];
         var waiting = new List<(int Index, StartedLaunch Launch)>();
+        var reused = new HashSet<nint>();
+        // reuseExisting reuses only windows that were open before the batch started anything, not one an earlier item started
+        var openBefore = applications.Any(a => a.ReuseExisting)
+            ? _windowService.GetApplicationWindows().Select(w => w.Handle).ToHashSet()
+            : null;
         var finished = 0;
         var reportLock = new object();
 
@@ -690,7 +1064,8 @@ public class ProcessService : IProcessService
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var request = applications[i];
-                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory);
+                var plan = PlanLaunch(request.Executable, request.Arguments, request.WorkingDirectory, request.ForceAccessibility);
+                plans[i] = plan;
                 if (!plan.IsValid)
                 {
                     results[i] = Rejected(plan);
@@ -698,6 +1073,25 @@ public class ProcessService : IProcessService
                     continue;
                 }
 
+                // reuseExisting: an open window of the app, each used by one item only
+                if (request.ReuseExisting)
+                {
+                    var reuse = FindOpenWindow(plan, request, reused, openBefore);
+                    if (reuse.Result is { } alreadyOpen)
+                    {
+                        reused.Add(alreadyOpen.WindowHandle!.Value);
+                        results[i] = alreadyOpen;
+                        Report(i);
+                        continue;
+                    }
+
+                    plan = plan with { Warning = CombineWarnings(plan.Warning, reuse.Note) };
+                    plans[i] = plan;
+                }
+
+                // Read right before this item's start, so an earlier item's process counts as running
+                plan = plan with { RunningInstance = RunningInstanceOf(plan) };
+                plans[i] = plan;
                 var launch = await StartAsync(plan, waitForWindows, cancellationToken).ConfigureAwait(false);
                 if (launch.Outcome is { } ended)
                 {
@@ -751,7 +1145,7 @@ public class ProcessService : IProcessService
                 var others = owners.Select((other, index) => (Owner: other, HasWindow: (Func<bool>)(() => HasWindow(index))))
                     .Where((_, index) => index != position).ToList();
                 results[item.Index] = await WaitForWindowAsync(
-                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, () => LauncherGone(item.Launch)), waitTimeoutMs,
+                    item.Launch, applications[item.Index], owner, BatchOwner(owner, others, new LauncherHandoff(item.Launch.Process)), waitTimeoutMs,
                     handle => Claim(position, handle), cancellationToken).ConfigureAwait(false);
                 Report(item.Index);
             })).ConfigureAwait(false);
@@ -764,7 +1158,7 @@ public class ProcessService : IProcessService
             }
         }
 
-        return results!;
+        return results.Select((result, i) => plans[i] is { } plan ? WithForceAccessibility(result!, plan) : result!).ToList();
     }
 
     private static string DescribeLaunch(LaunchResult result) => !result.Success
@@ -778,6 +1172,7 @@ public class ProcessService : IProcessService
             LaunchStatus.ExitedWithoutWindow => "started, but it exited without a window",
             LaunchStatus.TimedOut => "started, no window appeared in time",
             LaunchStatus.AwaitingUserConsent => "is waiting for the user to answer a prompt (most likely UAC)",
+            LaunchStatus.AlreadyOpen => "was already open, nothing was started",
             _ => "started"
         };
 

@@ -24,7 +24,9 @@ namespace WindowsAppManagerMcp.Infrastructure;
 public static class AuditLogToolFilter
 {
     /// <summary>
-    /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases), closes a
+    /// The audited tools: every tool that injects input (keys, clicks, pointer moves, scrolling, key releases) or acts on a UI
+    /// element through a UI Automation pattern (element_action, with its value's length only; respond_to_dialog with its
+    /// button; file_dialog with its path's length only), closes a
     /// window, stops a process, starts a program, changes the windows or presets of a layout, or replaces the clipboard;
     /// and get_clipboard, the one read that can return the user's own clipboard (after their yes, or with
     /// WAM_ALLOW_USER_CLIPBOARD), recorded with its format, origin and length, never its content. Other read-only tools are
@@ -34,8 +36,10 @@ public static class AuditLogToolFilter
     /// </summary>
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        // Input
-        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
+        // Input, and actions on UI elements through UI Automation patterns (roadmap M3.6)
+        "click", "right_click", "double_click", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input", "element_action",
+        // Dialogs answered and file dialogs completed through element_action (roadmap M3.5, M3.14)
+        "respond_to_dialog", "file_dialog",
         // Close and kill
         "close_window", "close_windows_batch", "close_application", "kill_process",
         // Launch
@@ -81,22 +85,22 @@ public static class AuditLogToolFilter
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                End(audit!, call, null, AuditOutcome.Cancelled);
+                await EndAsync(audit!, call, null, AuditOutcome.Cancelled).ConfigureAwait(false);
                 throw;
             }
             catch (McpProtocolException)
             {
-                End(audit!, call, null, AuditOutcome.ProtocolError);
+                await EndAsync(audit!, call, null, AuditOutcome.ProtocolError).ConfigureAwait(false);
                 throw;
             }
             catch (Exception)
             {
                 // The error filter inside turns every other exception into an error result; recorded all the same
-                End(audit!, call, null, AuditOutcome.Error);
+                await EndAsync(audit!, call, null, AuditOutcome.Error).ConfigureAwait(false);
                 throw;
             }
 
-            End(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok);
+            await EndAsync(audit!, call, result, result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok).ConfigureAwait(false);
             return result;
         };
 
@@ -114,11 +118,15 @@ public static class AuditLogToolFilter
         }
     }
 
-    private static void End(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
+    /// <summary>
+    /// Finishes the record. The log bounds its own wait; this also bounds a log that breaks its contract, so that a call
+    /// waits for its line at most <see cref="Services.AuditLog.MaxCallDelay"/>, without a thread.
+    /// </summary>
+    private static async Task EndAsync(IAuditLog audit, AuditCall call, CallToolResult? result, string outcome)
     {
         try
         {
-            audit.End(call, result, outcome);
+            await audit.EndAsync(call, result, outcome).WaitAsync(Services.AuditLog.MaxCallDelay).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -127,7 +135,7 @@ public static class AuditLogToolFilter
     }
 
     /// <summary>The input schema the server declares for <paramref name="tool"/>, or null when the filter cannot see it.</summary>
-    private static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
+    internal static JsonElement? InputSchemaOf(RequestContext<CallToolRequestParams> request, string tool) =>
         request.Server?.ServerOptions?.ToolCollection is { } tools && tools.TryGetPrimitive(tool, out var served)
             ? served.ProtocolTool.InputSchema
             : null;

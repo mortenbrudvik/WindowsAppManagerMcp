@@ -64,6 +64,7 @@ public static class FixtureContract
     {
         // Main window
         public const string EditBox = "editBox";
+        public const string PasswordBox = "passwordBox";
         public const string CheckBox = "checkBox";
         public const string ComboBox = "comboBox";
         public const string OpenModalButton = "openModalButton";

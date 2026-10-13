@@ -424,4 +424,42 @@ public class ModelTests
     }
 
     #endregion
+
+    #region UI element error codes
+
+    [Fact]
+    public void TheUIElementErrorCodes_KeepTheirNumbers_AndElementActionsShareThem()
+    {
+        // Shipped in 1.14.0: never renumbered
+        ((int)UIElementErrorCode.ElementNotFound).Should().Be(8);
+        ((int)UIElementErrorCode.CoordinatesOutOfBounds).Should().Be(9);
+
+        // Roadmap M3: one code per name across read_table and element_action (PatternNotSupported was M3.9's first), and
+        // element_action's own codes after it
+        ((int)UIElementErrorCode.PatternNotSupported).Should().Be(13);
+        ((int)UIElementErrorCode.ElementNotEnabled).Should().Be(14);
+        ((int)UIElementErrorCode.ElementOffscreen).Should().Be(15);
+        ((int)UIElementErrorCode.ElementReadOnly).Should().Be(16);
+        ((int)UIElementErrorCode.FocusNotOnElement).Should().Be(17);
+        ((int)UIElementErrorCode.ActionFailed).Should().Be(18);
+        ((int)UIElementErrorCode.ActionTimedOut).Should().Be(19);
+        ((int)UIElementErrorCode.ActionsPending).Should().Be(20);
+
+        // respond_to_dialog and file_dialog (roadmap M3.5, M3.14)
+        ((int)UIElementErrorCode.DialogNotFound).Should().Be(21);
+        ((int)UIElementErrorCode.DialogNotCompleted).Should().Be(22);
+        ((int)UIElementErrorCode.FileExists).Should().Be(23);
+
+        // The read tools' refusals of a window, under the input guard's names
+        ((int)UIElementErrorCode.TargetDeniedByPolicy).Should().Be(24);
+        ((int)UIElementErrorCode.TargetIsAgentHost).Should().Be(25);
+
+        Enum.GetValues<UIElementErrorCode>().Select(code => (int)code).Should().OnlyHaveUniqueItems();
+        typeof(UIElementErrorCode).Assembly.GetTypes().Where(t => t.IsEnum && t.Name.EndsWith("ErrorCode", StringComparison.Ordinal))
+            .Where(t => t != typeof(UIElementErrorCode))
+            .Should().NotContain(t => Enum.GetNames(t).Contains(nameof(UIElementErrorCode.PatternNotSupported)),
+                "PatternNotSupported is one code, in UIElementErrorCode");
+    }
+
+    #endregion
 }

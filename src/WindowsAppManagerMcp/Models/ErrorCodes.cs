@@ -61,7 +61,10 @@ public enum WindowErrorCode
     /// </summary>
     AccessDenied = 23,
 
-    /// <summary>A batch above the confirmation threshold was sent without confirm=true. Nothing was done.</summary>
+    /// <summary>
+    /// A batch above the confirmation threshold, or force on a protected window (roadmap M2.F1), was sent without confirm=true
+    /// by a client that cannot ask the user. Nothing was done.
+    /// </summary>
     ConfirmationRequired = 24,
 
     /// <summary>
@@ -132,7 +135,14 @@ public enum WindowErrorCode
     /// More than one window matches the call's window selector, and it has no index. Nothing was done; the error lists up
     /// to 5 candidates (handle, title, process and class) so the caller can name one exactly.
     /// </summary>
-    AmbiguousWindow = 36
+    AmbiguousWindow = 36,
+
+    /// <summary>
+    /// wait_for_window (roadmap M3.7): the condition was not met within timeoutMs. The result still says what was last
+    /// seen (satisfied false, timedOut true, the window as last seen). wait_for_element (roadmap M3.8) reports it too, with
+    /// the element as last seen and lastObservedState.
+    /// </summary>
+    WaitTimedOut = 37
 }
 
 /// <summary>
@@ -413,7 +423,14 @@ public enum ScreenshotErrorCode
     RegionOffScreen = 15,
 
     /// <summary>The pixels were captured, but the image could not be built, scaled or encoded (for example out of memory).</summary>
-    EncodeFailed = 16
+    EncodeFailed = 16,
+
+    /// <summary>
+    /// capture_window with a ref (roadmap M3.11): the element is offscreen, has no bounds, or lies outside the captured
+    /// window (its client area without the frame), so there is nothing of it to crop to. The same name as element_action's
+    /// UIElementErrorCode.ElementOffscreen.
+    /// </summary>
+    ElementOffscreen = 17
 }
 
 /// <summary>

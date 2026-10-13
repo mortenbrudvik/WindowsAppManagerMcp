@@ -50,7 +50,10 @@ internal sealed class ModalDialog : Window
         panel.Children.Add(buttons);
         Content = panel;
 
-        Loaded += (_, _) => FocusManager.SetFocusedElement(this, textBox);
+        // Logical focus on the text box, for when the dialog is activated. Set before it is shown, as the main window does:
+        // once shown, SetFocusedElement would give the text box keyboard focus while nothing else in the process has it,
+        // which activates the dialog
+        FocusManager.SetFocusedElement(this, textBox);
         ContentRendered += (_, _) => events.Write(
             Events.ModalOpened,
             ("hwnd", (long)new WindowInteropHelper(this).Handle),

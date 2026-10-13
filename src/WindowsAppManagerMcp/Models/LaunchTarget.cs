@@ -43,3 +43,11 @@ public record ResolvedLaunchTarget(
     string? FoundOnlyInWorkingDirectory = null,
     bool NotFound = false
 );
+
+/// <summary>
+/// A file or folder a launch opens, as a window title can show it: its name (such as todo.txt), and its full path when
+/// the server knows it (a relative argument is taken in the launch's working directory, as the app takes it).
+/// </summary>
+/// <param name="Name">The file or folder name, 3 characters or more.</param>
+/// <param name="FullPath">The full path, without a trailing separator; null when it is not known.</param>
+public sealed record DocumentHint(string Name, string? FullPath = null);

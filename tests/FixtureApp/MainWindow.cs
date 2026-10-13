@@ -11,10 +11,10 @@ using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
-/// The fixture's main window: an edit box, a check box, a combo box, a button that opens a modal dialog,
-/// a button that opens a document with unsaved changes, a context menu, solid color swatches and a
+/// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal
+/// dialog, a button that opens a document with unsaved changes, a context menu, solid color swatches and a
 /// virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
-/// AutomationId (<see cref="Ids"/>), and every change is written to the event log.
+/// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// </summary>
 internal sealed class MainWindow : Window
 {
@@ -42,6 +42,13 @@ internal sealed class MainWindow : Window
         Background = Brushes.White;
         Content = BuildContent();
 
+        // Logical focus on the edit box, so it gets keyboard focus whenever the window is activated (WPF moves the focus that
+        // activation gives the window on to its focused element). Set before the window is shown, while the edit box cannot
+        // take keyboard focus: FocusManager.SetFocusedElement also calls Keyboard.Focus when nothing in the process has
+        // keyboard focus, and the Win32 SetFocus under it activates the window. A process the test host just started may
+        // still take the foreground, so with --no-activate that brought the fixture to the front over the terminal.
+        FocusManager.SetFocusedElement(this, _editBox);
+
         AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnGotKeyboardFocus), handledEventsToo: true);
         Loaded += OnLoaded;
         ContentRendered += OnContentRendered;
@@ -58,6 +65,12 @@ internal sealed class MainWindow : Window
         left.Children.Add(new TextBlock { Text = "Edit box" });
         _editBox.TextChanged += (_, _) => Log(Events.TextChanged, ("id", Ids.EditBox), ("text", _editBox.Text));
         left.Children.Add(Report(Ids.EditBox, _editBox, "Edit box"));
+
+        // UI Automation reports it as a password field (IsPassword), whose value the server never reads. Its content is
+        // not logged.
+        left.Children.Add(new TextBlock { Text = "Password box" });
+        var passwordBox = new PasswordBox { Width = 320, Margin = new Thickness(0, 4, 0, 12) };
+        left.Children.Add(Report(Ids.PasswordBox, passwordBox, "Password box"));
 
         var checkBox = new CheckBox { Content = "Check box", Margin = new Thickness(0, 0, 0, 12) };
         checkBox.Checked += (_, _) => Log(Events.CheckedChanged, ("id", Ids.CheckBox), ("isChecked", true));
@@ -188,9 +201,8 @@ internal sealed class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // Logical focus on the edit box, so it gets keyboard focus whenever the window is activated.
-        // Only take keyboard focus now if the window was shown activated: SetFocus activates a window.
-        FocusManager.SetFocusedElement(this, _editBox);
+        // Only take keyboard focus now if the window was shown activated: SetFocus activates a window. Without activation
+        // nothing here focuses anything (see the constructor), so the window stays behind the one in front
         if (!_options.NoActivate)
         {
             _editBox.Focus();

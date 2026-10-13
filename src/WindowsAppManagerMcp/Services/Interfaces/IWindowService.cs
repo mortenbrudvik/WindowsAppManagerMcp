@@ -128,7 +128,9 @@ public interface IWindowService
     /// <summary>
     /// The server's target policy's verdict on the window (roadmap M1.12): it is matched by its process, and a
     /// UWP frame window also by the app it hosts, as the listings report them. The Window Control tools,
-    /// close_window and window activation refuse a window it denies. Allowed when the server has no policy.
+    /// close_window and window activation refuse a window it denies. Fails closed: while the policy denies
+    /// anything, a window whose process (or hosted app) cannot be named is refused
+    /// (<see cref="TargetPolicyVerdict.Unreadable"/>). Allowed when the server has no policy.
     /// </summary>
     TargetPolicyVerdict EvaluateTargetPolicy(nint handle);
 
@@ -179,8 +181,10 @@ public interface IWindowService
 
     /// <summary>
     /// The application windows on other virtual desktops: windows that would be in <see cref="GetApplicationWindows"/>
-    /// but that the shell cloaks (DWM_CLOAKED_SHELL). close_application leaves them alone and reports them, so an
-    /// application with unsaved work on another desktop is never reported closed without a word.
+    /// but that the shell cloaks (DWM_CLOAKED_SHELL), and that the virtual desktop manager does not put on the current
+    /// desktop or on none (a suspended or prelaunched Store frame is cloaked the same way, and is on no desktop); a window
+    /// it cannot place is kept. close_application leaves them alone and reports them, so an application with unsaved work
+    /// on another desktop is never reported closed without a word.
     /// </summary>
     IReadOnlyList<WindowInfo> GetApplicationWindowsOnOtherDesktops();
 

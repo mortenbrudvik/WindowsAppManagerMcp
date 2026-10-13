@@ -30,6 +30,7 @@ public class EveryToolContractTests
             ["close_application"] = Args("""{ "processName": "notepad" }"""),
             ["get_owned_windows"] = Args("""{ "handle": 1706796 }"""),
             ["get_window_info"] = Args("""{ "window": { "processName": "notepad" }, "detail": "full" }"""),
+            ["wait_for_window"] = Args("""{ "window": { "titleEquals": "Save As" }, "excludeHandles": [1706796] }"""),
             ["snap_window"] = Args("""{ "handle": 1706796, "position": "left_half" }"""),
             ["move_window_to_monitor"] = Args("""{ "handle": 1706796, "monitorIndex": 1 }"""),
             ["set_windows_bounds_batch"] = Args("""
@@ -54,9 +55,18 @@ public class EveryToolContractTests
             ["capture_region"] = Args("""{ "x": 100, "y": 100, "width": 800, "height": 600 }"""),
             ["capture_window"] = Args("""{ "handle": 1706796 }"""),
             ["capture_with_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["get_desktop_state"] = Args("""{ "handle": 1706796 }"""),
             ["get_ui_elements"] = Args("""{ "handle": 1706796 }"""),
+            ["find_ui_elements"] = Args("""{ "handle": 1706796, "name": "Save", "controlType": "Button" }"""),
+            ["read_element_text"] = Args("""{ "ref": "w4120035e57" }"""),
+            ["read_table"] = Args("""{ "ref": "w4120035e61" }"""),
+            ["element_action"] = Args("""{ "ref": "w4120035e17", "action": "set_value", "value": "window layout presets" }"""),
+            ["respond_to_dialog"] = Args("""{ "handle": 1706796, "button": "no" }"""),
+            ["file_dialog"] = Args($$"""{ "handle": 1706796, "path": {{JsonSerializer.Serialize(TypicalDesktop.SavePath)}}, "action": "save", "overwrite": true }"""),
             ["get_focused_element"] = Args("{}"),
             ["get_element_at_point"] = Args("""{ "x": 560, "y": 110 }"""),
+            ["get_active_popups"] = Args("""{ "window": { "processName": "notepad" } }"""),
+            ["wait_for_element"] = Args("""{ "window": { "processName": "notepad" }, "name": "Save", "condition": "enabled" }"""),
             ["get_browser_url"] = Args("""{ "handle": 2821181 }"""),
             ["get_active_browser_url"] = Args("{}"),
             ["get_browser_content"] = Args("""{ "handle": 2821181 }"""),
@@ -91,6 +101,12 @@ public class EveryToolContractTests
             // Paused, and the test client cannot ask the user (no elicitation): ResumeNeedsUser
             ["resume_input"] = services => services.Session.Pause(InputControlSources.Hotkey)
         };
+
+    /// <summary>
+    /// Tools that name their text block's payload ([ToolResultPayload]) but return an image only when the call asks for one
+    /// (get_desktop_state's include screenshot, element_action's observe screenshot; DesktopStateContractTests checks those).
+    /// </summary>
+    private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal) { "get_desktop_state", "element_action" };
 
     /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>
     private static readonly HashSet<string> NoFailingCall = new(StringComparer.Ordinal)
@@ -144,7 +160,7 @@ public class EveryToolContractTests
     [MemberData(nameof(ServedTools))]
     public async Task TypicalCall_OfACaptureTool_ReturnsTheImageFirst(string tool)
     {
-        var isCapture = ServerToolCatalog.Tools[tool].GetCustomAttribute<ToolResultPayloadAttribute>() != null;
+        var isCapture = ServerToolCatalog.Tools[tool].GetCustomAttribute<ToolResultPayloadAttribute>() != null && !ImageOnRequest.Contains(tool);
 
         var result = await TypicalCallAsync(tool);
 

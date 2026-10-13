@@ -27,7 +27,9 @@ public sealed class ContractServices : IDisposable
     public ContractServices(ContractMode mode)
     {
         Mode = mode;
-        Session = new InputSession(new FakeInputWrapper());
+        ElementRegistry.Setup(r => r.Lookup(It.IsAny<string>()))
+            .Returns((string elementRef) => new ElementLookup(elementRef, (nint)TypicalDesktop.NotepadHandle, null, 1));
+        Session = new InputSession(InputWrapper);
         Hotkey.Setup(h => h.Status).Returns(new PauseHotkeyStatus("Ctrl+Alt+Shift+Pause", PauseHotkeyState.Registered, PauseHotkeyOptions.DefaultSource));
         SetUpServerInfoSources();
 
@@ -51,6 +53,26 @@ public sealed class ContractServices : IDisposable
     public Mock<ILayoutService> Layouts { get; } = new();
     public Mock<IUIElementService> UiElements { get; } = new();
     public Mock<IElementInspectionService> Inspection { get; } = new();
+    public Mock<IElementSearchService> ElementSearch { get; } = new();
+    public Mock<IElementReadService> ElementReads { get; } = new();
+
+    /// <summary>The popups of a window (roadmap M3.5): a context menu and a Save As dialog of Notepad.</summary>
+    public Mock<IPopupService> Popups { get; } = new();
+
+    /// <summary>element_action's service (roadmap M3.6).</summary>
+    public Mock<IElementActionService> ElementActions { get; } = new();
+
+    /// <summary>element_action's menu_path (roadmap M3.5).</summary>
+    public Mock<IMenuPathService> MenuPaths { get; } = new();
+
+    /// <summary>respond_to_dialog's service (roadmap M3.5): Notepad's save prompt.</summary>
+    public Mock<IDialogService> Dialogs { get; } = new();
+
+    /// <summary>file_dialog's service (roadmap M3.14): Notepad's Save As dialog.</summary>
+    public Mock<IFileDialogService> FileDialogs { get; } = new();
+
+    /// <summary>The element registry (roadmap M3.4): every ref belongs to Notepad's window unless a test arranges otherwise.</summary>
+    public Mock<IElementRegistry> ElementRegistry { get; } = new();
     public Mock<IInputSimulationService> Input { get; } = new();
     public Mock<IClipboardService> Clipboard { get; } = new();
     public Mock<IPauseHotkey> Hotkey { get; } = new();
@@ -59,8 +81,21 @@ public sealed class ContractServices : IDisposable
     public Mock<IInputSafetyInfo> Safety { get; } = new();
     public Mock<INativeWindowWrapper> NativeWindows { get; } = new();
     public Mock<IWindowCloseVerifier> CloseVerifier { get; } = new();
+    public Mock<IWindowWaitService> WindowWait { get; } = new();
+    public Mock<IElementWaitService> ElementWait { get; } = new();
+    public Mock<ILaunchPlacementService> Placement { get; } = new();
     public InputSession Session { get; }
+
+    /// <summary>The fake input layer under <see cref="Session"/>: the cursor, the keys that are down and Caps Lock (get_desktop_state).</summary>
+    public FakeInputWrapper InputWrapper { get; } = new();
+
     public IScreenshotService Screenshots { get; private set; } = null!;
+
+    /// <summary>The capture registry the typical captures register in and the mouse tools' image points resolve through (roadmap M3.11).</summary>
+    public CaptureRegistry Captures { get; } = new();
+
+    /// <summary>The window the typical captures are of: 1600 x 900 at (0, 100), as the capture wrapper reports it.</summary>
+    private readonly Mock<INativeWindowWrapper> _capturedWindows = new();
 
     /// <summary>The audit log's folder (roadmap M2.17), in the temporary folder; created by the first line written.</summary>
     public string AuditFolder { get; } = Path.Combine(Path.GetTempPath(), "WamContractAudit", Guid.NewGuid().ToString("N"), "audit");
@@ -92,6 +127,9 @@ public sealed class ContractServices : IDisposable
         // The SDK creates the tool classes for every call from these registrations
         services.AddSingleton(Windows.Object);
         services.AddSingleton(CloseVerifier.Object);
+        services.AddSingleton(WindowWait.Object);
+        services.AddSingleton(ElementWait.Object);
+        services.AddSingleton(Placement.Object);
         services.AddSingleton(Foreground.Object);
         services.AddSingleton(Monitors.Object);
         services.AddSingleton(Processes.Object);
@@ -99,17 +137,33 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton(Layouts.Object);
         services.AddSingleton(UiElements.Object);
         services.AddSingleton(Inspection.Object);
+        services.AddSingleton(ElementSearch.Object);
+        services.AddSingleton(Popups.Object);
+        services.AddSingleton(ElementReads.Object);
+        services.AddSingleton(ElementActions.Object);
+        services.AddSingleton(MenuPaths.Object);
+        services.AddSingleton(Dialogs.Object);
+        services.AddSingleton(FileDialogs.Object);
+        services.AddSingleton(ElementRegistry.Object);
         services.AddSingleton(Input.Object);
         services.AddSingleton(Clipboard.Object);
         services.AddSingleton(Hotkey.Object);
         services.AddSingleton<IInputSession>(Session);
         services.AddSingleton(Screenshots);
+        services.AddSingleton<ICaptureRegistry>(Captures);
+        services.AddSingleton<ICoordinateSpaceResolver>(new CoordinateSpaceResolver(
+            Captures, _capturedWindows.Object, Mock.Of<INativeHitTestWrapper>(),
+            TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object));
         services.AddSingleton<ITargetPolicy>(new TargetPolicy(TargetPolicySettings.Default));
         services.AddSingleton(Audit);
         // get_server_info: the real report over mocked sources, with the toolsets the server was registered with
         services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
             SystemInfo.Object, SecurityProbe.Object, Monitors.Object, Safety.Object, Session, Hotkey.Object, Layouts.Object,
             NativeWindows.Object, sp.GetService<ToolsetSelection>(), Audit));
+        // get_desktop_state and element_action's observe (roadmap M3.12): the real observation over the mocks above
+        services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
+            Windows.Object, Session, InputWrapper, Inspection.Object, UiElements.Object, Popups.Object, Screenshots,
+            sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
     }
 
     public void Dispose()
@@ -214,6 +268,19 @@ public sealed class ContractServices : IDisposable
             }, IsDialog: true, IsBlocking: true)
         ]);
         CloseVerifier.Setup(v => v.ShownWindows(It.IsAny<IReadOnlyList<nint>>())).Returns((IReadOnlyList<nint> handles) => handles.ToHashSet());
+        // wait_for_window (roadmap M3.7): Notepad's Save As dialog opened and stayed
+        WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WindowConditionResult
+            {
+                Satisfied = true,
+                ElapsedMs = 640,
+                MatchCount = 1,
+                Window = notepad with
+                {
+                    Handle = 0x1A0C00, Title = "Save As", ClassName = "#32770", OwnerHandle = (nint)TypicalDesktop.NotepadHandle,
+                    Bounds = new WindowRect(400, 200, 960, 640), VisibleBounds = new WindowRect(407, 200, 946, 633)
+                }
+            });
         CloseVerifier.Setup(v => v.WaitForCloseAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<IReadOnlySet<nint>>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, IReadOnlySet<nint> _, TimeSpan _, CancellationToken _) =>
                 handles.Select(h => new CloseObservation(h, CloseStatus.Closed)).ToList());
@@ -286,15 +353,46 @@ public sealed class ContractServices : IDisposable
         Layouts.Setup(l => l.DeletePresetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string name, CancellationToken _) => new LayoutDeleteResult(true, name));
 
+        // get_desktop_state (roadmap M3.12): the pointer over Notepad's editor
+        InputWrapper.MovePointer(640, 480);
+
         var tree = TypicalDesktop.UiTree();
         UiElements.Setup(u => u.IsAvailable()).Returns(true);
         UiElements.Setup(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),It.IsAny<IProgress<OperationProgress>?>(),It.IsAny<CancellationToken>()))
-            .ReturnsAsync((nint handle, int depth, UIElementFilter? _, IProgress<OperationProgress>? _, CancellationToken _) => new UIElementResult(
-                true, handle, notepad.Title, tree, TypicalDesktop.Count(tree), depth, 184.5, DepthReached: 3));
+            .ReturnsAsync((nint handle, int depth, UIElementFilter? filter, IProgress<OperationProgress>? _, CancellationToken _) =>
+                filter?.MaxElements is { } max && max < TypicalDesktop.Count(tree)
+                    ? new UIElementResult(true, handle, notepad.Title, TypicalDesktop.Take(tree, max), max, depth, 184.5, DepthReached: 3,
+                        Truncated: true, TruncationReason: UIElementTruncationReason.MaxElements)
+                    : new UIElementResult(true, handle, notepad.Title, tree, TypicalDesktop.Count(tree), depth, 184.5, DepthReached: 3));
 
         Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(true, TypicalDesktop.FocusedEdit, TypicalDesktop.NotepadHandle, notepad.Title,
                 notepad.ProcessId, notepad.ProcessName, 12.5));
+        ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
+                true, query.WindowHandle, notepad.Title, MatchCount: 2, Truncated: false, TypicalDesktop.FoundButtons, 21.5,
+                Scope: ElementSearchScope.Window));
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(
+                true, window == 0 ? TypicalDesktop.NotepadHandle : (long)window, notepad.Title, IsForeground: true,
+                TypicalDesktop.NotepadPopups, 4.25));
+        ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.MessageText);
+        ElementReads.Setup(r => r.ReadTableAsync(It.IsAny<ElementTableRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.ProcessTable);
+        // wait_for_element (roadmap M3.8): the Save button enabled after 3 checks
+        ElementWait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WaitForElementResult(true, true, false, ElapsedMs: 480, Polls: 3, WindowHandle: TypicalDesktop.NotepadHandle,
+                Element: TypicalDesktop.FoundButtons[0], MatchCount: 1));
+        ElementActions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementActionRequest request, CancellationToken _) => TypicalDesktop.ElementActionDone(request));
+        // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): File>Save As, the save prompt, the Save As dialog
+        MenuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.MenuPathDone);
+        Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TypicalDesktop.SavePromptAnswered);
+        FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((FileDialogRequest request, CancellationToken _) => TypicalDesktop.FileSaved(request));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int ancestors, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 true, x, y, TypicalDesktop.FocusedEdit,
@@ -339,10 +437,15 @@ public sealed class ContractServices : IDisposable
         // The real capture pipeline (scaling, encoding, metadata) over blank pixels: a 2560 x 1440 monitor, a 1600 x 900 window
         var monitors = new Mock<IMonitorService>();
         monitors.Setup(m => m.GetAllMonitors()).Returns(TypicalDesktop.Monitors);
+        _capturedWindows.Setup(w => w.IsWindowVisible(It.IsAny<nint>())).Returns(true);
+        _capturedWindows.Setup(w => w.IsWindow(It.IsAny<nint>())).Returns(true);
+        _capturedWindows.Setup(w => w.GetWindowRect(It.IsAny<nint>())).Returns((0, 100, 1600, 1000));
+        _capturedWindows.Setup(w => w.GetWindowThreadProcessId(It.IsAny<nint>())).Returns(4242u);
         Screenshots = new ScreenshotService(
             TestDataFactory.CreateMockScreenCaptureWrapper(captureWidth: 1600, captureHeight: 900, windowOriginX: 0, windowOriginY: 100).Object,
             monitors.Object,
-            Mock.Of<INativeWindowWrapper>(w => w.IsWindowVisible(It.IsAny<nint>()) == true));
+            _capturedWindows.Object,
+            captureRegistry: Captures);
     }
 
     /// <summary>A launch that started a process and, when it waited, found the window.</summary>
@@ -370,6 +473,14 @@ public sealed class ContractServices : IDisposable
             .Returns((nint handle, bool _) => new WindowCloseResult(handle, false, WindowErrorCode.InvalidHandle, invalid));
         Windows.Setup(w => w.GetApplicationWindows()).Returns([]);
         Windows.Setup(w => w.GetOwnedWindows(It.IsAny<nint>(), It.IsAny<bool>())).Returns([]);
+        WindowWait.Setup(w => w.WaitForConditionAsync(It.IsAny<WindowConditionRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WindowConditionResult
+            {
+                TimedOut = true,
+                ElapsedMs = 10_000,
+                ErrorCode = nameof(WindowErrorCode.WaitTimedOut),
+                Error = "No window matching titleEquals 'Save As' appeared within 10000 ms."
+            });
         Windows.Setup(w => w.CloseWindowsBatchAsync(It.IsAny<IReadOnlyList<nint>>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<nint> handles, bool _, int _, CancellationToken _) =>
                 handles.Select(h => new WindowCloseResult(h, false, WindowErrorCode.InvalidHandle, invalid)).ToList());
@@ -425,6 +536,40 @@ public sealed class ContractServices : IDisposable
                 new UIElementResult(false, handle, null, null, 0, 0, 1.5, invalid, UIElementErrorCode.InvalidHandle));
         Inspection.Setup(i => i.GetFocusedElementAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new FocusedElementResult(false, null, null, null, null, null, 5000, "UI Automation did not answer", UIElementErrorCode.OperationTimedOut));
+        ElementSearch.Setup(s => s.FindAsync(It.IsAny<ElementQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementQuery query, CancellationToken _) => new FindElementsResult(
+                false, query.WindowHandle, null, 0, false, null, 1.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
+        Popups.Setup(p => p.GetActivePopupsAsync(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((nint window, TimeSpan _, CancellationToken _, TimeSpan? _) => new ActivePopupsResult(
+                false, (long)window, null, false, null, 0.5, Error: invalid, ErrorCode: UIElementErrorCode.InvalidHandle));
+        const string stale = "Element ref 'w4120035e57' is stale: its window closed. Find the element again with find_ui_elements.";
+        ElementReads.Setup(r => r.ReadTextAsync(It.IsAny<ElementTextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementTextRequest request, CancellationToken _) => new ElementTextResult(
+                false, request.Ref, 0, null, null, null, 0, null, false, null, 0.5, Error: stale, ErrorCode: UIElementErrorCode.ElementStale));
+        ElementReads.Setup(r => r.ReadTableAsync(It.IsAny<ElementTableRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementTableRequest request, CancellationToken _) => new ElementTableResult(
+                false, request.Ref, 0, null, null, null, request.StartRow, null, null, false, 0.5, Error: stale,
+                ErrorCode: UIElementErrorCode.ElementStale));
+        ElementWait.Setup(w => w.WaitAsync(It.IsAny<ElementWaitRequest>(), It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WaitForElementResult(false, false, true, ElapsedMs: 10_000, Polls: 24, WindowHandle: TypicalDesktop.NotepadHandle,
+                Element: TypicalDesktop.FoundButtons[0] with { IsEnabled = false }, MatchCount: 1,
+                LastObservedState: "Button 'Save' (w4120035e9) is disabled", ErrorCode: "WaitTimedOut",
+                Error: "No element matching name 'Save' became enabled within 10000 ms (24 checks): Button 'Save' (w4120035e9) is disabled."));
+        ElementActions.Setup(a => a.ActAsync(It.IsAny<ElementActionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ElementActionRequest request, CancellationToken _) => new ElementActionResult(
+                false, "set_value", request.Ref, TypicalDesktop.NotepadHandle,
+                Error: "Element ref is stale: its window closed. Find the element again with find_ui_elements.",
+                ErrorCode: nameof(UIElementErrorCode.ElementStale), ElapsedMilliseconds: 1.5));
+        MenuPaths.Setup(m => m.RunAsync(It.IsAny<MenuPathRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ElementActionResult(false, "menu_path", WindowHandle: TypicalDesktop.NotepadHandle,
+                Error: "No visible menu item 'File' (item 1 of 2) was found in the window (or its open popups).",
+                ErrorCode: nameof(UIElementErrorCode.ElementNotFound), ElapsedMilliseconds: 21.5));
+        const string noDialog = "Window 1706796 ('Untitled - Notepad') is no dialog box and has no open dialog. Nothing was done.";
+        Dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DialogResponseResult(false, Error: noDialog, ErrorCode: nameof(UIElementErrorCode.DialogNotFound), ElapsedMilliseconds: 0.5));
+        FileDialogs.Setup(d => d.CompleteAsync(It.IsAny<FileDialogRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FileDialogResult(false, "save", Error: noDialog, ErrorCode: nameof(UIElementErrorCode.DialogNotFound),
+                ElapsedMilliseconds: 0.5));
         Inspection.Setup(i => i.GetElementAtPointAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int x, int y, int _, TimeSpan _, CancellationToken _) => new ElementAtPointResult(
                 false, x, y, null, null, null, null, null, null, 0.5, "The point is outside every monitor", UIElementErrorCode.CoordinatesOutOfBounds));

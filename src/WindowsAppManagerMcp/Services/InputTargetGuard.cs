@@ -219,15 +219,41 @@ public sealed class InputTargetGuard : IInputTargetGuard
                 return refused;
             }
 
+            if (PointRefusal(target) is { } stale)
+            {
+                return stale;
+            }
+
             return WithCaptureCheck(x, y, CheckHitForTarget(x, y, hit, target, targetRoot));
+        }
+
+        if (PointRefusal(target) is { } staleWithoutTarget)
+        {
+            return staleWithoutTarget;
         }
 
         return WithCaptureCheck(x, y, CheckHitWithoutTarget(x, y, hit, target));
     }
 
+    /// <summary>
+    /// The refusal of a converted point whose capture or window changed since it was converted
+    /// (<see cref="InputTarget.PointRecheck"/>, roadmap M3.11), or null.
+    /// </summary>
+    private static InputGuardResult? PointRefusal(InputTarget target) =>
+        target.PointRecheck?.Invoke() is { } changed
+            ? InputGuardResult.Refuse(RecheckErrorCode(changed.ErrorCode), changed.Error, target)
+            : null;
+
     public InputGuardResult RecheckMouse(int x, int y, InputGuardResult approved)
     {
         ArgumentNullException.ThrowIfNull(approved);
+
+        // A converted point is checked against what it was measured on before every press: the window can move while the
+        // same window stays at the point (the 10 ms before a click, up to 500 ms between a double click's presses)
+        if (PointRefusal(approved.Target) is { } stale)
+        {
+            return stale;
+        }
 
         // The capture is read again even when the same window is at the point: it can start at any moment
         var hit = RootAt(x, y);
@@ -323,6 +349,35 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         return WindowRefusal(window, Read(window), approved.Target, "sent", targetRoot) == null;
+    }
+
+    public InputGuardResult CheckTarget(InputTarget target)
+    {
+        if (DesktopRefusal(target) is { } desktop)
+        {
+            return desktop;
+        }
+
+        if (TargetRefusal(target, out _, out var root) is { } refused)
+        {
+            return refused;
+        }
+
+        var window = Read(root);
+        return InputGuardResult.Allow(target, root, window.Summary, anchor: root);
+    }
+
+    public InputGuardResult CheckElementWindow(InputTarget target, nint elementWindow)
+    {
+        if (elementWindow == nint.Zero || !_windows.IsWindow(elementWindow))
+        {
+            return InvalidHandle(target, elementWindow);
+        }
+
+        var targetRoot = target.WindowHandle is { } handle && handle != nint.Zero ? RootOf(handle) : nint.Zero;
+        var window = Read(elementWindow);
+        return WindowRefusal(elementWindow, window, target, "done", targetRoot)
+               ?? InputGuardResult.Allow(target, elementWindow, window.Summary, anchor: targetRoot);
     }
 
     public WindowSummary? DescribeForeground()
@@ -500,7 +555,8 @@ public sealed class InputTargetGuard : IInputTargetGuard
     /// The probes, policy and host checks of a window the input would reach. The host check is skipped only
     /// for an explicit target with allowHostTarget, and only when the window is the target's top-level
     /// window <paramref name="targetRoot"/> or a window it owns: a popup that is accepted only because it
-    /// belongs to the target's process or a child process is still checked.
+    /// belongs to the target's process or a child process is still checked. A window of the server's own process
+    /// (or one it owns) is refused whatever allowHostTarget says.
     /// </summary>
     private InputGuardResult? WindowRefusal(nint hWnd, WindowRead window, InputTarget target, string action, nint targetRoot)
     {
@@ -519,15 +575,28 @@ public sealed class InputTargetGuard : IInputTargetGuard
             }
         }
 
-        // Policy: set by the user in the server's environment
+        // Policy: set by the user in the server's environment. A window whose process cannot be named cannot be checked, so it
+        // is refused while the policy denies anything, as the UI Automation reads refuse it
         var verdict = window.Info is { } info
-            ? _policy.Evaluate(info)
-            : _policy.Evaluate([window.Summary.ProcessName]);
+            ? _policy.EvaluateFailClosed(info)
+            : _policy.EvaluateFailClosed([window.Summary.ProcessName]);
         if (!verdict.Allowed)
         {
             return InputGuardResult.Refuse(InputErrorCode.TargetDeniedByPolicy,
                 $"{Name(window.Summary)} is refused by the server's target policy: {verdict.Reason}. Nothing was {action}. " +
                 "The policy is set by the user in the server's environment and no tool argument changes it; ask the user to do this step.",
+                target, window.Summary);
+        }
+
+        // The server's own process, whatever allowHostTarget says: its one window of its own is the hidden clipboard owner,
+        // so a window of it that input could reach is a prompt Windows showed in it, such as the security warning of a file
+        // a launch opens (ShellExecuteEx runs that check in the calling process). Only the user answers those.
+        if (IsServerWindow(hWnd, window))
+        {
+            return InputGuardResult.Refuse(InputErrorCode.TargetIsAgentHost,
+                $"{Name(window.Summary)} belongs to this server's own process, or a window of it owns it: a prompt Windows " +
+                $"showed for the server, such as the security warning of a file a launch opened. Only the user answers it. " +
+                $"Nothing was {action}, and no tool argument changes that: ask the user to answer it.",
                 target, window.Summary);
         }
 
@@ -551,6 +620,19 @@ public sealed class InputTargetGuard : IInputTargetGuard
         }
 
         return null;
+    }
+
+    /// <summary>Whether the window, or a window that owns it, belongs to this server's own process.</summary>
+    private bool IsServerWindow(nint hWnd, WindowRead window)
+    {
+        var server = _hostGuard.Host?.ServerProcessId ?? 0;
+        if (server <= 0)
+        {
+            return false;
+        }
+
+        return window.Info?.ProcessId == server ||
+               WindowOwnerChain.SelfAndOwners(_windows, hWnd).Any(w => (int)_windows.GetWindowThreadProcessId(w) == server);
     }
 
     private InputGuardResult? DesktopRefusal(InputTarget target)
@@ -688,7 +770,7 @@ public sealed class InputTargetGuard : IInputTargetGuard
         var processId = _windows.GetWindowThreadProcessId(hWnd);
         var processName = processId == 0 ? null : _windows.GetProcessName(processId);
         return new WindowRead(null, new WindowSummary(hWnd, _windows.GetWindowText(hWnd) ?? string.Empty,
-            processName ?? "Unknown", (int)processId));
+            processName ?? WindowInfo.UnknownProcessName, (int)processId));
     }
 
     private static string Name(WindowSummary? window) => window switch

@@ -23,9 +23,10 @@ public interface IWindowWaitService
     /// <see cref="WindowWaitOptions.StableMs"/> (which skips splash screens). Unowned windows go before owned ones (a
     /// dialog). Then a bounded WaitForInputIdle runs on its process.</item>
     /// <item>While no new window is pending, an <b>existing</b> window that <paramref name="isOwner"/> accepts and that came
-    /// to the front since the baseline, or whose title changed to contain one of <see cref="WindowWaitOptions.DocumentHints"/>,
-    /// once that has held for <see cref="WindowWaitOptions.ReuseSettleMs"/>: <see cref="WindowWaitOutcome.OpenedInTab"/>
-    /// when its title changed, else <see cref="WindowWaitOutcome.ReusedExistingWindow"/>.</item>
+    /// to the front since the baseline, or whose title changed to show one of <see cref="WindowWaitOptions.DocumentHints"/>
+    /// or to contain <see cref="WindowWaitOptions.TitleContains"/> (which its title in the baseline did not), once that has
+    /// held for <see cref="WindowWaitOptions.ReuseSettleMs"/>: <see cref="WindowWaitOutcome.OpenedInTab"/> when its title
+    /// changed, else <see cref="WindowWaitOutcome.ReusedExistingWindow"/>.</item>
     /// </list>
     /// </summary>
     /// <param name="baseline">The windows before the start.</param>
@@ -36,6 +37,27 @@ public interface IWindowWaitService
         WindowBaseline baseline,
         Func<WindowCandidate, bool> isOwner,
         WindowWaitOptions options,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Waits until a window condition holds (roadmap M3.7, wait_for_window), polling every 100 ms (every 250 ms after the
+    /// first 2 seconds), at most <see cref="WindowConditionRequest.TimeoutMs"/> (clamped to 60 seconds). The selector is
+    /// resolved on every poll with the rules of <see cref="IWindowService.ResolveWindow"/> (the listing's rules, so
+    /// includeUntitled or className finds an untitled dialog), minus <see cref="WindowConditionRequest.ExcludeHandles"/>
+    /// and, with <see cref="WindowConditionRequest.NewOnly"/>, minus the windows shown at the start; the selector's index
+    /// then picks one of what is left. The condition must hold for <see cref="WindowConditionRequest.StableMs"/>.
+    /// </summary>
+    /// <remarks>
+    /// Ends early, unsatisfied, when the condition can no longer be met: a selector that cannot be used (InvalidArguments),
+    /// a window.handle that is no window for any condition but gone (InvalidHandle), the window of title_changed closing
+    /// (InvalidHandle) or not resolving to one window at the start (its resolution's errorCode, with candidates), and
+    /// input_idle finding several windows (AmbiguousWindow). Only reads windows; the one wait on an application,
+    /// WaitForInputIdle, is bounded to 250 ms per poll. Progress (elapsed of total ms) is reported about once a second.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    Task<WindowConditionResult> WaitForConditionAsync(
+        WindowConditionRequest request,
+        IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -79,10 +101,16 @@ public sealed record WindowWaitOptions
     public int InputIdleMs { get; init; } = 1000;
 
     /// <summary>
-    /// Texts that mean an existing window now shows the launched document or URL when its title contains one (file names,
-    /// folder names, host names), case-insensitive.
+    /// The files and folders the launch opens: an existing window now shows one when its title shows it and did not before,
+    /// as <see cref="LaunchTitles.Shows"/> tells (a whole name, and never after another path than the launched one).
     /// </summary>
-    public IReadOnlyList<string> DocumentHints { get; init; } = [];
+    public IReadOnlyList<DocumentHint> DocumentHints { get; init; } = [];
+
+    /// <summary>
+    /// The caller's expectWindow.titleContains, or null: an existing window now shows the launch when its title contains it
+    /// (case-insensitive) and did not before. The only title sign for a web address, whose page sets the title.
+    /// </summary>
+    public string? TitleContains { get; init; }
 
     /// <summary>
     /// Claims a new window for this wait, so launches waited for together (a batch) never report the same new window:

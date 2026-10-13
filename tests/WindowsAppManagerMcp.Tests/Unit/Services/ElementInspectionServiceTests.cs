@@ -601,4 +601,242 @@ public class ElementInspectionServiceTests
     }
 
     #endregion
+
+    #region Web content warm-up (roadmap M3.3)
+
+    private static readonly AccessibilityWarmupInfo Warmed =
+        new(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, 400, 3, 12);
+
+    private readonly Mock<IAccessibilityWarmup> _warmup = new();
+
+    private ElementInspectionService CreateSutWithWarmup() =>
+        new(_tree, _worker, _hitTest.Object, _windows.Object, _monitors.Object, _warmup.Object);
+
+    [Fact]
+    public async Task GetFocusedElement_WarmsUpTheForegroundWindowFirst_WithinAThirdOfTheTimeout()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => _tree.Reads.Should().BeEmpty("the warm-up comes before the focused element is read"))
+            .Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(TimeSpan.FromSeconds(3));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.AccessibilityWarmup.Should().Be(Warmed);
+        _warmup.Verify(w => w.WarmUp(TopLevel, TimeSpan.FromSeconds(1), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WhenNothingHasFocus_StillReportsTheWarmup()
+    {
+        // Arrange
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.ElementNotFound);
+        result.AccessibilityWarmup.Should().Be(Warmed);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WithoutAForegroundWindow_WarmsNothingUp()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+
+        // Act
+        var result = await CreateSutWithWarmup().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.AccessibilityWarmup.Should().BeNull();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_WarmsUpTheWindowAtThePointBeforeTheHitTest()
+    {
+        // Arrange
+        var field = BuildForm();
+        var hitTested = false;
+        _tree.AtPoint = (_, _) =>
+        {
+            hitTested = true;
+            return field;
+        };
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
+        _warmup.Setup(w => w.WarmUp(TopLevel, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => hitTested.Should().BeFalse("a page that is not built yet would answer with its frame"))
+            .Returns(Warmed);
+
+        // Act
+        var result = await CreateSutWithWarmup().GetElementAtPointAsync(150, 210, 1, Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.AccessibilityWarmup.Should().Be(Warmed);
+        _warmup.Verify(w => w.WarmUp(TopLevel, AccessibilityWarmup.BudgetFor(Timeout), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_AncestorsNameTheirFramework()
+    {
+        // Arrange
+        var link = new FakeUiaNode("Hyperlink", "Home") { FrameworkId = "Chrome" };
+        new FakeUiaNode("Pane", "Host") { FrameworkId = "Win32", ClassName = "Chrome_RenderWidgetHostHWND" }.With(
+            new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" }.With(link));
+        _tree.AtPoint = (_, _) => link;
+
+        // Act
+        var result = await CreateSut().GetElementAtPointAsync(150, 210, 2, Timeout);
+
+        // Assert
+        result.Element!.FrameworkId.Should().Be("Chrome");
+        result.Ancestors!.Select(a => a.FrameworkId).Should().Equal("Chrome", "Win32");
+    }
+
+    #endregion
+
+    #region Target policy
+
+    private static readonly nint Prompt = 0x6000;
+
+    private ElementInspectionService CreateSutWithPolicy(TargetPolicySettings? policy = null) =>
+        new(_tree, _worker, _hitTest.Object, _windows.Object, _monitors.Object, _warmup.Object,
+            policy: new TargetPolicy(policy ?? TargetPolicySettings.Default));
+
+    /// <summary>Makes <paramref name="window"/> a window of process <paramref name="processId"/> named <paramref name="processName"/>.</summary>
+    private void WindowOf(nint window, uint processId, string processName)
+    {
+        _windows.Setup(w => w.IsWindow(window)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(window)).Returns(processId);
+        _windows.Setup(w => w.GetProcessName(processId)).Returns(processName);
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_WithADeniedAppInFront_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange - a password manager is in front, with its master password box focused
+        _tree.Focused = BuildForm();
+        WindowOf(TopLevel, 3001, "KeePass");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_InAPromptOfADeniedAppOverAnAllowedWindow_IsNotReturned_NorItsValueRead()
+    {
+        // Arrange - the app in front is allowed, but the focus is in a credential prompt of another process
+        var field = new FakeUiaNode("Edit", "User name") { ProcessId = 900, ActionPatterns = ["Value"], Value = "j.smith" };
+        new FakeUiaNode("Window", "Windows Security") { NativeWindowHandle = Prompt, ProcessId = 900 }.With(field);
+        _tree.Focused = field;
+        WindowOf(TopLevel, 4242, "app");
+        WindowOf(Prompt, 900, "CredentialUIBroker");
+        _hitTest.Setup(h => h.GetRootWindow(Prompt)).Returns(Prompt);
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("CredentialUIBroker");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Read:User name"),
+            "nothing of the element is read once its window is known to be denied");
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_OfAProcessThatCannotBeNamed_IsNotReturned_NorItsValueRead_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the app in front is allowed, but the focused element has no window above it, and the server cannot name
+        // its own process (it may run elevated), so it cannot be checked against the policy
+        _tree.Focused = new FakeUiaNode("Edit", "Master password") { ProcessId = 901, ActionPatterns = ["Value"], Value = "hunter2" };
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _windows.Setup(w => w.GetProcessName(901u)).Returns((string?)null);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("cannot be read");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Read:Master password"));
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_OfAProcessThatCannotBeNamed_IsReturned_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        _tree.Focused = new FakeUiaNode("Edit", "Master password") { ProcessId = 901, ActionPatterns = ["Value"], Value = "hunter2" };
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+        _windows.Setup(w => w.GetProcessName(901u)).Returns((string?)null);
+
+        // Act
+        var result = await CreateSutWithPolicy(
+            TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null)).GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.ProcessId.Should().Be(901);
+        result.ProcessName.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetFocusedElement_InAnAllowedApp_IsRead()
+    {
+        // Arrange
+        _tree.Focused = BuildForm();
+        WindowOf(TopLevel, 4242, "app");
+        _windows.Setup(w => w.GetForegroundWindow()).Returns(TopLevel);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetFocusedElementAsync(Timeout);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Element!.Value.Should().Be("user@example.com");
+    }
+
+    [Fact]
+    public async Task GetElementAtPoint_OverAWindowOfADeniedApp_IsRefused_BeforeAnyWarmupOrRead()
+    {
+        // Arrange
+        BuildForm();
+        WindowOf(TopLevel, 3001, "1Password");
+        _hitTest.Setup(h => h.WindowFromPoint(150, 210)).Returns(ChildWindow);
+
+        // Act
+        var result = await CreateSutWithPolicy().GetElementAtPointAsync(150, 210, 2, Timeout);
+
+        // Assert
+        result.ErrorCode.Should().Be(UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("1Password");
+        result.Element.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _warmup.VerifyNoOtherCalls();
+    }
+
+    #endregion
 }

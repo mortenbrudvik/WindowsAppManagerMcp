@@ -152,6 +152,16 @@ public sealed class ToolArgumentContractTests : IDisposable
         result.Content.OfType<ImageContentBlock>().Single().MimeType.Should().Be("image/jpeg");
     }
 
+    [Fact]
+    public async Task GetUIElements_UnknownFormat_IsInvalidArguments_AndReadsNothing()
+    {
+        var result = await CallAsync("get_ui_elements", """{ "handle": 1706796, "format": "yaml" }""");
+
+        ShouldBeRefused(result, ToolErrorReporting.InvalidArgumentsErrorCode, "tree, flat, text");
+        _services.UiElements.Verify(u => u.GetUIElementsAsync(It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(),
+            It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     #endregion
 
     #region The input schema lists the allowed values
@@ -184,6 +194,7 @@ public sealed class ToolArgumentContractTests : IDisposable
         Values(Property("capture_window", "format")).Should().Equal("auto", "png", "jpeg", "jpg");
         Values(Property("capture_with_elements", "output")).Should().Equal("image", "file", "both", "metadata");
         Values(Property("launch_browser_with_debug", "browser")).Should().Equal("chrome", "edge", "brave");
+        Values(Property("get_ui_elements", "format")).Should().Equal("tree", "flat", "text");
         Property("take_screenshot", "format")["type"]!.GetValue<string>().Should().Be("string");
     }
 

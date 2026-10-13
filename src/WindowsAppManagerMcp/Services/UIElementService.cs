@@ -12,16 +12,38 @@ namespace WindowsAppManagerMcp.Services;
 /// <remarks>
 /// Walk rules:
 /// <list type="bullet">
+/// <item>A window of an app the user's target policy denies is not read (TargetDeniedByPolicy, see
+/// <see cref="UiaTargets.ReadVerdict"/>): checked before the walk, the warm-up and the hung-window check.</item>
+/// <item>A window that does not respond is not read (NotResponding): Windows reports it hung, or it does not answer a
+/// message within <see cref="RespondTimeoutMs"/>. Every UI Automation call to it would block until it recovers.</item>
+/// <item>The walk is breadth first (roadmap M3.1): all of a level before the next, so a walk cut short by the timeout
+/// or by maxElements keeps the levels nearest the window. The children of an element are first listed without their
+/// properties (<see cref="IUiaTree.GetChildren"/>, one call of references only). A level of at most <see cref="CachedLevelLimit"/>
+/// children is then read in one more cross-process call with their properties (a cache request:
+/// <see cref="IUiaTree.GetChildElements"/>); a wider level, or one whose cached read fails, is read one element at a
+/// time, so the walk stops in the middle of it at maxElements or the timeout, and one failing element costs only
+/// itself.</item>
 /// <item>maxDepth counts levels below the window: its children are level 1, and nothing below
 /// level maxDepth is read.</item>
-/// <item>The controlTypes, size and interactable filters decide only whether an element itself is
+/// <item>The controlTypes, size, interactable and actionable filters decide only whether an element itself is
 /// returned. An element that fails one is left out, and the elements inside it that pass take its
 /// place in its parent's list. Only an offscreen element (visibleOnly) leaves out its whole subtree.</item>
+/// <item>maxElements stops the walk once that many elements are returned. truncationReason MaxElements says something
+/// was left unread: an element of the level being read, or the children of an element whose children were still to
+/// be read. To tell, the elements still waiting are asked for a first child (<see cref="IUiaTree.HasChildren"/>, one
+/// element at most each, however wide its level) until one has one, at most <see cref="MaxChildProbes"/> of them; when
+/// that cannot be told (more are waiting, the timeout, a failing call), it is assumed.</item>
 /// <item>An element that cannot be read is skipped and counted, and the walk goes on with its
 /// siblings. An element whose interaction properties cannot be read (interactableOnly) is left out
 /// and counted too, but the elements inside it are still walked. A timeout ends the walk and returns
-/// what was read so far. So does a walk that is abandoned because a UI Automation call did not return
-/// (a hung provider): the elements it had read until then are returned.</item>
+/// what was read so far; a level already fetched when it passes is kept whole, because reading it cost no further
+/// call. So does a walk that is abandoned because a UI Automation call did not return (a hung provider): the
+/// elements it had read until then are returned.</item>
+/// <item>A window that shows web content (Chromium, Electron, WebView2) is warmed up first (<see cref="IAccessibilityWarmup"/>,
+/// roadmap M3.3): its page's accessibility tree is asked for and waited for, within a share of the timeout, and the result
+/// says what came of it (accessibilityWarmup) instead of returning a silently thin tree.</item>
+/// <item>Each element names its UI framework only where it changes from the returned element it is inside (or, at the top,
+/// from the window's), so a web page inside a native frame shows where it starts without repeating it on every element.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -29,29 +51,64 @@ public class UIElementService : IUIElementService
     private const int MaxAllowedDepth = 10;
     private const int DefaultMaxDepth = 5;
 
+    /// <summary>
+    /// The widest level read in one call with its properties. A wider level is read one element at a time, so that
+    /// maxElements and the timeout stop the walk in it: one call for thousands of children with all their properties
+    /// can outlast the deadline, and its elements would all be lost.
+    /// </summary>
+    public const int CachedLevelLimit = 200;
+
     /// <summary>A walk reports its progress after every this many elements read.</summary>
     public const int ProgressInterval = 100;
 
     /// <summary>
+    /// How many of the elements still waiting a walk stopped by maxElements asks for a child; after that, something is
+    /// assumed left unread.
+    /// </summary>
+    public const int MaxChildProbes = 32;
+
+    /// <summary>How long the hung-window check waits for the window to answer a message.</summary>
+    public const uint RespondTimeoutMs = UiaTargets.RespondTimeoutMs;
+
+    /// <summary>
     /// How long to keep waiting after the timeout for the walk to stop and hand back its partial
-    /// tree. A walk still stuck in a UI Automation call after that is abandoned.
+    /// tree, unless the filter sets its own (<see cref="UIElementFilter.StopGrace"/>). A walk still stuck in a UI
+    /// Automation call after that is abandoned.
     /// </summary>
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(2);
 
     private readonly IUiaTree _tree;
     private readonly IUiaWorker _worker;
     private readonly INativeWindowWrapper? _windows;
+    private readonly IAccessibilityWarmup? _warmup;
+    private readonly IElementRegistry? _registry;
+    private readonly ITargetPolicy? _policy;
 
     /// <param name="tree">The UI Automation tree.</param>
     /// <param name="worker">Runs the walk under a deadline.</param>
-    /// <param name="windows">Identifies the application whose window is read (for a UWP app its own
-    /// process, see <see cref="UwpFrames"/>), so a hung application blocks only reads of itself (see
-    /// <see cref="IUiaWorker"/>). Without it all reads share one count.</param>
-    public UIElementService(IUiaTree tree, IUiaWorker worker, INativeWindowWrapper? windows = null)
+    /// <param name="windows">Checks that the window responds before it is read, and identifies the application
+    /// whose window is read (for a UWP app its own process, see <see cref="UwpFrames"/>), so a hung application blocks
+    /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count and nothing is
+    /// checked first.</param>
+    /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
+    /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
+    /// <param name="registry">Gives every returned element its ref (roadmap M3.4). Without it the elements have none.</param>
+    /// <param name="policy">The user's target policy, which refuses reads of a window of an app it denies. The server always
+    /// passes it; without it (or without <paramref name="windows"/>) no window is refused.</param>
+    public UIElementService(
+        IUiaTree tree,
+        IUiaWorker worker,
+        INativeWindowWrapper? windows = null,
+        IAccessibilityWarmup? warmup = null,
+        IElementRegistry? registry = null,
+        ITargetPolicy? policy = null)
     {
         _tree = tree;
         _worker = worker;
         _windows = windows;
+        _warmup = warmup;
+        _registry = registry;
+        _policy = policy;
     }
 
     /// <inheritdoc />
@@ -83,6 +140,12 @@ public class UIElementService : IUIElementService
             return CreateErrorResult(windowHandle, stopwatch, invalidControlTypes, UIElementErrorCode.InvalidControlType);
         }
 
+        // Before the worker: no warm-up and no UI Automation call reaches a window of an app the user denies
+        if (UiaTargets.PolicyRefusal(_windows, _policy, windowHandle) is { } denied)
+        {
+            return CreateErrorResult(windowHandle, stopwatch, denied, UIElementErrorCode.TargetDeniedByPolicy);
+        }
+
         var started = new WalkStarted();
         UIElementResult result;
         try
@@ -91,7 +154,7 @@ public class UIElementService : IUIElementService
                 TargetProcessId(windowHandle),
                 token => ReadTree(windowHandle, maxDepth, filter, controlTypes, stopwatch, started, progress, token),
                 cancellationToken,
-                StopGrace).ConfigureAwait(false);
+                filter?.StopGrace ?? StopGrace).ConfigureAwait(false);
         }
         catch (TimeoutException ex)
         {
@@ -101,7 +164,7 @@ public class UIElementService : IUIElementService
                      CreateErrorResult(windowHandle, stopwatch, ex.Message, UIElementErrorCode.OperationTimedOut);
         }
 
-        return result with { WindowState = ReadWindowState(windowHandle) };
+        return result with { WindowState = ReadWindowState(windowHandle), AccessibilityWarmup = started.Warmup };
     }
 
     /// <summary>
@@ -143,42 +206,39 @@ public class UIElementService : IUIElementService
         }
     }
 
+    /// <summary>Why the window must not be read, or null when it responds (see <see cref="UiaTargets.NotRespondingReason"/>).</summary>
+    private string? NotRespondingReason(nint windowHandle) => UiaTargets.NotRespondingReason(_windows, windowHandle);
+
     /// <summary>
     /// The walk of one call, once it has started: the caller reads its partial tree when the worker abandons it.
     /// </summary>
     private sealed class WalkStarted
     {
         private Walk? _walk;
+        private AccessibilityWarmupInfo? _warmup;
 
         public Walk? Walk
         {
             get => Volatile.Read(ref _walk);
             set => Volatile.Write(ref _walk, value);
         }
+
+        /// <summary>What the warm-up of the window's web content did, when it ran (roadmap M3.3).</summary>
+        public AccessibilityWarmupInfo? Warmup
+        {
+            get => Volatile.Read(ref _warmup);
+            set => Volatile.Write(ref _warmup, value);
+        }
     }
 
-    /// <summary>
-    /// The process of the app that the window shows, or 0 when it is not known. For a UWP frame window
-    /// that is the app's own process, not the ApplicationFrameHost that owns the frames of every UWP app.
-    /// </summary>
-    private int TargetProcessId(nint windowHandle)
-    {
-        try
-        {
-            return _windows == null ? 0 : (int)UwpFrames.AppProcessId(_windows, windowHandle);
-        }
-        catch (Exception)
-        {
-            // Only the stuck-read count depends on it
-            return 0;
-        }
-    }
+    /// <summary>The process a stuck read of the window is counted against (see <see cref="UiaTargets.TargetProcessId"/>).</summary>
+    private int TargetProcessId(nint windowHandle) => UiaTargets.TargetProcessId(_windows, windowHandle);
 
     /// <summary>
     /// Validates the controlTypes filter. Returns an error message for unknown names, or null with
     /// the canonical names in <paramref name="controlTypes"/> (null when the filter is not set).
     /// </summary>
-    private static string? ParseControlTypes(string[]? names, out HashSet<string>? controlTypes)
+    internal static string? ParseControlTypes(IReadOnlyList<string>? names, out HashSet<string>? controlTypes)
     {
         controlTypes = null;
         var requested = names?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
@@ -213,6 +273,11 @@ public class UIElementService : IUIElementService
     {
         try
         {
+            if (NotRespondingReason(windowHandle) is { } notResponding)
+            {
+                return CreateErrorResult(windowHandle, stopwatch, notResponding, UIElementErrorCode.NotResponding);
+            }
+
             if (!_tree.IsAvailable())
             {
                 return CreateErrorResult(
@@ -241,15 +306,22 @@ public class UIElementService : IUIElementService
                     UIElementErrorCode.WindowNotFound);
             }
 
-            var windowTitle = TryReadName(window);
-            var walk = new Walk(_tree, maxDepth, filter, controlTypes, windowTitle, progress, cancellationToken);
+            // A window with web content builds its page's tree only once asked: ask, and wait for it a moment
+            started.Warmup = _warmup?.WarmUp(
+                windowHandle, filter?.AccessibilityWarmupBudget ?? AccessibilityWarmup.MaxWait, cancellationToken);
+
+            var (windowTitle, windowFramework) = TryReadWindow(window);
+            var refs = _registry == null ? null : new WalkRefs(_registry, windowHandle, _registry.NextGeneration());
+            var walk = new Walk(
+                _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
             // window without controls
-            var elements = walk.ReadChildren(window, level: 1, isWindow: true);
+            walk.Run(window);
 
-            if (walk.TimedOut && walk.ElementCount == 0)
+            var (elements, count) = walk.Snapshot();
+            if (walk.TimedOut && count == 0)
             {
                 var message = walk.ReadCount == 0
                     ? "The timeout passed before any element was read. Try again with a larger timeoutMs; " +
@@ -262,20 +334,23 @@ public class UIElementService : IUIElementService
 
             var truncationReason = walk.TimedOut
                 ? UIElementTruncationReason.Timeout
-                : walk.SkippedElementCount > 0 ? UIElementTruncationReason.ElementsSkipped : (UIElementTruncationReason?)null;
+                : walk.StoppedAtMaxElements
+                    ? UIElementTruncationReason.MaxElements
+                    : walk.SkippedElementCount > 0 ? UIElementTruncationReason.ElementsSkipped : (UIElementTruncationReason?)null;
 
             return new UIElementResult(
                 Success: true,
                 WindowHandle: (long)windowHandle,
                 WindowTitle: windowTitle,
                 Elements: elements,
-                TotalElementCount: walk.ElementCount,
+                TotalElementCount: count,
                 Depth: maxDepth,
                 ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
                 SkippedElementCount: walk.SkippedElementCount,
                 DepthReached: walk.DepthReached,
                 Truncated: truncationReason != null,
-                TruncationReason: truncationReason);
+                TruncationReason: truncationReason,
+                FrameworkId: windowFramework);
         }
         catch (UiaElementUnavailableException ex)
         {
@@ -303,58 +378,61 @@ public class UIElementService : IUIElementService
         }
     }
 
-    private string? TryReadName(IUiaNode node)
+    /// <summary>The window's name and UI framework, or nulls when they cannot be read.</summary>
+    private (string? Name, string? FrameworkId) TryReadWindow(IUiaNode node)
     {
         try
         {
-            return _tree.Read(node).Name;
+            var properties = _tree.Read(node);
+            return (properties.Name, EmptyToNull(properties.FrameworkId));
         }
         catch (Exception)
         {
             // The window title is optional
-            return null;
+            return (null, null);
         }
     }
 
+    private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
     /// <summary>
-    /// The state of one tree walk. The walk runs on the worker thread; when the worker abandons it, the caller
-    /// takes its partial tree (<see cref="PartialResult"/>) while the walk thread may still be blocked in a UI
-    /// Automation call, and may go on later. So the lists of the tree and the counts change only under
-    /// <see cref="_gate"/>, which is never held during a UI Automation call, and the partial tree is a copy.
+    /// The state of one breadth-first tree walk. The walk runs on the worker thread; when the worker abandons it, the
+    /// caller takes its partial tree (<see cref="PartialResult"/>) while the walk thread may still be blocked in a UI
+    /// Automation call, and may go on later. So the tree and the counts change only under <see cref="_gate"/>, which is
+    /// never held during a UI Automation call, and the partial tree is a copy.
     /// </summary>
+    /// <remarks>
+    /// Every element read is a <see cref="WalkNode"/> in its parent's list, in tree order, whether it is returned or
+    /// not; an element the filters leave out keeps its place, and the elements inside it that are returned take that
+    /// place when the tree is copied out (<see cref="Materialize"/>). So the tree is consistent at any moment, however
+    /// far the levels below have been read.
+    /// </remarks>
     private sealed class Walk(
         IUiaTree tree,
         int maxDepth,
         UIElementFilter? filter,
         HashSet<string>? controlTypes,
         string? windowTitle,
+        string? windowFramework,
+        WalkRefs? refs,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
         private readonly object _gate = new();
 
-        /// <summary>The elements whose children are being read, outermost first, with what was read inside them.</summary>
-        private readonly List<PendingElement> _pending = [];
+        /// <summary>The window: its children are the elements of level 1.</summary>
+        private readonly WalkNode _root = new(null, Included: false, Ref: null, IndexPath: []);
 
-        /// <summary>The window's children read so far (level 1).</summary>
-        private List<UIElementInfo>? _top;
+        /// <summary>The elements whose children are still to be read, in breadth-first order, with their level's number.</summary>
+        private readonly Queue<(WalkNode Parent, IUiaNode Node, int Level)> _pending = new();
 
         private int _elementCount;
         private int _skippedElementCount;
         private int _readCount;
         private int _depthReached;
-
-        /// <summary>Elements returned, nested ones included.</summary>
-        public int ElementCount
-        {
-            get
-            {
-                lock (_gate)
-                {
-                    return _elementCount;
-                }
-            }
-        }
+        private volatile bool _timedOut;
+        private volatile bool _capReached;
+        private volatile bool _leftUnread;
 
         /// <summary>Elements, or lists of children, that could not be read.</summary>
         public int SkippedElementCount
@@ -393,41 +471,102 @@ public class UIElementService : IUIElementService
         }
 
         /// <summary>The walk stopped early because the timeout passed.</summary>
-        public bool TimedOut { get; private set; }
+        public bool TimedOut => _timedOut;
+
+        /// <summary>The walk stopped at maxElements with elements left unread (or, when that could not be told, perhaps).</summary>
+        public bool StoppedAtMaxElements => _capReached && _leftUnread;
+
+        /// <summary>Walks the window's subtree, level by level.</summary>
+        public void Run(IUiaNode window)
+        {
+            ReadChildren(_root, window, level: 1, isWindow: true);
+            while (true)
+            {
+                (WalkNode Parent, IUiaNode Node, int Level) next;
+                lock (_gate)
+                {
+                    if (!_pending.TryDequeue(out next))
+                    {
+                        return;
+                    }
+                }
+
+                if (_capReached)
+                {
+                    // Elements are left whose children were not read; whether there are any is still to be seen
+                    // (a level cut in the middle has already said so)
+                    _leftUnread = _leftUnread || AnyChildLeft(next.Node);
+                    return;
+                }
+
+                if (StopRequested())
+                {
+                    return;
+                }
+
+                ReadChildren(next.Parent, next.Node, next.Level);
+            }
+        }
 
         /// <summary>
-        /// The tree read so far, for a walk the worker abandoned: the finished elements, and the elements whose
-        /// children were being read with the children read until then. Success with truncated=true; null when no
-        /// element passed the filters yet. Runs on the caller's thread.
+        /// Whether <paramref name="first"/> or an element still waiting has a child: the elements maxElements left unread.
+        /// One call per element (a first child, never the whole level), until the first with a child. When the walk is
+        /// asked to stop, a call fails, or more than <see cref="MaxChildProbes"/> elements are waiting, it is not known,
+        /// and assumed.
+        /// </summary>
+        private bool AnyChildLeft(IUiaNode first)
+        {
+            var node = first;
+            for (var probes = 0; ; probes++)
+            {
+                if (cancellationToken.IsCancellationRequested || probes >= MaxChildProbes)
+                {
+                    return true;
+                }
+
+                try
+                {
+                    if (tree.HasChildren(node))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception)
+                {
+                    return true;
+                }
+
+                lock (_gate)
+                {
+                    if (!_pending.TryDequeue(out var next))
+                    {
+                        return false;
+                    }
+
+                    node = next.Node;
+                }
+            }
+        }
+
+        /// <summary>The returned tree so far and how many elements it holds. Runs on either thread.</summary>
+        public (List<UIElementInfo> Elements, int Count) Snapshot()
+        {
+            lock (_gate)
+            {
+                var elements = Materialize(_root.Children, windowFramework);
+                return (elements, Count(elements));
+            }
+
+            static int Count(IReadOnlyList<UIElementInfo>? list) => list?.Sum(e => 1 + Count(e.Children)) ?? 0;
+        }
+
+        /// <summary>
+        /// The tree read so far, for a walk the worker abandoned: success with truncated=true, or null when no element
+        /// passed the filters yet. Runs on the caller's thread.
         /// </summary>
         public UIElementResult? PartialResult(nint windowHandle, Stopwatch stopwatch)
         {
-            List<UIElementInfo> elements;
-            int skipped, depthReached;
-            lock (_gate)
-            {
-                if (_top == null)
-                {
-                    return null;
-                }
-
-                // From the innermost element being read outwards: each takes the partial one inside it as its
-                // last child (or, when it is filtered out, those children take its place)
-                List<UIElementInfo>? inner = null;
-                for (var i = _pending.Count - 1; i >= 0; i--)
-                {
-                    var pending = _pending[i];
-                    var children = new List<UIElementInfo>(pending.Children);
-                    children.AddRange(inner ?? []);
-                    inner = pending.Included ? [Element(pending.Properties, children)] : children;
-                }
-
-                elements = [.. _top, .. inner ?? []];
-                skipped = _skippedElementCount;
-                depthReached = _depthReached;
-            }
-
-            var count = Count(elements);
+            var (elements, count) = Snapshot();
             return count == 0
                 ? null
                 : new UIElementResult(
@@ -438,49 +577,32 @@ public class UIElementService : IUIElementService
                     TotalElementCount: count,
                     Depth: maxDepth,
                     ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2),
-                    SkippedElementCount: skipped,
-                    DepthReached: depthReached,
+                    SkippedElementCount: SkippedElementCount,
+                    DepthReached: DepthReached,
                     Truncated: true,
-                    TruncationReason: UIElementTruncationReason.Timeout);
-
-            static int Count(IReadOnlyList<UIElementInfo>? list) => list?.Sum(e => 1 + Count(e.Children)) ?? 0;
+                    TruncationReason: UIElementTruncationReason.Timeout,
+                    FrameworkId: windowFramework);
         }
 
         /// <summary>
-        /// Reads the children of <paramref name="parent"/>, which are at <paramref name="level"/>, and
-        /// returns the elements to list under it.
+        /// Reads the children of <paramref name="node"/>, which are at <paramref name="level"/>, into
+        /// <paramref name="parent"/>, and queues those whose own children are to be read.
         /// </summary>
-        public List<UIElementInfo> ReadChildren(IUiaNode parent, int level, bool isWindow = false)
-        {
-            var output = new List<UIElementInfo>();
-            if (isWindow)
-            {
-                lock (_gate)
-                {
-                    _top = output;
-                }
-            }
-
-            ReadChildrenInto(parent, level, output, isWindow);
-            return output;
-        }
-
-        /// <summary>Reads the children of <paramref name="parent"/> into <paramref name="output"/>.</summary>
-        private void ReadChildrenInto(IUiaNode parent, int level, List<UIElementInfo> output, bool isWindow = false)
+        private void ReadChildren(WalkNode parent, IUiaNode node, int level, bool isWindow = false)
         {
             if (StopRequested())
             {
                 return;
             }
 
-            IReadOnlyList<IUiaNode> children;
+            IReadOnlyList<Candidate> children;
             try
             {
-                children = tree.GetChildren(parent, cancellationToken);
+                children = FetchChildren(node);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                TimedOut = true;
+                _timedOut = true;
                 return;
             }
             catch (Exception) when (!isWindow)
@@ -490,28 +612,67 @@ public class UIElementService : IUIElementService
                 return;
             }
 
-            foreach (var child in children)
+            for (var index = 0; index < children.Count; index++)
             {
-                if (StopRequested())
+                var child = children[index];
+                if (_capReached)
                 {
-                    break;
+                    _leftUnread = true;
+                    return;
                 }
 
-                Visit(child, level, output);
+                // Elements fetched with their properties cost no further call, so a level already read is kept whole
+                // when the timeout passes; elements read one at a time stop with it
+                if (child.Cached == null && StopRequested())
+                {
+                    return;
+                }
+
+                Visit(child, level, parent, [.. parent.IndexPath, index]);
             }
         }
 
         /// <summary>
-        /// Adds <paramref name="node"/> with its returned children to <paramref name="output"/> when it
-        /// passes the filters; otherwise adds the children that pass in its place.
+        /// The children of a node: listed in one call without their properties, then, for a level of at most
+        /// <see cref="CachedLevelLimit"/>, read in one more call with them. A wider level, or one whose cached read fails
+        /// (a provider that fails one child can fail it all), comes as nodes to read one at a time. A cached read that
+        /// times out, or the cancellation of the walk, is not retried one at a time: each read would wait again.
         /// </summary>
-        private void Visit(IUiaNode node, int level, List<UIElementInfo> output)
+        private IReadOnlyList<Candidate> FetchChildren(IUiaNode node)
+        {
+            var children = tree.GetChildren(node, cancellationToken);
+            if (children.Count == 0)
+            {
+                return [];
+            }
+
+            if (children.Count <= CachedLevelLimit)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    return tree.GetChildElements(node, cancellationToken).Select(e => new Candidate(e.Node, e)).ToList();
+                }
+                catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+                {
+                    // A provider failed for the read as a whole (often for one child): read the children one at a time
+                }
+            }
+
+            return children.Select(n => new Candidate(n, null)).ToList();
+        }
+
+        /// <summary>
+        /// Adds <paramref name="candidate"/> to <paramref name="parent"/>'s list unless it is offscreen (visibleOnly) or
+        /// cannot be read, and queues it for its children while the levels go on.
+        /// </summary>
+        private void Visit(Candidate candidate, int level, WalkNode parent, int[] indexPath)
         {
             UiaNodeProperties properties;
             bool included;
             try
             {
-                properties = tree.Read(node);
+                properties = candidate.Cached?.Properties ?? tree.Read(candidate.Node);
                 int read, returned, depthReached;
                 lock (_gate)
                 {
@@ -528,7 +689,7 @@ public class UIElementService : IUIElementService
                     return;
                 }
 
-                included = PassesFilters(node, properties);
+                included = PassesFilters(candidate, properties);
             }
             catch (Exception)
             {
@@ -538,39 +699,82 @@ public class UIElementService : IUIElementService
                 return;
             }
 
-            var children = new List<UIElementInfo>();
-            var readsChildren = level < maxDepth && !StopRequested();
-            if (readsChildren)
-            {
-                // While its children are read, the element is pending: a partial tree shows it with them
-                lock (_gate)
-                {
-                    _pending.Add(new PendingElement(properties, included, children));
-                }
+            // The list row the element is in (the walk knows its ancestors), and the row of the elements below it
+            var row = ElementRows.IsItem(properties.ControlType) ? null : ElementRows.Below(parent.Row);
+            var rowBelow = ElementRows.IsItem(properties.ControlType)
+                ? ElementRows.OfItem(RuntimeIdOf(candidate), properties)
+                : ElementRows.EndsTheSearch(properties.ControlType) ? null : row;
 
-                ReadChildrenInto(node, level + 1, children);
-            }
-
-            // Finished: from the pending elements into its parent's list, in one step
+            // Registered outside the walk's lock: the registry has its own, and makes no UI Automation call
+            var elementRef = included ? refs?.Register(tree, candidate, properties, indexPath, row) : null;
+            var node = new WalkNode(properties, included, elementRef, indexPath) { Row = rowBelow };
             lock (_gate)
             {
-                if (readsChildren)
+                parent.Children.Add(node);
+                if (included)
                 {
-                    _pending.RemoveAt(_pending.Count - 1);
+                    _elementCount++;
+                    if (filter?.MaxElements is { } max && _elementCount >= max)
+                    {
+                        _capReached = true;
+                    }
                 }
 
-                if (!included)
+                if (level < maxDepth)
                 {
-                    output.AddRange(children);
-                    return;
+                    _pending.Enqueue((node, candidate.Node, level + 1));
                 }
-
-                _elementCount++;
-                output.Add(Element(properties, children));
             }
         }
 
-        private static UIElementInfo Element(UiaNodeProperties properties, List<UIElementInfo> children) =>
+        /// <summary>
+        /// An item's runtime id, for the row of the elements below it: from its level's read, else as the engine knows it
+        /// (no further call for an element it found); null when it cannot be read.
+        /// </summary>
+        private IReadOnlyList<int>? RuntimeIdOf(Candidate candidate)
+        {
+            try
+            {
+                return candidate.Cached?.RuntimeId ?? tree.GetRuntimeId(candidate.Node);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The returned elements of a list of walk nodes: an element left out by the filters is replaced by the
+        /// returned elements inside it. An element names its framework only where it differs from
+        /// <paramref name="enclosingFramework"/>, that of the returned element it is inside (or the window's). Called
+        /// under the gate.
+        /// </summary>
+        private static List<UIElementInfo> Materialize(List<WalkNode> nodes, string? enclosingFramework)
+        {
+            var output = new List<UIElementInfo>();
+            foreach (var node in nodes)
+            {
+                if (!node.Included)
+                {
+                    output.AddRange(Materialize(node.Children, enclosingFramework));
+                    continue;
+                }
+
+                var properties = node.Properties!;
+                var framework = EmptyToNull(properties.FrameworkId);
+                var children = Materialize(node.Children, framework ?? enclosingFramework);
+                output.Add(Element(
+                    properties,
+                    children,
+                    framework != null && !string.Equals(framework, enclosingFramework, StringComparison.Ordinal) ? framework : null,
+                    node.Ref));
+            }
+
+            return output;
+        }
+
+        private static UIElementInfo Element(
+            UiaNodeProperties properties, List<UIElementInfo> children, string? frameworkId, string? elementRef) =>
             new(
                 Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
                 ControlType: properties.ControlType,
@@ -578,7 +782,9 @@ public class UIElementService : IUIElementService
                 Bounds: properties.Bounds.ToBounds(),
                 IsEnabled: properties.IsEnabled,
                 IsOffscreen: properties.IsOffscreen,
-                Children: children.Count > 0 ? children : null);
+                Children: children.Count > 0 ? children : null,
+                FrameworkId: frameworkId,
+                Ref: elementRef);
 
         /// <summary>
         /// Reports every <see cref="ProgressInterval"/> elements read. Never once the walk is asked to stop: the caller
@@ -605,15 +811,13 @@ public class UIElementService : IUIElementService
             }
         }
 
-        /// <summary>An element whose children are being read, and the elements read inside it so far.</summary>
-        private sealed record PendingElement(UiaNodeProperties Properties, bool Included, List<UIElementInfo> Children);
-
         /// <summary>
-        /// The controlTypes, size and interactable filters, cheapest first: the interactable check
-        /// reads more properties, so it runs only for elements that pass the others. Throws only when
-        /// the element disappeared.
+        /// The controlTypes, size, interactable and actionable filters, cheapest first; an element must pass every
+        /// filter that is set. A fetched element's interaction properties came with it; an element read on its own
+        /// reads them (focus and patterns for interactable, a fresh element read for actionable) only when it passes
+        /// the filters before. Throws only when the element disappeared.
         /// </summary>
-        private bool PassesFilters(IUiaNode node, UiaNodeProperties properties)
+        private bool PassesFilters(Candidate candidate, UiaNodeProperties properties)
         {
             if (controlTypes != null && !controlTypes.Contains(properties.ControlType))
             {
@@ -639,31 +843,119 @@ public class UIElementService : IUIElementService
                     return false;
                 }
 
-                try
+                if (!IsInteractable(candidate))
                 {
-                    return tree.IsInteractable(node);
-                }
-                catch (Exception ex) when (ex is not UiaElementUnavailableException)
-                {
-                    // Only this element's own properties failed (a provider that rejects a pattern
-                    // query, for example): leave the element out, but keep walking the elements
-                    // inside it. A vanished element is skipped with its subtree, which is gone too.
-                    Count(ref _skippedElementCount);
                     return false;
                 }
             }
 
+            if (filter?.ActionableOnly == true && !IsActionable(candidate))
+            {
+                return false;
+            }
+
             return true;
+        }
+
+        /// <summary>
+        /// Whether the element can take focus or supports an action pattern: from the properties fetched with its level,
+        /// or from a fresh read when it was read on its own. An element whose properties cannot be read counts as
+        /// skipped and is left out; its subtree is still walked.
+        /// </summary>
+        private bool IsInteractable(Candidate candidate)
+        {
+            if (candidate.Cached is { } cached)
+            {
+                return cached.IsInteractable;
+            }
+
+            try
+            {
+                return tree.IsInteractable(candidate.Node);
+            }
+            catch (Exception ex) when (ex is not UiaElementUnavailableException)
+            {
+                // Only this element's own properties failed (a provider that rejects a pattern
+                // query, for example): leave the element out, but keep walking the elements
+                // inside it. A vanished element is skipped with its subtree, which is gone too.
+                Count(ref _skippedElementCount);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Whether the element supports an action pattern: from the patterns fetched with its level, or from one fresh read
+        /// of the element (a cross-process call) when it was read on its own. An element whose patterns cannot be read is
+        /// left out and counted, and the elements inside it are still walked; one that disappeared throws.
+        /// </summary>
+        private bool IsActionable(Candidate candidate)
+        {
+            if (candidate.Cached is { } cached)
+            {
+                return (cached.Patterns & UiaPatterns.Actions) != 0;
+            }
+
+            try
+            {
+                return (tree.ReadElement(candidate.Node).Patterns & UiaPatterns.Actions) != 0;
+            }
+            catch (Exception ex) when (ex is not UiaElementUnavailableException)
+            {
+                Count(ref _skippedElementCount);
+                return false;
+            }
         }
 
         private bool StopRequested()
         {
             if (cancellationToken.IsCancellationRequested)
             {
-                TimedOut = true;
+                _timedOut = true;
             }
 
-            return TimedOut;
+            return _timedOut || _capReached;
+        }
+
+        /// <summary>
+        /// An element read during the walk, returned or not, with the elements read inside it, its ref when it is
+        /// returned, and its index path (its index among its parent's children at each level below the window).
+        /// </summary>
+        private sealed record WalkNode(UiaNodeProperties? Properties, bool Included, string? Ref, int[] IndexPath)
+        {
+            public List<WalkNode> Children { get; } = [];
+
+            /// <summary>
+            /// The list row of the elements below this one (<see cref="ElementRows"/>), its levels counted from this element
+            /// (0 when it is the item itself), or null when they are in none.
+            /// </summary>
+            public ElementRow? Row { get; init; }
+        }
+    }
+
+    /// <summary>A child to visit: its node, and its properties when they came with it.</summary>
+    private sealed record Candidate(IUiaNode Node, UiaElement? Cached);
+
+    /// <summary>
+    /// Gives the elements a walk returns their refs (roadmap M3.4). An element fetched with its level brings its runtime id
+    /// and class along; one read on its own gets its runtime id from <see cref="IUiaTree.GetRuntimeId"/> (which the
+    /// engines answer from what they read when they found it) and is registered without a class.
+    /// </summary>
+    private sealed class WalkRefs(IElementRegistry registry, nint windowHandle, long generation)
+    {
+        public string? Register(IUiaTree tree, Candidate candidate, UiaNodeProperties properties, int[] indexPath, ElementRow? row)
+        {
+            try
+            {
+                var element = candidate.Cached ?? new UiaElement(
+                    candidate.Node, properties, ClassName: null, IsKeyboardFocusable: false, UiaPatterns.None,
+                    tree.GetRuntimeId(candidate.Node), ControlTypeId: null);
+                return registry.Register(windowHandle, element, new ElementOrigin(generation, IndexPath: indexPath, Row: row));
+            }
+            catch (Exception)
+            {
+                // The element is still returned, without a ref
+                return null;
+            }
         }
     }
 

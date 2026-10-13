@@ -101,7 +101,8 @@ public class WindowCloseToolContractTests
         promptJson.GetProperty("text").GetString().Should().Be("Do you want to save changes to Untitled?");
         promptJson.GetProperty("buttons").EnumerateArray().Select(b => b.GetString()).Should().Equal("Save", "Don't Save");
         promptJson.GetProperty("kind").GetString().Should().Be("modalPopup");
-        payload.GetProperty("error").GetString().Should().Contain("Do not answer it yourself").And.Contain("ask which to choose");
+        payload.GetProperty("error").GetString().Should().Contain("Do not answer it yourself").And.Contain("ask which to choose")
+            .And.Contain("respond_to_dialog, handle: prompt.handle");
     }
 
     [Theory]
@@ -178,20 +179,25 @@ public class WindowCloseToolContractTests
     }
 
     [Fact]
-    public async Task CloseWindow_OnTheAgentHost_IsRefused_UnlessForceIsTrue()
+    public async Task CloseWindow_OnTheAgentHost_IsRefused_UnlessForceAndConfirmAreTrue_OnAClientThatCannotAsk()
     {
-        // Arrange
+        // Arrange - the in-process client does not offer elicitation
         await using var server = await StartServerAsync();
 
         // Act
         var refused = ParsePayload(await server.CallToolAsync(
             "close_window", new Dictionary<string, object?> { ["handle"] = (long)Terminal }));
-        var forced = ParsePayload(await server.CallToolAsync(
+        var unconfirmed = ParsePayload(await server.CallToolAsync(
             "close_window", new Dictionary<string, object?> { ["handle"] = (long)Terminal, ["force"] = true }));
+        VerifyNothingPosted();
+        var forced = ParsePayload(await server.CallToolAsync(
+            "close_window", new Dictionary<string, object?> { ["handle"] = (long)Terminal, ["force"] = true, ["confirm"] = true }));
 
         // Assert
         refused.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ProtectedWindow));
         refused.GetProperty("error").GetString().Should().Contain("agent's host");
+        unconfirmed.GetProperty("errorCode").GetString().Should().Be(nameof(WindowErrorCode.ConfirmationRequired));
+        unconfirmed.GetProperty("error").GetString().Should().Contain("agent's host").And.Contain("confirm=true");
         forced.GetProperty("success").GetBoolean().Should().BeTrue();
         forced.TryGetProperty("errorCode", out _).Should().BeFalse();
         _native.Verify(n => n.PostMessage(Terminal, WmClose, nint.Zero, nint.Zero), Times.Once);

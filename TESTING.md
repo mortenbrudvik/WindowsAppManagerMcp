@@ -1836,8 +1836,9 @@ process tokens, the input desktop, the session state and the agent's host chain 
 client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomationCollection.Name)]`),
 which runs them one at a time: the client's first call in a process fails with E_FAIL when two
 threads make it at once. `RealUiAutomationCollectionTests` scans the test assembly and fails for a
-class that calls the real client (the production `UiaTree` or `UIAutomationWrapper`,
-`UiaClientStartup.Shared` or `AutomationElement`) outside that collection, directly or through a
+class that calls the real client (the production `UiaTree`, `Uia3Tree` or `UIAutomationWrapper`,
+`UiaClientStartup.Shared`, `AutomationElement` or the COM client's `CUIAutomation*` classes) outside that
+collection, directly or through a
 helper in the test assembly (a fixture factory, another class's helper, their lambdas, async
 bodies and static constructors). Calls through an interface or a virtual method are not followed,
 so keep real-client factories non-virtual.
@@ -1861,7 +1862,9 @@ that the unit tests and the end-to-end tests share). There are two tiers:
   `Category=Desktop` selects both and `Category=DesktopNoInput` selects the no-input tier alone.
 
 Besides the gate's canaries in `DesktopTestGateTests`, which only check that the gate let them run,
-the desktop tests are the fixture app scenarios (see
+and one screen read in `ScreenCaptureWrapperIntegrationTests`
+(`CaptureScreenRegion_ReportsTheRegionOriginAsScreenOrigin`), the desktop tests are the fixture app
+scenarios (see
 [End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app)). An input
 test brings a window to the front and types into it, so save your work before opting in, and run
 them deliberately:
@@ -1912,15 +1915,17 @@ Rules for new tests:
   process code goes through `INativeProcessWrapper`.
 - `NativeCallGuardTests` also works as an allow-list. Outside the action wrappers the tests always
   replace (`NativeWindowWrapper`, `NativeInputWrapper`, `NativeProcessWrapper`,
-  `NativeThreadInputWrapper` and `NativeHotkeyWrapper`), code may call only the read-only
+  `NativeThreadInputWrapper`, `NativeHotkeyWrapper` and `NativeClipboardWrapper`), code may call only the read-only
   `NativeMethods` APIs listed in `ReadOnlyNativeApis`, and P/Invoke declarations must live in
   `NativeMethods`. The queries of `NativeWindowWrapper` that `ReadOnlyNativeWindowWrapper` forwards
   may reach only those APIs and the window reads in `WindowQueryNativeApis`, followed through their
   lambdas and helpers. `AttachThreadInput` is pinned to `NativeThreadInputWrapper`, and the last Win32
   error is read only inside the Native wrapper that made the call (also through framework members
-  that read it, such as `new Win32Exception()`). Outside `UIAutomationWrapper`, UI Automation
+  that read it, such as `new Win32Exception()`). Outside `UIAutomationWrapper` and the two UI Automation
+  engine adapters (`UiaTree`, `Uia3Tree`, whose pattern objects `IUiaTree.GetPattern` hands out), UI Automation
   elements, patterns and text ranges may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`,
-  `SetValue`, `Toggle`, `Select`, `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
+  `SetValue`, `Toggle`, `Select`, `SetFocus` or other action
+  (`UiAutomationActions_AreOnlyCalledByTheWrapperAndTheEngineAdapters`). A new native call or UI Automation action therefore fails the guard
   until it goes through a mockable wrapper or is reviewed onto a list.
 - Never register a real global hotkey, and never open the real shared pause. The pause hotkey (roadmap
   M1.10) registers its chord, and the input session opens the pause every server on the desktop shares
@@ -1952,13 +1957,23 @@ Rules for new tests:
   start-up (seconds, not 100 ms). Prefer a fake clock (`ManualClock`) or an explicit signal from the code
   under test over sleeping.
 
+**Timing-sensitive tests under heavy load.** A few tests still fail now and then when the machine is very busy (a
+build, another test run, a virus scan), and pass on a rerun: the deadline tests of `DesktopStateServiceTests`
+(`APartThatDoesNotAnswer_IsReportedAtTheDeadline_AndTheRestIsReturned` and the `TheElementsWalk_*` and
+`TheUiAutomationParts_*` tests, which bound a call's wall time), and contract tests that time out after about 11 to 14
+seconds in an in-process server (close_windows_batch in `UserConfirmationContractTests`, the click case of
+`ToolPayloadBudgetTests` and `EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`).
+When one of these fails alone in a full run, run it again on its own (`--filter "FullyQualifiedName~<class>"`) before
+you look for a regression; a failure that repeats on an idle machine is a real one.
+
 ### End-to-end tests against the fixture app
 
 `tests/WindowsAppManagerMcp.E2ETests` tests the real server services against an app the suite
 owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
 mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
 
-**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a check box, a
+**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a password box
+(UI Automation reports it as a password field, whose value the server never reads), a check box, a
 combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
 button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
 unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
@@ -1975,10 +1990,15 @@ box, selection, buttons, focus, modal, document, context menu). It is the fixtur
 what reached it, independent of what the server reports. `FixtureContract.Events` documents the
 events; the harness reads them with `FixtureEventLogReader`.
 
-**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, starts the fixture
-(`FixtureAppSession`), waits for its ready event, builds the server services as Program.cs registers
-them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose kills the
-fixture.
+**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, records the agent's
+host (`ServerHarness.RecordAgentHost`), starts the fixture (`FixtureAppSession`), waits for its ready
+event, builds the server services as Program.cs registers them (`ServerHarness`, with that host) and
+finds the fixture's main window through find_windows. Dispose kills the fixture. The server counts the
+window in front when it starts as part of the agent's host; the harness runs no hosted service, so it
+records the host itself, before the fixture exists, and the window in front is then the terminal that
+runs the tests. A session whose server still counts the fixture's main window as the host fails at
+once, and the scenarios that need the host in front (`E2ESession.RequireAgentHostInFront`) fail when
+another window is: keep the terminal in front, and do not click the fixture, during a run.
 
 Every native wrapper of the server sits behind a fail-closed guard (`WrapperGuard`). That includes
 the process and monitor wrappers that ProcessService and MonitorService would otherwise create
@@ -1986,18 +2006,26 @@ themselves: `ServerHarness` registers them, so the container passes the guarded 
 test (`ServerHarnessTests`) resolves every service and fails if any of them holds a native wrapper
 outside the guard. A process handle returned by `OpenProcess` is guarded as well. The guard does not
 decide from member names: `WrapperCatalog` classifies every wrapper member explicitly (read, window
-action, input, process action, process start, thread-input attach or global hotkey). A member it does not list is refused in every tier,
-and `WrapperCatalogTests` fails until a new wrapper or member is classified. When you merge a change
-that adds wrapper members, classify them there.
+action, input, process action, process start, thread-input attach, global hotkey, clipboard or UI Automation
+action). A member it does not list is refused in every tier, and `WrapperCatalogTests` fails until a new wrapper or
+member is classified. When you merge a change that adds wrapper members, classify them there (`TestingGuideTests`
+fails until a new kind is named in this list).
 
-- In the no-input tier the server can only read. Input, window changes, process closes and kills
-  throw `E2EGuardException` before they reach the wrapper.
+- In the no-input tier the server can only read. Input, window changes, UI Automation actions, and
+  process closes and kills throw `E2EGuardException` before they reach the wrapper.
 - In the input tier the server can act only on the fixture process:
   - keyboard input goes out only while a fixture window is in front;
   - mouse input goes out only while the cursor is over a fixture window, and a batch that moves the
     pointer (a click carries an absolute move to its point) only when the move ends over a fixture window;
+  - a mouse wheel batch goes out only while a fixture window is also in front, because Windows can send the
+    wheel to the focus window instead of the one under the cursor;
   - window calls go through only when every window they name is a fixture window;
-  - closes and kills apply only to the fixture process, checked by id and process name.
+  - closes and kills apply only to the fixture process, checked by id and process name;
+  - UI Automation actions (a pattern's `Invoke`, `Toggle`, `SetValue` and the other actions, and
+    `IUiaTree.SetFocus`, roadmap M3.6) go through only on an element of the fixture process. The guard reads the
+    element's process with `ReadIdentity`, through the tree that handed out the pattern (or that `SetFocus` was
+    called on), and refuses the call when it cannot read it. Unlike input, a UI Automation action gets no
+    foreground or hit-test check: a pattern acts on its element wherever the element is.
 
   Two narrow exceptions serve verified activation (EnsureForeground): a batch of zero-distance mouse
   moves, which moves nothing and presses nothing, may be sent wherever the cursor is; and the server may
@@ -2008,12 +2036,21 @@ that adds wrapper members, classify them there.
   the typing. It is a second, independent layer under the server's own input guard (roadmap M1.1 and
   M1.5, `InputTargetGuard`), so a bug in that guard cannot send input to a window outside the fixture;
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
-- In both tiers, starting a process (including `where.exe`) is refused. CDP (`ICdpService`) refuses
-  every call, because it talks to a browser's debug port over the network, outside the native
-  wrappers, and no fixture has one yet.
+- In both tiers, starting a process (including `where.exe`), registering a global hotkey and reading
+  or writing the clipboard's content are refused. CDP (`ICdpService`) refuses every call, because it
+  talks to a browser's debug port over the network, outside the native wrappers, and no fixture has one yet.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
-forbids acting pattern calls outside the Native wrappers. The harness finds the fixture exe from a
+forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
+pattern objects `IUiaTree.GetPattern` hands out are guarded in turn: their actions (`UiaAction` in
+`WrapperCatalog`) are refused in the no-input tier and allowed in the input tier only on elements of the fixture
+process, as above. A scenario can choose the engine with `E2ESession.Start(..., uiaEngine: UiaEngine.Uia2)` (or
+`ServerHarness.Create(tier, pid, engine)`); without it the server reads with the engine `WAM_UIA_ENGINE` chooses in
+the test process (by default uia3), and `E2ESession.Start` writes the engine and where it came from to the test output
+(`UI Automation engine: Uia3 (default)`). `FixtureUiaEngineTests` and `FixtureUiElementsTests` read the fixture with
+both engines in every run (see
+[Release gate: the UI Automation engines](#release-gate-the-ui-automation-engines)). The Uia3Tree unit tests never
+create the COM client: they run over Moq mocks of its interfaces. The harness finds the fixture exe from a
 path the build records in the test assembly; set `WAM_FIXTURE_APP_PATH` to use another build of
 `WamFixtureApp.exe` (for example in Windows Sandbox). The harness refuses any exe with another name.
 
@@ -2022,11 +2059,11 @@ captures and `[DesktopFact]` when it acts, and start from `E2ESession`:
 
 ```csharp
 [DesktopNoInputFact]
-public void GetUIElements_SeesTheEditBox()
+public async Task GetUIElements_SeesTheEditBox()
 {
     using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
-    var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+    var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 
     UiaReads.Flatten(result.Elements).Should().Contain(e => e.AutomationId == FixtureContract.Ids.EditBox);
 }
@@ -2039,11 +2076,119 @@ as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless pop
 process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
 `HarnessTests/` are ordinary tests of the harness and must never start the fixture.
 
+**The scenarios.** Each class in `Scenarios/` covers one area; a class can hold tests of both tiers.
+
+| Scenario class | Tier | What it checks against the fixture |
+|----------------|------|------------------------------------|
+| `FixtureWindowTests` | No input | find_windows and get_window_info |
+| `FixtureUiElementsTests` | No input | get_ui_elements: automation ids, control types, bounds, the realized rows of the virtualized list (with each engine) |
+| `FixtureCaptureTests`, `MirroredWindowCaptureTests` | No input | capture_window's size and origin (the color swatches); a right-to-left mirrored window |
+| `FixtureInputGuardTests` | Both | The input guard: refusals in the no-input tier, input that must be sent in the input tier |
+| `FixtureForegroundTests`, `FixtureTypingTests`, `FixtureSessionTests` | Input | Verified activation, focus_window and type_text, the user's pause |
+| `FixtureCloseTests` | Input | close_window's guard and its report of the save prompt |
+| `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
+| `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
+| `FixturePopupTests` | Input | The open context menu found by the default scope and listed by get_active_popups, and the combo box list found by scope windowAndPopups (M3.5) |
+| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5) |
+| `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
+| `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
+| `FixtureElementWaitTests` | No input | wait_for_element (M3.8) |
+| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9) |
+| `FixtureVirtualizedListTests` | Both | searchVirtualized in the no-input tier, element_action realize in the input tier (M3.10) |
+| `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
+| `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |
+| `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
+
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
 checks that the runner has an interactive desktop and otherwise ends with a notice instead of
 running anything; use a self-hosted runner in a logged-on desktop session then. It fails when no
 test ran, so an opt-in that did not reach the tests cannot pass as green.
+
+### Release gate: the UI Automation engines
+
+The server reads UI Automation with the UIA3 COM client by default, and with the managed UIA2 client
+(System.Windows.Automation) when `WAM_UIA_ENGINE=uia2` (roadmap M3.2). Before a release that ships
+uia3 as the default, the repository owner runs the whole no-input tier twice on a real desktop: once
+with `WAM_UIA_ENGINE` unset (uia3) and once with `WAM_UIA_ENGINE=uia2`. If the engines differ, the
+release ships with uia2 as the default (`UiaEngineOptions.Default`). The owner runs it, never an
+agent. The tier only starts the fixture and reads it, but the fixture's windows appear on the screen:
+leave the desktop alone during the runs, because a window opened over the fixture can fail a capture
+scenario.
+
+Run both from the repository root, on a real desktop: `.github/workflows/e2e.yml` has no engine choice. The trx
+logger keeps every test's output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
+
+```bash
+# Git Bash
+# Run 1: the default engine (uia3)
+env -u WAM_UIA_ENGINE WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
+# Run 2: uia2
+WAM_UIA_ENGINE=uia2 WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
+```
+
+```powershell
+# PowerShell
+# Run 1: the default engine (uia3)
+Remove-Item Env:WAM_UIA_ENGINE -ErrorAction SilentlyContinue
+$env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS = "1"
+dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
+
+# Run 2: uia2
+$env:WAM_UIA_ENGINE = "uia2"
+dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
+
+Remove-Item Env:WAM_UIA_ENGINE
+Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
+```
+
+What the runs cover:
+
+- Every no-input scenario that leaves the engine to the server reads with the engine of the run:
+  `FixtureElementRefsTests` (find_ui_elements and refs), `FixtureElementReadTests` (read_element_text and
+  read_table), `FixtureElementWaitTests` (wait_for_element), `FixtureSetOfMarksTests` (Set-of-Marks),
+  `FixtureDesktopStateTests` (get_desktop_state) and `FixtureVirtualizedListTests` (the virtualized list search).
+  The rest of the tier (see [the scenarios](#end-to-end-tests-against-the-fixture-app)) runs too. Each test's output
+  names the engine and where it came from:
+  `UI Automation engine: Uia3 (default)` in the first run, `UI Automation engine: Uia2 (WAM_UIA_ENGINE)`
+  in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
+  falling back to uia3, so a mistyped second run cannot pass as a uia2 run.
+- `FixtureUiaEngineTests` and `FixtureUiElementsTests` choose the engine themselves, so they give the
+  same results in both runs (`UiaEngineScenarioTests` keeps it so). Each of their theories runs once
+  per engine (`engine: Uia3` and `engine: Uia2`). Among them, the find_ui_elements theory checks with
+  each engine that every element found at detail full is the fixture's (its process id), has a click
+  point in its bounds and a ref that resolves to the live element, and that the password box alone is a
+  password field, whose text neither find_ui_elements nor read_element_text reads. The `BothEngines_*`
+  facts start a server per engine against one fixture and compare what the two read: the
+  get_ui_elements tree (control types, names, automation ids, states, frameworks, a ref for every
+  element, bounds), and the elements find_ui_elements finds at detail full, by control types and by an
+  automation id in other letter case (identity: process, window handle and password flag; patterns;
+  toggle, expand/collapse and selection state; value; focus; description; bounds). Patterns are
+  compared by name without LegacyIAccessible, which uia3 reports on nearly every element and uia2
+  never does.
+
+What to compare:
+
+1. Both runs pass, with the same counts: the engines agree. Keep uia3 as the default.
+2. A test that fails in one run only, a theory that fails for one `engine` only, or a `BothEngines_*`
+   fact that fails: the engines differ. The failure message names the test's engine, or, for a
+   `BothEngines_*` fact, the first element that differs. The release defaults to uia2; record the
+   failing tests and their messages for the follow-up.
+3. A test that fails in both runs and, for a theory, with both engines, is a problem of the test or
+   the fixture, not an engine difference. Fix it and run the gate again. A `BothEngines_*` fact is the
+   exception: it compares the engines, so it fails in both runs when they differ (point 2).
+
+One caveat for point 2: the window's title bar, its system menu bar and the minimize, maximize or restore and close
+buttons are not the server's or the fixture's. Windows serves that Win32 non-client area itself, through its native
+proxy to uia3 and through .NET's managed client-side proxy to uia2, and the two disagree on details that have nothing
+to do with the server's code, from run to run: in the second run of the first 1.15.0 gate (on c2db508), uia2 read the
+Minimize button with automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while
+the first run's uia2 agreed, and in both runs of the gate that passed (on 293cacd) both engines read `Minimize` and
+`Win32`. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
+lie wholly outside the client area the fixture reports) by control type and name only, and every other element in full.
+On a Windows display language other than English a name or a localized type of the title bar can still differ: when the
+first difference is one of those elements, record it, and compare the fixture's own controls in the output of the
+find_ui_elements theory, which writes every element it finds with each engine, before you change the default.
 
 ### Tool surface snapshot
 
@@ -2108,6 +2253,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | README.md | `tool-table` | "Available Tools (N)" and the category table |
 | docs/TOOLS.md | `summary` | The introduction with the tool count, and the quick reference |
 | docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
+| docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
 | SKILL.md | `count` | The sentence with the tool count |
 | SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |
@@ -2161,20 +2307,33 @@ fail it after 5 seconds instead of blocking every input call.
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
 presets) and holds it to a per-tool token budget. Text is estimated at 4 UTF-8 bytes per token; a capture's
 image at width × height / 750 tokens, at most 3,300 (the default 1568-pixel long edge). Each budget is about
-one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it.
-The largest typical results, measured in October 2026:
+one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it. Every
+typical result over 300 tokens, and tools/list itself, measured in October 2026:
 
 | Tool | Typical result | Tokens | Budget |
 |------|----------------|-------:|-------:|
-| `capture_with_elements` | Metadata of 120 elements (the image is budgeted separately) | 6,026 | 9,500 |
-| `get_ui_elements` | 120 elements at the default depth | 5,397 | 8,500 |
+| `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
+| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
+| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 1,410 | 2,150 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
-| `find_windows`, `get_all_windows` | 15 windows | 989 | 1,500 |
-| `get_server_info` | The default deny list, five host processes, two monitors | 543 | 850 |
+| `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
+| `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
+| `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
+| `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
+| `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 205,453 bytes (`ToolList_StaysWithinItsBudget`) | 51,364 | 51,400 |
 
-Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
+Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
+`ToolList_StaysWithinItsBudget` bounds tools/list, which a client that loads every tool up front keeps in context
+for the whole session, serialized as the SDK writes it. Its budget is a ratchet, not a margin: raise it only in a
+change that adds to the surface on purpose, by what the failure message measures, and lower it when descriptions are
+trimmed. There is no per-description cap.
+`Contract/ElementReadContractTests` also bounds the largest result read_element_text and read_table can return
+(a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
+cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:
+the reads bound a page in bytes of JSON, not only in characters.
 
 ### Protocol revisions, progress and cancellation
 
@@ -2227,7 +2386,7 @@ mode serves exactly the tools annotated `readOnlyHint: true`, and that each of t
 gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
-keeps the server instructions at 15 to 20 lines that name only served tools.
+keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only served tools.
 
 ### Audit log and clipboard in tests
 
@@ -2315,4 +2474,4 @@ build of the current sources, and compares their tools/list with the snapshot (s
 
 ---
 
-*Last updated: January 2025*
+*Last updated: October 2026*

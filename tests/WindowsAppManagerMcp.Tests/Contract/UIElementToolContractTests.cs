@@ -74,9 +74,11 @@ public class UIElementToolContractTests
     [MemberData(nameof(Revisions))]
     public async Task GetUIElements_CancelledByTheClient_StopsTheWalkOnTheServer(string? revision)
     {
-        // Arrange - 200 elements that take 50 ms each: a ten-second walk
+        // Arrange - 200 panes whose children take 50 ms each to fetch (one cross-process call per pane): a ten-second walk
         _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(
-            Enumerable.Range(1, 200).Select(i => new FakeUiaNode("Button", $"B{i}") { OnRead = () => Thread.Sleep(50) }).ToArray()));
+            Enumerable.Range(1, 200)
+                .Select(i => new FakeUiaNode("Pane", $"P{i}") { OnGetChildren = () => Thread.Sleep(50) }.With(new FakeUiaNode("Button", $"B{i}")))
+                .ToArray()));
         var requestId = new TaskCompletionSource<RequestId>(TaskCreationOptions.RunContinuationsAsynchronously);
         var callEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = await StartServerAsync(revision, requestId, callEnded);
@@ -84,7 +86,7 @@ public class UIElementToolContractTests
         var call = server.CallToolAsync("get_ui_elements",
             new Dictionary<string, object?> { ["handle"] = (long)Handle, ["timeoutMs"] = 30000 }, cancellationToken: clientGivesUp.Token);
         var id = await requestId.Task.WaitAsync(Timeout);
-        SpinWait.SpinUntil(() => _tree.ReadNodes.Count >= 3, Timeout).Should().BeTrue();
+        SpinWait.SpinUntil(() => _tree.CachedFetches.Count >= 3, Timeout).Should().BeTrue();
 
         // Act - the client cancels the call (notifications/cancelled with its id)
         await server.Client.SendNotificationAsync(NotificationMethods.CancelledNotification,
@@ -92,10 +94,10 @@ public class UIElementToolContractTests
 
         // Assert - the walk stopped long before its end, and the call ended without waiting for the timeout
         await callEnded.Task.WaitAsync(Timeout);
-        var read = _tree.ReadNodes.Count;
-        read.Should().BeLessThan(200, "the request's token is linked with the walk's timeout");
+        var fetched = _tree.CachedFetches.Count;
+        fetched.Should().BeLessThan(201, "the request's token is linked with the walk's timeout");
         await Task.Delay(200);
-        _tree.ReadNodes.Count.Should().BeLessThanOrEqualTo(read + 1, "the walk does not go on after the call ended");
+        _tree.CachedFetches.Count.Should().BeLessThanOrEqualTo(fetched + 1, "the walk does not go on after the call ended");
 
         await server.AssertNoResponseSentAsync(id);
         clientGivesUp.Cancel();
@@ -134,6 +136,54 @@ public class UIElementToolContractTests
         json.TryGetProperty("truncationReason", out _).Should().BeFalse("null members are left out");
         json.GetProperty("elements")[0].TryGetProperty("bounds", out _).Should().BeFalse(
             "an element without geometry has no bounds instead of int.MinValue coordinates");
+    }
+
+    [Fact]
+    public async Task GetUIElements_TextFormatWithMaxElements_ReturnsCompactLinesOfTheShallowLevelsOverMcp()
+    {
+        // Arrange (roadmap M3.1)
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(
+            new FakeUiaNode("ToolBar", "Tools") { Bounds = new UiaRect(0, 0, 200, 30) }.With(
+                new FakeUiaNode("Button", "Save") { AutomationId = "SaveBtn", Bounds = new UiaRect(812, 44, 80, 24), IsEnabled = false },
+                new FakeUiaNode("Button", "Open")),
+            new FakeUiaNode("Edit", "Name") { Bounds = new UiaRect(5, 50, 300, 20) }));
+        await using var server = await StartServerAsync();
+
+        // Act
+        var json = Json(await server.CallToolAsync("get_ui_elements",
+            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["format"] = "text", ["maxElements"] = 3 }));
+
+        // Assert - breadth first: both elements under the window, then the first one below
+        json.GetProperty("text").GetString().Should().Be(
+            "ToolBar 'Tools' @0,0 200x30\n" +
+            "  Button 'Save' aid=SaveBtn @812,44 80x24 [disabled]\n" +
+            "Edit 'Name' @5,50 300x20");
+        json.TryGetProperty("elements", out _).Should().BeFalse("the text replaces the elements");
+        json.GetProperty("totalElementCount").GetInt32().Should().Be(3);
+        json.GetProperty("truncated").GetBoolean().Should().BeTrue();
+        json.GetProperty("truncationReason").GetString().Should().Be("MaxElements");
+    }
+
+    [Fact]
+    public async Task GetUIElements_FlatFormat_ReturnsDepthAndParentOverMcp()
+    {
+        // Arrange
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Editor").With(
+            new FakeUiaNode("ToolBar", "Tools").With(new FakeUiaNode("Button", "Save"))));
+        await using var server = await StartServerAsync();
+
+        // Act
+        var json = Json(await server.CallToolAsync("get_ui_elements",
+            new Dictionary<string, object?> { ["handle"] = (long)Handle, ["format"] = "flat" }));
+
+        // Assert
+        var elements = json.GetProperty("elements").EnumerateArray().ToList();
+        elements.Select(e => e.GetProperty("name").GetString()).Should().Equal("Tools", "Save");
+        elements[0].GetProperty("depth").GetInt32().Should().Be(1);
+        elements[0].TryGetProperty("parent", out _).Should().BeFalse("a top-level element has no parent");
+        elements[1].GetProperty("depth").GetInt32().Should().Be(2);
+        elements[1].GetProperty("parent").GetInt32().Should().Be(0);
+        elements.Where(e => e.TryGetProperty("children", out var _)).Should().BeEmpty();
     }
 
     [Fact]

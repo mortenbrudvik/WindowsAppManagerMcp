@@ -21,8 +21,8 @@ public class ScreenshotToolsCaptureHealthTests
     private readonly Mock<IInputSession> _session = new();
     private readonly List<string> _events = [];
 
-    private ScreenshotTools CreateSut() =>
-        new(_screenshots.Object, _elements.Object, _windows.Object, new TargetPolicy(TargetPolicySettings.Default), _session.Object);
+    private ScreenshotTools CreateSut(TargetPolicySettings? policy = null) =>
+        new(_screenshots.Object, _elements.Object, _windows.Object, new TargetPolicy(policy ?? TargetPolicySettings.Default), _session.Object);
 
     #region capture_with_elements and the walk
 
@@ -55,6 +55,29 @@ public class ScreenshotToolsCaptureHealthTests
         // Assert
         json.TryGetProperty("truncated", out _).Should().BeFalse();
         json.TryGetProperty("elementsErrorCode", out _).Should().BeFalse();
+        json.TryGetProperty("accessibilityWarmup", out _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CaptureWithElements_ReportsTheWebContentWarmup_WhetherTheWalkSucceededOrNot(bool walked)
+    {
+        // Arrange - roadmap M3.3: the window's page was not built in time
+        var warmup = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.NotReady, WebContentHost.Chromium, 1500, 6, 0, "Read again.");
+        var walk = walked
+            ? TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()])
+            : TestDataFactory.CreateUIElementResult(success: false, error: "timed out", errorCode: UIElementErrorCode.OperationTimedOut);
+        WalkReturns(walk with { AccessibilityWarmup = warmup });
+
+        // Act
+        var json = Metadata(await CreateSut().CaptureWithElements(handle: (long)Window));
+
+        // Assert
+        var reported = json.GetProperty("accessibilityWarmup");
+        reported.GetProperty("status").GetString().Should().Be("NotReady");
+        reported.GetProperty("host").GetString().Should().Be("Chromium");
+        reported.GetProperty("warning").GetString().Should().Be("Read again.");
     }
 
     [Fact]
@@ -94,8 +117,8 @@ public class ScreenshotToolsCaptureHealthTests
     [Fact]
     public async Task CaptureWithElements_OfAnUntitledWindow_TakesTheTitleFromTheWalk()
     {
-        // Arrange - GetWindowInfo reports nothing for an untitled popup
-        _windows.Setup(w => w.GetWindowInfo(Window)).Returns((WindowInfo?)null);
+        // Arrange - an untitled popup
+        _windows.Setup(w => w.GetWindowInfo(Window)).Returns(TestDataFactory.CreateWindowInfo((int)Window, title: ""));
         WalkReturns(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]) with { WindowTitle = "Context" });
 
         // Act
@@ -103,7 +126,7 @@ public class ScreenshotToolsCaptureHealthTests
 
         // Assert
         _screenshots.Verify(s => s.CaptureWindowWithElements(Window, "Context", It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Theory]
@@ -178,7 +201,7 @@ public class ScreenshotToolsCaptureHealthTests
             .Callback(() => _events.Add("walk"))
             .ReturnsAsync(TestDataFactory.CreateUIElementResult(elements: [TestDataFactory.CreateUIElementInfo()]));
         _screenshots.Setup(s => s.CaptureWindowWithElements(Window, It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-                It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()))
+                It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()))
             .Callback(() => _events.Add("capture"))
             .Returns(new ScreenCapture<AnnotatedScreenshotResult>(TestDataFactory.CreateAnnotatedScreenshotResult(), TestDataFactory.CreateEncodedImage()));
 
@@ -238,6 +261,46 @@ public class ScreenshotToolsCaptureHealthTests
         Metadata(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
         _events.Should().BeEmpty();
         _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_WithRestoreIfMinimized_WhenTheRestoreWouldShowAWindowWhoseProcessCannotBeNamed_RestoresNothing()
+    {
+        // Arrange - the minimized window owns a prompt of a process the server cannot name (it may run elevated), so the
+        // prompt cannot be checked against the policy
+        Minimized();
+        var prompt = new nint(0x6100);
+        _screenshots.Setup(s => s.WindowsShownByRestore(Window)).Returns([Window, prompt]);
+        ProcessCannotBeNamed(prompt, TargetPolicySettings.Default);
+
+        // Act
+        var result = await CreateSut().CaptureWindow(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeTrue();
+        Metadata(result).GetProperty("errorCode").GetString().Should().Be(nameof(ScreenshotErrorCode.TargetDeniedByPolicy));
+        Metadata(result).GetProperty("error").GetString().Should().Contain("cannot be read");
+        _events.Should().BeEmpty();
+        _screenshots.Verify(s => s.CaptureWindow(It.IsAny<nint>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CaptureWindow_WithRestoreIfMinimized_WhenTheRestoreWouldShowAWindowWhoseProcessCannotBeNamed_RestoresIt_WhenThePolicyDeniesNothing()
+    {
+        // Arrange
+        var none = TargetPolicySettings.FromEnvironment(name => name == TargetPolicySettings.DenyVariable ? "none" : null);
+        Minimized();
+        var prompt = new nint(0x6100);
+        _screenshots.Setup(s => s.WindowsShownByRestore(Window)).Returns([Window, prompt]);
+        ProcessCannotBeNamed(prompt, none);
+
+        // Act
+        var result = await CreateSut(none).CaptureWindow(handle: (long)Window, restoreIfMinimized: true);
+
+        // Assert
+        result.IsError.Should().BeFalse();
+        _events.Should().Equal("restore", "minimize");
+        _screenshots.Verify(s => s.CaptureWindow(Window, true, It.IsAny<CaptureOptions>()), Times.Once);
     }
 
     [Fact]
@@ -338,6 +401,22 @@ public class ScreenshotToolsCaptureHealthTests
             });
     }
 
+    /// <summary>
+    /// The window service's own target policy check (<see cref="WindowService.EvaluateTargetPolicy"/>), with
+    /// <paramref name="policy"/>, for <paramref name="window"/>: a window whose process the server cannot name.
+    /// </summary>
+    private void ProcessCannotBeNamed(nint window, TargetPolicySettings policy)
+    {
+        const uint processId = 6100;
+        var native = new Mock<INativeWindowWrapper>();
+        native.Setup(n => n.IsWindow(window)).Returns(true);
+        native.Setup(n => n.GetWindowThreadProcessId(window)).Returns(processId);
+        native.Setup(n => n.GetProcessName(processId)).Returns((string?)null);
+        var windowService = new WindowService(
+            TestDataFactory.CreateMockMonitorService().Object, native.Object, Mock.Of<IHostGuard>(), new TargetPolicy(policy));
+        _windows.Setup(w => w.EvaluateTargetPolicy(window)).Returns(() => windowService.EvaluateTargetPolicy(window));
+    }
+
     private MinimizedWindowRestore Restored()
     {
         var minimized = true;
@@ -386,7 +465,7 @@ public class ScreenshotToolsCaptureHealthTests
 
     private void VerifyNotCaptured() =>
         _screenshots.Verify(s => s.CaptureWindowWithElements(It.IsAny<nint>(), It.IsAny<string?>(),
-            It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
 
     private static JsonElement Metadata(CallToolResult result) =>
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement;

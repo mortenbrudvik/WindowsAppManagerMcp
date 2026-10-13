@@ -12,6 +12,7 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="Paths">Where the server keeps its files.</param>
 /// <param name="Toolsets">The toolsets, exclusions and read-only mode in force.</param>
 /// <param name="Warnings">What will make tools fail or coordinates wrong, one sentence each; null when nothing does.</param>
+/// <param name="UiAutomation">The UI Automation engine the element tools use (roadmap M3.2).</param>
 public sealed record ServerInfoResult(
     ServerBuildInfo Server,
     ServerConnectionInfo Connection,
@@ -23,7 +24,19 @@ public sealed record ServerInfoResult(
     SafetySettingsInfo Safety,
     ServerPathsInfo Paths,
     ToolsetInfo Toolsets,
-    IReadOnlyList<string>? Warnings);
+    IReadOnlyList<string>? Warnings,
+    UiAutomationInfo? UiAutomation = null);
+
+/// <summary>The UI Automation engine behind get_ui_elements, get_focused_element, get_element_at_point and verified close.</summary>
+/// <param name="Engine">Uia3 (the COM client, the default) or Uia2 (the managed client, WAM_UIA_ENGINE=uia2).</param>
+/// <param name="Source">"default", or WAM_UIA_ENGINE.</param>
+/// <param name="ConnectionTimeoutMs">How long a UIA3 call waits to connect to an application; null for Uia2, which has none.</param>
+/// <param name="TransactionTimeoutMs">How long a UIA3 call waits for an application to answer; null for Uia2, which has none.</param>
+public sealed record UiAutomationInfo(
+    UiaEngine Engine,
+    string Source,
+    int? ConnectionTimeoutMs,
+    int? TransactionTimeoutMs);
 
 /// <summary>What is running.</summary>
 /// <param name="Name">The MCP server name, windows-app-manager.</param>

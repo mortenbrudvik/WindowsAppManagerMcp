@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
@@ -55,13 +54,6 @@ public static class ToolErrorReporting
     public static readonly TimeSpan SlowCallThreshold = TimeSpan.FromSeconds(10);
 
     private const string LoggerCategory = "WindowsAppManagerMcp.ToolErrors";
-
-    // The SDK's options plus relaxed escaping, so quotes in exception messages stay readable for
-    // the agent instead of being escaped as unicode sequences. The text goes to an MCP client, not HTML.
-    private static readonly JsonSerializerOptions ErrorJsonOptions = new(McpJsonUtilities.DefaultOptions)
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
 
     /// <summary>
     /// Registers <see cref="Filter"/> in the call-tool pipeline of the MCP server.
@@ -264,7 +256,7 @@ public static class ToolErrorReporting
     private static CallToolResult CreateResult(ToolErrorResultDto payload) => new()
     {
         IsError = true,
-        Content = [new TextContentBlock { Text = JsonSerializer.Serialize(payload, ErrorJsonOptions) }]
+        Content = [new TextContentBlock { Text = JsonSerializer.Serialize(payload, ToolJson.SdkResultOptions) }]
     };
 
     /// <summary>

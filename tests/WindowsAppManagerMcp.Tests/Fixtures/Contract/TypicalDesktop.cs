@@ -81,6 +81,9 @@ public static class TypicalDesktop
                 IsVisible: true,
                 MonitorIndex: i % 4 == 1 ? 1 : 0)
             {
+                // The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS) without the invisible resize borders of Windows 10 and 11:
+                // 7 pixels left, right and bottom at 100%. The service reads it for every window, minimized ones included
+                VisibleBounds = new WindowRect((i % 2 == 0 ? 0 : 1280) + 7, i % 3 * 100, 1280 - 14, 1392 - i % 3 * 100 - 7),
                 ClassName = app.Class,
                 HostProcessName = app.Class == "ApplicationFrameWindow" ? "ApplicationFrameHost" : null,
                 HostProcessId = app.Class == "ApplicationFrameWindow" ? 9_120 : null
@@ -92,10 +95,15 @@ public static class TypicalDesktop
     public static IReadOnlyList<UIElementInfo> UiTree()
     {
         var y = 0;
+        var element = 0;
+
+        // Every element has a ref (roadmap M3.4), as in a real walk, numbered in the order the walk would register them
         UIElementInfo Leaf(string name, string type, string id) =>
-            new(name, type, id, new BoundsDto(40, 60 + (y += 24) % 1200, 220, 22), IsEnabled: true, IsOffscreen: false);
+            new(name, type, id, new BoundsDto(40, 60 + (y += 24) % 1200, 220, 22), IsEnabled: true, IsOffscreen: false,
+                Ref: $"w4120035e{++element}");
         UIElementInfo Group(string name, string type, string id, IReadOnlyList<UIElementInfo> children) =>
-            new(name, type, id, new BoundsDto(0, 40, 1280, 600), IsEnabled: true, IsOffscreen: false, Children: children);
+            new(name, type, id, new BoundsDto(0, 40, 1280, 600), IsEnabled: true, IsOffscreen: false, Children: children,
+                Ref: $"w4120035e{++element}");
 
         var menu = Group("Application", "MenuBar", "MenuBar",
             new[] { "File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help" }
@@ -115,8 +123,146 @@ public static class TypicalDesktop
         return [pane, document];
     }
 
+    /// <summary>What find_ui_elements returns for "the Save button": two matches, at the default detail.</summary>
+    public static IReadOnlyList<FoundElement> FoundButtons { get; } =
+    [
+        new("w4120035e9", "Save", "Button", "cmd.save", "Button", new BoundsDto(64, 88, 28, 28), new ScreenPoint(78, 102), true, false,
+            ["Invoke"]),
+        new("w4120035e31", "Save all", "Button", "cmd.saveAll", "Button", new BoundsDto(96, 88, 28, 28), new ScreenPoint(110, 102), true, false,
+            ["Invoke"]),
+    ];
+
+    /// <summary>What get_active_popups returns for Notepad (roadmap M3.5): its open context menu and a Save As dialog.</summary>
+    public static IReadOnlyList<ActivePopup> NotepadPopups { get; } =
+    [
+        new("w4120036e1", 2493112, PopupKind.Menu, null, "#32768", 4120, "Notepad", null, new BoundsDto(612, 240, 268, 410), "Menu"),
+        new("w4120037e1", 3017452, PopupKind.Dialog, "Save As", "#32770", 4120, "Notepad", NotepadHandle,
+            new BoundsDto(420, 180, 960, 640), "Window", IsBlocking: true),
+    ];
+
+    /// <summary>Characters of the reading pane's text that read_element_text returns for a typical e-mail (roadmap M3.9).</summary>
+    public const int MessageLength = 3_000;
+
+    /// <summary>What read_element_text returns for a reading pane: the first page of a 3,000-character e-mail.</summary>
+    public static ElementTextResult MessageText { get; } = new(
+        true, "w4120035e57", NotepadHandle, "Document", Article[..MessageLength], ElementTextSource.Text, 0, MessageLength, false, null, 18.25);
+
+    /// <summary>Rows of the process table read_table returns (Task Manager's first page, roadmap M3.9).</summary>
+    public const int TableRows = 50;
+
+    /// <summary>What read_table returns for Task Manager's processes: 50 rows of 5 columns, with headers.</summary>
+    public static ElementTableResult ProcessTable { get; } = new(
+        Success: true,
+        Ref: "w4120035e61",
+        WindowHandle: NotepadHandle,
+        Source: ElementTableSource.Grid,
+        Headers: ["Name", "Status", "CPU", "Memory", "Disk"],
+        Rows: Enumerable.Range(0, TableRows)
+            .Select(i => (IReadOnlyList<string?>)
+            [
+                ProcessNames[i % ProcessNames.Length], i % 7 == 0 ? "Suspended" : "", $"{i % 9}.{i % 10}%", $"{48.5 + i * 11.25:0.0} MB",
+                $"{i % 4}.1 MB/s"
+            ])
+            .ToList(),
+        StartRow: 0,
+        TotalRows: 212,
+        TotalColumns: 5,
+        Truncated: true,
+        ElapsedMilliseconds: 412.5,
+        TruncationReason: ElementTableTruncation.MaxRows,
+        NextStartRow: TableRows);
+
+    /// <summary>
+    /// What element_action returns for a typical set_value through the Value pattern (roadmap M3.6): the state before and
+    /// after, verified. The value set is not echoed; the state shows the field's value.
+    /// </summary>
+    public static ElementActionResult ElementActionDone(ElementActionRequest request) => new(
+        Success: true,
+        Action: "set_value",
+        Ref: request.Ref,
+        WindowHandle: NotepadHandle,
+        Status: ElementActionStatus.Done,
+        Method: ElementActionMethod.Value,
+        Before: new ElementState("Search", IsEnabled: true, IsOffscreen: false, HasKeyboardFocus: false, Value: "window layout"),
+        After: new ElementState("Search", IsEnabled: true, IsOffscreen: false, HasKeyboardFocus: false, Value: "window layout presets"),
+        OutcomeVerified: true,
+        ElapsedMilliseconds: 48.5);
+
+    /// <summary>
+    /// What element_action's menu_path returns for File>Save As in Notepad (roadmap M3.5): File expanded, its submenu window,
+    /// Save As invoked, and the Save As dialog the press waits for.
+    /// </summary>
+    public static ElementActionResult MenuPathDone { get; } = new(
+        Success: true,
+        Action: "menu_path",
+        Ref: "w4120037e4",
+        WindowHandle: 0x1A0C40,
+        Status: ElementActionStatus.InvokedPendingModal,
+        Method: ElementActionMethod.Invoke,
+        Before: new ElementState("Save As...", IsEnabled: true, IsOffscreen: false),
+        OpenedPopup: new OpenedWindow(0x1A0C00, "Save As", "#32770", 10_244, "notepad"),
+        ElapsedMilliseconds: 5_310.5,
+        Steps:
+        [
+            new MenuPathStep("File", "w4120035e3", ElementActionMethod.ExpandCollapse, 0x1A0C40),
+            new MenuPathStep("Save As", "w4120037e4", ElementActionMethod.Invoke, 0x1A0C00)
+        ]);
+
+    /// <summary>What respond_to_dialog returns for Notepad's save prompt answered "no" (roadmap M3.5).</summary>
+    public static DialogResponseResult SavePromptAnswered { get; } = new(
+        Success: true,
+        DialogHandle: 0x1A0C10,
+        Title: "Notepad",
+        Text: ["Do you want to save changes to Untitled?"],
+        Buttons:
+        [
+            new DialogButton("w4120036e1", "Save", "6", "yes", true),
+            new DialogButton("w4120036e2", "Don't Save", "7", "no", true),
+            new DialogButton("w4120036e3", "Cancel", "2", "cancel", true)
+        ],
+        Invoked: new DialogButton("w4120036e2", "Don't Save", "7", "no", true),
+        Method: ElementActionMethod.Invoke,
+        DialogClosed: true,
+        ElapsedMilliseconds: 186.5);
+
+    /// <summary>A file the contract run's file_dialog saves: in the temporary folder, which exists on every machine.</summary>
+    public static string SavePath { get; } = Path.Combine(Path.GetTempPath(), "meeting-notes.txt");
+
+    /// <summary>What file_dialog returns for Notepad's Save As dialog completed with a path (roadmap M3.14).</summary>
+    public static FileDialogResult FileSaved(FileDialogRequest request) => new(
+        Success: true,
+        Action: "save",
+        DialogHandle: 0x1A0C00,
+        Completed: true,
+        FinalPath: Path.GetFullPath(request.Path),
+        PromptHandled: request.Overwrite,
+        ElapsedMilliseconds: 742.5);
+
     public static int Count(IReadOnlyList<UIElementInfo> elements) =>
         elements.Sum(e => 1 + (e.Children == null ? 0 : Count(e.Children)));
+
+    /// <summary>The first <paramref name="max"/> elements in reading order, as a walk stopped at maxElements keeps them (get_desktop_state asks for 80).</summary>
+    public static IReadOnlyList<UIElementInfo> Take(IReadOnlyList<UIElementInfo> elements, int max)
+    {
+        var left = max;
+        return Cut(elements);
+
+        IReadOnlyList<UIElementInfo> Cut(IReadOnlyList<UIElementInfo> level)
+        {
+            var kept = new List<UIElementInfo>();
+            foreach (var element in level)
+            {
+                if (left-- <= 0)
+                {
+                    break;
+                }
+
+                kept.Add(element.Children == null ? element : element with { Children = Cut(element.Children) });
+            }
+
+            return kept;
+        }
+    }
 
     public static UIElementDetails FocusedEdit { get; } = new(
         Name: "Search",

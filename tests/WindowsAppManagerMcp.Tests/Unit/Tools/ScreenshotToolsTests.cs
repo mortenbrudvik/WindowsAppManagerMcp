@@ -335,8 +335,8 @@ public class ScreenshotToolsTests
         await act.Should().ThrowAsync<OperationCanceledException>();
         walkStopped.Should().BeTrue("the request's token is linked with the walk's timeout");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<bool>(),
-            It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(),
+            It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
     }
 
     [Fact]
@@ -418,8 +418,8 @@ public class ScreenshotToolsTests
     [Fact]
     public async Task CaptureWithElements_ForAnUntitledWindow_StillCaptures()
     {
-        // Arrange - popups and menus have no title, so GetWindowInfo reports nothing for them
-        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns((WindowInfo?)null);
+        // Arrange - popups and menus have no title
+        _mockWindowService.Setup(w => w.GetWindowInfo(It.IsAny<nint>())).Returns(TestDataFactory.CreateWindowInfo(4242, title: ""));
         var sut = CreateSut();
 
         // Act
@@ -428,7 +428,7 @@ public class ScreenshotToolsTests
         // Assert - the title then comes from the UI Automation walk
         result.IsError.Should().BeFalse();
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
-            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, true, Defaults), Times.Once);
+            new nint(4242), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(), true, ElementOverlayOptions.Default, Defaults, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
@@ -462,7 +462,7 @@ public class ScreenshotToolsTests
         json.GetProperty("windowTitle").GetString().Should().Be("Test Window");
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             new nint(12345), It.IsAny<string?>(), It.Is<IReadOnlyList<UIElementInfo>>(e => e.Count == 0),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Theory]
@@ -576,8 +576,8 @@ public class ScreenshotToolsTests
             "My Test Window",
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             true, // default includeFrame
-            true, // default highlightInteractable
-            Defaults), Times.Once);
+            ElementOverlayOptions.Default, // default: drawn, labelled, disabled dimmed
+            Defaults, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
@@ -597,23 +597,29 @@ public class ScreenshotToolsTests
             It.IsAny<string?>(),
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             It.IsAny<bool>(),
-            false,
-            expected), Times.Once);
+            new ElementOverlayOptions(true, true, false),
+            expected, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]
-    public async Task CaptureWithElements_MetadataListsTheElements()
+    public async Task CaptureWithElements_MetadataHasTheLegend_AndTheElementsOnlyWithDetailFull()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = await sut.CaptureWithElements(handle: 12345);
+        var byDefault = Metadata(await sut.CaptureWithElements(handle: 12345));
+        var full = Metadata(await sut.CaptureWithElements(handle: 12345, detail: CaptureElementDetail.Full));
 
-        // Assert
-        var elements = Metadata(result).GetProperty("elements");
+        // Assert - one line per mark (roadmap M3.11); the list with both bounds is the costly part
+        byDefault.TryGetProperty("elements", out _).Should().BeFalse();
+        byDefault.GetProperty("elementCount").GetInt32().Should().Be(3);
+        byDefault.GetProperty("legend").GetString()!.Split('\n').Should().HaveCount(3)
+            .And.Contain("[-] Button 'Submit' #btnSubmit center=(140,115)");
+        var elements = full.GetProperty("elements");
         elements.GetArrayLength().Should().Be(3);
         elements[0].GetProperty("screenBounds").GetProperty("x").GetInt32().Should().Be(200);
+        full.GetProperty("legend").GetString().Should().Be(byDefault.GetProperty("legend").GetString());
     }
 
     #endregion
@@ -630,7 +636,7 @@ public class ScreenshotToolsTests
             Times.Never);
         _mockScreenshotService.Verify(s => s.CaptureWindowWithElements(
             It.IsAny<nint>(), It.IsAny<string?>(), It.IsAny<IReadOnlyList<UIElementInfo>>(),
-            It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CaptureOptions>()), Times.Never);
+            It.IsAny<bool>(), It.IsAny<ElementOverlayOptions>(), It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()), Times.Never);
     }
 
     private static JsonElement Metadata(CallToolResult result) =>

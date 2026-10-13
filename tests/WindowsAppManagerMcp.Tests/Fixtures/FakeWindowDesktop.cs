@@ -93,6 +93,18 @@ public sealed class FakeWindowDesktop
         Native.Setup(n => n.GetWindowRect(hWnd)).Returns(((int, int, int, int)?)null);
     }
 
+    /// <summary>The window's title changes (roadmap M3.7).</summary>
+    public void SetTitle(nint hWnd, string title) => Native.Setup(n => n.GetWindowText(hWnd)).Returns(title);
+
+    /// <summary>The window is minimized, or restored (roadmap M3.7).</summary>
+    public void SetMinimized(nint hWnd, bool minimized) => Native.Setup(n => n.IsIconic(hWnd)).Returns(minimized);
+
+    /// <summary>The window is shown, or hidden without closing (roadmap M3.7).</summary>
+    public void SetVisible(nint hWnd, bool visible) => Native.Setup(n => n.IsWindowVisible(hWnd)).Returns(visible);
+
+    /// <summary>Windows reports the window hung, or responding again (roadmap M3.7).</summary>
+    public void SetHung(nint hWnd, bool hung) => Native.Setup(n => n.IsHungAppWindow(hWnd)).Returns(hung);
+
     /// <summary>The handle now belongs to another window: another title and process (a reused HWND).</summary>
     public void Reuse(nint hWnd, string title, uint processId, string processName)
     {

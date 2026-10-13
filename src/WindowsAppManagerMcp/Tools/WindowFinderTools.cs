@@ -9,17 +9,20 @@ using WindowsAppManagerMcp.Services.Interfaces;
 namespace WindowsAppManagerMcp.Tools;
 
 [McpServerToolType]
-public class WindowFinderTools
+public partial class WindowFinderTools
 {
     private readonly IWindowService _windowService;
     private readonly INativeHitTestWrapper? _hitTest;
+    private readonly IWindowWaitService? _windowWait;
 
     /// <param name="windowService">Window reads and the window selectors.</param>
     /// <param name="hitTest">The client-area read of get_window_info's detail 'full'; without it clientBounds is left out.</param>
-    public WindowFinderTools(IWindowService windowService, INativeHitTestWrapper? hitTest = null)
+    /// <param name="windowWait">wait_for_window's waits (roadmap M3.7); the server always registers it.</param>
+    public WindowFinderTools(IWindowService windowService, INativeHitTestWrapper? hitTest = null, IWindowWaitService? windowWait = null)
     {
         _windowService = windowService;
         _hitTest = hitTest;
+        _windowWait = windowWait;
     }
 
     /// <summary>The window parameters every tool shares with find_windows (roadmap M2.4).</summary>
@@ -27,7 +30,7 @@ public class WindowFinderTools
         " Titles are compared ignoring case, invisible characters (the zero-width space in 'Microsoft Edge') and Edge's ' and N more pages'.";
 
     [McpServerTool(Name = "find_windows", Title = "Find Windows", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds and move_window take) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true; use either only when the user explicitly asked." +
+    [Description("Find windows matching the specified criteria. By default only user-facing app windows are returned: no cloaked windows (other virtual desktops, suspended apps), tool windows, untitled windows or shell windows (desktop, taskbar). A handle or className, or includeShell=true, skips that filter. Returns each window's handle, title, process, className, bounds (the window rect, with the invisible resize borders), visibleBounds (the visible frame, which set_window_bounds and move_window take) and state, front to back unless sort says otherwise; a UWP app's window reports the app's own process, with hostProcessName 'ApplicationFrameHost'. isAgentHost: true marks the agent's own terminal, editor or chat window: input tools refuse it unless it is passed as windowHandle with allowHostTarget=true, and close tools refuse it unless force=true (with confirm=true when the client cannot ask the user); use either only when the user explicitly asked." +
                  " The same filters make up the window selector that every tool taking a window accepts as window (beside handle): it must " +
                  "name exactly one window, or the call does nothing and fails with WindowNotFound or AmbiguousWindow (with up to 5 " +
                  "candidates; pick one by handle, narrow the filters, or add index, which picks a match front to back); foreground: " +
@@ -165,7 +168,7 @@ public class WindowFinderTools
                  "standard dialog, also isDialog), process, ownerHandle, bounds, state and isVisible; isBlocking: true marks the modal " +
                  "dialog that takes the window's input (the prompt close_window reports), and isBlocked says the window has one. Hidden helper " +
                  "windows (IME) only with includeHidden. Dialogs drawn inside the window (a WinUI ContentDialog) are not windows: " +
-                 "use get_ui_elements. errorCode InvalidHandle: the handle is not a window.")]
+                 "use find_ui_elements and element_action. errorCode InvalidHandle: the handle is not a window.")]
     public OwnedWindowsResult GetOwnedWindows(
         [Description("Window handle (as integer) of the owner. Pass handle or window, not both.")]
         long? handle = null,

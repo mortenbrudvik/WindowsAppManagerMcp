@@ -33,6 +33,12 @@ public interface IProcessService
     /// the launch opens, whichever process owns it (<see cref="IWindowWaitService"/>, <see cref="LaunchWindowOwner"/>),
     /// and reports it in <see cref="LaunchResult.Window"/> with a <see cref="LaunchResult.Status"/>.
     /// </para>
+    /// <para>
+    /// With <see cref="LaunchRequest.ReuseExisting"/> (roadmap M3.13), a valid request first looks for an open window of the
+    /// same app that shows what the launch opens; when it finds one nothing is started and the result is
+    /// <see cref="LaunchStatus.AlreadyOpen"/> with that window (no process ID). ProcessService.FindOpenWindow defines which
+    /// window counts.
+    /// </para>
     /// </summary>
     /// <param name="cancellationToken">As for the other overload.</param>
     Task<LaunchResult> LaunchApplicationAsync(
@@ -99,7 +105,8 @@ public interface IProcessService
     /// Launches multiple applications: each one is checked and started in order, as by
     /// <see cref="LaunchApplicationAsync(LaunchRequest, bool, int, CancellationToken)"/>; with <paramref name="waitForWindows"/>
     /// the windows are then waited for together, against one deadline (<paramref name="waitTimeoutMs"/> after the last
-    /// start), and a new window is reported for one launch only.
+    /// start), and a new window is reported for one launch only. An open window that one item reuses
+    /// (<see cref="LaunchRequest.ReuseExisting"/>) is not reused by a later item.
     /// </summary>
     /// <param name="applications">The applications to launch.</param>
     /// <param name="waitForWindows">Whether to wait for each application's window.</param>

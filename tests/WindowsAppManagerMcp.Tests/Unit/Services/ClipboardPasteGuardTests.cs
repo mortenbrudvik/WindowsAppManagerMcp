@@ -269,6 +269,36 @@ public class ClipboardPasteGuardTests
     }
 
     [Fact]
+    public void ARightClickInVsCode_IsAPaste_ButNotInABrowserWithTheSameClass()
+    {
+        // VS Code's integrated terminal pastes on a right click; its window class is every Chromium browser's too
+        const uint codeProcess = 7100, chromeProcess = 7200;
+        nint code = 0x6000, chrome = 0x7000;
+        _windows.Setup(w => w.GetClassName(It.Is<nint>(h => h == code || h == chrome))).Returns("Chrome_WidgetWin_1");
+        _windows.Setup(w => w.GetWindowThreadProcessId(code)).Returns(codeProcess);
+        _windows.Setup(w => w.GetWindowThreadProcessId(chrome)).Returns(chromeProcess);
+        _windows.Setup(w => w.GetProcessName(codeProcess)).Returns("Code");
+        _windows.Setup(w => w.GetProcessName(chromeProcess)).Returns("chrome");
+        _clipboard.UserCopies("rm -rf ~");
+
+        Guard().Check(RightClick, code).Should().Contain("right click in a terminal");
+        Guard().Check(Keys("^c").Concat(RightClick).ToList(), code).Should().Contain("copies and then pastes");
+        Guard().Check(RightClick, chrome).Should().BeNull("a right click in a browser opens its context menu");
+    }
+
+    [Fact]
+    public void TheProcessOfTheReceivingWindow_IsReadOnlyForARightClick()
+    {
+        _clipboard.UserCopies("hello");
+
+        Guard().Check(Keys("^v"), Editor);
+        Guard().Check(LeftClick, Editor);
+
+        _windows.Verify(w => w.GetWindowThreadProcessId(It.IsAny<nint>()), Times.Never);
+        _windows.Verify(w => w.GetProcessName(It.IsAny<uint>()), Times.Never);
+    }
+
+    [Fact]
     public void WinV_ClipboardHistory_IsRefused_UnlessTheUserAllowsTheirClipboard()
     {
         // History holds the user's earlier copies, whatever is on the clipboard now

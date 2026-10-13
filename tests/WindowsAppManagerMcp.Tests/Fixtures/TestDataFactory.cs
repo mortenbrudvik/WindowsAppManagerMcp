@@ -562,8 +562,8 @@ public static class TestDataFactory
                 It.IsAny<string?>(),
                 It.IsAny<IReadOnlyList<UIElementInfo>>(),
                 It.IsAny<bool>(),
-                It.IsAny<bool>(),
-                It.IsAny<CaptureOptions>()))
+                It.IsAny<ElementOverlayOptions>(),
+                It.IsAny<CaptureOptions>(), It.IsAny<CapturedWindow?>()))
             .Returns(new ScreenCapture<AnnotatedScreenshotResult>(annotated, success ? CreateEncodedImage() : null));
 
         return mock;

@@ -48,6 +48,8 @@ public static class ServiceRegistration
         // SetWindowPos and ShowWindow wait for the window's thread; this gives up on a hung window at a deadline,
         // so a window tool cannot hold the input gate until the application recovers
         services.AddSingleton<IWindowCallRunner, WindowCallRunner>();
+        // Tells windows on other virtual desktops from suspended or prelaunched frames the shell cloaks the same way
+        services.AddSingleton<INativeVirtualDesktopWrapper, NativeVirtualDesktopWrapper>();
         services.AddSingleton<IWindowService, WindowService>();
         // Verified close (roadmap M2.5): waits for closed windows and reads their prompts through UI Automation
         services.AddSingleton<IWindowCloseVerifier, WindowCloseVerifier>();
@@ -57,15 +59,59 @@ public static class ServiceRegistration
         services.AddSingleton<IProcessService, ProcessService>();
         // Finds the window a launch opens, whichever process owns it (launch tools and apply_layout's launchMissing)
         services.AddSingleton<IWindowWaitService, WindowWaitService>();
+        // Places the launch tools' windows (placement, roadmap M3.13) through the window and foreground services
+        services.AddSingleton<ILaunchPlacementService>(sp => new LaunchPlacementService(
+            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IForegroundService>(), sp.GetRequiredService<IInputSession>()));
         services.AddSingleton<IScreenCaptureWrapper, ScreenCaptureWrapper>();
+        // Captures register under a captureId, and the mouse tools convert image, window and client points (roadmap M3.11)
+        services.AddSingleton<ICaptureRegistry, CaptureRegistry>();
+        services.AddSingleton<ICoordinateSpaceResolver, CoordinateSpaceResolver>();
         services.AddSingleton<IScreenshotService, ScreenshotService>();
         services.AddSingleton<IUIElementService, UIElementService>();
         // UI Automation tree seam (UIElementService) and single-element reads (get_focused_element,
-        // get_element_at_point); UiaWorker runs every UI Automation read under a deadline
-        services.AddSingleton<IUiaTree, UiaTree>();
+        // get_element_at_point); UiaWorker runs every UI Automation read under a deadline. The engine (roadmap M3.2):
+        // the COM client (Uia3Tree) unless WAM_UIA_ENGINE=uia2 chooses the managed one (UiaTree); neither touches UI
+        // Automation before its first read
+        services.AddSingleton(_ => UiaEngineOptions.FromEnvironment());
+        services.AddSingleton<IUiaTree>(sp => sp.GetRequiredService<UiaEngineOptions>().Engine == UiaEngine.Uia2
+            ? new UiaTree()
+            : new Uia3Tree());
         services.AddSingleton<IUiaWorker, UiaWorker>();
         services.AddSingleton<INativeHitTestWrapper, NativeHitTestWrapper>();
         services.AddSingleton<IElementInspectionService, ElementInspectionService>();
+        // Warms up the web content of Chromium, Electron and WebView2 windows before the two services above read them
+        // (roadmap M3.3); it remembers the windows it warmed up
+        services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
+            sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>()));
+        // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
+        // the provider evaluating its criteria, and the tools that act on a ref resolve it here
+        services.AddSingleton<IElementRegistry, ElementRegistry>();
+        services.AddSingleton<IElementSearchService, ElementSearchService>();
+        // The popups of a window (roadmap M3.5): find_ui_elements' windowAndPopups and desktop scopes, get_active_popups,
+        // and the tools that act on or wait for a popup
+        services.AddSingleton<IPopupService>(sp => new PopupService(
+            sp.GetRequiredService<INativeWindowWrapper>(), sp.GetRequiredService<INativeProcessWrapper>(),
+            sp.GetRequiredService<IHostGuard>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetRequiredService<IUiaTree>(),
+            sp.GetRequiredService<IUiaWorker>(), sp.GetRequiredService<IElementRegistry>()));
+        // read_element_text and read_table (roadmap M3.9): text and tables through the patterns, by ref or find's criteria
+        services.AddSingleton<IElementReadService, ElementReadService>();
+        // wait_for_element (roadmap M3.8): waits for the window through IWindowWaitService, then checks with the search above
+        services.AddSingleton<IElementWaitService, ElementWaitService>();
+        // element_action (roadmap M3.6): pattern calls on threads of their own (a blocked Invoke never stops the reads of the
+        // dialog it opened), the application's new windows, and the action itself behind the input guard's target checks
+        services.AddSingleton<IUiaActionRunner, UiaActionRunner>();
+        services.AddSingleton<IAppWindowProbe, AppWindowProbe>();
+        services.AddSingleton<IElementActionService, ElementActionService>();
+        // get_desktop_state (roadmap M3.12) and element_action's observe: one observation through the reads above, under one deadline
+        services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
+            sp.GetRequiredService<IWindowService>(), sp.GetRequiredService<IInputSession>(), sp.GetRequiredService<INativeInputWrapper>(),
+            sp.GetRequiredService<IElementInspectionService>(), sp.GetRequiredService<IUIElementService>(), sp.GetRequiredService<IPopupService>(),
+            sp.GetRequiredService<IScreenshotService>(), sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
+        // menu_path, respond_to_dialog and file_dialog (roadmap M3.5, M3.14): searches and popups to find the elements, and
+        // every action through element_action's service above, so its guards apply to each step
+        services.AddSingleton<IMenuPathService, MenuPathService>();
+        services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IFileDialogService, FileDialogService>();
         services.AddSingleton<IInputSimulationService, InputSimulationService>();
         services.AddSingleton<ILayoutService>(sp =>
         {
@@ -113,7 +159,8 @@ public static class ServiceRegistration
             sp.GetService<ToolsetSelection>(), // registered by AddWindowsAppManagerTools
             sp.GetRequiredService<IAuditLog>(),
             sp.GetService<ClipboardOptions>(),
-            ProtocolAllowlist.FromEnvironment()));
+            ProtocolAllowlist.FromEnvironment(),
+            sp.GetService<UiaEngineOptions>()));
 
         // The audit log of input and destructive actions (roadmap M2.17), written by AuditLogToolFilter
         services.AddSingleton<IAuditLog>(sp => new AuditLog(
@@ -155,6 +202,12 @@ public static class ServiceRegistration
         services.AddSingleton<BrowserReadingTools>();
         services.AddSingleton<ScreenshotTools>();
         services.AddSingleton<UIElementTools>();
+        services.AddSingleton<PopupTools>();
+        services.AddSingleton<ElementReadTools>();
+        services.AddSingleton<ElementWaitTools>();
+        services.AddSingleton<ElementActionTools>();
+        services.AddSingleton<DesktopStateTools>();
+        services.AddSingleton<DialogTools>();
         services.AddSingleton<InputSimulationTools>();
         services.AddSingleton<InputControlTools>();
         services.AddSingleton<ServerInfoTools>();
@@ -211,6 +264,9 @@ public static class ServiceRegistration
             // it is outside it: its call log includes the wait for the gate and the calls the gate filter
             // refuses while input is paused
             .AddToolErrorReporting()
+            // An acting tool refuses an argument it does not declare (M3 review). Inside the two filters above, so the refusal
+            // is audited and reported as a tool error; outside the gate filter, so it never waits for the gate
+            .AddUndeclaredArgumentRefusal()
             // Tools that can change which window is in front run inside the input gate, so they cannot
             // change it between an input call's guard check and its input
             .AddInputGateSerialization()
@@ -224,6 +280,12 @@ public static class ServiceRegistration
             .WithServerTools<BrowserReadingTools>()
             .WithServerTools<ScreenshotTools>()
             .WithServerTools<UIElementTools>()
+            .WithServerTools<PopupTools>()
+            .WithServerTools<ElementReadTools>()
+            .WithServerTools<ElementWaitTools>()
+            .WithServerTools<ElementActionTools>()
+            .WithServerTools<DesktopStateTools>()
+            .WithServerTools<DialogTools>()
             .WithServerTools<InputSimulationTools>()
             .WithServerTools<InputControlTools>()
             .WithServerTools<ServerInfoTools>()

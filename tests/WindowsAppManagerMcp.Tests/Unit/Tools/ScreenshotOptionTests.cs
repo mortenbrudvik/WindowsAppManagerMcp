@@ -99,8 +99,8 @@ public class ScreenshotOptionTests
             It.IsAny<string?>(),
             It.IsAny<IReadOnlyList<UIElementInfo>>(),
             true,
-            true,
-            options), Times.Once);
+            ElementOverlayOptions.Default,
+            options, It.IsAny<CapturedWindow?>()), Times.Once);
     }
 
     [Fact]

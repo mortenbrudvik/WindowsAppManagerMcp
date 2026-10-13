@@ -11,18 +11,31 @@ namespace WindowsAppManagerMcp.Models;
 /// <param name="WorkingDirectory">The working directory; null means the program's own folder.</param>
 /// <param name="ExpectWindow">
 /// A hint for the window wait: which window the launch opens when the server cannot tell from the process that was
-/// started (packaged apps, URIs and documents handed to an app that is already running).
+/// started (packaged apps, URIs and documents handed to an app that is already running). With
+/// <paramref name="ReuseExisting"/>, the open window reused must match it too.
+/// </param>
+/// <param name="ReuseExisting">
+/// Use a window of the app that is already open instead of starting the program (roadmap M3.13); see
+/// IProcessService.LaunchApplicationAsync for which window counts.
+/// </param>
+/// <param name="ForceAccessibility">
+/// Start a Chromium browser, an Electron or a CEF app with --force-renderer-accessibility, so its pages' accessibility
+/// trees are built from the start (roadmap M3.3). Added only for such a program (Services.ChromiumPrograms); for any other
+/// target nothing is added and the result's warning says why.
 /// </param>
 public sealed record LaunchRequest(
     string Executable,
     string[]? Arguments = null,
     string? WorkingDirectory = null,
-    LaunchWindowHint? ExpectWindow = null);
+    LaunchWindowHint? ExpectWindow = null,
+    bool ReuseExisting = false,
+    bool ForceAccessibility = false);
 
 /// <summary>
 /// The window a launch is expected to open, for the cases the server cannot work out on its own: a packaged app
 /// started through a URI or shell:AppsFolder, or a document opened by whatever app is registered for it. A window
-/// that appears during the wait and matches every field that is set counts as the launch's window.
+/// that appears during the wait and matches every field that is set counts as the launch's window; reuseExisting reuses
+/// only an open window that matches it (a web address needs <see cref="TitleContains"/>, since a page sets its own title).
 /// </summary>
 /// <param name="ProcessName">Part of the name of the process that owns the window, case-insensitive (for example 'CalculatorApp' or 'SystemSettings').</param>
 /// <param name="TitleContains">Part of the window title, case-insensitive.</param>
@@ -71,7 +84,13 @@ public enum LaunchStatus
     /// The start did not return in time: Windows is most likely showing a consent or security prompt (UAC, SmartScreen,
     /// a security warning). It starts only if the user approves; a later decline is not reported.
     /// </summary>
-    AwaitingUserConsent
+    AwaitingUserConsent,
+
+    /// <summary>
+    /// reuseExisting found a window of the app already open (showing what the launch opens), so nothing was started
+    /// (roadmap M3.13).
+    /// </summary>
+    AlreadyOpen
 }
 
 public static class LaunchStatusNames
@@ -87,6 +106,7 @@ public static class LaunchStatusNames
         LaunchStatus.ExitedWithoutWindow => "exitedWithoutWindow",
         LaunchStatus.TimedOut => "timedOut",
         LaunchStatus.AwaitingUserConsent => "awaitingUserConsent",
+        LaunchStatus.AlreadyOpen => "alreadyOpen",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
     };
 }

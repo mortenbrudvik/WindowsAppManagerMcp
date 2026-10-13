@@ -1,0 +1,1062 @@
+using WindowsAppManagerMcp.Infrastructure;
+using WindowsAppManagerMcp.Models;
+using WindowsAppManagerMcp.Services.Interfaces;
+
+namespace WindowsAppManagerMcp.Services;
+
+// Phase 1 (resolve, read, validate, choose how to act) and the state reads and checks, all on the read worker's thread
+public sealed partial class ElementActionService
+{
+    /// <summary>How many ancestors scroll looks through for a scrollable container.</summary>
+    private const int MaxScrollAncestors = 16;
+
+    /// <summary>How many ancestors are looked through for the window an element of another process belongs to.</summary>
+    private const int MaxWindowAncestors = 32;
+
+    /// <summary>The most toggles a toggle toward a state makes: a three-state check box reaches any state in two.</summary>
+    private const int MaxToggles = 2;
+
+    /// <summary>The actions that act on an element the user can see and use: refused for a disabled or offscreen one.</summary>
+    private static bool NeedsUsableElement(ElementActionKind action) => action is not (ElementActionKind.ScrollIntoView
+        or ElementActionKind.Scroll or ElementActionKind.Realize or ElementActionKind.WindowClose
+        or ElementActionKind.WindowMinimize or ElementActionKind.WindowMaximize);
+
+    /// <summary>
+    /// Phase 1, on the worker: the hung check, the ref resolved, the identity read, the target checks of the element's own
+    /// window when it belongs to another process, then the state read, the checks and the plan. A refused element's state
+    /// (its name and value) is never read, so the refusal cannot carry it.
+    /// </summary>
+    private ReadOutcome<PreparedElement> Prepare(ActionCall call, InputTarget target, CancellationToken token)
+    {
+        if (UiaTargets.NotRespondingReason(_windows, call.Window, "its element was not acted on") is { } notResponding)
+        {
+            return Failed(call, nameof(UIElementErrorCode.NotResponding), notResponding);
+        }
+
+        if (!_tree.IsAvailable())
+        {
+            return Failed(call, nameof(UIElementErrorCode.AutomationUnavailable), "UI Automation is not available on this system.");
+        }
+
+        var resolution = _registry.Resolve(call.Ref!, token);
+        if (resolution.Element is not { } resolved)
+        {
+            return Failed(call, resolution.ErrorCode.ToString(), resolution.Error ?? "The element ref could not be resolved.");
+        }
+
+        var asked = call.Ref;
+        call.Ref = resolved.Ref;
+        if (resolved.Moved)
+        {
+            // Only an element the agent has read is acted on: a look-alike that took the gone element's place may be another
+            // page's or dialog's button with the same label
+            return ReadOutcome<PreparedElement>.Failed(call.Fail(nameof(UIElementErrorCode.ElementStale),
+                $"Element ref '{asked}' is stale: the element it was given for is gone, and the ref was moved to a " +
+                $"re-created element ({resolved.Element.Properties.ControlType} '{resolved.Element.Properties.Name}', ref " +
+                $"'{resolved.Ref}') that alone fits its description. Nothing was done: an action is never carried out on an " +
+                "element only its description found. Read it again (find_ui_elements, which returns the same ref when it is " +
+                "that element), check that it is the one you mean, and act then.") with { RefMoved = true });
+        }
+        try
+        {
+            var node = resolved.Node;
+            var element = resolved.Element;
+
+            // Fails closed: without the identity it is not known whether the element is a password field (whose value is
+            // never read), whether it is a top-level window (window_*), or which process it belongs to (the target checks)
+            UiaNodeIdentity identity;
+            var passwordUnknown = false;
+            try
+            {
+                identity = _tree.ReadIdentity(node);
+            }
+            catch (UiaElementUnavailableException) when (element.Virtualized)
+            {
+                // An item its list has not realized fails the identity read as a whole (WPF's placeholder fails IsPassword): its
+                // process, class and framework are read property by property, and while it does not say whether it is a
+                // password field it counts as one, so no value of it is read or set (realize and scroll_into_view need none)
+                var item = _tree.ReadVirtualizedItem(node);
+                passwordUnknown = item.IsPassword == null;
+                identity = new UiaNodeIdentity(item.Element.ClassName, item.Element.Properties.FrameworkId, item.ProcessId,
+                    item.Element.NativeWindowHandle, item.IsPassword ?? true);
+            }
+            catch (Exception ex) when (ex is not (UiaElementUnavailableException or TimeoutException or OperationCanceledException))
+            {
+                return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
+                    $"The element's identity could not be read ({ex.Message}), so it is not known whether it is a password field or " +
+                    "which window and process it belongs to. Nothing was done. Read it again with find_ui_elements.");
+            }
+
+            if (!BelongsToWindowsProcess(call.Window, identity.ProcessId))
+            {
+                var elementWindow = OwnWindowOf(node, identity);
+                if (elementWindow == nint.Zero)
+                {
+                    return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed),
+                        $"The element belongs to process {identity.ProcessId}, not to the process of window {(long)call.Window}, and " +
+                        "no window of that process could be found above it, so the target checks (policy, elevation, host) cannot " +
+                        "run on it. Nothing was done.");
+                }
+
+                // That process's own window passes the policy, elevation and host checks too (Win32 reads only)
+                if (_guard.CheckElementWindow(target, elementWindow) is { Allowed: false } foreign)
+                {
+                    return Failed(call, foreign.ErrorCode.ToString(), foreign.Error!);
+                }
+            }
+
+            var isPassword = identity.IsPassword;
+            var (before, fullValue) = ReadState(node, element, isPassword, passwordUnknown);
+            call.Before = before;
+
+            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue)
+            {
+                PasswordUnknown = passwordUnknown
+            };
+            var request = call.Request;
+            var properties = element.Properties;
+            if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
+            {
+                return Failed(call, nameof(UIElementErrorCode.ElementNotEnabled),
+                    $"{Name(element)} is disabled: it takes no input until the application enables it. Nothing was done. Check " +
+                    "what it waits for (another field, a selection) and read it again.");
+            }
+
+            if (NeedsUsableElement(request.Action) && properties.IsOffscreen)
+            {
+                // Every element of a minimized window is offscreen, and scrolling cannot help there
+                return Failed(call, nameof(UIElementErrorCode.ElementOffscreen), _windows.IsIconic(call.Window)
+                    ? $"{Name(element)} is offscreen because its window {(long)call.Window} is minimized. Nothing was done. Restore " +
+                      "the window first (set_window_state with state normal), then try again."
+                    : $"{Name(element)} is offscreen (scrolled out of view, or in a collapsed or hidden part). Nothing was done. Use " +
+                      "action scroll_into_view first (realize for an item of a virtualized list), or open the part that holds it.");
+            }
+
+            return Choose(call, prepared) is { } refused ? ReadOutcome<PreparedElement>.Failed(refused) : ReadOutcome<PreparedElement>.Of(prepared);
+        }
+        catch (UiaElementUnavailableException ex)
+        {
+            return Failed(call, nameof(UIElementErrorCode.ElementStale),
+                $"The element disappeared while it was read ({ex.Message}). Nothing was done. Find it again with find_ui_elements.");
+        }
+        catch (TimeoutException ex)
+        {
+            return Failed(call, nameof(UIElementErrorCode.OperationTimedOut),
+                $"UI Automation did not answer in time ({ex.Message}). Nothing was done.");
+        }
+        catch (Exception ex)
+        {
+            return Failed(call, nameof(UIElementErrorCode.ElementAccessFailed), $"The element could not be read: {ex.Message} Nothing was done.");
+        }
+    }
+
+    /// <summary>Chooses how to carry out the action and stores it in <paramref name="element"/>; the refusal, or null.</summary>
+    private ElementActionResult? Choose(ActionCall call, PreparedElement element)
+    {
+        var request = call.Request;
+        var node = element.Node;
+        var before = element.Before;
+        switch (request.Action)
+        {
+            case ElementActionKind.Invoke:
+                if (Pattern<IUiaInvokePattern>(element, UiaPatterns.Invoke) is { } invoke)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.Invoke, invoke.Invoke));
+                }
+
+                if (DefaultAction(element) is { } legacy)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.LegacyIAccessible, legacy.DoDefaultAction));
+                }
+
+                return request.Fallback == ElementActionFallback.Mouse
+                    ? element.Use(Plan.Click(MouseKind.Left))
+                    : NotSupported(call, element, "invoke needs the Invoke pattern (or an MSAA default action under the UIA3 engine)",
+                        "Try action click, which also uses SelectionItem, Toggle and ExpandCollapse, or pass fallback mouse for a guarded click.");
+
+            case ElementActionKind.Click:
+                // A single click on an item that can be selected (a list, tree, grid or tab item, a radio button) selects it.
+                // Such items often support Invoke too, but their Invoke is the default action of a double click: it opens the
+                // file or starts the program (Explorer, a ListView). And a list row with a check box toggles only when the box
+                // itself is clicked. So SelectionItem comes before Invoke and Toggle.
+                if (Pattern<IUiaSelectionItemPattern>(element, UiaPatterns.SelectionItem) is { } clickSelect)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.SelectionItem, clickSelect.Select));
+                }
+
+                if (Pattern<IUiaInvokePattern>(element, UiaPatterns.Invoke) is { } clickInvoke)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.Invoke, clickInvoke.Invoke));
+                }
+
+                if (Pattern<IUiaTogglePattern>(element, UiaPatterns.Toggle) is { } clickToggle)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.Toggle, clickToggle.Toggle));
+                }
+
+                if (Pattern<IUiaExpandCollapsePattern>(element, UiaPatterns.ExpandCollapse) is { } clickExpand &&
+                    before.ExpandCollapseState is { } expandState && expandState != UiaExpandCollapseState.LeafNode)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.ExpandCollapse,
+                        expandState == UiaExpandCollapseState.Collapsed ? clickExpand.Expand : clickExpand.Collapse));
+                }
+
+                if (DefaultAction(element) is { } clickLegacy)
+                {
+                    return element.Use(Plan.Pattern(ElementActionMethod.LegacyIAccessible, clickLegacy.DoDefaultAction));
+                }
+
+                return request.Fallback == ElementActionFallback.Mouse
+                    ? element.Use(Plan.Click(MouseKind.Left))
+                    : NotSupported(call, element, "click needs one of the SelectionItem, Invoke, Toggle or ExpandCollapse patterns",
+                        "Pass fallback mouse for a guarded mouse click at the element's click point.");
+
+            case ElementActionKind.DoubleClick:
+                return element.Use(Plan.Click(MouseKind.Double));
+
+            case ElementActionKind.RightClick:
+                return element.Use(Plan.Click(MouseKind.Right));
+
+            case ElementActionKind.Focus:
+                return element.Element.IsKeyboardFocusable
+                    ? element.Use(new Plan(PlanKind.Focus, ElementActionMethod.Focus))
+                    : NotSupported(call, element, "focus needs a keyboard-focusable element", "Focus the field or control inside it instead.");
+
+            case ElementActionKind.SetValue:
+            case ElementActionKind.AppendText:
+                return ChooseValue(call, element);
+
+            case ElementActionKind.Toggle:
+            {
+                if (Pattern<IUiaTogglePattern>(element, UiaPatterns.Toggle) is not { } toggle)
+                {
+                    return NotSupported(call, element, "toggle needs the Toggle pattern",
+                        "Use action click (with fallback mouse when it has no pattern either).");
+                }
+
+                var goal = ParseToggleState(request.Value);
+                if (goal != null && before.ToggleState == goal)
+                {
+                    return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+                }
+
+                var plan = new Plan(PlanKind.Pattern, ElementActionMethod.Toggle);
+                var wait = Min(ToggleStateWait, Timeout(request) / 4);
+                var poll = ToggleStatePoll;
+                plan.Act = () =>
+                {
+                    // Up to two toggles: a three-state check box reaches any state in two. Each next toggle waits until the
+                    // state has changed from the last one: Chromium, Electron and WebView2 toggle asynchronously and report the
+                    // old state for a while, and toggling again on a stale read would click once too often. A box that is back
+                    // in its state before has gone round without the goal (a two-state box asked for indeterminate): it is left
+                    // there, as it was, since any further toggle could only move it away again.
+                    var current = before.ToggleState;
+                    for (var i = 0; i < MaxToggles; i++)
+                    {
+                        toggle.Toggle();
+                        plan.Toggles++;
+                        if (goal == null || ToggleStateAfter(toggle, current, wait, poll) is not { } now || now == goal)
+                        {
+                            break;
+                        }
+
+                        if (now == before.ToggleState)
+                        {
+                            plan.CycledBack = true;
+                            break;
+                        }
+
+                        current = now;
+                    }
+                };
+                return element.Use(plan);
+            }
+
+            case ElementActionKind.Select:
+            case ElementActionKind.AddToSelection:
+            case ElementActionKind.RemoveFromSelection:
+            {
+                if (Pattern<IUiaSelectionItemPattern>(element, UiaPatterns.SelectionItem) is not { } selection)
+                {
+                    return request.Fallback == ElementActionFallback.Mouse
+                        ? element.Use(Plan.Click(MouseKind.Left))
+                        : NotSupported(call, element, $"{call.Action} needs the SelectionItem pattern",
+                            request.Action == ElementActionKind.Select
+                                ? "Pass fallback mouse for a guarded click on the item."
+                                : "Select it with a click instead (action click).");
+                }
+
+                Action act = request.Action switch
+                {
+                    ElementActionKind.AddToSelection => selection.AddToSelection,
+                    ElementActionKind.RemoveFromSelection => selection.RemoveFromSelection,
+                    _ => selection.Select
+                };
+                return element.Use(Plan.Pattern(ElementActionMethod.SelectionItem, act));
+            }
+
+            case ElementActionKind.Expand:
+            case ElementActionKind.Collapse:
+            {
+                if (Pattern<IUiaExpandCollapsePattern>(element, UiaPatterns.ExpandCollapse) is not { } expandCollapse)
+                {
+                    return NotSupported(call, element, $"{call.Action} needs the ExpandCollapse pattern",
+                        "Use action click (with fallback mouse when it has no pattern either).");
+                }
+
+                var expand = request.Action == ElementActionKind.Expand;
+                if (before.ExpandCollapseState == UiaExpandCollapseState.LeafNode)
+                {
+                    return NotSupported(call, element, $"{Name(element.Element)} is a leaf node: it has nothing to {call.Action}", null);
+                }
+
+                if (before.ExpandCollapseState == (expand ? UiaExpandCollapseState.Expanded : UiaExpandCollapseState.Collapsed))
+                {
+                    return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+                }
+
+                return element.Use(Plan.Pattern(ElementActionMethod.ExpandCollapse, expand ? expandCollapse.Expand : expandCollapse.Collapse));
+            }
+
+            case ElementActionKind.ScrollIntoView:
+                return Pattern<IUiaScrollItemPattern>(element, UiaPatterns.ScrollItem) is { } scrollItem
+                    ? element.Use(Plan.Pattern(ElementActionMethod.ScrollItem, scrollItem.ScrollIntoView))
+                    : NotSupported(call, element, "scroll_into_view needs the ScrollItem pattern",
+                        "Scroll its container instead (action scroll on the element or the list), or realize a virtualized item.");
+
+            case ElementActionKind.Scroll:
+                return ChooseScroll(call, element, node);
+
+            case ElementActionKind.SetRangeValue:
+            {
+                if (Pattern<IUiaRangeValuePattern>(element, UiaPatterns.RangeValue) is not { } range)
+                {
+                    return NotSupported(call, element, "set_range_value needs the RangeValue pattern", "Use set_value for a text box.");
+                }
+
+                var state = range.State;
+                if (state.IsReadOnly)
+                {
+                    return Refuse(call, nameof(UIElementErrorCode.ElementReadOnly), $"{Name(element.Element)} is read-only. Nothing was done.");
+                }
+
+                TryParseNumber(request.Value, out var number);
+                if (number < state.Minimum || number > state.Maximum)
+                {
+                    return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
+                        $"{number} is outside the element's range {state.Minimum} to {state.Maximum}. Nothing was done.");
+                }
+
+                element.RangeTarget = number;
+                return Math.Abs(state.Value - number) <= RangeTolerance(state)
+                    ? element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None))
+                    : element.Use(Plan.Pattern(ElementActionMethod.RangeValue, () => range.SetValue(number)));
+            }
+
+            case ElementActionKind.Realize:
+                return ChooseRealize(element);
+
+            case ElementActionKind.WindowClose:
+            case ElementActionKind.WindowMinimize:
+            case ElementActionKind.WindowMaximize:
+                return ChooseWindow(call, element);
+        }
+
+        return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode, $"Unknown action {call.Action}. Nothing was done.");
+    }
+
+    private ElementActionResult? ChooseValue(ActionCall call, PreparedElement element)
+    {
+        var request = call.Request;
+        var value = Pattern<IUiaValuePattern>(element, UiaPatterns.Value);
+        if (value != null && value.IsReadOnly)
+        {
+            return Refuse(call, nameof(UIElementErrorCode.ElementReadOnly),
+                $"{Name(element.Element)} is read-only (its Value pattern says so). Nothing was done.");
+        }
+
+        if (request.Mode != ElementValueMode.Value)
+        {
+            // Keys go only to a text field: Ctrl+A and Delete in a list, grid or pane would select and delete its items (a
+            // folder's files, a grid's rows), and a space typed into a button presses it
+            if (!IsTextField(element.Element, value))
+            {
+                return NotSupported(call, element,
+                    $"mode {ToolEnum<ElementValueMode>.Name(request.Mode)} types only into a text field (an Edit, or a Document or " +
+                    "ComboBox with a writable Value pattern)",
+                    "Name the edit box itself (find_ui_elements with controlType Edit), not its container or row; or use mode value.");
+            }
+
+            if (request.Mode == ElementValueMode.Paste && element.IsPassword)
+            {
+                return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
+                    "mode paste would leave the password on the clipboard, where any program can read it. Nothing was done. Use " +
+                    "mode value or type for a password field.");
+            }
+
+            return element.Use(new Plan(PlanKind.Keyboard, ElementActionMethod.Keyboard));
+        }
+
+        if (value == null)
+        {
+            return NotSupported(call, element, $"{call.Action} with mode value needs the Value pattern",
+                "Use mode type: the server focuses the element and types the text, with every input check.");
+        }
+
+        var text = request.Value ?? string.Empty;
+        if (request.Action == ElementActionKind.SetValue)
+        {
+            return element.Use(Plan.Pattern(ElementActionMethod.Value, () => value.SetValue(text)));
+        }
+
+        if (element.IsPassword)
+        {
+            return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
+                "append_text with mode value reads the field's value first, and a password field's value is never read. Nothing " +
+                "was done. Use mode type, or set_value with the whole text.");
+        }
+
+        // The current value is read again on the action's thread, whole (the state shows at most 200 characters)
+        return element.Use(Plan.Pattern(ElementActionMethod.Value, () => value.SetValue((value.Value ?? string.Empty) + text)));
+    }
+
+    /// <summary>
+    /// realize (roadmap M3.10), the one implementation behind element_action realize, whether the item was named by a ref
+    /// (find_ui_elements' searchVirtualized gives the refs of items that are not realized) or by criteria: the VirtualizedItem
+    /// pattern's Realize, then, when the item is still offscreen, its ScrollItem pattern's ScrollIntoView, both on the action
+    /// runner like every pattern action. An item that is real already is only scrolled into view when it is offscreen.
+    /// </summary>
+    private ElementActionResult? ChooseRealize(PreparedElement element)
+    {
+        var node = element.Node;
+        if (Pattern<IUiaVirtualizedItemPattern>(element, UiaPatterns.VirtualizedItem) is { } virtualized)
+        {
+            return element.Use(Plan.Pattern(ElementActionMethod.VirtualizedItem, () =>
+            {
+                virtualized.Realize();
+                ScrollIntoViewWhenOffscreen(node);
+            }));
+        }
+
+        if (element.Before.IsOffscreen && Pattern<IUiaScrollItemPattern>(element, UiaPatterns.ScrollItem) is { } scrollItem)
+        {
+            element.Warnings.Add("The element is not a virtualized item (it supports no VirtualizedItem pattern): it is real already, " +
+                                 "so it was only scrolled into view.");
+            return element.Use(Plan.Pattern(ElementActionMethod.ScrollItem, scrollItem.ScrollIntoView));
+        }
+
+        element.Warnings.Add("The element is not a virtualized item (it supports no VirtualizedItem pattern): it is real already" +
+                             (element.Before.IsOffscreen ? ", and it cannot be scrolled into view (no ScrollItem pattern)." : " and in view."));
+        return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+    }
+
+    /// <summary>
+    /// On the action's thread, after Realize: the item scrolled into view when it is still offscreen (a provider whose Realize
+    /// creates the item without scrolling to it). Its patterns are read again, since a placeholder may offer ScrollItem only
+    /// once it is real; a read that fails leaves it as Realize left it, and the state read afterwards tells.
+    /// </summary>
+    private void ScrollIntoViewWhenOffscreen(IUiaNode node)
+    {
+        UiaElement now;
+        try
+        {
+            now = _tree.ReadElement(node);
+        }
+        catch (Exception ex) when (ex is not (TimeoutException or OperationCanceledException))
+        {
+            return;
+        }
+
+        if (now.Properties.IsOffscreen && (now.Patterns & UiaPatterns.ScrollItem) != 0 &&
+            _tree.GetPattern<IUiaScrollItemPattern>(node) is { } scrollItem)
+        {
+            scrollItem.ScrollIntoView();
+        }
+    }
+
+    private ElementActionResult? ChooseScroll(ActionCall call, PreparedElement element, IUiaNode node)
+    {
+        var request = call.Request;
+        IUiaScrollPattern? scroll = null;
+        IUiaNode? container = null;
+        UiaElement? containerElement = null;
+        if (Pattern<IUiaScrollPattern>(element, UiaPatterns.Scroll) is { } own)
+        {
+            (scroll, container) = (own, node);
+        }
+        else
+        {
+            var current = node;
+            for (var level = 0; level < MaxScrollAncestors && _tree.GetParent(current) is { } parent; level++)
+            {
+                var read = _tree.ReadElement(parent);
+                if ((read.Patterns & UiaPatterns.Scroll) != 0 && _tree.GetPattern<IUiaScrollPattern>(parent) is { } found)
+                {
+                    (scroll, container, containerElement) = (found, parent, read);
+                    break;
+                }
+
+                current = parent;
+            }
+        }
+
+        if (scroll == null || container == null)
+        {
+            return NotSupported(call, element, "scroll needs the Scroll pattern on the element or one of its ancestors",
+                "Use the scroll tool (the mouse wheel) over the element's window instead.");
+        }
+
+        var state = scroll.State;
+        element.ScrollContainer = container;
+        element.ScrollBefore = state;
+        if (containerElement != null)
+        {
+            element.ContainerRef = TryRead(() => _registry.Register(call.Window, containerElement, new ElementOrigin(_registry.NextGeneration())));
+        }
+
+        var direction = request.Direction!.Value;
+        var vertical = direction is ElementScrollDirection.Up or ElementScrollDirection.Down;
+        if (!(vertical ? state.VerticallyScrollable : state.HorizontallyScrollable))
+        {
+            element.Warnings.Add($"The container does not scroll {(vertical ? "vertically" : "horizontally")}: all of its content fits.");
+            return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+        }
+
+        if (AtEnd(direction, state))
+        {
+            return element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None));
+        }
+
+        var forward = direction is ElementScrollDirection.Down or ElementScrollDirection.Right;
+        var amount = request.Amount == ElementScrollAmount.Line
+            ? forward ? UiaScrollAmount.SmallIncrement : UiaScrollAmount.SmallDecrement
+            : forward ? UiaScrollAmount.LargeIncrement : UiaScrollAmount.LargeDecrement;
+        return element.Use(Plan.Pattern(ElementActionMethod.Scroll, vertical
+            ? () => scroll.Scroll(UiaScrollAmount.NoAmount, amount)
+            : () => scroll.Scroll(amount, UiaScrollAmount.NoAmount)));
+    }
+
+    private ElementActionResult? ChooseWindow(ActionCall call, PreparedElement element)
+    {
+        var request = call.Request;
+        if (Pattern<IUiaWindowPattern>(element, UiaPatterns.Window) is not { } window)
+        {
+            return NotSupported(call, element, $"{call.Action} needs the Window pattern", "Act on the window element itself.");
+        }
+
+        // A top-level window has tools of its own, with the close guards (shell and host windows, confirmation, verified close)
+        // and verified state changes: those must not be bypassed through its Window pattern
+        var handle = TopLevelWindowOf(call, element);
+        if (handle != nint.Zero)
+        {
+            return Refuse(call, ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"The element is the top-level window {(long)handle}. " + (request.Action == ElementActionKind.WindowClose
+                    ? $"Close it with close_window (handle {(long)handle}), which refuses the shell and your own host window, asks the user " +
+                      "where needed and verifies the close."
+                    : $"Use set_window_state (handle {(long)handle}), which checks the policy and verifies the new state.") +
+                " window_* actions are for windows drawn inside an application (an MDI child, an in-app dialog). Nothing was done.");
+        }
+
+        var state = window.State;
+        switch (request.Action)
+        {
+            case ElementActionKind.WindowClose:
+                return element.Use(Plan.Pattern(ElementActionMethod.Window, window.Close));
+            case ElementActionKind.WindowMinimize when !state.CanMinimize:
+            case ElementActionKind.WindowMaximize when !state.CanMaximize:
+                return NotSupported(call, element, $"the window cannot be {(request.Action == ElementActionKind.WindowMinimize ? "minimized" : "maximized")}", null);
+        }
+
+        var goal = request.Action == ElementActionKind.WindowMinimize ? UiaWindowVisualState.Minimized : UiaWindowVisualState.Maximized;
+        return state.VisualState == goal
+            ? element.Use(new Plan(PlanKind.Nothing, ElementActionMethod.None))
+            : element.Use(Plan.Pattern(ElementActionMethod.Window, () => window.SetVisualState(goal)));
+    }
+
+    /// <summary>
+    /// The top-level window the element is (for a UWP app's CoreWindow, its frame window), or zero when it is a window drawn
+    /// inside an application. Fails closed: when that cannot be told, the element counts as the top-level window.
+    /// </summary>
+    private nint TopLevelWindowOf(ActionCall call, PreparedElement element)
+    {
+        var handle = element.Identity.NativeWindowHandle;
+        if (handle != nint.Zero)
+        {
+            var root = _windows.GetAncestor(handle, WindowAncestor.Root);
+            if (handle == call.Window || root == handle || root == nint.Zero)
+            {
+                return handle;
+            }
+
+            // A UWP app's CoreWindow is a child of its ApplicationFrameWindow, but closing it ends the app
+            return string.Equals(_windows.GetClassName(handle), WindowClassification.CoreWindowClass, StringComparison.Ordinal) ? root : nint.Zero;
+        }
+
+        // No window handle of its own: it is the top-level window when it is the element of the ref's window itself
+        try
+        {
+            return _tree.FromHandle(call.Window) is { } top && _tree.AreSameElement(top, element.Node) ? call.Window : nint.Zero;
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            return call.Window;
+        }
+    }
+
+    /// <summary>Whether <paramref name="processId"/> is the process of <paramref name="window"/> (for a UWP frame, also the app's).</summary>
+    private bool BelongsToWindowsProcess(nint window, int processId) =>
+        processId > 0 && (processId == (int)_windows.GetWindowThreadProcessId(window) || processId == UiaTargets.TargetProcessId(_windows, window));
+
+    /// <summary>
+    /// The nearest window handle at or above the element, when it belongs to the element's own process; zero when there is
+    /// none within <see cref="MaxWindowAncestors"/> levels.
+    /// </summary>
+    private nint OwnWindowOf(IUiaNode node, UiaNodeIdentity identity)
+    {
+        var current = node;
+        var handle = identity.NativeWindowHandle;
+        for (var level = 0; handle == nint.Zero && level < MaxWindowAncestors; level++)
+        {
+            if (_tree.GetParent(current) is not { } parent)
+            {
+                return nint.Zero;
+            }
+
+            current = parent;
+            handle = _tree.ReadIdentity(current).NativeWindowHandle;
+        }
+
+        return handle != nint.Zero && identity.ProcessId > 0 && (int)_windows.GetWindowThreadProcessId(handle) == identity.ProcessId
+            ? handle
+            : nint.Zero;
+    }
+
+    /// <summary>
+    /// Whether keys may be typed into the element: an Edit (unless its Value pattern is read-only, refused before), or a
+    /// Document or ComboBox with a writable Value pattern. Not a list, grid, pane or button.
+    /// </summary>
+    private static bool IsTextField(UiaElement element, IUiaValuePattern? value) => element.Properties.ControlType switch
+    {
+        "Edit" => true,
+        "Document" or "ComboBox" => value is { IsReadOnly: false },
+        _ => false
+    };
+
+    /// <summary>
+    /// The toggle state once it differs from <paramref name="previous"/>, read every <paramref name="poll"/> for up to
+    /// <paramref name="wait"/> of <see cref="Clock"/>; null when it did not change, or it (or the state before) cannot be read.
+    /// </summary>
+    private UiaToggleState? ToggleStateAfter(IUiaTogglePattern toggle, UiaToggleState? previous, TimeSpan wait, TimeSpan poll)
+    {
+        if (previous == null)
+        {
+            return null;
+        }
+
+        var started = Clock.GetTimestamp();
+        while (true)
+        {
+            UiaToggleState now;
+            try
+            {
+                now = toggle.ToggleState;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
+
+            if (now != previous)
+            {
+                return now;
+            }
+
+            if (Clock.GetElapsedTime(started) >= wait)
+            {
+                return null;
+            }
+
+            Sleep(poll);
+        }
+    }
+
+    private static TimeSpan Min(TimeSpan first, TimeSpan second) => first < second ? first : second;
+
+    /// <summary>
+    /// The element's state, read through its patterns, and its whole value (null for a password field).
+    /// <paramref name="passwordUnknown"/>: <paramref name="isPassword"/> is only assumed (an item its list has not realized did
+    /// not say), so no value is read and the state does not report it as a password field.
+    /// </summary>
+    private (ElementState State, string? FullValue) ReadState(IUiaNode node, UiaElement element, bool isPassword, bool passwordUnknown = false)
+    {
+        var properties = element.Properties;
+        var patterns = element.Patterns;
+        var interaction = TryRead(() => _tree.ReadInteraction(node));
+
+        // A password field's value is never read, not even to mask it
+        var fullValue = !isPassword && (patterns & UiaPatterns.Value) != 0 ? TryRead(() => _tree.GetPattern<IUiaValuePattern>(node)?.Value) : null;
+        var (value, truncated) = ElementInspectionService.Truncate(fullValue);
+        var scroll = (patterns & UiaPatterns.Scroll) != 0 ? TryRead(() => _tree.GetPattern<IUiaScrollPattern>(node)?.State) : null;
+        var state = new ElementState(
+            Name: string.IsNullOrEmpty(properties.Name) ? null : properties.Name,
+            IsEnabled: properties.IsEnabled,
+            IsOffscreen: properties.IsOffscreen,
+            HasKeyboardFocus: interaction?.HasKeyboardFocus,
+            Value: value,
+            ValueTruncated: truncated ? true : null,
+            IsPassword: isPassword && !passwordUnknown ? true : null,
+            ToggleState: (patterns & UiaPatterns.Toggle) != 0 ? TryState(() => _tree.GetPattern<IUiaTogglePattern>(node)?.ToggleState) : null,
+            ExpandCollapseState: (patterns & UiaPatterns.ExpandCollapse) != 0
+                ? TryState(() => _tree.GetPattern<IUiaExpandCollapsePattern>(node)?.ExpandCollapseState)
+                : null,
+            IsSelected: (patterns & UiaPatterns.SelectionItem) != 0 ? TryState(() => _tree.GetPattern<IUiaSelectionItemPattern>(node)?.IsSelected) : null,
+            RangeValue: (patterns & UiaPatterns.RangeValue) != 0 ? TryState(() => _tree.GetPattern<IUiaRangeValuePattern>(node)?.State.Value) : null,
+            HorizontalScrollPercent: Percent(scroll?.HorizontallyScrollable, scroll?.HorizontalPercent),
+            VerticalScrollPercent: Percent(scroll?.VerticallyScrollable, scroll?.VerticalPercent),
+            WindowVisualState: (patterns & UiaPatterns.Window) != 0 ? TryState(() => _tree.GetPattern<IUiaWindowPattern>(node)?.State.VisualState) : null);
+        return (state, fullValue);
+    }
+
+    /// <summary>Phase 3, on the worker: the element read again (or gone), with its scroll container's position.</summary>
+    private ReadOutcome<AfterRead> ReadAfter(ActionCall call, PreparedElement element)
+    {
+        try
+        {
+            UiaElement fresh;
+            try
+            {
+                fresh = _tree.ReadElement(element.Node);
+            }
+            catch (UiaElementUnavailableException)
+            {
+                // An item its list has still not realized (a realize that did nothing) fails the whole read: it is there,
+                // offscreen
+                if (!element.Element.Virtualized ||
+                    TryRead(() => _tree.ReadVirtualizedItem(element.Node)) is not { Element.Virtualized: true } item)
+                {
+                    return ReadOutcome<AfterRead>.Of(new AfterRead(null, null, null, Gone: true, Warning: null));
+                }
+
+                fresh = item.Element;
+            }
+
+            // An item that did not say whether it is a password field is asked again once it is real
+            var (isPassword, passwordUnknown) = (element.IsPassword, element.PasswordUnknown);
+            if (passwordUnknown && !fresh.Virtualized && TryRead(() => _tree.ReadIdentity(element.Node)) is { } identity)
+            {
+                (isPassword, passwordUnknown) = (identity.IsPassword, false);
+            }
+
+            var (state, fullValue) = ReadState(element.Node, fresh, isPassword, passwordUnknown);
+            var scroll = element.ScrollContainer is { } container
+                ? TryRead(() => _tree.GetPattern<IUiaScrollPattern>(container)?.State)
+                : null;
+            return ReadOutcome<AfterRead>.Of(new AfterRead(state, fullValue, scroll, Gone: false, Warning: null));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return ReadOutcome<AfterRead>.Failed(call.Fail(nameof(UIElementErrorCode.ElementAccessFailed),
+                $"The action was done, but the element's state could not be read afterwards: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// Whether the state after the action shows its effect: true, false, or null when the action has no state to check (invoke,
+    /// a mouse click) or the state could not be read (a password field's value).
+    /// </summary>
+    private static bool? Verify(ElementActionRequest request, PreparedElement element, AfterRead after)
+    {
+        if (after.Gone)
+        {
+            return request.Action == ElementActionKind.WindowClose ? true : null;
+        }
+
+        if (after.State is not { } state)
+        {
+            return null;
+        }
+
+        var before = element.Before;
+        var method = element.Plan.Method;
+        return request.Action switch
+        {
+            ElementActionKind.Click => method switch
+            {
+                ElementActionMethod.Toggle => state.ToggleState != before.ToggleState,
+                ElementActionMethod.SelectionItem => state.IsSelected == true,
+                ElementActionMethod.ExpandCollapse => state.ExpandCollapseState != before.ExpandCollapseState,
+                _ => null
+            },
+            ElementActionKind.Focus => state.HasKeyboardFocus,
+            ElementActionKind.SetValue => element.IsPassword || after.FullValue == null ? null : after.FullValue == (request.Value ?? string.Empty),
+            ElementActionKind.AppendText => element.IsPassword || after.FullValue == null || element.FullValue == null
+                ? null
+                : after.FullValue == element.FullValue + request.Value,
+            ElementActionKind.Toggle => ParseToggleState(request.Value) is { } goal
+                ? state.ToggleState == goal
+                : state.ToggleState != before.ToggleState,
+            ElementActionKind.Select or ElementActionKind.AddToSelection => method == ElementActionMethod.Mouse ? null : state.IsSelected == true,
+            ElementActionKind.RemoveFromSelection => state.IsSelected == false,
+            ElementActionKind.Expand => state.ExpandCollapseState is UiaExpandCollapseState.Expanded or UiaExpandCollapseState.PartiallyExpanded,
+            ElementActionKind.Collapse => state.ExpandCollapseState == UiaExpandCollapseState.Collapsed,
+            ElementActionKind.ScrollIntoView or ElementActionKind.Realize => !state.IsOffscreen,
+            ElementActionKind.Scroll => ScrollVerified(request, element, after),
+            ElementActionKind.SetRangeValue => state.RangeValue is { } value && element.RangeTarget is { } target
+                ? Math.Abs(value - target) <= RangeTolerance(target)
+                : null,
+            ElementActionKind.WindowMinimize => state.WindowVisualState == UiaWindowVisualState.Minimized,
+            ElementActionKind.WindowMaximize => state.WindowVisualState == UiaWindowVisualState.Maximized,
+            ElementActionKind.WindowClose => false,
+            _ => null
+        };
+    }
+
+    private static bool? ScrollVerified(ElementActionRequest request, PreparedElement element, AfterRead after)
+    {
+        if (after.Scroll is not { } now || element.ScrollBefore is not { } then || request.Direction is not { } direction)
+        {
+            return null;
+        }
+
+        var vertical = direction is ElementScrollDirection.Up or ElementScrollDirection.Down;
+        var moved = vertical ? now.VerticalPercent != then.VerticalPercent : now.HorizontalPercent != then.HorizontalPercent;
+        return moved || AtEnd(direction, now);
+    }
+
+    private static ElementScrollPosition? ScrollPosition(ElementActionRequest request, PreparedElement element, AfterRead after)
+    {
+        if ((after.Scroll ?? element.ScrollBefore) is not { } state || request.Direction is not { } direction)
+        {
+            return null;
+        }
+
+        return new ElementScrollPosition(
+            Percent(state.HorizontallyScrollable, state.HorizontalPercent),
+            Percent(state.VerticallyScrollable, state.VerticalPercent),
+            AtEnd(direction, state),
+            element.ContainerRef);
+    }
+
+    /// <summary>True when the container cannot scroll further in <paramref name="direction"/> (or not on that axis at all).</summary>
+    private static bool AtEnd(ElementScrollDirection direction, UiaScrollState state) => direction switch
+    {
+        ElementScrollDirection.Down => !state.VerticallyScrollable || state.VerticalPercent >= 99.99,
+        ElementScrollDirection.Up => !state.VerticallyScrollable || state.VerticalPercent <= 0.01,
+        ElementScrollDirection.Right => !state.HorizontallyScrollable || state.HorizontalPercent >= 99.99,
+        _ => !state.HorizontallyScrollable || state.HorizontalPercent <= 0.01
+    };
+
+    private static double? Percent(bool? scrollable, double? percent) =>
+        scrollable == true && percent is { } value && value >= 0 ? Math.Round(value, 2) : null;
+
+    private static double RangeTolerance(UiaRangeValueState state) => Math.Max(1e-9, (state.Maximum - state.Minimum) * 1e-6);
+
+    private static double RangeTolerance(double goal) => Math.Max(1e-9, Math.Abs(goal) * 1e-6);
+
+    private static string UnverifiedWarning(ElementActionRequest request, PreparedElement element) => request.Action switch
+    {
+        ElementActionKind.SetValue or ElementActionKind.AppendText when request.Mode == ElementValueMode.Value =>
+            "The value read back is not the value set: the application may reformat it, or ignore the Value pattern (some web " +
+            "and React inputs do). Read it again, or set it with mode type.",
+        ElementActionKind.SetValue or ElementActionKind.AppendText =>
+            "The value read back is not the text typed: the field may limit or reformat its input. Read it again before you go on.",
+        ElementActionKind.Focus => "Keyboard focus is not on the element after SetFocus. Click it first (action click with fallback mouse).",
+        _ => $"The state read after {ToolEnum<ElementActionKind>.Name(request.Action)} does not show its effect yet; the application " +
+             "may still be updating. Read the element again before you repeat the action."
+    };
+
+    /// <summary>
+    /// On the worker: whether keyboard focus is on the element itself, or, for a ComboBox, on the Edit that is its direct
+    /// child (where an editable combo box takes its text). Focus anywhere else inside the element does not count: the keys
+    /// would reach that control, not the field.
+    /// </summary>
+    private ReadOutcome<bool> HasFocus(PreparedElement element)
+    {
+        try
+        {
+            var node = element.Node;
+            if (_tree.GetFocusedElement() is not { } focused)
+            {
+                return ReadOutcome<bool>.Of(false);
+            }
+
+            if (_tree.AreSameElement(focused, node))
+            {
+                return ReadOutcome<bool>.Of(true);
+            }
+
+            return ReadOutcome<bool>.Of(element.Element.Properties.ControlType == "ComboBox" &&
+                                        _tree.GetParent(focused) is { } parent && _tree.AreSameElement(parent, node) &&
+                                        _tree.ReadElement(focused).Properties.ControlType == "Edit");
+        }
+        catch (Exception ex) when (ex is UiaElementUnavailableException or InvalidOperationException)
+        {
+            return ReadOutcome<bool>.Of(false);
+        }
+    }
+
+    private TPattern? Pattern<TPattern>(PreparedElement element, UiaPatterns flag) where TPattern : class, IUiaPattern =>
+        (element.Element.Patterns & flag) != 0 ? _tree.GetPattern<TPattern>(element.Node) : null;
+
+    /// <summary>
+    /// The MSAA default action, when the element has one (UIA3 engine only). Never for a password field: the MSAA bridge is
+    /// not touched at all there, so no read of it can reach the field's value.
+    /// </summary>
+    private IUiaLegacyIAccessiblePattern? DefaultAction(PreparedElement element)
+    {
+        if (element.IsPassword ||
+            Pattern<IUiaLegacyIAccessiblePattern>(element, UiaPatterns.LegacyIAccessible) is not { } legacy ||
+            TryRead(() => legacy.DefaultAction) is not { Length: > 0 } name)
+        {
+            return null;
+        }
+
+        element.Warnings.Add($"The element has no Invoke pattern; its MSAA default action ('{name}') was used.");
+        return legacy;
+    }
+
+    private static ElementActionResult NotSupported(ActionCall call, PreparedElement element, string what, string? hint)
+    {
+        var patterns = UiaPatternNames.All(element.Element.Patterns);
+        return call.Fail(nameof(UIElementErrorCode.PatternNotSupported),
+            $"{what}, and {Name(element.Element)} supports {(patterns.Count == 0 ? "no pattern" : string.Join(", ", patterns))}. " +
+            $"Nothing was done.{(hint == null ? string.Empty : " " + hint)}");
+    }
+
+    private static ElementActionResult Refuse(ActionCall call, string code, string error) => call.Fail(code, error);
+
+    private static ReadOutcome<PreparedElement> Failed(ActionCall call, string code, string error) =>
+        ReadOutcome<PreparedElement>.Failed(call.Fail(code, error));
+
+    private static string Name(UiaElement element) =>
+        string.IsNullOrEmpty(element.Properties.Name)
+            ? $"The {element.Properties.ControlType}"
+            : $"{element.Properties.ControlType} '{element.Properties.Name}'";
+
+    /// <summary>A read that may fail without failing the action: null then. A provider timeout is thrown.</summary>
+    private static T? TryRead<T>(Func<T?> read) where T : class
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <inheritdoc cref="TryRead{T}"/>
+    private static T? TryState<T>(Func<T?> read) where T : struct
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    private enum PlanKind
+    {
+        /// <summary>The element is in the asked-for state already.</summary>
+        Nothing,
+
+        /// <summary>A pattern call on the action runner.</summary>
+        Pattern,
+
+        /// <summary>Activation, then SetFocus on the action runner.</summary>
+        Focus,
+
+        /// <summary>Activation, then a guarded click.</summary>
+        Mouse,
+
+        /// <summary>Activation, focus, then guarded keys.</summary>
+        Keyboard
+    }
+
+    private enum MouseKind
+    {
+        Left,
+        Right,
+        Double
+    }
+
+    /// <summary>How the action is carried out.</summary>
+    private sealed class Plan(PlanKind kind, ElementActionMethod method)
+    {
+        public PlanKind Kind { get; } = kind;
+
+        public ElementActionMethod Method { get; } = method;
+
+        /// <summary>The pattern call, for <see cref="PlanKind.Pattern"/>.</summary>
+        public Action? Act { get; set; }
+
+        public MouseKind Mouse { get; private init; }
+
+        /// <summary>How many toggles the toggle loop made (set on the action's thread).</summary>
+        public int Toggles { get; set; }
+
+        /// <summary>The toggle loop stopped because the element was back in its state before, without the goal.</summary>
+        public bool CycledBack { get; set; }
+
+        public static Plan Pattern(ElementActionMethod method, Action act) => new(PlanKind.Pattern, method) { Act = act };
+
+        public static Plan Click(MouseKind mouse) => new(PlanKind.Mouse, ElementActionMethod.Mouse) { Mouse = mouse };
+    }
+
+    /// <summary>The element as phase 1 found it, and how to act on it.</summary>
+    private sealed class PreparedElement(
+        string elementRef, IUiaNode node, UiaElement element, UiaNodeIdentity identity, bool isPassword, ElementState before,
+        string? fullValue)
+    {
+        public string Ref { get; } = elementRef;
+
+        public IUiaNode Node { get; } = node;
+
+        public UiaElement Element { get; } = element;
+
+        public UiaNodeIdentity Identity { get; } = identity;
+
+        public bool IsPassword { get; } = isPassword;
+
+        /// <summary>
+        /// <see cref="IsPassword"/> is only assumed: the element is an item its list has not realized, whose provider did not
+        /// say whether it is a password field.
+        /// </summary>
+        public bool PasswordUnknown { get; init; }
+
+        public ElementState Before { get; } = before;
+
+        /// <summary>The whole value before the action (null for a password field, or without a Value pattern).</summary>
+        public string? FullValue { get; } = fullValue;
+
+        public int ProcessId => Identity.ProcessId;
+
+        public Plan Plan { get; private set; } = new(PlanKind.Nothing, ElementActionMethod.None);
+
+        public IUiaNode? ScrollContainer { get; set; }
+
+        public UiaScrollState? ScrollBefore { get; set; }
+
+        public string? ContainerRef { get; set; }
+
+        public double? RangeTarget { get; set; }
+
+        public List<string> Warnings { get; } = [];
+
+        /// <summary>Stores the plan; null, for <see cref="Choose"/>'s "no refusal".</summary>
+        public ElementActionResult? Use(Plan plan)
+        {
+            Plan = plan;
+            return null;
+        }
+    }
+
+    /// <summary>The state after the action.</summary>
+    /// <param name="Gone">The element no longer exists.</param>
+    /// <param name="Warning">Why it could not be read, when it could not.</param>
+    private sealed record AfterRead(ElementState? State, string? FullValue, UiaScrollState? Scroll, bool Gone, string? Warning);
+}

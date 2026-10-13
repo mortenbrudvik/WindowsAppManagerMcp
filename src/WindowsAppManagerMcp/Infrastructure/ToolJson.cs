@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
@@ -15,15 +16,63 @@ namespace WindowsAppManagerMcp.Infrastructure;
 /// the input schema lists their values (<c>"enum": [...]</c>), so an agent sees the valid values instead of guessing.
 /// </summary>
 /// <remarks>
-/// The SDK's own string-enum converter would list the values too, but it matches custom names case-sensitively, takes
+/// <para>The SDK's own string-enum converter would list the values too, but it matches custom names case-sensitively, takes
 /// no aliases and accepts any number, so the server binds these enums itself. A custom converter hides a type's values
 /// from the schema exporter, so <see cref="SchemaOptions"/> writes them back. <see cref="WithServerTools{T}"/>
-/// registers a tool class with both, as WithTools&lt;T&gt;() would with the defaults.
+/// registers a tool class with both, as WithTools&lt;T&gt;() would with the defaults.</para>
+/// <para>The results are written with the relaxed encoder (<see cref="JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/>), as
+/// the error results, get_desktop_state and the audit log were: the SDK's default encoder writes every non-ASCII character,
+/// and quotes, apostrophes, &lt;, &gt;, &amp;, + and `, as a six-byte \uXXXX escape, which the agent reads as such (the
+/// tool's JSON is text inside the MCP message), so a page of Cyrillic or CJK text cost about six times its size. The text
+/// goes to an MCP client over stdio, never into HTML, and the relaxed encoder still escapes quotes, backslashes, control
+/// characters, the line and paragraph separators and every character outside the Basic Multilingual Plane, so the JSON
+/// stays valid and on one line.</para>
 /// </remarks>
 public static class ToolJson
 {
-    /// <summary>The SDK's serializer options with <see cref="ToolEnumConverterFactory"/> first.</summary>
+    /// <summary>
+    /// The encoder of every tool result: <see cref="JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/> (see the remarks).
+    /// </summary>
+    public static JavaScriptEncoder ResultEncoder => JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+
+    /// <summary>The SDK's serializer options with <see cref="ToolEnumConverterFactory"/> first and <see cref="ResultEncoder"/>.</summary>
     public static JsonSerializerOptions SerializerOptions { get; } = CreateSerializerOptions();
+
+    /// <summary>
+    /// The SDK's own serializer options (<see cref="McpJsonUtilities.DefaultOptions"/>) with <see cref="ResultEncoder"/>: for
+    /// the results the server writes itself without its enum converter (the capture metadata, the error results).
+    /// </summary>
+    public static JsonSerializerOptions SdkResultOptions { get; } = CreateSdkResultOptions();
+
+    /// <summary>
+    /// How many bytes <paramref name="text"/> takes in a tool result's JSON: UTF-8, with the escapes of
+    /// <see cref="ResultEncoder"/> (two bytes for \", \\, \n, \r, \t, \b and \f, six for any other escaped character, so
+    /// twelve for a character outside the Basic Multilingual Plane), without the quotes around it. read_element_text and
+    /// read_table bound their results with it, so a page costs about as many tokens in any script.
+    /// </summary>
+    public static int StringBytes(ReadOnlySpan<char> text)
+    {
+        var bytes = 0;
+        foreach (var c in text)
+        {
+            bytes += CharBytes(c);
+        }
+
+        return bytes;
+    }
+
+    /// <summary>The bytes one UTF-16 character takes in a tool result's JSON (<see cref="StringBytes"/>).</summary>
+    public static int CharBytes(char c) => c switch
+    {
+        '"' or '\\' or '\n' or '\r' or '\t' or '\b' or '\f' => 2,
+
+        // Each half of a surrogate pair is escaped on its own, and a lone one is written as an escaped U+FFFD
+        _ when char.IsSurrogate(c) => 6,
+        _ when ResultEncoder.WillEncode(c) => 6,
+        < (char)0x80 => 1,
+        < (char)0x800 => 2,
+        _ => 3
+    };
 
     /// <summary>The SDK's schema options, with the values of the <see cref="ToolEnumAttribute"/> enums added.</summary>
     public static AIJsonSchemaCreateOptions SchemaOptions { get; } = new() { TransformSchemaNode = ListToolEnumValues };
@@ -92,7 +141,7 @@ public static class ToolJson
 
     private static JsonSerializerOptions CreateSerializerOptions()
     {
-        var options = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
+        var options = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions) { Encoder = ResultEncoder };
 
         // Before the SDK's string-enum converter, which would otherwise bind these enums too
         options.Converters.Insert(0, new ToolEnumConverterFactory());
@@ -100,14 +149,32 @@ public static class ToolJson
         return options;
     }
 
+    private static JsonSerializerOptions CreateSdkResultOptions()
+    {
+        var options = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions) { Encoder = ResultEncoder };
+        options.MakeReadOnly();
+        return options;
+    }
+
     /// <summary>
     /// Lists the allowed values of a <see cref="ToolEnumAttribute"/> enum (also as Nullable), or of a string marked
     /// with <see cref="ToolValuesAttribute"/>, as <c>"type": "string", "enum": [...]</c>, with null added for a nullable
-    /// one. The description and default the schema already has are kept.
+    /// one. The description and default the schema already has are kept. An array of such an enum (get_desktop_state's
+    /// include) gets the values on its items: the custom converter leaves the exporter nothing to describe them with.
     /// </summary>
     private static JsonNode ListToolEnumValues(AIJsonSchemaCreateContext context, JsonNode schema)
     {
         var type = context.TypeInfo.Type;
+        if (type.IsArray && type.GetElementType() is { } element && ToolEnumInfo.IsToolEnum(element) && schema is JsonObject array)
+        {
+            array["items"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray([.. ToolEnumInfo.Get(element).SchemaValues.Select(value => (JsonNode?)JsonValue.Create(value))])
+            };
+            return array;
+        }
+
         var underlying = Nullable.GetUnderlyingType(type) ?? type;
         var enumType = ToolEnumInfo.IsToolEnum(underlying)
             ? underlying
