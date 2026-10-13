@@ -1,4 +1,3 @@
-| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs | 2,129 | 3,200 |
 # Testing Guide
 
 > **WindowsAppManagerMcp** | .NET 8.0 | xUnit | Moq
@@ -1914,15 +1913,17 @@ Rules for new tests:
   process code goes through `INativeProcessWrapper`.
 - `NativeCallGuardTests` also works as an allow-list. Outside the action wrappers the tests always
   replace (`NativeWindowWrapper`, `NativeInputWrapper`, `NativeProcessWrapper`,
-  `NativeThreadInputWrapper` and `NativeHotkeyWrapper`), code may call only the read-only
+  `NativeThreadInputWrapper`, `NativeHotkeyWrapper` and `NativeClipboardWrapper`), code may call only the read-only
   `NativeMethods` APIs listed in `ReadOnlyNativeApis`, and P/Invoke declarations must live in
   `NativeMethods`. The queries of `NativeWindowWrapper` that `ReadOnlyNativeWindowWrapper` forwards
   may reach only those APIs and the window reads in `WindowQueryNativeApis`, followed through their
   lambdas and helpers. `AttachThreadInput` is pinned to `NativeThreadInputWrapper`, and the last Win32
   error is read only inside the Native wrapper that made the call (also through framework members
-  that read it, such as `new Win32Exception()`). Outside `UIAutomationWrapper`, UI Automation
+  that read it, such as `new Win32Exception()`). Outside `UIAutomationWrapper` and the two UI Automation
+  engine adapters (`UiaTree`, `Uia3Tree`, whose pattern objects `IUiaTree.GetPattern` hands out), UI Automation
   elements, patterns and text ranges may only be read (`ReadOnlyUiAutomationMethods`): no `Invoke`,
-  `SetValue`, `Toggle`, `Select`, `SetFocus` or other action. A new native call or UI Automation action therefore fails the guard
+  `SetValue`, `Toggle`, `Select`, `SetFocus` or other action
+  (`UiAutomationActions_AreOnlyCalledByTheWrapperAndTheEngineAdapters`). A new native call or UI Automation action therefore fails the guard
   until it goes through a mockable wrapper or is reviewed onto a list.
 - Never register a real global hotkey, and never open the real shared pause. The pause hotkey (roadmap
   M1.10) registers its chord, and the input session opens the pause every server on the desktop shares
@@ -1953,6 +1954,15 @@ Rules for new tests:
   passed to `Task.Delay`; and give a call that must answer before a deadline a deadline far above thread
   start-up (seconds, not 100 ms). Prefer a fake clock (`ManualClock`) or an explicit signal from the code
   under test over sleeping.
+
+**Timing-sensitive tests under heavy load.** A few tests still fail now and then when the machine is very busy (a
+build, another test run, a virus scan), and pass on a rerun: the deadline tests of `DesktopStateServiceTests`
+(`APartThatDoesNotAnswer_IsReportedAtTheDeadline_AndTheRestIsReturned` and the `TheElementsWalk_*` and
+`TheUiAutomationParts_*` tests, which bound a call's wall time), and contract tests that time out after about 11 to 14
+seconds in an in-process server (close_windows_batch in `UserConfirmationContractTests`, the click case of
+`ToolPayloadBudgetTests` and `EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`).
+When one of these fails alone in a full run, run it again on its own (`--filter "FullyQualifiedName~<class>"`) before
+you look for a regression; a failure that repeats on an idle machine is a real one.
 
 ### End-to-end tests against the fixture app
 
@@ -2042,11 +2052,11 @@ captures and `[DesktopFact]` when it acts, and start from `E2ESession`:
 
 ```csharp
 [DesktopNoInputFact]
-public void GetUIElements_SeesTheEditBox()
+public async Task GetUIElements_SeesTheEditBox()
 {
     using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
-    var result = e2e.Server.UiElements.GetUIElements(e2e.Fixture.MainWindowHandle);
+    var result = await e2e.Server.UiElements.GetUIElementsAsync(e2e.Fixture.MainWindowHandle);
 
     UiaReads.Flatten(result.Elements).Should().Contain(e => e.AutomationId == FixtureContract.Ids.EditBox);
 }
@@ -2058,6 +2068,29 @@ its DPI. A scenario that needs a kind of window the WPF fixture cannot provide m
 as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless popup of the test
 process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
 `HarnessTests/` are ordinary tests of the harness and must never start the fixture.
+
+**The scenarios.** Each class in `Scenarios/` covers one area; a class can hold tests of both tiers.
+
+| Scenario class | Tier | What it checks against the fixture |
+|----------------|------|------------------------------------|
+| `FixtureWindowTests` | No input | find_windows and get_window_info |
+| `FixtureUiElementsTests` | No input | get_ui_elements: automation ids, control types, bounds, the realized rows of the virtualized list (with each engine) |
+| `FixtureCaptureTests`, `MirroredWindowCaptureTests` | No input | capture_window's size and origin (the color swatches); a right-to-left mirrored window |
+| `FixtureInputGuardTests` | Both | The input guard: refusals in the no-input tier, input that must be sent in the input tier |
+| `FixtureForegroundTests`, `FixtureTypingTests`, `FixtureSessionTests` | Input | Verified activation, focus_window and type_text, the user's pause |
+| `FixtureCloseTests` | Input | close_window's guard and its report of the save prompt |
+| `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
+| `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
+| `FixturePopupTests` | Input | The open context menu and combo box list found by the default scope, get_active_popups (M3.5) |
+| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5) |
+| `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
+| `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
+| `FixtureElementWaitTests` | No input | wait_for_element (M3.8) |
+| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9) |
+| `FixtureVirtualizedListTests` | Both | searchVirtualized in the no-input tier, element_action realize in the input tier (M3.10) |
+| `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
+| `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |
+| `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
@@ -2076,15 +2109,15 @@ agent. The tier only starts the fixture and reads it, but the fixture's windows 
 leave the desktop alone during the runs, because a window opened over the fixture can fail a capture
 scenario.
 
-Run both from the repository root. The trx logger keeps every test's output, so the two runs can be
-compared afterwards (`TestResults/` is not committed):
+Run both from the repository root, on a real desktop: `.github/workflows/e2e.yml` has no engine choice. The trx
+logger keeps every test's output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
 
 ```bash
 # Git Bash
 # Run 1: the default engine (uia3)
-env -u WAM_UIA_ENGINE WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1   dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
+env -u WAM_UIA_ENGINE WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia3
 # Run 2: uia2
-WAM_UIA_ENGINE=uia2 WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1   dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
+WAM_UIA_ENGINE=uia2 WAM_ALLOW_DESKTOP_NOINPUT_TESTS=1 dotnet test --filter "Category=DesktopNoInput" --logger trx --results-directory TestResults/release-gate/uia2
 ```
 
 ```powershell
@@ -2104,9 +2137,12 @@ Remove-Item Env:WAM_ALLOW_DESKTOP_NOINPUT_TESTS
 
 What the runs cover:
 
-- Every scenario that leaves the engine to the server (find_ui_elements and refs, read_element_text and
-  read_table, wait_for_element, Set-of-Marks, get_desktop_state, the virtualized list search) reads with
-  the engine of the run. Each test's output names the engine and where it came from:
+- Every no-input scenario that leaves the engine to the server reads with the engine of the run:
+  `FixtureElementRefsTests` (find_ui_elements and refs), `FixtureElementReadTests` (read_element_text and
+  read_table), `FixtureElementWaitTests` (wait_for_element), `FixtureSetOfMarksTests` (Set-of-Marks),
+  `FixtureDesktopStateTests` (get_desktop_state) and `FixtureVirtualizedListTests` (the virtualized list search).
+  The rest of the tier (see [the scenarios](#end-to-end-tests-against-the-fixture-app)) runs too. Each test's output
+  names the engine and where it came from:
   `UI Automation engine: Uia3 (default)` in the first run, `UI Automation engine: Uia2 (WAM_UIA_ENGINE)`
   in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
   falling back to uia3, so a mistyped second run cannot pass as a uia2 run.
@@ -2134,6 +2170,13 @@ What to compare:
 3. A test that fails in both runs and, for a theory, with both engines, is a problem of the test or
    the fixture, not an engine difference. Fix it and run the gate again. A `BothEngines_*` fact is the
    exception: it compares the engines, so it fails in both runs when they differ (point 2).
+
+One caveat for point 2: the `BothEngines_*` facts also compare the window's title bar and its buttons, which
+Windows itself serves for the Win32 non-client area, through a native proxy to uia3 and a managed proxy to uia2. On a
+Windows display language other than English those can differ (a name, a localized type) without any difference in the
+server's code. When the first difference is a `TitleBar` element or one of its buttons, record it, and compare the fixture's own
+controls in the output of the find_ui_elements theory, which writes every element it finds with each engine, before
+you change the default.
 
 ### Tool surface snapshot
 
@@ -2252,26 +2295,29 @@ monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-c
 presets) and holds it to a per-tool token budget. Text is estimated at 4 UTF-8 bytes per token; a capture's
 image at width × height / 750 tokens, at most 3,300 (the default 1568-pixel long edge). Each budget is about
 one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it.
-The largest typical results, measured in October 2026:
+capture_with_elements' budget is an exception: it was set for a larger legend (2,312 tokens). Every typical result
+over 300 tokens, and tools/list itself, measured in October 2026:
 
 | Tool | Typical result | Tokens | Budget |
 |------|----------------|-------:|-------:|
-| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 2,312 | 3,500 |
 | `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
+| `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
+| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 1,410 | 3,500 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
-| `get_server_info` | The default deny list, five host processes, two monitors | 598 | 850 |
+| `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
+| `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 205,722 bytes (`ToolList_StaysWithinItsBudget`) | 51,431 | 52,000 |
 
-Every other typical result is under 300 tokens. When a change makes a result larger on purpose, raise its
+Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
-`ToolList_StaysWithinItsBudget` bounds tools/list itself, which a client that loads every tool up front keeps in
-context for the whole session: 51,286 tokens (205,144 bytes, 64 tools, serialized as the SDK writes it) in October
-2026, against a budget of 52,000. That budget is a ratchet, not a margin: raise it only in a change that adds to the
-surface on purpose, by what the failure message measures, and lower it when descriptions are trimmed. There is no
-per-description cap.
+`ToolList_StaysWithinItsBudget` bounds tools/list, which a client that loads every tool up front keeps in context
+for the whole session, serialized as the SDK writes it. Its budget is a ratchet, not a margin: raise it only in a
+change that adds to the surface on purpose, by what the failure message measures, and lower it when descriptions are
+trimmed. There is no per-description cap.
 `Contract/ElementReadContractTests` also bounds the largest result read_element_text and read_table can return
 (a million-character document of English, Cyrillic, CJK, emoji or quotes, a 1000 x 100 grid of long, short or empty
 cells in English, Cyrillic or CJK, read end to end through the real read service over a fake tree) at 16,000 tokens:
@@ -2328,7 +2374,7 @@ mode serves exactly the tools annotated `readOnlyHint: true`, and that each of t
 gate. `Unit/Infrastructure/ToolsetSelectionTests` covers the parsing. `Contract/ServerInfoToolContractTests` calls
 `get_server_info` over MCP (a real `ServerInfoService` over the contract services' mocked sources),
 `Unit/Services/ServerInfoServiceTests` checks the report and its warnings, and `Contract/ServerInstructionsTests`
-keeps the server instructions at 15 to 20 lines that name only served tools.
+keeps the server instructions at 15 to 20 lines and under 3,000 characters, naming only served tools.
 
 ### Audit log and clipboard in tests
 
@@ -2416,4 +2462,4 @@ build of the current sources, and compares their tools/list with the snapshot (s
 
 ---
 
-*Last updated: January 2025*
+*Last updated: October 2026*
