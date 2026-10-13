@@ -5861,244 +5861,208 @@ the old behavior sees now. The plugin's committed exe has them since release 1.1
   `BlockedProtocol`. A URI with a quote, or (except `http` and `https`) whitespace or another character a URI cannot
   hold, is `InvalidUri`; percent-encode it. A bare name no longer resolves to a script (`.vbs`, `.js`, ...) through
   `PATHEXT`; only `.com`, `.exe`, `.bat` and `.cmd` are tried, as before.
-- **M2 follow-ups (after 1.14.0).** A [right_click](#right_click) in a window of VS Code (or Code - Insiders,
-  VSCodium, Cursor, Windsurf), Hyper, Tabby, WezTerm or Alacritty now counts as a paste, as one in the console does:
-  it is refused with `PasteNotAllowed` while the clipboard holds content the agent may not paste. In a
-  launch_applications_batch, an item whose launcher failed (a non-zero exit code) is no longer given a window of
-  another item's instance: it reports `exitedWithoutWindow`. close_application's `otherDesktopWindows` no longer lists
-  suspended or prelaunched Store app frames.
-- **UI Automation engine and bounded walks (roadmap M3.1 and M3.2, after 1.14.0).** The element tools read through the
-  UI Automation COM client instead of the managed one (`WAM_UIA_ENGINE=uia2` goes back), with the same fields. AppBar
-  and SemanticZoom elements are named from their ids on every display language; with the managed client a
-  non-English Windows gave them a localized name. get_ui_elements reads breadth first and returns at most `maxElements`
-  elements (default 300; it had no limit), so a window with more elements now returns `truncated: true` with the new
-  `truncationReason: MaxElements`; pass a larger `maxElements` (up to 5000) to read more. A level of more than 200
-  elements is read one element at a time and can be cut in the middle. When the timeout passes, a level of up to 200
-  elements whose properties were already fetched is returned whole, and a timeout or a hang can leave out deeper levels that the
-  depth-first walk used to reach first. A window that Windows reports hung, or that does not answer a message within
-  500 ms, fails at once with `NotResponding` (it used to block until the timeout); capture_with_elements then
-  captures the image without overlays and reports it as `elementsErrorCode`. New parameter `format` (`tree`, the
-  default and the old shape, `flat` or `text`), and get_server_info reports `uiAutomation`.
 
-Since 1.14.0 (roadmap M3):
+Since 1.14.0 (roadmap M3 and the M2 follow-ups):
 
-- **wait_for_window (M3.7).** A new read-only tool in the `windows` toolset waits on the server until a window exists,
-  is gone, is in front, is on screen, has a new title or is ready for input, instead of sleeping and calling
-  find_windows again. A wait that is not satisfied is a failure (`isError: true`) with the new errorCode
-  `WaitTimedOut`, and its result still carries `timedOut`, `elapsedMs` and the window as last seen. The server
-  instructions' waiting rule now names it, and read-only mode serves it.
-- **Launch and arrange (roadmap M3.13, after 1.14.0).** launch_application and the items of launch_applications_batch
-  take `placement` and `reuseExisting` (see [Launch and arrange](#launch-and-arrange)). A call without them is
-  unchanged. A result can carry `placement`, and `launchStatus` has a new value, `alreadyOpen`, only with
-  `reuseExisting`; a client that switches over the statuses should treat an unknown one as a success with a window.
-  The audit log line of a launch now keeps its `launchStatus` under `result`, a launch batch item's `launchStatus`
-  as its `status`, and the placement under `target` or the item.
-- **A window that was already open must show the launched file itself (M3 review).** With `waitForWindow`,
-  launch_application and launch_applications_batch take a window that was already open and stayed in the background as
-  the launch's (`openedInTab`) only when its title changed to show the launched file or folder as a whole name, after
-  no other path than the launched one, and did not show it before the start (one that came to the front counts as
-  before). It used to be enough that the title came to contain the name, or a web address's host, anywhere (`app` in
-  `mapper.ts`). A host name in a page's title no longer counts, since the page sets it; `expectWindow.titleContains`
-  now does. Such a launch can now end `possibleHandoff`, `exitedWithoutWindow` or `timedOut` instead: look for the
-  window with find_windows. `reuseExisting` follows the same rules: a web address reuses a browser window only with
-  `expectWindow.titleContains` (it used to reuse one whose title showed the host), a window whose title shows the name
-  after another path is not reused, and one that shows only the name is reused with a `warning` to check it (see
-  [Reusing an open window](#reusing-an-open-window)).
-- **`force` on a protected window needs `confirm` without elicitation (roadmap M2.F1).** On a client that cannot ask
-  the user, close_window and close_windows_batch no longer close the desktop shell or the agent's own host with
-  `force: true` alone: the call closes nothing and fails with `ConfirmationRequired` (close_window in its result, the
-  batch as a tool error, also for 3 windows or fewer and for its ordinary windows) until it is repeated with
-  `confirm: true` too. close_window gains the `confirm` argument for this. `force` on windows that are not protected,
-  and every call on a client with elicitation (the user is asked, as in 1.14.0), are unchanged. close_application has
-  no `force`, so it is unchanged.
-- **Web content accessibility (roadmap M3.3, after 1.14.0).** get_ui_elements, capture_with_elements,
-  get_focused_element and get_element_at_point now wait up to 1.5 s (at most a third of `timeoutMs`) the first time they
-  read a window with a Chromium, Electron or WebView2 page (and a tab shown since), so such a first call can take that
-  much longer, and their results carry `accessibilityWarmup` when they waited (see [Web content](#ui-automation)).
-  Elements carry `frameworkId`: get_ui_elements reports it at the top and on an element only where it changes (`fw=` in
-  the text format), and get_element_at_point's `ancestors` have it too. launch_application takes `forceAccessibility`
-  and then returns `forceAccessibilityApplied` (see [Web content accessibility](#web-content-accessibility)). All of
-  these are new fields; a call without `forceAccessibility` launches as before.
-- **Element refs and find_ui_elements (roadmap M3.4).** Every element of get_ui_elements (all formats),
-  get_focused_element, get_element_at_point and capture_with_elements gains `ref` (for example `w4120035e17`), the first
-  field of the element; `format: "text"` puts it at the start of each line, before the control type, so a client that
-  parsed the type as a line's first word must skip a leading ref (it is `w`, digits, `e`, digits). A ref names the same
-  element in every read of the session and never silently another one: a ref moved to a re-created element that alone
-  fits its description is reported (`refMoved: true` and a `warning`), and element_action refuses it until a read returns
-  that element again (see [Element refs](#ui-automation)). New read-only tool
-  [find_ui_elements](#find_ui_elements) in the `elements` toolset (read-only mode serves it) searches by name,
-  automation id, control type and class with the provider evaluating the criteria, and returns refs, click points and
-  patterns. New errorCodes `ElementStale` and `AmbiguousElement` for refs that no longer name one element. The server
-  instructions' locate and act lines now name find_ui_elements and its click points (same number of lines).
-  find_ui_elements warms up a window with web content like the other reads (roadmap M3.3) and then carries
-  `accessibilityWarmup`.
-- **Popup-aware search and get_active_popups (roadmap M3.5).** [find_ui_elements](#find_ui_elements) takes `scope`
-  (`window`, `windowAndPopups`, `desktop`). Left out, it is `windowAndPopups` when the window, a window it owns or
-  another window of its process is in front, so a search of an app in front now also covers its open menus, dropdowns,
-  flyouts and dialogs (windows of their own) and can return more matches than before, popups first; pass
-  `scope: "window"` for the earlier window-only search (a window not in front is searched alone, as before, and so is
-  every `withinRef` search). The result gains `scope` (always), `windowsSearched` and `windowsExcluded` (wider scopes), and
-  `elements[].windowHandle` for an element in another window, whose ref belongs to that window;
-  `truncationReason` gains `WindowLimit` (`desktop`: over 40 windows; `windowAndPopups`: over 16 popups), and
-  `PartsSkipped` also covers a popup that did not respond or answer in time. With `scope: "desktop"`, `handle` and `window` may be left out (`windowHandle: 0`); the target policy's denied
-  windows and the agent's host windows are not searched unless named. New read-only tool
-  [get_active_popups](#get_active_popups) in the `elements` toolset (read-only mode serves it, so it is in the Observer
-  profile) lists an app's open popups with refs. No new error code.
-- **captureId and coordinate spaces (roadmap M3.11, after 1.14.0).** Every successful capture result has a new field
-  `captureId`, and take_screenshot takes `monitorIndex: -1` for the whole virtual screen (it used to fail with
-  `InvalidMonitorIndex`). click, right_click, double_click, mouse_move and scroll take `space`
-  (`screen`, `window`, `client`, `image`) and `captureId` (see
-  [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)); a call without them is unchanged
-  and its result has no `requested`. With them, `x` and `y` in the result are the converted screen point and
-  `requested` echoes the point as given; two new input error codes, `StaleCapture` and `CaptureNotFound`, refuse a
-  point whose capture changed or is gone. The audit log keeps a mouse call's `space`.
-- **Text and table reads (roadmap M3.9).** New read-only tools [read_element_text](#read_element_text) and
-  [read_table](#read_table) in the `elements` toolset (read-only mode serves them; not audited, they act on nothing).
-  read_element_text reads an element's text a page at a time (the Text pattern's document, the value, or the name),
-  never a password field's; read_table reads a grid's or list's headers and cells a page of rows at a time. New
-  errorCode `PatternNotSupported` (read_table on an element that is no table). Nothing else changes.
-- **wait_for_element (roadmap M3.8, after 1.14.0).** A new read-only tool in the `elements` toolset (read-only mode
-  serves it) waits on the server until an element, named by `ref` or by find_ui_elements' criteria in a `window` that
-  is waited for first, exists, is gone, is enabled, visible or focused, or has an expected name, value or toggle state.
-  A wait that is not satisfied is a failure (`isError: true`) with wait_for_window's `WaitTimedOut`, or ends early with
-  `WindowNotFound`, `ElementStale` or `AmbiguousElement`. The server instructions' waiting line now names both wait
-  tools (same number of lines). find_ui_elements is unchanged.
-- **element_action (roadmap M3.6).** A new tool in the `input` toolset (read-only mode leaves it out) acts on an element
-  named by its ref, or by a window and element criteria, through UI Automation patterns, and returns the state before
-  and after. It is destructive, runs inside the input gate like the window tools, and is audited (its `value` as a
-  length only, its result's `method` and `status`). New errorCodes `PatternNotSupported`, `ElementNotEnabled`, `ElementOffscreen`, `ElementReadOnly`,
-  `FocusNotOnElement`, `ActionFailed`, `ActionTimedOut` and `ActionsPending`. Under the UIA3 engine the server now turns
-  off UI Automation's AutoSetFocus, so pattern calls do not move focus; the read tools are unchanged by it.
-- **One scope for every element search (roadmap M3.5 with M3.6, M3.8 and M3.9).** [read_element_text](#read_element_text),
-  [wait_for_element](#wait_for_element) and [element_action](#element_action) take find_ui_elements' `scope` with their
-  element criteria (not with `ref`; only `window` with `withinRef`), and their criteria search uses the same default: the
-  window's open menus, dropdowns and dialogs too while it is in front. A criteria search that left popups or windows of
-  its scope out (`WindowLimit`) no longer counts as proof of exactly one match: read_element_text and element_action
-  refuse it with `OperationTimedOut`, as they refuse a search that timed out. element_action's error codes are
-  UI element codes, so `PatternNotSupported` is one code for read_table and element_action.
-- **Virtualized list items (roadmap M3.10).** [find_ui_elements](#find_ui_elements) takes `searchVirtualized` (default
-  `false`: nothing changes without it): it also asks the window's lists for items they have not realized, and returns them
-  with `virtualized: true`; the result gains `virtualized` (the lists searched), and a lookup that stops early is
-  truncated (`Timeout` or `PartsSkipped`). It only reads. [element_action](#element_action)
-  `realize` now also scrolls the realized item into view when it is still offscreen, and verifies that it is on screen
-  (`outcomeVerified`, which was always null); an offscreen item that is not virtualized is scrolled into view
-  (`method: "ScrollItem"`). By criteria, `realize` searches the lists' items too, and takes the new `maxScrolls` to
-  find an item by scrolling the window's one list (refused for other actions and with `ref`).
-- **Set-of-Marks and the ref crop (roadmap M3.11, part 2).** [capture_with_elements](#capture_with_elements) changes
-  what it returns by default. Each mark now has a filled tag with the element's ref, and the marks are drawn on the
-  returned image after it was scaled (the boxes were drawn before, widened by the scale). Without `controlTypes`, only
-  elements with an action pattern are marked (`actionableOnly`, new, defaults to true then); labels, panes, groups and
-  other containers are no longer drawn. Pass `actionableOnly: false` for the earlier set. The walk stops at
-  `maxElements` (new, default 80; it had no limit) with `truncationReason: "MaxElements"`. The metadata has a new
-  `legend`, one line per mark, and leaves `elements` out unless `detail: "full"` (new) is passed: a client that reads
-  `elements[].screenBounds` must pass `detail: "full"`, or take the legend's `center` with the `captureId`, or act on
-  the ref with element_action. `elementCount` still counts the marks. A window that moved while its elements were read
-  is captured without a `captureId` and with a `WindowMoved` warning (M3 review). New `labels` (default true) and `drawOverlays`
-  (default true; false returns the clean image). [capture_window](#capture_window) takes `ref` and `padding` (new) to
-  crop the image to one element; without them it is unchanged, and its result gains `ref` only with them. New
-  screenshot errorCode `ElementOffscreen` (capture_window with a ref); capture_window with a ref can also return the
-  ref errors `ElementStale` and `AmbiguousElement` and the UI Automation codes `NotResponding`, `OperationTimedOut`,
-  `WindowNotFound` (UI Automation cannot read the window) and `OperationException`.
-- **get_desktop_state and element_action's observe (roadmap M3.12, after 1.14.0).** A new read-only tool in the
-  `elements` toolset, [get_desktop_state](#get_desktop_state), returns in one call the window in front, the cursor, the
-  modifiers down, Caps Lock, the pause, the windows as compact rows, the focused element, the target window's popups and
-  its elements as text lines with refs, and optionally a capture (`include` lists every section to read); the server
-  instructions and the skill now make it the first call, and still say to call get_server_info once. [element_action](#element_action) takes `observe` (`none`, the default, `state`, `screenshot`) and then
-  returns the observation after the action as `observed` (and the capture as image content first). element_action's
-  result is now built by the tool (a `CallToolResult`, as the captures): without `observe` its JSON is unchanged. The
-  audit log keeps element_action's `observe` value. The server instructions were tightened to make room (same rules).
-- **allowHostTarget never reaches the server's own windows (M3 review).** The input tools, element_action,
-  respond_to_dialog and file_dialog refuse a window of this server's own process, or a window one owns, with
-  `TargetIsAgentHost` even with `allowHostTarget: true`. The server shows no window of its own, so such a window is a
-  prompt Windows showed for it, such as the security warning of a downloaded file that launch_application opens; only the
-  user answers it. `allowHostTarget` still lifts the host rule for the agent's own terminal, editor or chat app.
-- **Dialogs and menu paths (roadmap M3.5 part 2 and M3.14).** Two new tools in the `input` toolset (read-only mode
-  leaves them out), destructive, audited and self-gated like element_action: [respond_to_dialog](#respond_to_dialog)
-  reads a dialog's text and buttons and presses one, by standard name in any language (without `button` it only
-  reads); [file_dialog](#file_dialog) completes an Open or Save As dialog with a full path. element_action's `action` enum gains `menu_path` (`value`
-  `"File>Save As"`, with `handle` or `window` alone allowed), and its result a `steps` field for it. New UI element
-  errorCodes `DialogNotFound` (21), `DialogNotCompleted` (22) and `FileExists` (23, the same name as the captures'
-  code).
-- **Dialogs are answered only when named, and saves only when seen (review of roadmap M3.5 and M3.14).**
-  [respond_to_dialog](#respond_to_dialog) no longer reads and presses the dialog in front in one call: without `handle`
-  or `window` it still reads it, but the only button it presses there is `cancel`; any other `button` is refused with
-  `InvalidArguments`, with nothing read or pressed (read the dialog, then answer it by its `dialogHandle`). A press
-  asked of a dialog named by `handle` or `window` that a modal dialog of its own now disables is refused with
-  `BlockedByModal`, naming that dialog, where it used to be pressed in it; a named application window still stands for
-  its modal dialog. `ok` presses a dialog's only button only when it carries the id of Cancel or Close.
-  [file_dialog](#file_dialog) needs `handle` or `window` (`InvalidArguments` otherwise) and no longer completes the file
-  dialog in front unnamed. Its `save` is `completed: true` only once a file is seen written at `finalPath` (created, or
-  rewritten since the press); a dialog that closed without that is `success: true` with `completed: false` and a
-  warning, where it was `completed: true`. It answers a Yes/No prompt as the replace prompt only when the prompt's text
-  names the file (other prompts come back in `prompt`), and refuses `open` in a Save As dialog (`DialogNotFound`,
-  nothing typed). element_action's `menu_path` no longer acts on an item whose only match comes from a search that did
-  not finish (`OperationTimedOut`).
-- **Target policy (M3 review).** The default deny list adds `CredDialogHost` (a Windows credential prompt), `CHXSmartScreen`
-  and `smartscreen` (the SmartScreen prompt "Windows protected your PC") and `SecHealthUI` (the Windows Security app), so
-  input, window changes, closes, kills and captures of them now return `TargetDeniedByPolicy`; a `WAM_DENY_PROCESSES`
-  value without `default` is unchanged. The policy now also covers the UI Automation reads of a window, named or not:
-  [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_focused_element](#get_focused_element),
-  [get_element_at_point](#get_element_at_point), [read_element_text](#read_element_text), [read_table](#read_table),
-  [wait_for_element](#wait_for_element) and [get_active_popups](#get_active_popups) of a window of a denied app (password
-  managers and credential prompts by default) fail with `TargetDeniedByPolicy` (the new UI element errorCode 24) before any
-  warm-up or read, where they used to read a window they were given; capture_window and capture_with_elements already
-  refused it. A popup counts as a window nobody named: find_ui_elements' `windowAndPopups` scope (and the criteria of
-  read_element_text and wait_for_element), get_active_popups and get_desktop_state no longer list or read a popup of a
-  denied app or of the agent's own host (a credential prompt the app owns, the terminal's context menu), and count it
-  in `windowsExcluded` or the new `popupsExcluded`; element_action's criteria still find the host's popups, which its
-  input guard checks. A window whose process name cannot be read is refused (`TargetDeniedByPolicy`) by these reads, and
-  now also by the input tools, element_action, respond_to_dialog, file_dialog, capture_window, capture_with_elements
-  (also for a window `restoreIfMinimized` would show), get_desktop_state (as its window, its focus and its screenshot),
-  focus_window (also for a window it would activate or a restore would show), the other window tools and their batches,
-  close_window, close_windows_batch, close_application, apply_layout and the launch tools' `placement` and
-  `reuseExisting`, while the policy denies anything; they used to act on it, close it or capture it. save_layout no
-  longer saves its title, and get_focused_element and get_element_at_point also refuse an element whose own process
-  cannot be named. With `WAM_DENY_PROCESSES=none` and no allow list, such a window is still allowed. [get_desktop_state](#get_desktop_state) no longer reads a denied window that is named (a `target` error),
-  and checks the window in front before it reads the focus, so the focus of the agent's own host or of a denied app in
-  front is no longer read at all. The window lists ([find_windows](#find_windows), get_desktop_state's rows) are unchanged.
-- **Undeclared arguments are refused by the acting tools (M3 review).** element_action, respond_to_dialog, file_dialog,
-  the input tools (click, right_click, double_click, mouse_move, scroll, type_text, send_keys), close_window,
-  close_windows_batch, close_application and kill_process now fail with `InvalidArguments` when a call passes an argument
+Most of these changes are new tools and new optional parameters, which a 1.14.0 client does not send. Where a call that
+worked with 1.14.0 now returns something else or is refused, the bullet says so. The last bullets give the main rules of
+the new tools; their sections have the rest.
+
+- **New tools.** Ten new tools, 64 in all where 1.14.0 served 54: [get_desktop_state](#get_desktop_state),
+  [find_ui_elements](#find_ui_elements), [get_active_popups](#get_active_popups), [read_element_text](#read_element_text),
+  [read_table](#read_table) and [wait_for_element](#wait_for_element) in the `elements` toolset;
+  [element_action](#element_action), [respond_to_dialog](#respond_to_dialog) and [file_dialog](#file_dialog) in the
+  `input` toolset; [wait_for_window](#wait_for_window) in the `windows` toolset. A `WAM_TOOLSETS` value that keeps a
+  toolset serves its new tools too, and one that removes it (`-input`) leaves them out. Read-only mode serves the seven
+  that only read (27 tools, where it served 20), so the Observer profile gets them; the three that act are destructive,
+  take the input gate themselves and are audited.
+- **Server instructions.** 19 lines (18 in 1.14.0), still under 3,000 characters. get_desktop_state is the first call;
+  the locate line names find_ui_elements; the act line names element_action and allows an image point with its
+  `captureId`; a new line says to read a ref reported with `refMoved: true` before acting on it, to press a dialog's
+  button by the `dialogHandle` respond_to_dialog returned, and that file_dialog takes the dialog's handle; the waiting
+  line names wait_for_window and wait_for_element; `TargetDeniedByPolicy` now also covers reading.
+- **Readable tool results.** Every tool result's JSON is now written with the relaxed encoder, as the error results and
+  the audit log already were: non-ASCII text, apostrophes, `<`, `>`, `&`, `+` and `` ` `` appear as they are instead of
+  six-byte `\uXXXX` escapes (quotes, backslashes, control characters, U+2028 and U+2029 and characters outside the Basic
+  Multilingual Plane are still escaped). A JSON parser reads the same values; a client that matched the raw text sees
+  the characters themselves.
+- **Undeclared arguments are refused by the acting tools.** The input tools (click, right_click, double_click,
+  mouse_move, scroll, type_text, send_keys), close_window, close_windows_batch, close_application and kill_process, and
+  the new element_action, respond_to_dialog and file_dialog, fail with `InvalidArguments` when a call passes an argument
   they do not declare, naming it and the closest declared name, where they used to ignore it and run. Nothing is done,
-  and the refusal is audited. The read tools still ignore such an argument. The scope description of element_action and
-  read_element_text no longer mentions `withinRef`, which neither takes, and get_desktop_state's `scope` lists only
-  `window` and `windowAndPopups` (`desktop` is still refused with `InvalidArguments`).
-- **Audit log lines of the dialogs and element names (M3 review).** The [audit log](#audit-log) line of
-  respond_to_dialog and file_dialog names the dialog they answered as its `target` (handle, title and process), also
-  when the call named the dialog's owner, a selector or no window; it used to name only a handle given in the
-  arguments. element_action's `name` criterion is recorded as `nameLength`, as file_dialog's path is; the `name` of
-  apply_layout, save_layout and delete_layout is still kept.
-- **Waits (M3 review).** [wait_for_element](#wait_for_element)'s `gone` is satisfied, with a `warning`, when
-  `window.handle` had already closed or `withinRef`'s element is gone, where it ended with `InvalidHandle` or
-  `ElementStale`; a `ref` or `withinRef` this server session never issued now ends it with `ElementStale`, where it
-  satisfied it. Without `scope`, `gone` searches the window's popups on every check, whatever is in front, and a check
-  that left one of them out unread (`windowsExcluded`) no longer satisfies it. A window counts as closed
-  (`WindowNotFound`, or `gone` satisfied) only once Win32 says so: UI Automation failing to open a window that is still
-  there is a check that cannot tell. The docs now give the real bound: a wait can end up to about 3 s after `timeoutMs`
-  when UI Automation is slow (they said a second). [wait_for_window](#wait_for_window) refuses `newOnly`, and an
-  `excludeHandles` that holds the handle, with `window.handle` (`InvalidArguments`: such a wait could only time out);
-  `newOnly` counts a window that was hidden at the start and is shown during the wait as new; a satisfied wait returns
-  only the windows that held the condition for `stableMs`; and title_changed by `handle` no longer checks the title
-  filters, so it follows a window whose title already changed instead of ending with `HandleMismatch`.
-- **Readable tool results, and text and table reads that only read (M3 review).** Every tool result's JSON is now written
-  with the relaxed encoder, as the error results, get_desktop_state and the audit log already were: non-ASCII text,
-  apostrophes, `<`, `>`, `&`, `+` and `` ` `` appear as they are instead of six-byte `\uXXXX` escapes (quotes,
-  backslashes, control characters, U+2028 and U+2029 and characters outside the Basic Multilingual Plane are still
-  escaped). A JSON parser reads the same values; a client that matched the raw text sees the characters themselves.
-  [read_element_text](#read_element_text): a page also takes at most 60,000 bytes of JSON, so it holds fewer characters
-  of non-ASCII text; the server caps a document page itself (it trusted the provider's length), and the new `textSkipped`
-  says when one of the provider's characters had to be cut. Its criteria search answers as element_action's does: one
-  that did not finish is `OperationTimedOut` also with no match so far (it was `ElementNotFound`) or with skipped parts
-  (it was `ElementAccessFailed`), and both tools answer several matches with `AmbiguousElement` even from a search that did
-  not finish (element_action said `OperationTimedOut`). [read_table](#read_table) never scrolls: it reads WPF, WinUI and
-  other grids whose GetItem scrolls through their realized rows and ends the page at the first row that is not realized
-  (the new `truncationReason` `NotRealized`, with a `warning`), where it used to scroll the grid to each cell; Win32,
-  WinForms and Chromium grids are read as before. A cell's value now comes before its name (a WinForms cell read
-  `Amount Row 1, Not sorted.`); an HTML table's header row is no longer data row 0 nor counted in `totalRows`, and headers
-  over two rows are paired with their columns (`Q1 / Revenue`); an expanded tree item's child items are no longer its
-  cells; a cell that disappears is `null`, and a table that disappears after rows were read returns them (the new
-  `truncationReason` `Disappeared`). Its 40,000 limit counts bytes of JSON, not characters. New result fields
-  `textSkipped` and `warning`; no new error code.
+  and the refusal is audited. Every other tool still ignores such an argument (see
+  [Undeclared arguments](#undeclared-arguments)).
+- **Target policy.** The default deny list adds `CredDialogHost` (a Windows credential prompt), `CHXSmartScreen` and
+  `smartscreen` (the SmartScreen prompt "Windows protected your PC") and `SecHealthUI` (the Windows Security app), so
+  input, window changes, closes, kills and captures of them now return `TargetDeniedByPolicy`; a `WAM_DENY_PROCESSES`
+  value without `default` is unchanged. The policy now also covers the UI Automation reads:
+  [get_ui_elements](#get_ui_elements) of a denied app's window (password managers and credential prompts by default), and
+  [get_focused_element](#get_focused_element) and [get_element_at_point](#get_element_at_point) of a denied app's window
+  or of an element a denied process provides, fail with `TargetDeniedByPolicy` (the new UI element errorCode 24) before
+  any warm-up or read, where they used to read it; capture_window and capture_with_elements already refused it. The new
+  reads refuse it too, and leave the popups of a denied app, and those of the agent's own host, out of what they list
+  and search (see [Target policy](#target-policy)). A window whose process name cannot be read (it exited, or the server
+  may not query it) is now refused with `TargetDeniedByPolicy` while the policy denies anything (it does by default),
+  where it used to be acted on: by the input tools, focus_window (also for a window it would activate or a restore would
+  show), the other window tools and their batches, close_window, close_windows_batch, close_application, apply_layout,
+  capture_window and capture_with_elements (also for a window `restoreIfMinimized` would show) and the UI Automation
+  reads (get_focused_element and get_element_at_point also for an element whose own process cannot be named); the new
+  launch `placement` and `reuseExisting` never place or reuse it, and save_layout no longer saves its title. With
+  `WAM_DENY_PROCESSES=none` and no allow list, such a window is still allowed. The window lists
+  ([find_windows](#find_windows), [get_all_windows](#get_all_windows), ...) are unchanged.
+- **allowHostTarget never reaches the server's own windows.** The input tools refuse a window of this server's own
+  process, or a window one owns, with `TargetIsAgentHost` even with `allowHostTarget: true`, and so do element_action,
+  respond_to_dialog and file_dialog. The server shows no window of its own, so such a window is a prompt Windows showed
+  for it, such as the security warning of a downloaded file that launch_application opens; only the user answers it.
+  `allowHostTarget` still lifts the host rule for the agent's own terminal, editor or chat app.
+- **Audit log.** element_action, respond_to_dialog and file_dialog are audited. element_action keeps its `ref`, its fixed
+  values (`action`, `mode`, `direction`, `amount`, `fallback`, `observe`) and its result's `method` and `status`, and
+  records its `value` and its `name` criterion as lengths (`valueLength`, `nameLength`); respond_to_dialog keeps its
+  `button`, and file_dialog its `action` and its `path` as `pathLength`; both name the dialog they answered as the line's
+  `target`, also when the call named its owner, a selector or no window. A mouse call keeps its `space` and records a
+  `captureId` as its length. A launch keeps its `launchStatus` under `result`, a launch batch item's `launchStatus` as
+  its `status`, and the placement under `target` or the item. A call refused for an undeclared argument is logged too.
+  See [Audit log](#audit-log).
+- **UI Automation engine and bounded walks (roadmap M3.1 and M3.2).** The element tools read through the UI Automation
+  COM client instead of the managed one (`WAM_UIA_ENGINE=uia2` goes back), with the same fields. AppBar and SemanticZoom
+  elements are named from their ids on every display language; with the managed client a non-English Windows gave them
+  a localized name. Through the COM client, a UI Automation call gives up on an application that does not connect within
+  1 s or answer within 5 s, so a hung provider costs a call seconds instead of holding it until the timeout.
+  get_ui_elements reads breadth first and returns at most `maxElements` elements (default 300; it had no limit), so a window with more elements now
+  returns `truncated: true` with the new `truncationReason: MaxElements`; pass a larger `maxElements` (up to 5000) to read
+  more. A level of more than 200 elements is read one element at a time and can be cut in the middle. When the timeout
+  passes, a level of up to 200 elements whose properties were already fetched is returned whole, and a timeout or a hang
+  can leave out deeper levels that the depth-first walk used to reach first. A window that Windows reports hung, or that
+  does not answer a message within 500 ms, fails at once with `NotResponding` (the new UI element errorCode 10; it used
+  to block until the timeout); capture_with_elements then captures the image without overlays and reports it as
+  `elementsErrorCode`. New parameter `format` (`tree`, the default and the old shape, `flat` or `text`). get_server_info
+  reports `uiAutomation` (the engine in force, where it came from and those two timeouts) and warns about a
+  `WAM_UIA_ENGINE` value that is neither `uia3` nor `uia2`.
+- **Element refs (roadmap M3.4).** Every element of get_ui_elements, get_focused_element and get_element_at_point, and
+  every mark of capture_with_elements, gains `ref` (for example `w4120035e17`) as its first field: a short name for the
+  element that later calls take instead of coordinates or a repeated search (element_action, read_element_text,
+  read_table, wait_for_element, find_ui_elements' `withinRef`, capture_window's `ref`). A ref names the same element in
+  every read of the server session and never silently another one: a ref moved to a re-created element that alone fits
+  its description is reported (`refMoved: true` and a `warning`), and element_action refuses it until a read returns
+  that element again. A tool given a ref that no longer names one element fails with the new codes `ElementStale` (11)
+  or `AmbiguousElement` (12) (see [Element refs](#ui-automation)).
+- **Web content accessibility (roadmap M3.3).** get_ui_elements, capture_with_elements, get_focused_element and
+  get_element_at_point now wait up to 1.5 s (at most a third of `timeoutMs`) the first time they read a window with a
+  Chromium, Electron or WebView2 page (and a tab shown since), so such a first call can take that much longer, and their
+  results carry `accessibilityWarmup` when they waited (see [Web content](#ui-automation)). Elements carry `frameworkId`:
+  get_ui_elements reports it at the top and on an element only where it changes (`fw=` in the text format),
+  get_focused_element and get_element_at_point on every element, and get_element_at_point's `ancestors` have it too.
+  launch_application takes `forceAccessibility` and then returns `forceAccessibilityApplied` (see
+  [Web content accessibility](#web-content-accessibility)). All of these are new fields; a call without
+  `forceAccessibility` launches as before.
+- **captureId and coordinate spaces (roadmap M3.11).** A successful capture result has a new field `captureId` (left out
+  when a captured window's rectangle cannot be read, and by capture_with_elements when the window moved while its
+  elements were read), and take_screenshot takes `monitorIndex: -1` for the whole virtual screen (it used to fail with
+  `InvalidMonitorIndex`). click, right_click, double_click, mouse_move and scroll take `space` (`screen`, `window`,
+  `client`, `image`) and `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools));
+  a call without them is unchanged and its result has no `requested`. With them, `x` and `y` in the result are the
+  converted screen point and `requested` echoes the point as given; two new input error codes, `StaleCapture` (46) and
+  `CaptureNotFound` (47), refuse a point whose capture changed or is gone.
+- **capture_with_elements draws Set-of-Marks, and capture_window crops to an element (roadmap M3.11).**
+  [capture_with_elements](#capture_with_elements) changes what it returns by default. Each mark now has a filled tag with
+  the element's ref, and the marks are drawn on the returned image after it was scaled (the boxes were drawn before,
+  widened by the scale). Without `controlTypes`, only elements with an action pattern are marked (`actionableOnly`, new,
+  defaults to true then); labels, panes, groups and other containers are no longer drawn. Pass `actionableOnly: false`
+  for the earlier set. The walk stops at `maxElements` (new, default 80; it had no limit) with
+  `truncationReason: "MaxElements"`. The metadata has a new `legend`, one line per mark, and leaves `elements` out unless
+  `detail: "full"` (new) is passed: a client that reads `elements[].screenBounds` must pass `detail: "full"`, or take the
+  legend's `center` with the `captureId`, or act on the ref with element_action. `elementCount` still counts the marks.
+  A window that moved while its elements were read is captured without a `captureId` and with a `WindowMoved` warning.
+  New `labels` (default true) and `drawOverlays` (default true; false returns the clean image).
+  [capture_window](#capture_window) takes `ref` and `padding` (new) to crop the image to one element; without them it is
+  unchanged, and its result gains `ref` only with them. New screenshot errorCode `ElementOffscreen` (capture_window with a
+  ref); capture_window with a ref can also return the ref errors `ElementStale` and `AmbiguousElement` and the UI
+  Automation codes `NotResponding`, `OperationTimedOut`, `WindowNotFound` (UI Automation cannot read the window) and
+  `OperationException`.
+- **A right click pastes in more apps (M2 follow-up).** A [right_click](#right_click) in a window of VS Code (or Code -
+  Insiders, VSCodium, Cursor, Windsurf), Hyper, Tabby, WezTerm or Alacritty now counts as a paste, as one in the console
+  does: it is refused with `PasteNotAllowed` while the clipboard holds content the agent may not paste.
+- **Closing (roadmap M2.F1 and an M2 follow-up).** On a client that cannot ask the user, close_window and
+  close_windows_batch no longer close the desktop shell or the agent's own host with `force: true` alone: the call closes
+  nothing and fails with `ConfirmationRequired` (close_window in its result, the batch as a tool error, also for 3
+  windows or fewer and for its ordinary windows) until it is repeated with `confirm: true` too. close_window gains the
+  `confirm` argument for this. `force` on windows that are not protected, and every call on a client with elicitation
+  (the user is asked, as in 1.14.0), are unchanged; close_application has no `force`. close_application's
+  `otherDesktopWindows` no longer lists suspended or prelaunched Store app frames.
+- **Launch and arrange (roadmap M3.13).** launch_application and the items of launch_applications_batch take
+  `placement` and `reuseExisting` (see [Launch and arrange](#launch-and-arrange)). A call without them is unchanged. A
+  result can carry `placement`, and `launchStatus` has a new value, `alreadyOpen`, only with `reuseExisting`; a client
+  that switches over the statuses should treat an unknown one as a success with a window. `reuseExisting` reuses a
+  window only when its title shows each launched file or folder as a whole name, never after another path, or contains
+  `expectWindow.titleContains` when that is set; a web address or a URI page needs `expectWindow.titleContains`, since a
+  page sets its own title, and a window whose title shows only the name is reused with a `warning` to check it (see
+  [Reusing an open window](#reusing-an-open-window)).
+- **The window a launch reports (M2 follow-up and M3 review).** With `waitForWindow`, launch_application and
+  launch_applications_batch take a window that was already open and stayed in the background as the launch's
+  (`openedInTab`) only when its title changed to show the launched file or folder as a whole name, after no other path
+  than the launched one, and did not show it before the start (one that came to the front counts as before). It used to
+  be enough that the title came to contain the name, or a web address's host, anywhere (`app` in `mapper.ts`). A host
+  name in a page's title no longer counts, since the page sets it; `expectWindow.titleContains` now does. Such a launch
+  can now end `possibleHandoff`, `exitedWithoutWindow` or `timedOut` instead: look for the window with find_windows. In
+  a launch_applications_batch, an item whose launcher failed (a non-zero exit code) is no longer given a window of
+  another item's instance: it reports `exitedWithoutWindow`.
+- **get_desktop_state (roadmap M3.12).** Returns in one call the window in front, the cursor, the modifiers down, Caps
+  Lock, the pause, the windows as compact rows, the focused element, the target window's popups and its elements as text
+  lines with refs, and optionally a capture (`include` lists every section to read). One `timeoutMs` covers the call: a
+  part not read by then is left out and listed in `errors`. It does not read the window in front, or its focus, when that
+  is the agent's own host or an app the policy denies (a `target` or `focus` error), and its `scope` takes `window` and
+  `windowAndPopups` only. [element_action](#element_action) takes `observe` (`state`, `screenshot`) to return this
+  observation after the action as `observed`.
+- **find_ui_elements and get_active_popups (roadmap M3.4, M3.5 and M3.10).** [find_ui_elements](#find_ui_elements)
+  searches a window by name, automation id, control type and class with the provider evaluating the criteria, and
+  returns refs, click points and patterns (at most `maxResults`, default 20). `scope` is `window`, `windowAndPopups`
+  (also the window's open menus, dropdowns, flyouts and dialogs, which are windows of their own) or `desktop` (every
+  visible window, at most 40); left out, it is `windowAndPopups` when the window, a window it owns or another window of
+  its process is in front, else `window`. Denied windows are never searched (a named one is refused) and the agent's
+  host windows only when named (`windowsExcluded` counts them). `withinRef` searches below an element, and
+  `searchVirtualized` also asks lists for items they have not realized (`virtualized: true`). A search that did not
+  finish is truncated (`Timeout`, `SearchLimit`, `PartsSkipped`, `WindowLimit`); a search held up in a provider call can
+  end up to about 2 s after `timeoutMs`. [get_active_popups](#get_active_popups) lists an app's open menus, dropdowns,
+  flyouts and dialogs with refs.
+- **element_action (roadmap M3.6, M3.10, M3.12 and M3.14).** Acts on one element through UI Automation patterns and
+  returns its state before and after and `outcomeVerified`. The element is named by its ref, or by a window and element
+  criteria with find_ui_elements' `scope`, which must match exactly one element: several are `AmbiguousElement`, and a
+  search that did not finish is `OperationTimedOut`. A ref moved to a re-created element is refused (`ElementStale`,
+  `refMoved: true`). It runs inside the input gate with the input guard's target checks; `double_click`, `right_click`,
+  `fallback: "mouse"` and `mode` `type` or `paste` send guarded input, and a click point is hit-tested first
+  (`TargetOccluded` when another element covers it). `realize` makes a virtualized item real and scrolls it into view
+  (`maxScrolls`: by scrolling the window's one list); `menu_path` opens a path such as `File>Save As` (`steps`);
+  `observe` adds get_desktop_state's observation. New UI element errorCodes `PatternNotSupported` (13),
+  `ElementNotEnabled` (14), `ElementOffscreen` (15), `ElementReadOnly` (16), `FocusNotOnElement` (17), `ActionFailed`
+  (18), `ActionTimedOut` (19) and `ActionsPending` (20). Under the UIA3 engine the server turns off UI Automation's
+  AutoSetFocus, so pattern calls do not move focus; the read tools are unchanged by it.
+- **respond_to_dialog and file_dialog (roadmap M3.5 and M3.14).** [respond_to_dialog](#respond_to_dialog) reads a
+  dialog's title, text and buttons and presses one through element_action's `invoke`, by standard name in any language;
+  without `button` it only reads. A press needs the dialog named by `handle` or `window` (its `dialogHandle`, or
+  close_window's `prompt.handle`): only `cancel` goes to the dialog in front, and any other button is refused with
+  `InvalidArguments`. A press asked of a named dialog that a modal dialog of its own disables is `BlockedByModal`, and
+  `ok` presses a dialog's only button only when it carries the id of Cancel or Close. A dialog drawn inside its window
+  has no window of its own: press its button with element_action. [file_dialog](#file_dialog) completes an Open or Save
+  As dialog named by `handle` or `window` with a full path. Its `save` is `completed: true` only once a file is seen
+  written at `finalPath`; it answers the replace prompt only when the prompt's text names the file, and refuses `open` in
+  a Save As dialog (`DialogNotFound`). New UI element errorCodes `DialogNotFound` (21), `DialogNotCompleted` (22) and
+  `FileExists` (23, the same name as the captures' code).
+- **read_element_text and read_table (roadmap M3.9).** [read_element_text](#read_element_text) reads an element's text a
+  page at a time (the Text pattern's document, the value, or the name; at most `maxLength` characters and 60,000 bytes of
+  JSON a page), never a password field's. [read_table](#read_table) reads a grid's or list's headers and cells a page of
+  rows at a time (at most 40,000 bytes of JSON) and never scrolls: a row a virtualized grid has not realized ends the
+  page (`truncationReason: NotRealized`). A criteria search that did not finish is no proof of one match:
+  read_element_text, like element_action, refuses it with `OperationTimedOut`, or `AmbiguousElement` when it found
+  several. read_table returns `PatternNotSupported` for an element that is no table.
+- **wait_for_window and wait_for_element (roadmap M3.7 and M3.8).** [wait_for_window](#wait_for_window) waits on the
+  server until a window exists, is gone, is in front, is on screen, has a new title or is ready for input;
+  [wait_for_element](#wait_for_element) until an element, named by `ref` or by find_ui_elements' criteria in a `window`
+  that is waited for first, exists, is gone, is enabled, visible or focused, or has an expected name, value or toggle
+  state. A wait that is not satisfied is a failure (`isError: true`) with the new errorCode `WaitTimedOut` (37), and its
+  result still carries `timedOut`, `elapsedMs` and what was last seen; wait_for_element can also end early with
+  `WindowNotFound`, `ElementStale`, `AmbiguousElement`, `AmbiguousWindow` or `TargetDeniedByPolicy`. wait_for_window's
+  condition must hold for `stableMs` (default 300); wait_for_element has no `stableMs`, and can end up to about 3 s after
+  `timeoutMs` when UI Automation is slow.
 
 ## Error Codes
 
