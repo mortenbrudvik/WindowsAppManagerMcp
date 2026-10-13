@@ -37,7 +37,11 @@ public class PopupTools
         int timeoutMs = DefaultTimeoutMs,
         CancellationToken cancellationToken = default)
     {
-        var target = WindowTargeting.Optional(_windowService, handle, window) ?? nint.Zero;
+        // {"foreground": true} alone is whatever window is in front, not a window the agent chose: the app in front is then
+        // chosen as without a window (never the agent's own host or a denied app)
+        var target = handle == null && WindowTargeting.IsBareForeground(window)
+            ? nint.Zero
+            : WindowTargeting.Optional(_windowService, handle, window) ?? nint.Zero;
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(timeoutMs, MinTimeoutMs, MaxTimeoutMs));
         var result = await _popups.GetActivePopupsAsync(target, timeout, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();

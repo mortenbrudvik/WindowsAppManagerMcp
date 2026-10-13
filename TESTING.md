@@ -1862,7 +1862,9 @@ that the unit tests and the end-to-end tests share). There are two tiers:
   `Category=Desktop` selects both and `Category=DesktopNoInput` selects the no-input tier alone.
 
 Besides the gate's canaries in `DesktopTestGateTests`, which only check that the gate let them run,
-the desktop tests are the fixture app scenarios (see
+and one screen read in `ScreenCaptureWrapperIntegrationTests`
+(`CaptureScreenRegion_ReportsTheRegionOriginAsScreenOrigin`), the desktop tests are the fixture app
+scenarios (see
 [End-to-end tests against the fixture app](#end-to-end-tests-against-the-fixture-app)). An input
 test brings a window to the front and types into it, so save your work before opting in, and run
 them deliberately:
@@ -2081,7 +2083,7 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixtureCloseTests` | Input | close_window's guard and its report of the save prompt |
 | `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
 | `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
-| `FixturePopupTests` | Input | The open context menu and combo box list found by the default scope, get_active_popups (M3.5) |
+| `FixturePopupTests` | Input | The open context menu found by the default scope and listed by get_active_popups, and the combo box list found by scope windowAndPopups (M3.5) |
 | `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5) |
 | `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
 | `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
@@ -2241,6 +2243,7 @@ The tool tables of the docs are generated into marked regions, between `<!-- too
 | README.md | `tool-table` | "Available Tools (N)" and the category table |
 | docs/TOOLS.md | `summary` | The introduction with the tool count, and the quick reference |
 | docs/TOOLS.md | `toolsets` | The toolsets of `Toolsets.Server`: default, description and tools (generated from the catalog, not from tools/list) |
+| docs/TOOLS.md | `read-only` | The tools served in read-only mode (generated from the readOnlyHint annotations) |
 | docs/TOOLS.md | `params:TOOL` | The parameter table of each tool, and a field table for each array-of-objects parameter |
 | SKILL.md | `count` | The sentence with the tool count |
 | SKILL.md | `tool-tables` | The whole "Available Tools" section: a table per category with summaries and key parameters |

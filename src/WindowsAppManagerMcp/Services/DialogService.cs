@@ -130,9 +130,9 @@ public sealed class DialogService : IDialogService
         return DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
             $"Window {(long)current}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')")} is no " +
             $"dialog box and has no open dialog{(window == nint.Zero ? " (it is the window in front)" : string.Empty)}. A dialog is " +
-            "a #32770 dialog box or a captioned window owned by another; a window without an owner is no dialog. Nothing was " +
-            "done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a button of " +
-            "another window with element_action.");
+            "a #32770 dialog box or a captioned window owned by another; any other window without an owner is no dialog. " +
+            "Nothing was done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a " +
+            "button of another window with element_action.");
     }
 
     /// <summary>
@@ -301,10 +301,10 @@ public sealed class DialogService : IDialogService
             // Read and pressed in one call, the dialog in front may be one that came up after the agent looked (a prompt of
             // another application): only cancel, which answers nothing, may go to it unread
             return Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
-                $"button '{Cut(unnamed.Trim(), 100)}' needs the dialog named by handle or window: the dialog in front now may not be " +
-                "the one you read. Read the dialog first (respond_to_dialog without button, or get_active_popups), then answer " +
-                "it by its dialogHandle as handle. Only cancel may be pressed in the dialog in front without naming it. Nothing " +
-                "was read or pressed.");
+                $"button '{Cut(unnamed.Trim(), 100)}' needs the dialog named by handle or window ({{\"foreground\": true}} alone " +
+                "names none): the dialog in front now may not be the one you read. Read the dialog first (respond_to_dialog " +
+                "without button, or get_active_popups), then answer it by its dialogHandle as handle. Only cancel may be pressed " +
+                "in the dialog in front without naming it. Nothing was read or pressed.");
         }
 
         if (!readOnly)

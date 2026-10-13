@@ -139,8 +139,8 @@ public record FoundElement(
 /// waited for its accessibility tree before searching (roadmap M3.3); null otherwise, also for a window an earlier call
 /// warmed up.</param>
 /// <param name="Scope">The windows the search covered (roadmap M3.5): the scope asked for, or the default one chose
-/// (windowAndPopups when the window or one of its popups was in the foreground, else window). Null on a failure before
-/// the search.</param>
+/// (windowAndPopups when the window, a window it owns or another window of its process was in the foreground, else
+/// window). Null on a failure before the search.</param>
 /// <param name="WindowsSearched">With scope windowAndPopups or desktop: how many windows were searched, the window itself
 /// included. Left out for scope window.</param>
 /// <param name="WindowsExcluded">With scope desktop: visible windows left out because the target policy denies their process

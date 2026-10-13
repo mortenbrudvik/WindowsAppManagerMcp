@@ -109,8 +109,8 @@ public sealed class FileDialogService : IFileDialogService
             return call.Fail(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "file_dialog needs the file dialog named: handle (the openedPopup of the menu item or button that opened it, or " +
                 "a handle from wait_for_window or get_active_popups) or window (the application's window, whose modal file " +
-                "dialog is completed). The file dialog in front is not taken unnamed: it may be another application's. Nothing " +
-                "was done.");
+                "dialog is completed; {\"foreground\": true} alone names none). The file dialog in front is not taken unnamed: " +
+                "it may be another application's. Nothing was done.");
         }
 
         var path = FileDialogPaths.Check(request.Path, request.Action, request.Overwrite);

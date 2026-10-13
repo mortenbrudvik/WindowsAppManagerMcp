@@ -43,6 +43,28 @@ public class PopupToolsTests
         _window.Should().Be((nint)0x4400);
     }
 
+    [Fact]
+    public async Task GetActivePopups_WithForegroundAlone_AsksForTheAppInFront_AsWithoutAWindow()
+    {
+        // {"foreground": true} is whatever window is in front, not a window the agent chose: the app in front is chosen as
+        // without a window, so the agent's own host or a denied app in front is refused
+        await CreateSut().GetActivePopups(window: new WindowSelector { Foreground = true });
+
+        _window.Should().Be(nint.Zero);
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetActivePopups_WithForegroundAndAFilter_ListsThePopupsOfTheWindowItResolvesTo()
+    {
+        _windows.Setup(w => w.ResolveWindow(It.IsAny<WindowSelector>()))
+            .Returns(WindowResolution.Found(TestDataFactory.CreateWindowInfo(handleValue: 0x4400)));
+
+        await CreateSut().GetActivePopups(window: new WindowSelector { Foreground = true, ProcessName = "notepad" });
+
+        _window.Should().Be((nint)0x4400);
+    }
+
     [Theory]
     [InlineData(10, 1000)]
     [InlineData(99_000, 30_000)]

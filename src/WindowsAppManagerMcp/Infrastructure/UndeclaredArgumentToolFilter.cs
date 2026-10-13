@@ -6,10 +6,11 @@ namespace WindowsAppManagerMcp.Infrastructure;
 
 /// <summary>
 /// Call-tool filter that refuses an argument an <see cref="ActingTools">acting tool</see> does not declare (M3 review), before
-/// the tool runs, with InvalidArguments naming it and the nearest declared name. The SDK binds each parameter by name and
-/// ignores every other key, so a misspelled or borrowed name (get_ui_elements' controlTypes for element_action's
-/// controlType, find_ui_elements' withinRef) would be dropped without a word, and the call would act on a wider match than
-/// the agent asked for. Read tools still ignore such an argument: it can only widen what they read.
+/// the tool runs, with InvalidArguments naming it and, when one is within <see cref="MaxSuggestionDistance"/> edits, the
+/// declared name it most likely stands for. The SDK binds each parameter by name and ignores every other key, so a
+/// misspelled or borrowed name (get_ui_elements' controlTypes for element_action's controlType, find_ui_elements'
+/// withinRef) would be dropped without a word, and the call would act on a wider match than the agent asked for. Read
+/// tools still ignore such an argument: it can only widen what they read.
 /// </summary>
 /// <remarks>
 /// The declared names are the <c>properties</c> of the input schema the server serves for the tool, as the audit log reads

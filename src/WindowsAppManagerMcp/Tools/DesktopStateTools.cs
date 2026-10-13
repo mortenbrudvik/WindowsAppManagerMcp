@@ -66,7 +66,7 @@ public class DesktopStateTools
         bool interactableOnly = true,
         [Description("Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and " +
                      "dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' " +
-                     "line). Default: windowAndPopups when the window or one of its popups is in front, else window, as " +
+                     "line). Default: windowAndPopups when the window's app is in front, else window, as " +
                      "find_ui_elements.")]
         DesktopStateScope? scope = null,
         [Description("The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are.")]
@@ -83,7 +83,11 @@ public class DesktopStateTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, unavailable + " Nothing was read.");
         }
 
-        var target = WindowTargeting.Optional(_windowService, handle, window);
+        // {"foreground": true} alone is whatever window is in front, not a window the agent chose: it is read by the rules of
+        // the window in front (never the agent's own host), not by those of a window named
+        var target = handle == null && WindowTargeting.IsBareForeground(window)
+            ? null
+            : WindowTargeting.Optional(_windowService, handle, window);
         var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, ScopeOf(scope), maxWindows,
             screenshotMaxLongEdge, timeoutMs), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
