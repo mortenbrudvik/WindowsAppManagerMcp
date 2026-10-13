@@ -1180,7 +1180,7 @@ The wait ends early when the window closes, or when a Win32 prompt has stayed fo
     "buttons": ["Save", "Don't Save", "Cancel"],
     "kind": "modalPopup"
   },
-  "error": "The window did not close: it shows a prompt (see prompt) that waits for an answer. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.",
+  "error": "The window did not close: it shows a prompt (see prompt) that waits for an answer. Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to choose (No or Don't Save discards their unsaved work), then answer it as they say with respond_to_dialog, handle: prompt.handle (inWindowDialog, which has no window of its own: element_action on its button).",
   "errorCode": "PromptShown"
 }
 ```

@@ -219,6 +219,10 @@ public class WindowManagerToolsCloseTests
         foreach (var error in new[] { single.Error, batch.Results[0].Error })
         {
             error.Should().Contain("Do not answer it yourself").And.Contain("ask which to choose").And.Contain("discards their unsaved work");
+
+            // Then the tool that answers it: respond_to_dialog by the prompt's own handle, element_action for an in-window dialog
+            error.Should().Contain("respond_to_dialog, handle: prompt.handle").And.Contain("inWindowDialog")
+                .And.Contain("element_action").And.NotContain("input tools");
         }
     }
 
@@ -726,8 +730,9 @@ public class WindowManagerToolsCloseTests
 
         var result = await CreateSut().CloseApplication(processId: 700);
 
-        result.Error.Should().Contain("Do not answer it yourself").And.Contain("discards their unsaved work");
-        result.Windows[0].Error.Should().Contain("Do not answer it yourself");
+        result.Error.Should().Contain("Do not answer it yourself").And.Contain("discards their unsaved work")
+            .And.Contain("respond_to_dialog, handle: prompt.handle").And.NotContain("input tools");
+        result.Windows[0].Error.Should().Contain("Do not answer it yourself").And.Contain("respond_to_dialog");
     }
 
     [Fact]
