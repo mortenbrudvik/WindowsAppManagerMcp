@@ -74,7 +74,7 @@ public enum ObserveMode
 /// <param name="MaxElements">The most element lines, the popups' and the window's together.</param>
 /// <param name="InteractableOnly">Only elements that are enabled and focusable or have an action pattern.</param>
 /// <param name="Scope">Whether the target's popups are walked too; null for find_ui_elements' default (windowAndPopups when the
-/// window or one of its popups is in front, else window). Never desktop.</param>
+/// window, a window it owns or another window of its process is in front, else window). Never desktop.</param>
 /// <param name="MaxWindows">The most window rows.</param>
 /// <param name="ScreenshotMaxLongEdge">The capture's long edge in pixels.</param>
 /// <param name="Timeout">The one deadline of the whole observation: what is not read by then is reported as not read.</param>

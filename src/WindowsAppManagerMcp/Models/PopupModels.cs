@@ -6,8 +6,9 @@ namespace WindowsAppManagerMcp.Models;
 /// Which windows an element search covers (roadmap M3.5). Menus, dropdowns, flyouts and many dialogs are top-level windows
 /// of their own, outside the UI Automation subtree of the window that opened them.
 /// </summary>
-/// <remarks>Optional on the tools: left out (or null), the search covers windowAndPopups when the window or one of its popups
-/// is in the foreground (<see cref="Services.Interfaces.IPopupService.IsInForeground"/>), else the window alone.</remarks>
+/// <remarks>Optional on the tools: left out (or null), the search covers windowAndPopups when the window, a window it owns
+/// or another window of its process is in the foreground (<see cref="Services.Interfaces.IPopupService.IsInForeground"/>),
+/// else the window alone.</remarks>
 [ToolEnum(WindowsAppManagerMcp.Infrastructure.ToolErrorReporting.InvalidArgumentsErrorCode, "scope value")]
 public enum ElementSearchScope
 {
@@ -148,7 +149,8 @@ public sealed record ActivePopup(
 /// <summary>Result of get_active_popups (roadmap M3.5).</summary>
 /// <param name="WindowHandle">The app window whose popups were listed: the window given, or the window in front (the window
 /// that owns it, when the window in front is a dialog).</param>
-/// <param name="IsForeground">True when that window, or one of its popups, is in the foreground.</param>
+/// <param name="IsForeground">True when that window, a window it owns or another window of its process is in the
+/// foreground (the default scope of find_ui_elements then searches its popups).</param>
 /// <param name="Popups">The open popups, front first (z-order).</param>
 /// <param name="Truncated">True when more popups were open than one call returns (<see cref="Services.PopupService.MaxPopups"/>).</param>
 /// <param name="PopupsExcluded">Open popups left out because they are windows of the agent's own host or of an app the target

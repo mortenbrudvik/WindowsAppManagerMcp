@@ -52,8 +52,8 @@ public class DialogTools
                      "window.")]
         string? button = null,
         [Description("Window handle (as integer) of the dialog (the dialogHandle a read returned, or close_window's prompt.handle), " +
-                     "or of the window whose modal dialog to answer. Leave out handle and window only to read the dialog in front, " +
-                     "or to press cancel in it.")]
+                     "or of the window whose modal dialog (else its frontmost open dialog) to answer. Leave out handle and window " +
+                     "only to read the dialog in front, or to press cancel in it.")]
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,

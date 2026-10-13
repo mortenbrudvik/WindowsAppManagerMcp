@@ -50,8 +50,8 @@ public partial class ElementActionTools
                  "close_window, set_window_state); menu_path opens the menu path in value, such as 'File>Save As' (each item " +
                  "expanded, the last invoked, through the submenus they open), from the window or a menu bar's or open menu's ref. " +
                  "Name the element by ref (from find_ui_elements or get_ui_elements), or by handle " +
-                 "or window plus name, automationId, controlType or className (in its open menus and dialogs too while it is in front: " +
-                 "scope), which must match exactly one element (else AmbiguousElement or ElementNotFound; OperationTimedOut " +
+                 "or window plus name, automationId, controlType or className (in its open menus and dialogs too while its app is " +
+                 "in front: scope), which must match exactly one element (else AmbiguousElement or ElementNotFound; OperationTimedOut " +
                  "when the search did not finish). Returns method, before and after (value, toggle, expand and selection " +
                  "state, name, enabled), outcomeVerified and openedPopup (a window of the app that appeared). A disabled or " +
                  "offscreen element is refused (ElementNotEnabled, ElementOffscreen: use scroll_into_view); an element without the " +

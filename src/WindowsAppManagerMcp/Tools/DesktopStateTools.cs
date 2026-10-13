@@ -66,7 +66,7 @@ public class DesktopStateTools
         bool interactableOnly = true,
         [Description("Whose elements: 'window' (the window alone) or 'windowAndPopups' (its open menus, dropdowns, flyouts and " +
                      "dialogs first, within half of maxElements, each under a '# popup' line, then the window under a '# window' " +
-                     "line). Default: windowAndPopups when the window or one of its popups is in front, else window, as " +
+                     "line). Default: windowAndPopups when the window's app is in front, else window, as " +
                      "find_ui_elements.")]
         DesktopStateScope? scope = null,
         [Description("The most window rows (default: 20, min: 1, max: 100); windowCount says how many there are.")]

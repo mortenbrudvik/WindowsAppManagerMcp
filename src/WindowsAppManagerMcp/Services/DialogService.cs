@@ -130,9 +130,9 @@ public sealed class DialogService : IDialogService
         return DialogLocation.Failed(nameof(UIElementErrorCode.DialogNotFound),
             $"Window {(long)current}{(string.IsNullOrEmpty(title) ? string.Empty : $" ('{Cut(title, MaxTitleLength)}')")} is no " +
             $"dialog box and has no open dialog{(window == nint.Zero ? " (it is the window in front)" : string.Empty)}. A dialog is " +
-            "a #32770 dialog box or a captioned window owned by another; a window without an owner is no dialog. Nothing was " +
-            "done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a button of " +
-            "another window with element_action.");
+            "a #32770 dialog box or a captioned window owned by another; any other window without an owner is no dialog. " +
+            "Nothing was done. Wait for the dialog (wait_for_window), list the app's popups with get_active_popups, or press a " +
+            "button of another window with element_action.");
     }
 
     /// <summary>

@@ -20,7 +20,8 @@ public partial class ElementActionTools
     internal const string MaxScrollsDescription =
         "realize with element criteria only: when the item is found neither in the tree nor through its list's ItemContainer " +
         "pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table) a page at a time, " +
-        "at most this many pages (down to its end, then back up), searching it after each page, and realize the first match. " +
+        "at most this many pages (down to its end, then back up), searching it after each page, and realize the item once " +
+        "exactly one matches (two: AmbiguousElement). " +
         "Every page is an element_action scroll with every check; the list stays where the item was found (or where the search " +
         "ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, at least " +
         "a second): raise it for long lists.";

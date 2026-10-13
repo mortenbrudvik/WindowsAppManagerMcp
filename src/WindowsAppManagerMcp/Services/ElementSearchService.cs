@@ -215,7 +215,8 @@ public sealed partial class ElementSearchService : IElementSearchService
 
     /// <summary>
     /// The scope a query searches: the window alone below withinRef, the scope asked for, or the default (windowAndPopups
-    /// when the window or one of its popups is in front, else window). Without the popup service, the window alone.
+    /// when the window, a window it owns or another window of its process is in front, else window). Without the popup
+    /// service, the window alone.
     /// </summary>
     private ElementSearchScope ScopeOf(ElementQuery query)
     {
