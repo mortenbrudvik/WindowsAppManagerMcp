@@ -16,7 +16,9 @@ namespace WindowsAppManagerMcp.E2ETests.Harness;
 /// <item>every native wrapper sits behind the tier's guard (<see cref="WrapperGuard"/>). A
 /// <see cref="DesktopTier.NoInput"/> server can only read; a <see cref="DesktopTier.Input"/> server can
 /// act only on the fixture process, and neither can start a process;</item>
-/// <item>the services in <see cref="RefusedServices"/> refuse every call.</item>
+/// <item>the services in <see cref="RefusedServices"/> refuse every call;</item>
+/// <item>no hosted service runs, so the host guard is created when the harness is built, or recorded before the fixture
+/// starts and passed in (<see cref="RecordAgentHost(DesktopTier)"/>).</item>
 /// </list>
 /// ServerHarnessTests resolves every service and fails if any of them holds a native wrapper that is not
 /// behind the guard.
@@ -61,22 +63,63 @@ public sealed class ServerHarness : IDisposable
     /// </summary>
     /// <param name="uiaEngine">The UI Automation engine the server reads with (roadmap M3.2); null for the server's own
     /// choice (WAM_UIA_ENGINE, by default UIA3), so a scenario can run its reads against both engines.</param>
-    public static ServerHarness Create(DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null) =>
-        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine);
+    /// <param name="agentHost">The agent's host as <see cref="RecordAgentHost(DesktopTier)"/> recorded it before the fixture
+    /// started, which the server then uses as its own; null to let the server record it now, as it does when it starts.</param>
+    public static ServerHarness Create(DesktopTier tier, int fixtureProcessId, UiaEngine? uiaEngine = null, IHostGuard? agentHost = null) =>
+        Create(tier, fixtureProcessId, new Win32DesktopProbe(), Environment.GetEnvironmentVariable, uiaEngine, agentHost);
 
     internal static ServerHarness Create(
         DesktopTier tier,
         int fixtureProcessId,
         IDesktopProbe probe,
         Func<string, string?> readVariable,
-        UiaEngine? uiaEngine = null)
+        UiaEngine? uiaEngine = null,
+        IHostGuard? agentHost = null)
     {
         DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
         E2EProcess.EnsureServerDpiAwareness();
 
         var layoutsPath = Path.Combine(Path.GetTempPath(), "WamE2E", "layouts-" + Guid.NewGuid().ToString("N"));
-        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine);
-        return new ServerHarness(services.BuildServiceProvider(), layoutsPath, guarded);
+        var services = CreateServices(tier, fixtureProcessId, probe, layoutsPath, wrapperSubstitute: null, out var guarded, uiaEngine, agentHost);
+        var harness = new ServerHarness(services.BuildServiceProvider(), layoutsPath, guarded);
+        try
+        {
+            // The server records its host when it starts (HostGuardStartup); the harness runs no hosted service, so it
+            // records it here, before any call, rather than at the first call that asks
+            harness.Get<IHostGuard>();
+            return harness;
+        }
+        catch
+        {
+            harness.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Records the agent's host as the server records it when it starts (<see cref="HostGuardStartup"/>): a
+    /// <see cref="HostGuard"/> over the server's own window and process wrappers, behind the read-only guard in every tier
+    /// (it only reads). Among other things it records the window in front as part of the host, so
+    /// <see cref="E2ESession.Start"/> records it before it starts the fixture: the window in front is then the terminal that
+    /// runs the tests, never the fixture. Pass the result to <see cref="Create(DesktopTier, int, UiaEngine?, IHostGuard?)"/>.
+    /// Refuses unless <paramref name="tier"/> is opted in.
+    /// </summary>
+    public static IHostGuard RecordAgentHost(DesktopTier tier) =>
+        RecordAgentHost(tier, Environment.GetEnvironmentVariable, wrapperSubstitute: null);
+
+    /// <summary>
+    /// As <see cref="RecordAgentHost(DesktopTier)"/>. <paramref name="wrapperSubstitute"/>, when given, creates what stands
+    /// behind each wrapper's guard instead of the real wrapper, so the harness's own tests can check it with mocks.
+    /// </summary>
+    internal static IHostGuard RecordAgentHost(DesktopTier tier, Func<string, string?> readVariable, Func<Type, object>? wrapperSubstitute)
+    {
+        DesktopTestGate.ThrowIfNotAllowed(tier, readVariable);
+
+        // Handles and process ids only: the DPI awareness does not change what is recorded
+        var policy = new ReadOnlyCallPolicy();
+        var windows = (INativeWindowWrapper)(wrapperSubstitute?.Invoke(typeof(INativeWindowWrapper)) ?? new NativeWindowWrapper());
+        var processes = (INativeProcessWrapper)(wrapperSubstitute?.Invoke(typeof(INativeProcessWrapper)) ?? new NativeProcessWrapper());
+        return new HostGuard(WrapperGuard.Create(windows, policy), WrapperGuard.Create(processes, policy));
     }
 
     /// <summary>
@@ -102,6 +145,7 @@ public sealed class ServerHarness : IDisposable
     /// As <see cref="CreateServices(DesktopTier, int, IDesktopProbe, string, out IReadOnlyList{Type})"/>.
     /// <paramref name="wrapperSubstitute"/>, when given, creates what stands behind each wrapper's guard
     /// instead of the real wrapper, so the harness's own tests can check the composition with mocks.
+    /// <paramref name="agentHost"/>, when given, is the server's host guard (<see cref="RecordAgentHost(DesktopTier)"/>).
     /// </summary>
     internal static ServiceCollection CreateServices(
         DesktopTier tier,
@@ -110,7 +154,8 @@ public sealed class ServerHarness : IDisposable
         string layoutsPath,
         Func<Type, object>? wrapperSubstitute,
         out IReadOnlyList<Type> guardedWrappers,
-        UiaEngine? uiaEngine = null)
+        UiaEngine? uiaEngine = null,
+        IHostGuard? agentHost = null)
     {
         var services = new ServiceCollection();
         services.AddWindowsAppManagerServices(
@@ -121,6 +166,12 @@ public sealed class ServerHarness : IDisposable
         {
             // The server builds its IUiaTree from these options, so the engine's tree sits behind the guard as usual
             services.Replace(ServiceDescriptor.Singleton(new UiaEngineOptions(engine, "chosen by the test")));
+        }
+
+        if (agentHost != null)
+        {
+            // Recorded before the fixture started; its wrappers sit behind a read-only guard of their own
+            services.Replace(ServiceDescriptor.Singleton(agentHost));
         }
 
         if (wrapperSubstitute != null)

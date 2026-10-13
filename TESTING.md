@@ -1990,10 +1990,15 @@ box, selection, buttons, focus, modal, document, context menu). It is the fixtur
 what reached it, independent of what the server reports. `FixtureContract.Events` documents the
 events; the harness reads them with `FixtureEventLogReader`.
 
-**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, starts the fixture
-(`FixtureAppSession`), waits for its ready event, builds the server services as Program.cs registers
-them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose kills the
-fixture.
+**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, records the agent's
+host (`ServerHarness.RecordAgentHost`), starts the fixture (`FixtureAppSession`), waits for its ready
+event, builds the server services as Program.cs registers them (`ServerHarness`, with that host) and
+finds the fixture's main window through find_windows. Dispose kills the fixture. The server counts the
+window in front when it starts as part of the agent's host; the harness runs no hosted service, so it
+records the host itself, before the fixture exists, and the window in front is then the terminal that
+runs the tests. A session whose server still counts the fixture's main window as the host fails at
+once, and the scenarios that need the host in front (`E2ESession.RequireAgentHostInFront`) fail when
+another window is: keep the terminal in front, and do not click the fixture, during a run.
 
 Every native wrapper of the server sits behind a fail-closed guard (`WrapperGuard`). That includes
 the process and monitor wrappers that ProcessService and MonitorService would otherwise create

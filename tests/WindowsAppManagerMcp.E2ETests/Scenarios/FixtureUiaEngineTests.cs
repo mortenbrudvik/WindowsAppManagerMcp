@@ -75,7 +75,7 @@ public class FixtureUiaEngineTests
     {
         // Arrange - one fixture, a server per engine
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: UiaEngine.Uia3);
-        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2);
+        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2, e2e.AgentHost);
         var window = e2e.Fixture.MainWindowHandle;
 
         // Act
@@ -172,7 +172,7 @@ public class FixtureUiaEngineTests
     {
         // Arrange - one fixture, a server per engine
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: UiaEngine.Uia3);
-        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2);
+        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2, e2e.AgentHost);
         var queries = Queries(e2e.Fixture.MainWindowHandle);
 
         // Act

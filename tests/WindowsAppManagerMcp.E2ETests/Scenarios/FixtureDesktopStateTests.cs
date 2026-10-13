@@ -36,7 +36,9 @@ public class FixtureDesktopStateTests
         state.Success.Should().BeTrue(state.Error);
         image.Should().BeNull("no capture was asked for");
         state.WindowHandle.Should().Be(window);
-        state.Errors.Should().NotContain(e => e.Section == "elements" || e.Section == "popups");
+
+        // Errors is left out (null) when no part failed; a focus entry is fine (the host in front is not read)
+        (state.Errors ?? []).Should().NotContain(e => e.Section == "elements" || e.Section == "popups");
         state.Elements!.Text.Should().Contain(FixtureContract.Ids.OpenModalButton);
         state.Windows.Should().Contain(row => row.Handle == window, "the fixture is a user-facing window");
         state.Cursor.Should().NotBeNull();
