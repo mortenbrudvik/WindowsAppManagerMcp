@@ -67,7 +67,7 @@ public class UiaEngineScenarioTests
     [InlineData("Button", 1367, 174, 60, 37)]
     public void TheBothEnginesFacts_CompareTheTitleBarAndItsButtons_ByTypeAndNameOnly(string controlType, int x, int y, int width, int height)
     {
-        // The elements the gate's second run read with other automation ids under UIA2, where Windows serves them itself
+        // The elements the first 1.15.0 gate's second run read with other automation ids under UIA2, where Windows serves them itself
         FixtureUiaEngineTests.IsNonClient(controlType, new BoundsDto(x, y, width, height), GateClientArea).Should().BeTrue();
     }
 

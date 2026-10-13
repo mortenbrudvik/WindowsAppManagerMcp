@@ -2181,9 +2181,10 @@ What to compare:
 One caveat for point 2: the window's title bar, its system menu bar and the minimize, maximize or restore and close
 buttons are not the server's or the fixture's. Windows serves that Win32 non-client area itself, through its native
 proxy to uia3 and through .NET's managed client-side proxy to uia2, and the two disagree on details that have nothing
-to do with the server's code, from run to run: in the 1.15.0 gate's second run, uia2 read the Minimize button with
-automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while the first run's uia2
-agreed. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
+to do with the server's code, from run to run: in the second run of the first 1.15.0 gate (on c2db508), uia2 read the
+Minimize button with automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while
+the first run's uia2 agreed, and in both runs of the gate that passed (on 293cacd) both engines read `Minimize` and
+`Win32`. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
 lie wholly outside the client area the fixture reports) by control type and name only, and every other element in full.
 On a Windows display language other than English a name or a localized type of the title bar can still differ: when the
 first difference is one of those elements, record it, and compare the fixture's own controls in the output of the
