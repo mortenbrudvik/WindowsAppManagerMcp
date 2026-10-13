@@ -51,8 +51,8 @@ public partial class ElementActionTools
                  "expanded, the last invoked, through the submenus they open), from the window or a menu bar's or open menu's ref. " +
                  "Name the element by ref (from find_ui_elements or get_ui_elements), or by handle " +
                  "or window plus name, automationId, controlType or className (in its open menus and dialogs too while it is in front: " +
-                 "scope), which must match exactly one element (else " +
-                 "AmbiguousElement or ElementNotFound). Returns method, before and after (value, toggle, expand and selection " +
+                 "scope), which must match exactly one element (else AmbiguousElement or ElementNotFound; OperationTimedOut " +
+                 "when the search did not finish). Returns method, before and after (value, toggle, expand and selection " +
                  "state, name, enabled), outcomeVerified and openedPopup (a window of the app that appeared). A disabled or " +
                  "offscreen element is refused (ElementNotEnabled, ElementOffscreen: use scroll_into_view); an element without the " +
                  "pattern is PatternNotSupported unless fallback mouse allows a guarded click. An action that waits for a dialog it " +
@@ -66,9 +66,7 @@ public partial class ElementActionTools
                  "also a capture of it as image content.")]
     [ToolResultPayload(typeof(ElementActionResult))]
     public async Task<CallToolResult> ElementAction(
-        [Description("What to do: invoke, click, double_click, right_click, focus, set_value, append_text, toggle, select, " +
-                     "add_to_selection, remove_from_selection, expand, collapse, scroll_into_view, scroll, set_range_value, realize, " +
-                     "window_close, window_minimize, window_maximize, menu_path.")]
+        [Description("What to do; the tool description says what each action does.")]
         ElementActionKind action,
         [Description("The element: a ref from an earlier read, such as 'w4120035e17'. A ref moved to a re-created element " +
                      "(refMoved) is refused with ElementStale until a read returns that element again. Or leave it out and pass " +
@@ -78,7 +76,8 @@ public partial class ElementActionTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description("Element criteria, as find_ui_elements: the element's name, compared as nameMatch says.")]
+        [Description("Element criteria, as find_ui_elements: the element's name, compared as nameMatch says. Logged as its " +
+                     "length only.")]
         string? name = null,
         [Description("How name is compared: 'exact' (default), 'contains' or 'regex', as find_ui_elements.")]
         ElementNameMatch nameMatch = ElementNameMatch.Exact,
@@ -100,14 +99,14 @@ public partial class ElementActionTools
                      "inputs that ignore the Value pattern) or 'paste' (as type, but pasted from the clipboard, which it replaces; " +
                      "not for password fields).")]
         ElementValueMode mode = ElementValueMode.Value,
-        [Description("scroll: 'up', 'down', 'left' or 'right'. The element's Scroll pattern, or its nearest scrollable ancestor's, " +
-                     "is used; the result's scroll has the percent and atEnd.")]
+        [Description("scroll: which way. The element's Scroll pattern, or its nearest scrollable ancestor's, is used; the " +
+                     "result's scroll has the percent and atEnd.")]
         ElementScrollDirection? direction = null,
         [Description("scroll: 'page' (default) or 'line'.")]
         ElementScrollAmount amount = ElementScrollAmount.Page,
         [Description("When no pattern does invoke, click or select: 'none' (default: PatternNotSupported, nothing is done) or " +
-                     "'mouse' (bring the window to the front and send a guarded click at the element's click point, with every " +
-                     "input check; it moves the pointer and takes the foreground).")]
+                     "'mouse' (bring the window to the front and send a guarded click at the element's click point; it moves " +
+                     "the pointer and takes the foreground).")]
         ElementActionFallback fallback = ElementActionFallback.None,
         [Description("Allow acting on the agent's own host window (its terminal, editor or chat app). Works only with ref or " +
                      "handle (or window.handle); set it only when the user explicitly asked for it. Default: false")]

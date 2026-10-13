@@ -168,7 +168,7 @@ public partial class WindowFinderTools
                  "standard dialog, also isDialog), process, ownerHandle, bounds, state and isVisible; isBlocking: true marks the modal " +
                  "dialog that takes the window's input (the prompt close_window reports), and isBlocked says the window has one. Hidden helper " +
                  "windows (IME) only with includeHidden. Dialogs drawn inside the window (a WinUI ContentDialog) are not windows: " +
-                 "use get_ui_elements. errorCode InvalidHandle: the handle is not a window.")]
+                 "use find_ui_elements and element_action. errorCode InvalidHandle: the handle is not a window.")]
     public OwnedWindowsResult GetOwnedWindows(
         [Description("Window handle (as integer) of the owner. Pass handle or window, not both.")]
         long? handle = null,

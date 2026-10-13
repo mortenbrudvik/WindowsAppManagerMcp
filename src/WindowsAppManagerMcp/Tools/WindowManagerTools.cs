@@ -244,10 +244,8 @@ public class WindowManagerTools
     private const string ForceDescription =
         "Close even a protected window: the desktop shell (Program Manager, the taskbars) or the agent's own host " +
         "(the terminal, editor or chat app this server was started from). Default false: such windows are refused " +
-        "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. When the MCP " +
-        "client can ask the user (elicitation), the user is asked before a protected window is closed (ConfirmationDeclined " +
-        "when they do not confirm); when it cannot, a protected window is closed only with confirm=true too " +
-        "(ConfirmationRequired otherwise, and nothing is closed).";
+        "with errorCode ProtectedWindow. Set it only when the user explicitly asked to close that window. The user is asked " +
+        "first when the client can ask (elicitation; ConfirmationDeclined), else confirm=true is needed too (ConfirmationRequired).";
 
     private const string ForceConfirmDescription =
         "With force=true, must also be true to close a protected window when the MCP client cannot ask the user " +
@@ -266,17 +264,26 @@ public class WindowManagerTools
         "Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to " +
         "choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.";
 
+    /// <summary>
+    /// How the descriptions tell the agent to answer the prompt once the user chose: by the prompt's own handle, since
+    /// respond_to_dialog refuses a press asked of an owned window (which it takes for a dialog) that a modal dialog of its
+    /// own disables (BlockedByModal), and an in-window dialog has no window of its own, so its button is pressed with
+    /// element_action.
+    /// </summary>
+    private const string PromptAnswer =
+        "Answer with respond_to_dialog, handle: prompt.handle (inWindowDialog: element_action on its button).";
+
     private const string StatusDescription =
         "status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification " +
         "area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is " +
         "busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode " +
         "PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and " +
-        "kind; kind inWindowDialog is drawn inside the window, so use the window's handle. " + PromptAdvice + "); requested " +
+        "kind (inWindowDialog: drawn inside the window). " + PromptAdvice + " " + PromptAnswer + "); requested " +
         "(waitMs 0: sent, not checked). success is true for closed, hidden and requested.";
 
     [McpServerTool(Name = "close_window", Title = "Close Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Close a window gracefully by sending WM_CLOSE, then wait up to waitMs and report what happened. " + StatusDescription + " " +
-                 "Refuses the desktop shell and the agent's own terminal or editor window (errorCode ProtectedWindow) unless force is true; " +
+                 "Refuses the desktop shell and the agent's own host window (terminal, editor or chat app; errorCode ProtectedWindow) unless force is true; " +
                  "then, when the client can ask the user, the user is asked first (ConfirmationDeclined, or HandleMismatch when the " +
                  "window changed hands meanwhile), and when it cannot, confirm must be true too (ConfirmationRequired). It " +
                  "refuses an app the user's policy denies (TargetDeniedByPolicy; force does not override it), " +
@@ -389,12 +396,12 @@ public class WindowManagerTools
     [Description("Close multiple windows gracefully in a single batch operation, then wait up to waitMs for all of them and report each " +
                  "window's status as close_window does (closed, hidden, stillOpen, promptShown with its prompt, or requested), or notSent " +
                  "for a window refused or failed before its close message (see its errorCode), as close_application reports it. A prompt " +
-                 "is never answered: ask the user which button to choose, and do not answer it yourself. " +
+                 "is never answered: ask the user which button to choose, and do not answer it yourself (then answer it as close_window says). " +
                  "More than 3 windows need a confirmation, and so does force=true on a protected window when the MCP client can ask " +
                  "the user (elicitation): the user is asked, with each window's title, process and PID, and nothing is closed unless " +
                  "they confirm (errorCode ConfirmationDeclined). When the client cannot ask, more than 3 windows, and force=true on a " +
                  "protected window, need confirm=true (ConfirmationRequired; nothing is closed). A window that changed hands after the user confirmed is not closed " +
-                 "(HandleMismatch). Protected windows (the desktop shell, the agent's own terminal or editor) " +
+                 "(HandleMismatch). Protected windows (the desktop shell, the agent's own host) " +
                  "are refused per window with errorCode ProtectedWindow unless force is true, and apps the user's policy denies with TargetDeniedByPolicy; " +
                  "the other windows are still closed. An item that is null, or names its window by both handle and window, fails alone " +
                  "with InvalidArguments; an item whose selector names no single window fails alone with WindowNotFound, " +
@@ -519,7 +526,7 @@ public class WindowManagerTools
                  "the processes ended, " +
                  "runningProcessIds lists those that keep running, for example in the notification area or with otherDesktopWindows: its " +
                  "windows on other virtual desktops, which are not closed), promptShown (errorCode " +
-                 "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + ") or stillOpen " +
+                 "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + " " + PromptAnswer + ") or stillOpen " +
                  "(errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status " +
                  "requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), " +
                  "ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, " +
