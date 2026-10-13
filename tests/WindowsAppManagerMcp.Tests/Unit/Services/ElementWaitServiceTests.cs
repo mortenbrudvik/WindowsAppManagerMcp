@@ -990,6 +990,50 @@ public class ElementWaitServiceTests
         result.Warning.Should().Contain("withinRef");
     }
 
+    /// <summary>
+    /// A virtualized list in the window, and the ref find_ui_elements' searchVirtualized gives its item 5000, which it has not
+    /// realized: a placeholder that fails a whole read, as WPF's does.
+    /// </summary>
+    private async Task<(FakeVirtualList List, string ItemRef)> UnrealizedItemRef()
+    {
+        var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", 300);
+        BuildWindow(list.List);
+        var found = await _search.FindAsync(new ElementQuery(Handle, Name: "Item 05000", Timeout: TimeSpan.FromSeconds(5)) { SearchVirtualized = true });
+        return (list, found.Elements!.Single().Ref!);
+    }
+
+    [Fact]
+    public async Task Ref_OfAnItemTheListHasNotRealized_Exists_AsAVirtualizedItem_NotAsAStaleRef()
+    {
+        var (_, itemRef) = await UnrealizedItemRef();
+
+        var result = await WaitAsync(condition: ElementWaitCondition.Exists, elementRef: itemRef);
+
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.Element!.Ref.Should().Be(itemRef);
+        result.Element.Virtualized.Should().BeTrue();
+        result.Element.IsOffscreen.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Ref_Enabled_OfAnItemTheListHasNotRealized_IsNotMetByTheDefault_ButOnceTheItemIsRealized()
+    {
+        // Arrange - the placeholder does not say whether it is enabled; the list realizes the item later
+        var (list, itemRef) = await UnrealizedItemRef();
+        var never = await WaitAsync(condition: ElementWaitCondition.Enabled, elementRef: itemRef, timeoutMs: 1000);
+        At(NowMs + 300, () => list.VirtualizedOf(5000).Realize());
+
+        // Act
+        var result = await WaitAsync(condition: ElementWaitCondition.Enabled, elementRef: itemRef);
+
+        // Assert
+        never.Satisfied.Should().BeFalse();
+        never.ErrorCode.Should().Be("WaitTimedOut");
+        never.LastObservedState.Should().Contain("not realized");
+        result.Satisfied.Should().BeTrue(result.Error);
+        result.Element!.Virtualized.Should().BeNull("it is real now");
+    }
+
     #endregion
 
     #region Timing, warm-up, failures, progress

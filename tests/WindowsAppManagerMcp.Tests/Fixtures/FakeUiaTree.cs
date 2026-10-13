@@ -108,6 +108,7 @@ public sealed class FakeUiaTree : IUiaTree
         _reads.Enqueue($"Read:{fake.Name}");
         fake.OnRead?.Invoke();
         ThrowIfSet(fake.ReadException);
+        ThrowIfUnrealized(fake);
         return new UiaNodeProperties(fake.Name, fake.ControlType, fake.AutomationId, fake.Bounds, fake.IsEnabled, fake.IsOffscreen, fake.FrameworkId);
     }
 
@@ -116,6 +117,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Interaction:{fake.Name}");
         ThrowIfSet(fake.InteractionException);
+        ThrowIfUnrealized(fake);
         return new UiaNodeInteraction(fake.IsKeyboardFocusable, fake.HasKeyboardFocus, fake.ActionPatterns);
     }
 
@@ -124,6 +126,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Interactable:{fake.Name}");
         ThrowIfSet(fake.InteractionException);
+        ThrowIfUnrealized(fake);
         return fake.IsKeyboardFocusable || fake.ActionPatterns.Count > 0;
     }
 
@@ -132,6 +135,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Identity:{fake.Name}");
         ThrowIfSet(fake.IdentityException);
+        ThrowIfUnrealized(fake);
         return new UiaNodeIdentity(fake.ClassName, fake.FrameworkId, fake.ProcessId, fake.NativeWindowHandle, fake.IsPassword);
     }
 
@@ -142,7 +146,43 @@ public sealed class FakeUiaTree : IUiaTree
         _reads.Enqueue($"Element:{fake.Name}");
         fake.OnRead?.Invoke();
         ThrowIfSet(fake.ReadException);
+        ThrowIfUnrealized(fake);
         return Cached(fake);
+    }
+
+    /// <summary>
+    /// The property-by-property read of an item its list has not realized: logged as "VirtualizedItem:Name"; fails like
+    /// <see cref="ReadElement"/> for a node that vanished (its <see cref="FakeUiaNode.ReadException"/>), and for one without a
+    /// runtime id. Of an <see cref="FakeUiaNode.Unrealized"/> node it reads what WPF's placeholder serves (control type, name,
+    /// automation id, class, framework, runtime id, process and patterns) and leaves the rest at the engines' defaults (no
+    /// bounds, offscreen, enabled, not focusable, password unknown), marked virtualized; any other node reads in full.
+    /// </summary>
+    public UiaVirtualizedItem ReadVirtualizedItem(IUiaNode node)
+    {
+        var fake = Fake(node);
+        _reads.Enqueue($"VirtualizedItem:{fake.Name}");
+        ThrowIfSet(fake.ReadException);
+        if (fake.RuntimeId is not { Count: > 0 })
+        {
+            throw Vanished("element's runtime id");
+        }
+
+        if (!fake.Unrealized)
+        {
+            return new UiaVirtualizedItem(Cached(fake), fake.ProcessId, fake.IsPassword);
+        }
+
+        var element = new UiaElement(
+            fake,
+            new UiaNodeProperties(fake.Name, fake.ControlType, fake.AutomationId, UiaRect.Empty, IsEnabled: true, IsOffscreen: true, fake.FrameworkId),
+            fake.ClassName,
+            IsKeyboardFocusable: false,
+            fake.Patterns,
+            fake.RuntimeId,
+            UiaControlTypes.GetId(fake.ControlType),
+            fake.NativeWindowHandle,
+            Virtualized: true);
+        return new UiaVirtualizedItem(element, fake.ProcessId, IsPassword: null);
     }
 
     public UiaPoint? GetClickablePoint(IUiaNode node)
@@ -150,6 +190,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Clickable:{fake.Name}");
         ThrowIfSet(fake.ClickablePointException);
+        ThrowIfUnrealized(fake);
         return fake.ClickablePoint;
     }
 
@@ -158,6 +199,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"Description:{fake.Name}");
         ThrowIfSet(fake.ReadException);
+        ThrowIfUnrealized(fake);
         return new UiaNodeDescription(fake.HelpText, fake.AccessKey, fake.AcceleratorKey, fake.LocalizedControlType);
     }
 
@@ -264,6 +306,7 @@ public sealed class FakeUiaTree : IUiaTree
         var fake = Fake(node);
         _reads.Enqueue($"SetFocus:{fake.Name}");
         ThrowIfSet(fake.SetFocusException);
+        ThrowIfUnrealized(fake);
         if (SetFocusMovesFocus)
         {
             if (Focused != null)
@@ -297,6 +340,7 @@ public sealed class FakeUiaTree : IUiaTree
         node.OnRead?.Invoke();
         ThrowIfSet(node.ReadException);
         ThrowIfSet(node.InteractionException);
+        ThrowIfUnrealized(node);
         return Cached(node);
     }
 
@@ -352,6 +396,19 @@ public sealed class FakeUiaTree : IUiaTree
             : Equals(actual, condition.Value);
     }
 
+    /// <summary>
+    /// A read that includes a property an <see cref="FakeUiaNode.Unrealized"/> placeholder does not serve fails, as WPF's
+    /// ItemAutomationPeer fails it with ElementNotAvailableException (ThrowElementNotAvailableException).
+    /// </summary>
+    private static void ThrowIfUnrealized(FakeUiaNode node)
+    {
+        if (node.Unrealized)
+        {
+            throw new UiaElementUnavailableException(
+                "The element is not available: it is an item its list has not realized, which serves only some properties.");
+        }
+    }
+
     private static void ThrowIfSet(Exception? exception)
     {
         if (exception != null)
@@ -394,6 +451,16 @@ public sealed class FakeUiaNode : IUiaNode
     public IReadOnlyList<string> ActionPatterns { get; init; } = [];
 
     public string? ClassName { get; init; }
+
+    /// <summary>
+    /// A placeholder of an item its list has not realized, as WPF's ItemAutomationPeer is for an item without a container: it
+    /// serves its control type, name, automation id, class, runtime id, process and patterns, but every read that includes
+    /// its bounds, IsOffscreen, IsEnabled, keyboard focus, IsPassword, description or clickable point fails with
+    /// <see cref="UiaElementUnavailableException"/> (Read, ReadElement, ReadInteraction, IsInteractable, ReadIdentity,
+    /// ReadDescription, GetClickablePoint, SetFocus and the cached reads). Only <see cref="FakeUiaTree.ReadVirtualizedItem"/>
+    /// reads it. <see cref="FakeVirtualList"/> sets it for the items it has not realized.
+    /// </summary>
+    public bool Unrealized { get; set; }
     public string? FrameworkId { get; init; }
     public int ProcessId { get; set; }
     public nint NativeWindowHandle { get; init; }

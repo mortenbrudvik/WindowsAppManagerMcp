@@ -287,10 +287,25 @@ public sealed partial class ElementReadService : IElementReadService
                 Read(new(true, resolved.Ref, (long)handle, controlType, text, source, start, total, next != null, next,
                     Elapsed(stopwatch), AccessibilityWarmup: warmup.Value));
 
-            UiaNodeIdentity identity;
+            bool isPassword;
             try
             {
-                identity = _tree.ReadIdentity(node);
+                isPassword = _tree.ReadIdentity(node).IsPassword;
+            }
+            catch (UiaElementUnavailableException) when (resolved.Element.Virtualized)
+            {
+                // An item its list has not realized fails the identity read as a whole (WPF's placeholder fails IsPassword). Its
+                // name is read, which every element's description carries; a value or text it may hold is not, while it does
+                // not say whether it is a password field
+                var said = _tree.ReadVirtualizedItem(node).IsPassword;
+                if (said == null && (resolved.Element.Patterns & (UiaPatterns.Text | UiaPatterns.Value)) != 0)
+                {
+                    return Failure("The element is an item its list has not realized, which does not say whether it is a password " +
+                                   "field, so its text was not read. Realize it first (element_action realize), then read it again.",
+                        UIElementErrorCode.ElementAccessFailed, resolved.Ref);
+                }
+
+                isPassword = said == true;
             }
             catch (Exception ex) when (ex is not TimeoutException and not UiaElementUnavailableException)
             {
@@ -299,7 +314,7 @@ public sealed partial class ElementReadService : IElementReadService
                                "read.", UIElementErrorCode.ElementAccessFailed, resolved.Ref);
             }
 
-            if (identity.IsPassword)
+            if (isPassword)
             {
                 return Read(new ElementTextResult(true, resolved.Ref, (long)handle, controlType, null, ElementTextSource.Redacted, 0,
                     null, false, null, Elapsed(stopwatch), IsPassword: true, AccessibilityWarmup: warmup.Value));

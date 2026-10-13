@@ -285,6 +285,9 @@ public static class WrapperCatalog
                 // Roadmap M3.4: a fresh read of the walk's properties (the element registry's liveness check), the clickable
                 // point (a hit test the provider answers) and the description properties: reads only
                 [nameof(IUiaTree.ReadElement)] = WrapperMember.Read,
+                // Roadmap M3.10: an item its list has not realized, read property by property (current and cached property
+                // reads only; realizing it is the VirtualizedItem pattern's Realize, a UiaAction)
+                [nameof(IUiaTree.ReadVirtualizedItem)] = WrapperMember.Read,
                 [nameof(IUiaTree.GetClickablePoint)] = WrapperMember.Read,
                 [nameof(IUiaTree.ReadDescription)] = WrapperMember.Read,
                 // WindowPattern.Current.IsModal: a property read (verified close looks for an in-window prompt)

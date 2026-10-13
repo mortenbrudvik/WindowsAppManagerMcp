@@ -669,9 +669,20 @@ public sealed class ElementWaitService : IElementWaitService
                     return (true, $"{name} exists");
 
                 case ElementWaitCondition.Enabled:
+                    if (element.Virtualized == true)
+                    {
+                        return (false, $"{name} is an item its list has not realized, whose state is not known until it is realized " +
+                                       "(element_action realize)");
+                    }
+
                     return (element.IsEnabled, $"{name} is {(element.IsEnabled ? "enabled" : "disabled")}");
 
                 case ElementWaitCondition.Visible:
+                    if (element.Virtualized == true)
+                    {
+                        return (false, $"{name} is an item its list has not realized (offscreen until element_action realize)");
+                    }
+
                     if (element.IsOffscreen)
                     {
                         return (false, $"{name} is offscreen (scrolled out of view, collapsed or hidden)");
@@ -848,6 +859,12 @@ public sealed class ElementWaitService : IElementWaitService
 
         var node = resolved.Node;
         var element = ElementSearchService.Minimal(resolved.Element, resolved.Ref);
+        if (resolved.Element.Virtualized)
+        {
+            // An item its list has not realized: offscreen, and its state not known until it is realized
+            element = element with { Virtualized = true };
+        }
+
         var patterns = resolved.Element.Patterns;
         if (!element.IsOffscreen && element.Bounds != null && Try(() => _tree.GetClickablePoint(node)) is { } point)
         {

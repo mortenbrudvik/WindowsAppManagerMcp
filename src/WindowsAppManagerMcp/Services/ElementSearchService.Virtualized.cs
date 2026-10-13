@@ -195,7 +195,7 @@ public sealed partial class ElementSearchService
                     after = item;
                     try
                     {
-                        element = _tree.ReadElement(item);
+                        element = ReadItem(item);
                     }
                     catch (TimeoutException)
                     {
@@ -204,7 +204,7 @@ public sealed partial class ElementSearchService
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        // A placeholder whose properties cannot be read, or an item that went away: the provider matched it, but it
+                        // An item that went away, or a placeholder that does not even name itself: the provider matched it, but it
                         // cannot be checked or named. The next one is asked for
                         Stopped(ElementSearchTruncation.PartsSkipped, "An item a list matched could not be read, so it was skipped.");
                         continue;
@@ -253,6 +253,26 @@ public sealed partial class ElementSearchService
         }
 
         return new VirtualizedLookup(items, more, containers, notes.Count == 0 ? null : string.Join(" ", notes), stop);
+    }
+
+    /// <summary>
+    /// An item a list's ItemContainer pattern returned, with the walk's properties. A realized item reads in one call; one the
+    /// list has not realized is often a placeholder that fails that read as a whole for the properties it does not serve
+    /// (WPF's fails its bounds, IsOffscreen and IsEnabled), so it is then read property by property
+    /// (<see cref="IUiaTree.ReadVirtualizedItem"/>): offscreen, without bounds, marked virtualized.
+    /// </summary>
+    /// <exception cref="UiaElementUnavailableException">The item is gone, or does not even serve its runtime id and control
+    /// type.</exception>
+    private UiaElement ReadItem(IUiaNode item)
+    {
+        try
+        {
+            return _tree.ReadElement(item);
+        }
+        catch (UiaElementUnavailableException)
+        {
+            return _tree.ReadVirtualizedItem(item).Element;
+        }
     }
 
     /// <summary>

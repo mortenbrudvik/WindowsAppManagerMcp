@@ -351,7 +351,18 @@ public sealed class ElementRegistry : IElementRegistry
         }
         catch (UiaElementUnavailableException)
         {
-            // Gone: look for it again
+            // Gone, or an item its list has not realized: such a placeholder fails a whole read for the properties it does not
+            // serve (WPF's fails its bounds and state, not its identity), so it is read again property by property, and
+            // accepted only as such a placeholder, with the stored runtime id and identity. A row zero levels up is the item
+            // itself, which those checks just compared; one further up is checked as for a live read
+            if (Placeholder(node) is { RuntimeId: { Count: > 0 } placeholderId } placeholder &&
+                placeholderId.SequenceEqual(entry.RuntimeId) && SameIdentity(fingerprint, Fingerprint(placeholder, null)))
+            {
+                return (row is { Levels: > 0 } ? RowChanged(entry, node, row, fingerprint, cancellationToken) : null) ??
+                       Resolved(entry, node, placeholder, ElementResolutionPath.Live);
+            }
+
+            // Otherwise gone: look for it again
         }
 
         IUiaNode? window;
@@ -448,6 +459,26 @@ public sealed class ElementRegistry : IElementRegistry
                     (found.Complete ? "" : " (the search of the window did not finish)") +
                     ". Find the element again with find_ui_elements.");
         }
+    }
+
+    /// <summary>
+    /// The element at <paramref name="node"/> when it is an item its list has not realized (roadmap M3.10): read property by
+    /// property (<see cref="IUiaTree.ReadVirtualizedItem"/>), it left out properties (<see cref="UiaElement.Virtualized"/>) and
+    /// offers the VirtualizedItem pattern. Null when it is gone, or is not such an item. A timeout is thrown.
+    /// </summary>
+    private UiaElement? Placeholder(IUiaNode node)
+    {
+        UiaElement element;
+        try
+        {
+            element = _tree.ReadVirtualizedItem(node).Element;
+        }
+        catch (UiaElementUnavailableException)
+        {
+            return null;
+        }
+
+        return element.Virtualized && (element.Patterns & UiaPatterns.VirtualizedItem) != 0 ? element : null;
     }
 
     /// <summary>

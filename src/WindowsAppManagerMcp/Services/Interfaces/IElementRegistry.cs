@@ -33,7 +33,10 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// whole window, not below withinRef). A tree walk, the focused element and the element at a point store none.</para>
 /// <para><b>Resolution</b> (<see cref="Resolve"/>), in order: (1) a live read of the stored element (one call that asks the
 /// provider; a runtime id alone is answered from memory and cannot tell that the element is gone), accepted when it reads
-/// the stored runtime id and identity. (2) A search of the window for the runtime id, accepted when the element found has
+/// the stored runtime id and identity. An item its list has not realized (find_ui_elements' searchVirtualized gives refs of
+/// such items) is often a placeholder that fails that read as a whole for the properties it does not serve; it is then read
+/// property by property (<see cref="IUiaTree.ReadVirtualizedItem"/>) and accepted while it is still such an item, with the
+/// VirtualizedItem pattern and the stored runtime id and identity. (2) A search of the window for the runtime id, accepted when the element found has
 /// the stored identity. In both, an element with a recorded row is accepted only while the item that many levels up is
 /// that row (its runtime id, and its name when it has no automation id): one call per level and one read, else
 /// ElementStale ("its row now shows another item"). (3) Only with a stored selector: the selector run again and each result checked against the

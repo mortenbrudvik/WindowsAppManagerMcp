@@ -85,6 +85,21 @@ public interface IUiaTree
     UiaElement ReadElement(IUiaNode node);
 
     /// <summary>
+    /// An item its list has not realized, read property by property (roadmap M3.10). What a list's ItemContainer pattern
+    /// returns for such an item is often a placeholder that serves only some properties: WPF's ItemAutomationPeer, for an item
+    /// without a container, answers its control type, name, automation id, class, runtime id and patterns, but fails its
+    /// bounding rectangle, IsOffscreen, IsEnabled, keyboard focus, IsPassword and description with "element not available",
+    /// and so fails <see cref="ReadElement"/>'s one cached read as a whole. Here a property the provider fails is left at its
+    /// default: no bounds, offscreen, enabled (not known to be disabled), not keyboard-focusable, and no name, automation id,
+    /// class, framework or patterns; the element is then marked <see cref="UiaElement.Virtualized"/>. Only reads. Call it for
+    /// an element <see cref="ReadElement"/> reported unavailable that may be such an item: one a list's ItemContainer pattern
+    /// returned, or the element of a ref given for one.
+    /// </summary>
+    /// <exception cref="UiaElementUnavailableException">The provider does not serve its runtime id or its control type, which
+    /// every placeholder still knows: the element is gone (or could not be named).</exception>
+    UiaVirtualizedItem ReadVirtualizedItem(IUiaNode node);
+
+    /// <summary>
     /// A point on the node that a click would hit (UI Automation's clickable point), in physical screen pixels, or null
     /// when the provider reports none (it is offscreen, covered, or the provider does not compute one).
     /// </summary>

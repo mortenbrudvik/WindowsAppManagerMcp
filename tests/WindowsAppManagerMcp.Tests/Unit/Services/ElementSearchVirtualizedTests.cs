@@ -95,6 +95,103 @@ public class ElementSearchVirtualizedTests
     }
 
     [Fact]
+    public async Task AnItemThatFailsAWholeRead_AsWpfsPlaceholderDoes_IsReadPropertyByProperty_AndFound()
+    {
+        // Arrange - the gate's failure (1.15.0): WPF's placeholder fails its bounds, IsOffscreen and IsEnabled, so a whole
+        // read of it fails, and every item the list matched was skipped as unreadable
+        _list.Items[5000].Unrealized.Should().BeTrue("precondition: the fake fails a whole read of it, as WPF does");
+
+        // Act
+        var result = await Find(name: "Item 05000", controlTypes: ["ListItem"]);
+
+        // Assert - found, not skipped: what the placeholder serves, offscreen and without bounds
+        result.Truncated.Should().BeFalse("{0}", result.Virtualized?.Note);
+        var item = result.Elements.Should().ContainSingle().Subject;
+        (item.Name, item.ControlType, item.AutomationId, item.IsOffscreen, item.Bounds).Should().Be(("Item 05000", "ListItem", "row-5000", true, null));
+        item.Virtualized.Should().BeTrue();
+        item.Ref.Should().NotBeNull();
+        _tree.Reads.Should().ContainInOrder("Element:Item 05000", "VirtualizedItem:Item 05000");
+    }
+
+    [Fact]
+    public async Task AnItemThatIsGone_FailsBothReads_AndIsPartsSkipped()
+    {
+        // Arrange - item 7000 went away between the probe and the read: it serves nothing, not even its runtime id
+        _list.Items[7000].ReadException = FakeUiaTree.Vanished();
+
+        // Act
+        var result = await Find(name: "Duplicate");
+
+        // Assert - item 8000 is still found
+        result.Elements.Should().ContainSingle().Which.AutomationId.Should().Be("row-8000");
+        result.TruncationReason.Should().Be(ElementSearchTruncation.PartsSkipped);
+        result.Virtualized!.Note.Should().Contain("could not be read");
+    }
+
+    [Fact]
+    public async Task TheItemsRef_ResolvesLive_ToThePlaceholder_ReadPropertyByProperty_NotElementStale()
+    {
+        // Arrange
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+
+        // Act
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+
+        // Assert - the live read of the placeholder failed as a whole; it was read again property by property
+        resolved.Success.Should().BeTrue(resolved.Error);
+        resolved.Element!.Via.Should().Be(ElementResolutionPath.Live);
+        resolved.Element.Element.Virtualized.Should().BeTrue();
+        resolved.Element.Element.Properties.IsOffscreen.Should().BeTrue();
+        resolved.Element.Moved.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TheItemsRef_OnceTheListRealizesTheItem_ResolvesToTheRealItem_UnderTheSameRef()
+    {
+        // Arrange
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+        _list.VirtualizedOf(5000).Realize();
+
+        // Act
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+
+        // Assert - a whole read of the real item works again
+        resolved.Element!.Via.Should().Be(ElementResolutionPath.Live);
+        resolved.Element.Element.Virtualized.Should().BeFalse();
+        resolved.Element.Ref.Should().Be(itemRef);
+    }
+
+    [Fact]
+    public async Task TheItemsRef_WhenTheItemIsGone_IsElementStale()
+    {
+        // Arrange - the item was removed from the list: its placeholder serves nothing now
+        var itemRef = (await Find(name: "Item 05000")).Elements!.Single().Ref!;
+        _list.Items[5000].ReadException = FakeUiaTree.Vanished();
+
+        // Act
+        var resolved = _registry.Resolve(itemRef, CancellationToken.None);
+
+        // Assert
+        resolved.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
+    public async Task TheRefOfAnItemWithoutAnAutomationId_IsNotResolvedToItsPlaceholder_OnceThatNamesAnotherItem()
+    {
+        // Arrange - a list whose items have no automation id: the name says which item it is
+        var unnamed = new FakeVirtualList(100, realized: 0, i => $"Row {i}", Pid);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Explorer") { ProcessId = Pid }.With(unnamed.List));
+        var rowRef = (await Find(name: "Row 50")).Elements!.Single().Ref!;
+        unnamed.Items[50].Name = "Row 51";
+
+        // Act
+        var resolved = _registry.Resolve(rowRef, CancellationToken.None);
+
+        // Assert - the same runtime id with another name is another item: the placeholder is not accepted
+        resolved.ErrorCode.Should().Be(UIElementErrorCode.ElementStale);
+    }
+
+    [Fact]
     public async Task ARealizedItem_TheTreeSearchFound_IsNotReportedTwice()
     {
         var result = await Find(name: "Item 00003");

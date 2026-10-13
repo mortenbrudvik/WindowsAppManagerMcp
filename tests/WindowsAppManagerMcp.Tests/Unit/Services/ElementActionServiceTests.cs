@@ -936,12 +936,17 @@ public sealed class ElementActionServiceTests : IDisposable
 
     #region realize (roadmap M3.10)
 
-    /// <summary>A 10,000-item virtual list in the window, its first 30 items realized, and the ref of an item it has not realized.</summary>
+    /// <summary>
+    /// A 10,000-item virtual list in the window, its first 30 items realized, and the ref of an item it has not realized,
+    /// registered as find_ui_elements' searchVirtualized registers it: read property by property, since the placeholder fails
+    /// a whole read (as WPF's does).
+    /// </summary>
     private (FakeVirtualList List, string ItemRef) VirtualList(int index)
     {
         var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", Pid);
         _window.With(list.List);
-        var itemRef = _registry.Register(Handle, _tree.ReadElement(list.Items[index]), new ElementOrigin(_registry.NextGeneration()))!;
+        var item = _tree.ReadVirtualizedItem(list.Items[index]).Element;
+        var itemRef = _registry.Register(Handle, item, new ElementOrigin(_registry.NextGeneration()))!;
         return (list, itemRef);
     }
 
@@ -974,6 +979,7 @@ public sealed class ElementActionServiceTests : IDisposable
         var node = list.Items[5000];
         list.VirtualizedOf(5000).OnRealize = () =>
         {
+            node.Unrealized = false;
             list.List.With(node);
             node.IsOffscreen = false;
         };
@@ -1055,6 +1061,68 @@ public sealed class ElementActionServiceTests : IDisposable
         result.OutcomeVerified.Should().BeTrue();
         var after = await search.FindAsync(query);
         after.Elements.Should().ContainSingle().Which.Ref.Should().Be(item.Ref);
+    }
+
+    [Fact]
+    public async Task RealizeByCriteria_TheSearchElementActionMakes_FindsThePlaceholder_AndRealizesIt()
+    {
+        // Arrange - the query element_action realize makes from its criteria (ElementActionTools.FindOneAsync): offscreen and
+        // disabled elements included, two results to tell one from several, the lists' unrealized items too. The placeholder
+        // fails a whole read, as WPF's does
+        var list = new FakeVirtualList(10_000, realized: 30, i => $"Item {i:D5}", Pid);
+        _window.With(list.List);
+        var search = new ElementSearchService(_tree, _worker, _registry, _windows.Object);
+        var query = new ElementQuery(Handle, Name: "Item 09000", ControlTypes: ["ListItem"], VisibleOnly: false, EnabledOnly: false,
+            MaxResults: 2, Detail: ElementDetail.Minimal, Timeout: TimeSpan.FromSeconds(5))
+        {
+            SearchVirtualized = true,
+            IncludeHostPopups = true
+        };
+
+        // Act
+        var found = await search.FindAsync(query);
+        var result = await ActAsync(found.Elements!.Single().Ref!, ElementActionKind.Realize);
+
+        // Assert - one match, complete; realized through its VirtualizedItem pattern and verified on screen
+        (found.MatchCount, found.Truncated).Should().Be((1, false));
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.VirtualizedItem);
+        result.OutcomeVerified.Should().BeTrue();
+        result.Before!.IsOffscreen.Should().BeTrue();
+        result.Before.IsPassword.Should().BeNull("the placeholder does not say, and it is not reported as one");
+        list.IsRealized(9000).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Click_OnAnItemTheListHasNotRealized_IsElementOffscreen_AndPointsToRealize()
+    {
+        // Arrange
+        var (list, item) = VirtualList(5000);
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Click);
+
+        // Assert - the ref resolves to the placeholder (not ElementStale), and nothing is done to an item not on screen
+        result.ErrorCode.Should().Be("ElementOffscreen");
+        result.Error.Should().Contain("realize");
+        list.IsRealized(5000).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Realize_ThatLeavesTheItemUnrealized_IsNotVerified_AndTheItemIsNotReportedGone()
+    {
+        // Arrange - a provider whose Realize does nothing: the item is still a placeholder afterwards
+        var (list, item) = VirtualList(5000);
+        list.VirtualizedOf(5000).OnRealize = null;
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Realize);
+
+        // Assert - read again property by property, it is still there, offscreen
+        result.Success.Should().BeTrue(result.Error);
+        result.OutcomeVerified.Should().BeFalse();
+        result.After!.IsOffscreen.Should().BeTrue();
+        result.Warnings.Should().NotContain(w => w.Contains("gone"));
     }
 
     #endregion

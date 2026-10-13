@@ -95,7 +95,8 @@ public record ScreenPoint(int X, int Y);
 /// <param name="Virtualized">searchVirtualized (roadmap M3.10): true for an item its list's ItemContainer pattern found that the
 /// tree search did not: usually one the list has not realized (it is not in the tree yet: offscreen, no bounds, no
 /// clickPoint), else a realized one scrolled out of view, which the tree search leaves out with visibleOnly. element_action
-/// realize makes it real and scrolls it into view. Left out otherwise.</param>
+/// realize makes it real and scrolls it into view. wait_for_element sets it on the element of a ref that is still an item its
+/// list has not realized. Left out otherwise.</param>
 public record FoundElement(
     [property: JsonPropertyOrder(-1)] string? Ref,
     string? Name,
