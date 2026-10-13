@@ -55,6 +55,41 @@ public class UiaEngineScenarioTests
             .Should().BeEmpty();
     }
 
+    /// <summary>The fixture's client area in the 1.15.0 gate's runs: (494, 211), 932 x 628.</summary>
+    private static readonly ScreenRect GateClientArea = new(494, 211, 932, 628);
+
+    [Theory]
+    [InlineData("TitleBar", 493, 174, 934, 37)]
+    [InlineData("MenuBar", 494, 182, 28, 28)]
+    [InlineData("MenuItem", 494, 182, 28, 28)]
+    [InlineData("Button", 1248, 174, 60, 37)]
+    [InlineData("Button", 1308, 174, 59, 37)]
+    [InlineData("Button", 1367, 174, 60, 37)]
+    public void TheBothEnginesFacts_CompareTheTitleBarAndItsButtons_ByTypeAndNameOnly(string controlType, int x, int y, int width, int height)
+    {
+        // The elements the gate's second run read with other automation ids under UIA2, where Windows serves them itself
+        FixtureUiaEngineTests.IsNonClient(controlType, new BoundsDto(x, y, width, height), GateClientArea).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("Button", 509, 427, 170, 32)]
+    [InlineData("Edit", 534, 251, 400, 22)]
+    [InlineData("List", 989, 226, 422, 598)]
+    [InlineData("ListItem", 991, 228, 397, 24)]
+    [InlineData("Edit", 10, 10, 50, 20)]
+    public void TheBothEnginesFacts_CompareTheFixturesOwnControls_InFull(string controlType, int x, int y, int width, int height)
+    {
+        // The fixture's controls are inside its client area; an element outside it that the title bar never holds (an Edit)
+        // is compared in full too
+        FixtureUiaEngineTests.IsNonClient(controlType, new BoundsDto(x, y, width, height), GateClientArea).Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheBothEnginesFacts_CompareAButtonWithoutBounds_InFull()
+    {
+        FixtureUiaEngineTests.IsNonClient("Button", bounds: null, GateClientArea).Should().BeFalse();
+    }
+
     /// <summary>The engine argument of each InlineData of a theory whose first parameter is the engine.</summary>
     private static IEnumerable<UiaEngine> EnginesOf(MethodInfo method) =>
         method.GetParameters() is [{ ParameterType: var type }, ..] && type == typeof(UiaEngine)
