@@ -19,7 +19,7 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// it on nearly every element and the managed client never does, by design.</para>
 /// <para>The window's non-client area (its title bar, the system menu bar and its item, and the minimize, maximize or restore
 /// and close buttons) is not the server's or the fixture's: Windows serves it through its own proxies, natively to UIA3 and
-/// through .NET's client-side proxy to UIA2, and those differ in automation ids and framework from run to run (the 1.15.0
+/// through .NET's client-side proxy to UIA2, and those differ in automation ids and framework from run to run (the first 1.15.0
 /// gate's second run read 'Minimize-Restore' and no framework where UIA3 read 'Minimize' and Win32). The BothEngines_* facts
 /// compare those elements by control type and name only (<see cref="IsNonClient"/>), and everything else in full.</para>
 /// </remarks>
