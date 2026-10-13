@@ -3231,7 +3231,7 @@
             "default": 5000
           },
           "expectWindow": {
-            "description": "With waitForWindow: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it. A new window that matches every field set counts as the launch's window",
+            "description": "With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)",
             "type": [
               "object",
               "null"

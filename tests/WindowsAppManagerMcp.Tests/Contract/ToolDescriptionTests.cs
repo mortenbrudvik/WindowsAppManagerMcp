@@ -196,6 +196,14 @@ public class ToolDescriptionTests
     }
 
     [Fact]
+    public void ExpectWindowDescription_SaysReuseExistingMatchesItToo()
+    {
+        // The hint is not only the window wait's: reuseExisting reuses only an open window that matches it, and a web address
+        // can only be reused by its titleContains
+        ParameterDescription("launch_application", "expectWindow").Should().Contain("With reuseExisting").And.Contain("titleContains");
+    }
+
+    [Fact]
     public void ControlTypesDescription_SaysUnknownNamesFail()
     {
         ParameterDescription("get_ui_elements", "controlTypes").Should().Contain("InvalidControlType");

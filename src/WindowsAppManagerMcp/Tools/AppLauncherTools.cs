@@ -100,7 +100,7 @@ public class AppLauncherTools
         bool waitForWindow = false,
         [Description("Maximum time in milliseconds to wait for the window (0-30000, default: 5000)")]
         int waitTimeoutMs = 5000,
-        [Description("With waitForWindow: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it. A new window that matches every field set counts as the launch's window")]
+        [Description("With waitForWindow or placement: the window to expect when the server cannot tell it from the started process, such as a Store app, a URI or a document opened by whatever app is registered for it; a new window that matches every field set counts as the launch's window. With reuseExisting: the open window must match it (a web address needs titleContains)")]
         LaunchWindowHint? expectWindow = null,
         [Description(PlacementDescription)]
         LaunchPlacement? placement = null,
