@@ -30,11 +30,12 @@ public class AppLauncherTools
     private const string ReuseDescription =
         "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
         "the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; " +
-        "never a terminal for cmd or powershell, or a browser for a web address), and of expectWindow.processName when set; when " +
-        "the launch opens a file or folder, its title must show that name as a whole name, and a path shown with it must be the " +
-        "launched path (or contain expectWindow.titleContains). A web address needs expectWindow.titleContains: a page sets its " +
-        "own title. The front-most match is used (one showing the full path first), nothing is started, and launchStatus is " +
-        "alreadyOpen; warning says when only the name matched or the title is the page's, so check the window before acting";
+        "never a terminal for cmd or powershell) and of expectWindow.processName when set (needed for a document, a Store app or " +
+        "a web address). Its title must contain expectWindow.titleContains when set, else show each file or folder the launch " +
+        "opens as a whole name, never after another path; a web address (a page sets its own title) or a URI page such as " +
+        "ms-settings:display needs titleContains. The front-most match is used (one showing the full path first), nothing is " +
+        "started, and launchStatus is alreadyOpen; warning says when only the name matched or the title is the page's: check " +
+        "the window before acting";
 
     private const string ForceAccessibilityDescription =
         "Start a Chromium browser, an Electron app (VS Code, Slack, Discord) or a CEF app with --force-renderer-accessibility, " +
@@ -378,7 +379,7 @@ public class AppLauncherTools
     }
 
     [McpServerTool(Name = "launch_applications_batch", Title = "Launch Applications (Batch)", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = true)]
-    [Description("Launch multiple applications in a single batch operation. More efficient than multiple individual calls. " +
+    [Description("Launch multiple applications in a single batch operation. " +
                  "Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, " +
                  "and each result has its own launchStatus, window and errorCode. " +
                  "An item that is null fails alone with InvalidArguments; the others are still launched. " +
@@ -387,8 +388,8 @@ public class AppLauncherTools
                  "placement on any item every window is waited for; the windows are placed after all of them were found, in order, and " +
                  "checked again together once.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("Array of applications to launch with executable, optional arguments, optional workingDirectory, optional expectWindow, " +
-                     "optional placement and optional reuseExisting")]
+        [Description("The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement " +
+                     "and reuseExisting")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,

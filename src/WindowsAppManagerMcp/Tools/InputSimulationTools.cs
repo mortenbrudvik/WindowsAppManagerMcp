@@ -14,10 +14,10 @@ namespace WindowsAppManagerMcp.Tools;
 public class InputSimulationTools
 {
     private const string XDescription =
-        "X coordinate in physical virtual-desktop pixels (negative on monitors left of the primary monitor)";
+        "X coordinate: physical virtual-desktop pixels (negative left of the primary monitor), or as space says";
 
     private const string YDescription =
-        "Y coordinate in physical virtual-desktop pixels (negative on monitors above the primary monitor)";
+        "Y coordinate: physical virtual-desktop pixels (negative above the primary monitor), or as space says";
 
     internal const string MouseWindowHandleDescription =
         "The window the input is for (handle from find_windows). Strongly recommended: the input is sent only if the point is on " +
@@ -54,7 +54,7 @@ public class InputSimulationTools
 
     private const string ClickTargetNote =
         " Pass windowHandle with the window you mean. Without it the click goes to whatever window is at that point (check it with get_foreground_window and get_element_at_point first), " +
-        "and is refused when that is the agent's own terminal or chat window (TargetIsAgentHost), or in the cases below." +
+        "and is refused when that is the agent's own host (terminal, editor or chat app; TargetIsAgentHost), or in the cases below." +
         " To act on an element, element_action with its ref needs no point; to click one, take find_ui_elements' clickPoint, the centre of its get_ui_elements bounds, or its capture_with_elements legend centre with that capture's captureId (any point you see on a capture works so: the server converts it)." +
         " The button is pressed exactly at the checked point; if the pointer does not stay there (it is confined to a window, or the user is moving the mouse), nothing is clicked (CursorNotAtPoint)." +
         " Refused while a mouse button is held down or another window has captured the mouse (MouseInUse): the press would go there. " +
@@ -63,7 +63,7 @@ public class InputSimulationTools
 
     private const string KeyboardTargetNote =
         " Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle;" +
-        " the keys are refused when that window is the agent's own terminal or chat window (TargetIsAgentHost)." +
+        " the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost)." +
         GuardNote;
 
     private const string GuardNote =

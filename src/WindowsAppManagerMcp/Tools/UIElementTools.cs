@@ -51,7 +51,7 @@ public class UIElementTools
         "dialogs, which are windows of their own, and the popups of a WebView2 child process; front first, an element there has " +
         "windowHandle) or 'desktop' (every visible window front first, at most 40; handle and window may then be left out). " +
         "Windows and popups of apps the target policy denies are never searched (a named one is refused), and the agent's own " +
-        "terminal only as the window named, not its popups (windowsExcluded counts them). Default: windowAndPopups when " +
+        "host only as the window named, not its popups (windowsExcluded counts them). Default: windowAndPopups when " +
         "the window or one of its popups is in front, else window. One timeoutMs and maxResults cover all the windows. With " +
         "withinRef, only 'window'.";
 
@@ -59,17 +59,21 @@ public class UIElementTools
     /// The scope of the tools that name one element by find_ui_elements' criteria in a window they require (read_element_text,
     /// element_action): the same search as find_ui_elements' scope, on ElementQuery.Scope. These tools take no withinRef.
     /// </summary>
-    internal const string CriteriaScopeDescription = CriteriaScope + ".";
+    internal const string CriteriaScopeDescription = CriteriaScope + ", else window. Not with ref.";
 
-    /// <summary><see cref="CriteriaScopeDescription"/> for wait_for_element, which also takes withinRef.</summary>
-    internal const string WithinRefCriteriaScopeDescription = CriteriaScope + "; with withinRef, only 'window'.";
+    /// <summary>
+    /// <see cref="CriteriaScopeDescription"/> for wait_for_element, which also takes withinRef, and whose gone searches the
+    /// window's popups whatever is in front (ElementWaitService).
+    /// </summary>
+    internal const string WithinRefCriteriaScopeDescription =
+        CriteriaScope + " (for gone: always), else window. Not with ref; with withinRef, only 'window'.";
 
     private const string CriteriaScope =
         "With the criteria: which windows they search, as find_ui_elements' scope: 'window' (the window alone), " +
         "'windowAndPopups' (also its open menus, dropdowns, flyouts and dialogs, which are windows of their own) or 'desktop' " +
         "(every visible window too, the named one first, at most 40). Windows and popups of apps the target policy denies are " +
-        "left out, and so are the agent's own terminal's (element_action keeps its popups). Default: windowAndPopups when the " +
-        "window or one of its popups is in front, else window. Not with ref";
+        "left out, and so are those of the agent's own host (element_action keeps its popups). Default: windowAndPopups when " +
+        "the window or one of its popups is in front";
 
     /// <summary>
     /// The InvalidArguments message for a scope that cannot apply: with a ref (it names its element), or a scope other than
@@ -103,7 +107,7 @@ public class UIElementTools
         "found has virtualized=true and a ref (one not realized has no bounds or clickPoint); act on it after element_action " +
         "realize, which makes it real and scrolls it into view. The result's virtualized lists the lists with refs; a lookup " +
         "that stops early is truncated (Timeout, PartsSkipped). Cost: one more search for the lists, " +
-        "then one provider call per item (the application scans its whole list in its own process), within timeoutMs; runs " +
+        "then one provider call per item, within timeoutMs; runs " +
         "only when the normal search finished with fewer than maxResults matches.";
 
     private const int DefaultMaxResults = 20;
@@ -151,7 +155,7 @@ public class UIElementTools
         int? minWidth = null,
         [Description("Minimum element height in pixels (optional). Shorter elements and elements without bounds are left out, but tall enough elements inside them are still returned.")]
         int? minHeight = null,
-        [Description("Timeout in milliseconds (default: 10000, max: 30000). When it passes, the elements read so far are returned with truncated=true.")]
+        [Description("Timeout in milliseconds (default: 10000, min: 1000, max: 30000). When it passes, the elements read so far are returned with truncated=true.")]
         int timeoutMs = DefaultTimeoutMs,
         [Description("Stop once this many elements are returned (default: 300, min: 1, max: 5000); then truncated=true and truncationReason MaxElements. The walk reads breadth first, so the levels nearest the window are kept; narrow it with controlTypes, interactableOnly or a smaller maxDepth rather than raising this.")]
         int maxElements = DefaultMaxElements,

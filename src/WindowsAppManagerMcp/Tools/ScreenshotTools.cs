@@ -200,8 +200,8 @@ public class ScreenshotTools
         long? handle = null,
         [Description(WindowTargeting.WindowDescription)]
         WindowSelector? window = null,
-        [Description("An element ref (from capture_with_elements, find_ui_elements, get_ui_elements, ...): crop the window's image to that element, " +
-                     "read again now, plus padding, clipped to the window. The window is the ref's own; a handle or window that names another fails " +
+        [Description("The element to crop the image to: a ref from an earlier read, such as 'w4120035e17' (its bounds are read again now), " +
+                     "plus padding, clipped to the window. The window is the ref's own; a handle or window that names another fails " +
                      "with InvalidArguments. ElementStale or AmbiguousElement when the element is gone, ElementOffscreen when it is offscreen or outside the window.")]
         string? @ref = null,
         [Description("Pixels of the window kept around the ref's element on every side (0-500). Default: 8. Only with ref.")]
@@ -308,7 +308,6 @@ public class ScreenshotTools
                  "The metadata's legend has one line per mark: '[ref] Type 'Name' #automationId center=(x,y)', center in pixels of the returned image. " +
                  "By default only elements with an action pattern (button, edit, check box, list item, menu item, ...) are marked, at most 80; " +
                  "detail 'full' adds the elements list with imageBounds and screenBounds. " +
-                 "Boxes are color-coded by type: green=buttons, blue=text inputs, orange=checkboxes, purple=lists, cyan=links, red=menus. " +
                  "The image is returned even when the UI Automation walk fails or times out: " +
                  "then elementsError and elementsErrorCode say why, and truncated is true whenever the element list is incomplete. " +
                  "A window is refused as in capture_window (WindowMinimized unless restoreIfMinimized, WindowHidden, Cloaked, TargetDeniedByPolicy). " +

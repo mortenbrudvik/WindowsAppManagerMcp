@@ -19,10 +19,10 @@ public partial class WindowFinderTools
     [McpServerTool(Name = "wait_for_window", Title = "Wait for Window", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Wait on the server until a window condition holds, instead of sleeping or calling find_windows again and again: " +
                  "after a launch, a click that opens a dialog, a close or a save. window is a selector as in find_windows (an untitled " +
-                 "dialog needs className or includeUntitled). condition: 'exists' (default: a matching window is open, minimized " +
-                 "included), 'gone' (none is open any more; by handle: it closed), 'foreground' (a matching window is in front), " +
-                 "'visible' (on screen: not minimized, hidden or cloaked), 'title_changed' (the one window named has a title other " +
-                 "than previousTitle) or 'input_idle' (best effort: the window is not hung and its process reports input idle, which " +
+                 "dialog needs className or includeUntitled). condition: exists (default: a matching window is open, minimized " +
+                 "included), gone (none is open any more; by handle: it closed), foreground (a matching window is in front), " +
+                 "visible (on screen: not minimized, hidden or cloaked), title_changed (the one window named has a title other " +
+                 "than previousTitle) or input_idle (best effort: the window is not hung and its process reports input idle, which " +
                  "Windows answers only once per process, right after it starts, and never for console programs; Store apps and " +
                  "programs started through a launcher are checked on the window's own process, not the launcher's). The condition " +
                  "must hold for stableMs, which skips splash screens and dialogs that close and reopen. To catch the window your " +
@@ -37,7 +37,7 @@ public partial class WindowFinderTools
                      "or includeUntitled for untitled dialogs; index picks one of the windows that count, front to back; handle plus " +
                      "filters waits for that window to match them, e.g. {\"handle\": 1706796, \"titleContains\": \"report.txt\"})")]
         WindowSelector window,
-        [Description("What to wait for: 'exists' (default), 'gone', 'foreground', 'visible', 'title_changed' or 'input_idle'")]
+        [Description("What to wait for: exists (default), gone, foreground, visible, title_changed or input_idle")]
         WindowWaitCondition condition = WindowWaitCondition.Exists,
         [Description("Only count windows that open, or are shown, after this call starts (default: false). A window your last action " +
                      "already opened is missed; prefer excludeHandles. Not with gone, title_changed or window.handle")]
@@ -48,9 +48,9 @@ public partial class WindowFinderTools
         [Description("title_changed only: the title you read before acting (default: the title when the wait starts, which misses a " +
                      "change that already happened)")]
         string? previousTitle = null,
-        [Description("How long to wait, 0-60000 ms (default: 10000); 0 checks once")]
+        [Description("How long to wait in milliseconds (default: 10000, min: 0, max: 60000); 0 checks once")]
         int timeoutMs = 10_000,
-        [Description("How long the condition must hold before it counts, 0-10000 ms (default: 300; at most timeoutMs)")]
+        [Description("How long the condition must hold before it counts, in milliseconds (default: 300, min: 0, max: 10000; at most timeoutMs)")]
         int stableMs = 300,
         IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken cancellationToken = default)
