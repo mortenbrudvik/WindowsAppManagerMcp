@@ -69,8 +69,8 @@ public partial class ElementActionTools
         [Description("What to do; the tool description says what each action does.")]
         ElementActionKind action,
         [Description("The element: a ref from an earlier read, such as 'w4120035e17'. A ref moved to a re-created element " +
-                     "(refMoved) is refused with ElementStale until a read returns that element again. Or leave it out and pass " +
-                     "handle or window with element criteria (menu_path: or with none, to start from the window).")]
+                     "(refMoved) is refused with ElementStale until find_ui_elements returns that element again. Or leave it out and " +
+                     "pass handle or window with element criteria (menu_path: or with none, to start from the window).")]
         string? @ref = null,
         [Description("Window handle (as integer) whose element the criteria name. Pass handle or window, with criteria, instead of ref.")]
         long? handle = null,
