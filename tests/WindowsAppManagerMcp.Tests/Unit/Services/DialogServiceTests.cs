@@ -259,6 +259,34 @@ public class DialogServiceTests
     }
 
     [Fact]
+    public async Task Respond_ToADialogWithMoreButtonsThanAreRead_ReturnsButtonsTruncated_ReadOrRefused()
+    {
+        // Arrange - a dialog with more buttons than a read lists
+        _buttons = Enumerable.Range(0, DialogService.MaxButtons + 3).Select(i => Element($"w1e{i}", $"Option {i}", $"opt{i}", "Button")).ToList();
+
+        // Act
+        var read = await RespondAsync(null);
+        var refused = await RespondAsync("Option 22");
+
+        // Assert - the button asked for may be one that was not read: the result says more exist
+        read.Success.Should().BeTrue(read.Error);
+        read.Buttons.Should().HaveCount(DialogService.MaxButtons);
+        read.ButtonsTruncated.Should().BeTrue();
+        refused.ErrorCode.Should().Be(nameof(UIElementErrorCode.ElementNotFound));
+        refused.ButtonsTruncated.Should().BeTrue();
+        _acted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Respond_ToADialogWhoseButtonsWereAllRead_LeavesButtonsTruncatedOut()
+    {
+        var result = await RespondAsync(null);
+
+        result.Buttons.Should().HaveCount(3);
+        result.ButtonsTruncated.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Respond_WithTwoButtonsOfTheText_IsAmbiguous()
     {
         _buttons = [Element("w1e1", "OK", "a", "Button"), Element("w1e2", "OK", "b", "Button")];
