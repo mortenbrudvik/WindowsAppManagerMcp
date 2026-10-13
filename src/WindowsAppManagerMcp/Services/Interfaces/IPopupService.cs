@@ -82,8 +82,11 @@ public interface IPopupService
     /// <paramref name="timeout"/>; a popup that does not respond, or that closed meanwhile, is returned without a ref.
     /// A popup of the agent's host or of an app the target policy denies is neither listed nor read, and is counted
     /// (PopupsExcluded). Fails with InvalidHandle for a handle that is no window, with WindowNotFound when
-    /// <paramref name="window"/> is zero and no window is in front, and with TargetDeniedByPolicy for a window named whose
-    /// app the policy denies.
+    /// <paramref name="window"/> is zero and no window is in front, and with TargetDeniedByPolicy for a window whose app the
+    /// policy denies, named or not. When <paramref name="window"/> is zero, the window in front is chosen as get_desktop_state
+    /// chooses it: the call fails with TargetIsAgentHost when the window in front (or the app window that owns it) is the
+    /// agent's host, and with TargetDeniedByPolicy when the policy denies either of them or cannot name its process; nothing
+    /// of it, not even its title, is read or returned.
     /// </summary>
     /// <param name="window">The app window, or zero for the app in front: the window that owns the foreground window
     /// (WindowOwnerChain.TopOwner), so a dialog in front is listed as a popup of its app.</param>
