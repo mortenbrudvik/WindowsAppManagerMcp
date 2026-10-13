@@ -62,6 +62,25 @@ public class DesktopStateToolsTests
     }
 
     [Fact]
+    public async Task ForegroundAlone_NamesNoWindow_SoTheWindowInFrontIsChosenAsWithoutOne()
+    {
+        // {"foreground": true} is whatever window is in front, not a window the agent chose: the rules for the window in
+        // front apply (never the agent's own host, never a denied app), not those of a window named
+        await CreateSut().GetDesktopState(window: new WindowSelector { Foreground = true });
+
+        _request!.Window.Should().BeNull();
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ForegroundWithAFilter_NamesTheWindowItResolvesTo()
+    {
+        await CreateSut().GetDesktopState(window: new WindowSelector { Foreground = true, ProcessName = "notepad" });
+
+        _request!.Window.Should().Be(Notepad);
+    }
+
+    [Fact]
     public async Task TheNumbers_AreClampedToTheirRanges()
     {
         await CreateSut().GetDesktopState(maxElements: 100_000, maxWindows: 0, screenshotMaxLongEdge: 10, timeoutMs: 999_999);

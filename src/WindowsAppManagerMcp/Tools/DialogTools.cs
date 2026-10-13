@@ -127,7 +127,11 @@ public class DialogTools
         return result;
     }
 
-    /// <summary>The window named (zero for the one in front), with allowHostTarget only for a window named by its handle.</summary>
+    /// <summary>
+    /// The window named (zero for the one in front), with allowHostTarget only for a window named by its handle. A bare
+    /// <c>{"foreground": true}</c> is whatever window is in front, not a dialog the agent read, so it names none: zero, and
+    /// the services then refuse a press other than cancel, and file_dialog, as without handle or window.
+    /// </summary>
     private nint Target(long? handle, WindowSelector? window, bool allowHostTarget)
     {
         if (allowHostTarget && handle == null && window is not { Handle: not null })
@@ -135,6 +139,11 @@ public class DialogTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "allowHostTarget lifts the guard on the agent's own terminal or chat window only for a window named by its handle " +
                 "(handle, or window.handle), not for the dialog in front or a selector that finds windows by name. Nothing was done.");
+        }
+
+        if (handle == null && WindowTargeting.IsBareForeground(window))
+        {
+            return nint.Zero;
         }
 
         return WindowTargeting.Optional(_windowService, handle, window) ?? nint.Zero;

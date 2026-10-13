@@ -83,7 +83,11 @@ public class DesktopStateTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, unavailable + " Nothing was read.");
         }
 
-        var target = WindowTargeting.Optional(_windowService, handle, window);
+        // {"foreground": true} alone is whatever window is in front, not a window the agent chose: it is read by the rules of
+        // the window in front (never the agent's own host), not by those of a window named
+        var target = handle == null && WindowTargeting.IsBareForeground(window)
+            ? null
+            : WindowTargeting.Optional(_windowService, handle, window);
         var snapshot = await _state.GetStateAsync(Request(target, sections, maxElements, interactableOnly, ScopeOf(scope), maxWindows,
             screenshotMaxLongEdge, timeoutMs), cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();

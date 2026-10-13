@@ -49,6 +49,43 @@ public class DialogToolsTests
         _respond.Timeout.Should().Be(TimeSpan.FromSeconds(30));
     }
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("6")]
+    [InlineData("Ersetzen")]
+    public async Task RespondToDialog_PressingWithForegroundAlone_IsRefusedAsWithoutAWindow_AndNothingIsReadOrPressed(string button)
+    {
+        // {"foreground": true} is whatever window is in front, not the dialog the agent read: a prompt that came up meanwhile
+        // would be answered blind. The real service, with nothing behind it that may be touched
+        var sut = new DialogTools(Untouched.Dialogs(), _fileDialogs.Object, _windows.Object);
+
+        var result = await sut.RespondToDialog(button, window: new WindowSelector { Foreground = true });
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("{\"foreground\": true} alone names none").And.Contain("Nothing was read or pressed");
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("cancel")]
+    public async Task RespondToDialog_ReadingOrCancellingWithForegroundAlone_GoesToTheDialogInFront_AsWithoutAWindow(string? button)
+    {
+        await CreateSut().RespondToDialog(button, window: new WindowSelector { Foreground = true });
+
+        _respond!.Window.Should().Be(nint.Zero);
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RespondToDialog_WithForegroundAndAFilter_NamesTheWindowItResolvesTo()
+    {
+        await CreateSut().RespondToDialog("yes", window: new WindowSelector { Foreground = true, ProcessName = "notepad" });
+
+        _respond!.Window.Should().Be((nint)0x4400);
+    }
+
     [Fact]
     public async Task RespondToDialog_WithoutAButton_AsksOnlyToReadTheDialog()
     {
@@ -87,6 +124,36 @@ public class DialogToolsTests
     }
 
     [Theory]
+    [InlineData(FileDialogAction.Save)]
+    [InlineData(FileDialogAction.Open)]
+    public async Task FileDialog_WithForegroundAlone_IsRefusedAsWithoutAWindow_AndNothingIsTouched(FileDialogAction action)
+    {
+        // The file dialog in front may be another application's: {"foreground": true} names it no more than leaving the
+        // window out does. The real service, with nothing behind it that may be touched
+        var path = action == FileDialogAction.Open
+            ? typeof(DialogToolsTests).Assembly.Location
+            : Path.Combine(Path.GetTempPath(), $"wam-{Guid.NewGuid():N}.txt");
+        var sut = new DialogTools(_dialogs.Object, Untouched.FileDialogs(), _windows.Object);
+
+        var result = await sut.FileDialog(path, action, window: new WindowSelector { Foreground = true });
+
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        result.Error.Should().Contain("{\"foreground\": true} alone names none").And.Contain("Nothing was done");
+        _windows.Verify(w => w.ResolveWindow(It.IsAny<WindowSelector>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task FileDialog_WithForegroundAndAFilter_NamesTheWindowItResolvesTo()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"wam-{Guid.NewGuid():N}.txt");
+
+        await CreateSut().FileDialog(path, FileDialogAction.Save, window: new WindowSelector { Foreground = true, TitleContains = "Notepad" });
+
+        _complete!.Window.Should().Be((nint)0x4400);
+    }
+
+    [Theory]
     [InlineData(@"\\server\share\report.txt")]
     [InlineData(@"report.txt")]
     [InlineData(@"C:\docs\*.txt")]
@@ -105,5 +172,26 @@ public class DialogToolsTests
             FileDialogAction.Open));
 
         error.Message.Should().Contain("does not exist");
+    }
+
+    /// <summary>The real services over strict mocks: any read, press or pause check they make fails the test.</summary>
+    private static class Untouched
+    {
+        public static DialogService Dialogs() => new(
+            new Mock<INativeWindowWrapper>(MockBehavior.Strict).Object,
+            new Mock<IPopupService>(MockBehavior.Strict).Object,
+            new Mock<IElementSearchService>(MockBehavior.Strict).Object,
+            new Mock<IElementActionService>(MockBehavior.Strict).Object,
+            new Mock<IInputTargetGuard>(MockBehavior.Strict).Object,
+            new Mock<IInputSession>(MockBehavior.Strict).Object);
+
+        public static FileDialogService FileDialogs() => new(
+            new Mock<IDialogService>(MockBehavior.Strict).Object,
+            new Mock<IElementSearchService>(MockBehavior.Strict).Object,
+            new Mock<IElementActionService>(MockBehavior.Strict).Object,
+            new Mock<IPopupService>(MockBehavior.Strict).Object,
+            new Mock<INativeWindowWrapper>(MockBehavior.Strict).Object,
+            new Mock<IInputTargetGuard>(MockBehavior.Strict).Object,
+            new Mock<IInputSession>(MockBehavior.Strict).Object);
     }
 }
