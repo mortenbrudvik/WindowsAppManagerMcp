@@ -62,6 +62,7 @@ public class ElementReadToolsTests
         query.ControlTypes.Should().Equal("Document", "Edit");
         query.VisibleOnly.Should().BeTrue();
         query.MaxResults.Should().Be(5, "enough to list the candidates when several match");
+        query.WithinRef.Should().BeNull("read_element_text takes no withinRef: only the ref read can be moved, never a search root");
     }
 
     [Fact]
