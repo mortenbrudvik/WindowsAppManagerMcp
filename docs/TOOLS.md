@@ -251,6 +251,8 @@ The launch, layout and window batch tools run inside the input gate (see [Window
 
 A client that sends a progress token with the call (`_meta.progressToken`) gets `notifications/progress` messages before the result: `progress` counts what is done and only grows, `total` is the number of items when it is known (not for a UI Automation walk), and `message` says what was just done. A client may use them to show progress or to keep a long call from timing out.
 
+A `timeoutMs` outside the range its tool's section gives is clamped to that range, without an error, by the [UI Automation](#ui-automation) tools other than wait_for_element, by [capture_with_elements](#capture_with_elements) and by the [Browser Reading](#browser-reading) tools; [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) and [close_application](#close_application) refuse it with `InvalidArguments` and do nothing.
+
 ---
 
 ## Toolsets

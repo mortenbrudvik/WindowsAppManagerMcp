@@ -68,23 +68,23 @@ public class ToolPayloadBudgetTests
 
         // Screenshot: metadata only; the image is checked against ImageTokenBudget
         ["list_screens"] = 200, // 116
-        ["take_screenshot"] = 150, // 125
-        ["capture_region"] = 150, // 112
-        ["capture_window"] = 150, // 120
-        ["capture_with_elements"] = 3_500, // 2,312: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full)
+        ["take_screenshot"] = 150, // 131
+        ["capture_region"] = 150, // 118
+        ["capture_window"] = 150, // 126
+        ["capture_with_elements"] = 2_150, // 1,410: the legend of the typical tree's 120 elements, one line each (roadmap M3.11; was 6,544 with the elements list, now detail full)
 
         // UI Automation
         ["get_desktop_state"] = 3_200, // 2,129: 15 window rows, the focus, 2 popups and 80 element lines with refs (roadmap M3.12)
         ["get_ui_elements"] = 8_500, // 6,000: 120 elements at the default depth, each with its ref (roadmap M3.4; M6 aims for at most 4,000)
-        ["find_ui_elements"] = 250, // 165: two Save buttons with refs and click points (roadmap M3.4)
+        ["find_ui_elements"] = 250, // 170: two Save buttons with refs and click points (roadmap M3.4)
         ["read_element_text"] = 1_200, // 802: the first page of a 3,000-character e-mail in the reading pane (roadmap M3.9)
         ["read_table"] = 1_000, // 643: the first 50 of Task Manager's processes, 5 columns with headers (roadmap M3.9)
         ["element_action"] = 150, // 99: a set_value with the state before and after (roadmap M3.6)
-        ["respond_to_dialog"] = 220, // 144: a save prompt's text and three buttons with refs, the one pressed (roadmap M3.5)
+        ["respond_to_dialog"] = 220, // 141: a save prompt's text and three buttons with refs, the one pressed (roadmap M3.5)
         ["file_dialog"] = 100, // 49: completed, the path typed (roadmap M3.14)
         ["get_focused_element"] = 250, // 140
         ["get_element_at_point"] = 400, // 245: the element and 3 ancestors
-        ["get_active_popups"] = 300, // a context menu and a Save As dialog with refs (roadmap M3.5)
+        ["get_active_popups"] = 300, // 152: a context menu and a Save As dialog with refs (roadmap M3.5)
         ["wait_for_element"] = 140, // 92: the Save button that became enabled, with its ref (roadmap M3.8)
 
         // Browser Reading
@@ -107,7 +107,7 @@ public class ToolPayloadBudgetTests
         ["set_clipboard"] = 100, // 19
 
         // Input Control
-        ["get_control_status"] = 150, // 72
+        ["get_control_status"] = 150, // 65
         ["resume_input"] = 100, // 14
         ["release_all_input"] = 100, // 21
 
@@ -125,17 +125,17 @@ public class ToolPayloadBudgetTests
         ["delete_layout"] = 100, // 4
 
         // Server Info: the default deny list, five host processes, two monitors
-        ["get_server_info"] = 850, // 598
+        ["get_server_info"] = 850, // 634
     };
 
     /// <summary>
     /// The token budget of the whole tools/list result (every tool's name, title, description, schemas and annotations), as
     /// clients that load every tool up front pay it for the whole session. A ratchet, not a margin: it sits just above the
-    /// measured size (51,286 tokens, 205,144 bytes for 64 tools, October 2026), so every addition to the surface is a decision. When a change
+    /// measured size (51,364 tokens, 205,453 bytes for 64 tools, October 2026), so every addition to the surface is a decision. When a change
     /// adds to the surface on purpose, raise it in the same change by what the failure message measures; when a change
     /// trims descriptions, lower it.
     /// </summary>
-    public const int ToolListTokenBudget = 52_000;
+    public const int ToolListTokenBudget = 51_400;
 
     public static TheoryData<string> ServedTools() => EveryToolContractTests.ServedTools();
 

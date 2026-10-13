@@ -2294,23 +2294,22 @@ fail it after 5 seconds instead of blocking every input call.
 monitors, 15 windows, 40 processes, a 120-element UI Automation tree, a 15,000-character article, five layout
 presets) and holds it to a per-tool token budget. Text is estimated at 4 UTF-8 bytes per token; a capture's
 image at width × height / 750 tokens, at most 3,300 (the default 1568-pixel long edge). Each budget is about
-one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it.
-capture_with_elements' budget is an exception: it was set for a larger legend (2,312 tokens). Every typical result
-over 300 tokens, and tools/list itself, measured in October 2026:
+one and a half times the measured size, at least 100 tokens; the measured size is in a comment next to it. Every
+typical result over 300 tokens, and tools/list itself, measured in October 2026:
 
 | Tool | Typical result | Tokens | Budget |
 |------|----------------|-------:|-------:|
 | `get_ui_elements` | 120 elements at the default depth, each with its ref | 6,000 | 8,500 |
 | `get_browser_content` | A 15,000-character article | 3,815 | 6,000 |
 | `get_desktop_state` | 15 window rows, the focused element, 2 popups and 80 element lines with refs (roadmap M3.12) | 2,129 | 3,200 |
-| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 1,410 | 3,500 |
+| `capture_with_elements` | Metadata with the legend of 120 marks, one line each (the image is budgeted separately; roadmap M3.11) | 1,410 | 2,150 |
 | `list_processes` | 40 processes | 1,328 | 2,000 |
 | `find_windows`, `get_all_windows` | 15 windows, each with `visibleBounds` | 1,213 | 1,850 |
 | `read_element_text` | The first page of a 3,000-character e-mail | 802 | 1,200 |
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 205,722 bytes (`ToolList_StaysWithinItsBudget`) | 51,431 | 52,000 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 205,453 bytes (`ToolList_StaysWithinItsBudget`) | 51,364 | 51,400 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
