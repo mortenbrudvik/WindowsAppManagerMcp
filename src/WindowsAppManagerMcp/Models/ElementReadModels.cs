@@ -104,8 +104,8 @@ public sealed record ElementTableRequest(
 /// <param name="TextSkipped">True when the page ends inside one of the provider's characters that was longer than the page
 /// could hold (a line break counted as one character, with maxLength 1): the rest of that character is not returned, and
 /// nextOffset is after it. Left out otherwise.</param>
-/// <param name="RefMoved">True when the ref (or the criteria's withinRef) was moved to a re-created element that alone fits
-/// its description (the element it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
+/// <param name="RefMoved">True when the ref read was moved to a re-created element that alone fits its description (the
+/// element it was given for is gone), with <paramref name="Warning"/>; left out otherwise.</param>
 /// <param name="Warning">Why the text needs a check although it was read: the ref moved.</param>
 public sealed record ElementTextResult(
     bool Success,

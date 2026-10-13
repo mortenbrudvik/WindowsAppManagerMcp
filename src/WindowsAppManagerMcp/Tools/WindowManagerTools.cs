@@ -258,27 +258,22 @@ public class WindowManagerTools
 
     /// <summary>
     /// What the agent must do about a prompt a close left open. Every PromptShown text and description carries it: not
-    /// every client loads the skill, and answering 'Save changes?' with No or Don't Save destroys the user's work.
+    /// every client loads the skill, and answering 'Save changes?' with No or Don't Save destroys the user's work. Once the
+    /// user chose, the prompt is answered by its own handle, since respond_to_dialog refuses a press asked of an owned window
+    /// (which it takes for a dialog) that a modal dialog of its own disables (BlockedByModal); an in-window dialog has no
+    /// window of its own, so its button is pressed with element_action.
     /// </summary>
     internal const string PromptAdvice =
         "Nothing was answered. Do not answer it yourself: show the user the prompt's text and buttons and ask which to " +
-        "choose (No or Don't Save discards their unsaved work); answer it with the element and input tools only as the user says.";
-
-    /// <summary>
-    /// How the descriptions tell the agent to answer the prompt once the user chose: by the prompt's own handle, since
-    /// respond_to_dialog refuses a press asked of an owned window (which it takes for a dialog) that a modal dialog of its
-    /// own disables (BlockedByModal), and an in-window dialog has no window of its own, so its button is pressed with
-    /// element_action.
-    /// </summary>
-    private const string PromptAnswer =
-        "Answer with respond_to_dialog, handle: prompt.handle (inWindowDialog: element_action on its button).";
+        "choose (No or Don't Save discards their unsaved work), then answer it as they say with respond_to_dialog, handle: " +
+        "prompt.handle (inWindowDialog, which has no window of its own: element_action on its button).";
 
     private const string StatusDescription =
         "status: closed; hidden (the app hid the window it showed instead of closing it, for example into the notification " +
         "area; it still runs: use close_application or kill_process to end it); stillOpen (errorCode StillOpen: the app is " +
         "busy or ignores the request, or the window was already hidden or on another virtual desktop); promptShown (errorCode " +
         "PromptShown: a prompt such as 'Save changes?' waits; prompt gives its handle, title, className, text, buttons and " +
-        "kind (inWindowDialog: drawn inside the window). " + PromptAdvice + " " + PromptAnswer + "); requested " +
+        "kind (inWindowDialog: drawn inside the window). " + PromptAdvice + "); requested " +
         "(waitMs 0: sent, not checked). success is true for closed, hidden and requested.";
 
     [McpServerTool(Name = "close_window", Title = "Close Window", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
@@ -526,7 +521,7 @@ public class WindowManagerTools
                  "the processes ended, " +
                  "runningProcessIds lists those that keep running, for example in the notification area or with otherDesktopWindows: its " +
                  "windows on other virtual desktops, which are not closed), promptShown (errorCode " +
-                 "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + " " + PromptAnswer + ") or stillOpen " +
+                 "PromptShown, promptDetected, and prompt with its handle, title, text and buttons. " + PromptAdvice + ") or stillOpen " +
                  "(errorCode StillOpen), with windows (each window's status) and remainingWindows; timeoutMs 0 only sends (status " +
                  "requested). Refused before anything is sent, with nothing closed: NoClosableWindow (no such window), " +
                  "ProtectedWindow (the agent's own host or the desktop shell; there is no force), TargetDeniedByPolicy, InvalidHandle, " +

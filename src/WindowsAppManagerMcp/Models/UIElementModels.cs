@@ -246,7 +246,14 @@ public enum UIElementErrorCode
     /// read_table, wait_for_element and get_active_popups refuse it as the captures do, before any warm-up or read. The same
     /// name as the input guard's code; no tool argument changes it.
     /// </summary>
-    TargetDeniedByPolicy = 24
+    TargetDeniedByPolicy = 24,
+
+    /// <summary>
+    /// get_active_popups without a window named: the window in front is the agent's own host (its terminal, editor or chat
+    /// app), which is not read unless it is named, as get_desktop_state does not read it. Nothing was listed or read. The
+    /// same name as the input guard's code.
+    /// </summary>
+    TargetIsAgentHost = 25
 }
 
 /// <summary>

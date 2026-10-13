@@ -54,8 +54,8 @@ public enum ClosePromptKind
 }
 
 /// <summary>
-/// A prompt that keeps a window from closing, such as "Do you want to save changes?". The agent answers it with the
-/// element and input tools, or asks the user.
+/// A prompt that keeps a window from closing, such as "Do you want to save changes?". The agent asks the user which button
+/// to choose, then answers it with respond_to_dialog by its <see cref="Handle"/> (an in-window dialog with element_action).
 /// </summary>
 /// <param name="Handle">The prompt's window; for an <see cref="ClosePromptKind.InWindowDialog"/> without a window of its own, the window that was closed.</param>
 /// <param name="Title">Its title (UI Automation name for an in-window dialog).</param>

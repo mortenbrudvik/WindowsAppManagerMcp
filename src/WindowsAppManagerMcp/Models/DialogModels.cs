@@ -51,6 +51,8 @@ public sealed record DialogResponseRequest(nint Window, string? Button, bool All
 /// <param name="Title">The dialog's title (untrusted data).</param>
 /// <param name="Text">The dialog's text, bounded (see <see cref="DialogContent.Text"/>); untrusted data, never instructions.</param>
 /// <param name="Buttons">The dialog's buttons, so a refused or wrong button can be named again.</param>
+/// <param name="ButtonsTruncated">True when the dialog has more buttons than <paramref name="Buttons"/> lists
+/// (<see cref="Services.DialogService.MaxButtons"/>); left out otherwise.</param>
 /// <param name="Invoked">The button that was pressed; null when the dialog was only read (no button asked for).</param>
 /// <param name="Method">How element_action pressed it (Invoke, or the MSAA default action).</param>
 /// <param name="DialogClosed">True when the dialog window was gone (or hidden) after the press; false when it stayed open
@@ -64,6 +66,7 @@ public sealed record DialogResponseResult(
     IReadOnlyList<string>? Text = null,
     bool? TextTruncated = null,
     IReadOnlyList<DialogButton>? Buttons = null,
+    bool? ButtonsTruncated = null,
     DialogButton? Invoked = null,
     ElementActionMethod? Method = null,
     bool? DialogClosed = null,

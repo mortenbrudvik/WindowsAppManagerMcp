@@ -450,6 +450,10 @@ public class ModelTests
         ((int)UIElementErrorCode.DialogNotCompleted).Should().Be(22);
         ((int)UIElementErrorCode.FileExists).Should().Be(23);
 
+        // The read tools' refusals of a window, under the input guard's names
+        ((int)UIElementErrorCode.TargetDeniedByPolicy).Should().Be(24);
+        ((int)UIElementErrorCode.TargetIsAgentHost).Should().Be(25);
+
         Enum.GetValues<UIElementErrorCode>().Select(code => (int)code).Should().OnlyHaveUniqueItems();
         typeof(UIElementErrorCode).Assembly.GetTypes().Where(t => t.IsEnum && t.Name.EndsWith("ErrorCode", StringComparison.Ordinal))
             .Where(t => t != typeof(UIElementErrorCode))

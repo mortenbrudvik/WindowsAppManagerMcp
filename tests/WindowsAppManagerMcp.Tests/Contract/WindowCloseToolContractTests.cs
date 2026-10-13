@@ -101,7 +101,8 @@ public class WindowCloseToolContractTests
         promptJson.GetProperty("text").GetString().Should().Be("Do you want to save changes to Untitled?");
         promptJson.GetProperty("buttons").EnumerateArray().Select(b => b.GetString()).Should().Equal("Save", "Don't Save");
         promptJson.GetProperty("kind").GetString().Should().Be("modalPopup");
-        payload.GetProperty("error").GetString().Should().Contain("Do not answer it yourself").And.Contain("ask which to choose");
+        payload.GetProperty("error").GetString().Should().Contain("Do not answer it yourself").And.Contain("ask which to choose")
+            .And.Contain("respond_to_dialog, handle: prompt.handle");
     }
 
     [Theory]

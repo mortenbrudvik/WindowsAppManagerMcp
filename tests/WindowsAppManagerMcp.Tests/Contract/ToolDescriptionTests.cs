@@ -196,6 +196,22 @@ public class ToolDescriptionTests
     }
 
     [Fact]
+    public void FindWindowsDescription_SaysForceOnTheHostNeedsConfirmWhenTheClientCannotAsk()
+    {
+        // Since M2.F1 force alone no longer closes a protected window: the user answers, or confirm stands in when the
+        // client cannot ask (close_window's ConfirmationRequired)
+        ServerToolCatalog.Description("find_windows").Should().Contain("unless force=true").And.Contain("confirm=true");
+    }
+
+    [Fact]
+    public void ExpectWindowDescription_SaysReuseExistingMatchesItToo()
+    {
+        // The hint is not only the window wait's: reuseExisting reuses only an open window that matches it, and a web address
+        // can only be reused by its titleContains
+        ParameterDescription("launch_application", "expectWindow").Should().Contain("With reuseExisting").And.Contain("titleContains");
+    }
+
+    [Fact]
     public void ControlTypesDescription_SaysUnknownNamesFail()
     {
         ParameterDescription("get_ui_elements", "controlTypes").Should().Contain("InvalidControlType");

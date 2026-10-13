@@ -438,6 +438,7 @@ public sealed class DialogService : IDialogService
             Text = content?.Text,
             TextTruncated = content?.TextTruncated,
             Buttons = content?.Buttons,
+            ButtonsTruncated = content?.ButtonsTruncated,
             ElapsedMilliseconds = Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2)
         };
 

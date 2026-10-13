@@ -585,7 +585,7 @@ public class PopupServiceTests
     }
 
     [Fact]
-    public async Task GetActivePopups_WithoutAWindow_LeavesOutThePopupsOfADeniedAppInFront()
+    public async Task GetActivePopups_WithoutAWindow_RefusesADeniedAppInFront_WithNothingOfItListedOrRead()
     {
         // Arrange - a dialog of a password manager is in front
         var main = AddMain("Vault", processName: "KeePass");
@@ -597,17 +597,87 @@ public class PopupServiceTests
         // Act
         var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
 
-        // Assert
-        result.Success.Should().BeTrue();
-        result.WindowHandle.Should().Be((long)main);
-        result.Popups.Should().BeEmpty();
-        result.PopupsExcluded.Should().Be(1);
-        _tree.Reads.Should().BeEmpty();
-        _worker.Calls.Should().Be(0);
+        // Assert - get_desktop_state's rule for the window in front: named or not, a denied app is not read
+        AssertRefused(result, UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().Contain("KeePass").And.NotContain("Vault").And.NotContain("Edit Entry");
     }
 
     [Fact]
-    public async Task GetActivePopups_LeavesOutThePopupsOfTheAgentsHost_EvenWhenTheHostIsNamed()
+    public async Task GetActivePopups_WithoutAWindow_RefusesADeniedPromptInFront_ThatAnAllowedAppOwns()
+    {
+        // Arrange - Chrome owns a credential prompt of another process, and the prompt is in front
+        var main = AddMain("Inbox - Chrome", processName: "chrome");
+        var prompt = AddPopup("Windows Security", "Credential Dialog Xaml Host", processName: "CredentialUIBroker", style: WsCaption,
+            owner: main);
+        var menu = AddPopup("", PopupService.MenuClass, processName: "chrome");
+        _tree.WithWindow(prompt, new FakeUiaNode("Window", "Windows Security"));
+        _tree.WithWindow(menu, new FakeUiaNode("Menu", "Context"));
+        _desktop.SetForeground(prompt);
+        Deny("CredentialUIBroker");
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert - the window in front is checked itself, not only the app that owns it
+        AssertRefused(result, UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().NotContain("Windows Security");
+    }
+
+    [Fact]
+    public async Task GetActivePopups_WithoutAWindow_RefusesTheDeniedAppThatOwnsTheWindowInFront()
+    {
+        // Arrange - a print dialog of another process, owned by a password manager's window, is in front
+        var main = AddMain("Vault", processName: "KeePass");
+        var dialog = AddPopup("Print", "#32770", processName: "splwow64", style: WsCaption, owner: main);
+        _tree.WithWindow(dialog, new FakeUiaNode("Window", "Print"));
+        _desktop.SetForeground(dialog);
+        Deny("KeePass");
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert - the app whose popups would be listed is the denied one
+        AssertRefused(result, UIElementErrorCode.TargetDeniedByPolicy);
+        result.Error.Should().NotContain("Vault");
+    }
+
+    [Fact]
+    public async Task GetActivePopups_WithoutAWindow_RefusesTheAppInFront_WhenItsProcessCannotBeNamed_WhileThePolicyDeniesAnything()
+    {
+        // Arrange - the process exited, or cannot be read: it cannot be checked against the deny list
+        var main = AddMain("Editor", processId: 777);
+        var menu = AddPopup("", PopupService.MenuClass, processId: 777, owner: main);
+        _tree.WithWindow(menu, new FakeUiaNode("Menu", "Context"));
+        _desktop.Native.Setup(n => n.GetProcessName(777u)).Returns((string?)null);
+        _desktop.SetForeground(main);
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert
+        AssertRefused(result, UIElementErrorCode.TargetDeniedByPolicy);
+    }
+
+    [Fact]
+    public async Task GetActivePopups_WithoutAWindow_RefusesTheAgentsHostInFront_WithNothingOfItListedOrRead()
+    {
+        // Arrange - the agent's terminal is in front, with a context menu open
+        var terminal = AddMain("pwsh", processName: "WindowsTerminal");
+        var menu = AddPopup("", PopupService.MenuClass, processName: "WindowsTerminal", owner: terminal);
+        _tree.WithWindow(menu, new FakeUiaNode("Menu", "Context"));
+        _desktop.HostGuard.Setup(g => g.IsHostWindow(It.IsAny<nint>())).Returns(true);
+        _desktop.SetForeground(terminal);
+
+        // Act
+        var result = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        // Assert - get_desktop_state's rule: the host in front is not read unless it is named
+        AssertRefused(result, UIElementErrorCode.TargetIsAgentHost);
+        result.Error.Should().Contain("host").And.Contain("Name the window").And.NotContain("pwsh");
+    }
+
+    [Fact]
+    public async Task GetActivePopups_OfTheAgentsHostNamed_ReadsIt_ButLeavesOutItsPopups()
     {
         // Arrange - the agent's terminal, with a context menu open
         var terminal = AddMain("pwsh", processName: "WindowsTerminal");
@@ -617,18 +687,27 @@ public class PopupServiceTests
         _desktop.SetForeground(terminal);
 
         // Act
-        var unnamed = await CreateSut().GetActivePopupsAsync(0, TimeSpan.FromSeconds(5), CancellationToken.None);
-        var named = await CreateSut().GetActivePopupsAsync(terminal, TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await CreateSut().GetActivePopupsAsync(terminal, TimeSpan.FromSeconds(5), CancellationToken.None);
 
-        // Assert - the desktop scope's rule: a host window that was not itself named is not read
-        foreach (var result in new[] { unnamed, named })
-        {
-            result.Success.Should().BeTrue();
-            result.Popups.Should().BeEmpty();
-            result.PopupsExcluded.Should().Be(1);
-        }
-
+        // Assert - a popup is never named: the desktop scope's rule leaves the host's popups out
+        result.Success.Should().BeTrue();
+        result.WindowTitle.Should().Be("pwsh");
+        result.Popups.Should().BeEmpty();
+        result.PopupsExcluded.Should().Be(1);
         _tree.Reads.Should().BeEmpty();
+    }
+
+    /// <summary>A refusal of the app in front: none of its titles, popups or elements is returned or read.</summary>
+    private void AssertRefused(ActivePopupsResult result, UIElementErrorCode code)
+    {
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(code);
+        result.WindowTitle.Should().BeNull();
+        result.Popups.Should().BeNull();
+        result.PopupsExcluded.Should().BeNull();
+        _tree.Reads.Should().BeEmpty();
+        _worker.Calls.Should().Be(0);
+        Registry.Count.Should().Be(0);
     }
 
     [Fact]

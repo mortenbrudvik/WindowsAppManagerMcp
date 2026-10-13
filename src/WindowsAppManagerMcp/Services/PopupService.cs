@@ -422,6 +422,13 @@ public sealed class PopupService : IPopupService
             }
 
             window = WindowOwnerChain.TopOwner(_windows, foreground);
+
+            // The window in front that nobody named, as get_desktop_state chooses it: not the agent's host, nor an app the user
+            // denies (or whose process cannot be named), checked for the window in front and for the app that owns it
+            if (ForegroundRefusal(foreground, window, stopwatch) is { } refused)
+            {
+                return refused;
+            }
         }
 
         if (!_windows.IsWindow(window))
@@ -490,6 +497,36 @@ public sealed class PopupService : IPopupService
         // A copy: a read the worker abandoned may still write into the array
         return new ActivePopupsResult(true, (long)window, title, foregroundNow, Snapshot(listed), Elapsed(stopwatch),
             Truncated: truncated, PopupsExcluded: excluded > 0 ? excluded : null);
+    }
+
+    /// <summary>
+    /// Why the app in front, which nobody named, is not read (get_desktop_state's rule for the window in front): the window in
+    /// front, or the app window that owns it, is the agent's host (TargetIsAgentHost), or the target policy denies either of
+    /// them, or cannot name its process while it denies anything (TargetDeniedByPolicy, <see cref="UiaTargets.ReadVerdict"/>).
+    /// Null when the app is read. Only Win32 reads: nothing of the window, not even its title, is read or returned.
+    /// </summary>
+    private ActivePopupsResult? ForegroundRefusal(nint foreground, nint app, Stopwatch stopwatch)
+    {
+        if (IsHost(foreground) || IsHost(app))
+        {
+            return new ActivePopupsResult(false, (long)app, null, false, null, Elapsed(stopwatch),
+                Error: "The window in front is your own host window (the terminal, editor or chat app you run in), so its popups " +
+                       "were not listed or read. Name the window you mean (handle or window, for example from find_windows).",
+                ErrorCode: UIElementErrorCode.TargetIsAgentHost);
+        }
+
+        nint[] windows = app == foreground ? [foreground] : [foreground, app];
+        foreach (var window in windows)
+        {
+            if (UiaTargets.ReadVerdict(_windows, _policy, window) is { Allowed: false } verdict)
+            {
+                return new ActivePopupsResult(false, (long)app, null, false, null, Elapsed(stopwatch),
+                    Error: "The app in front was not read. " + UiaTargets.PolicyRefusalMessage(window, verdict),
+                    ErrorCode: UIElementErrorCode.TargetDeniedByPolicy);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>The popups' elements, read on the worker: each one's ref and control type written into <paramref name="listed"/>.</summary>
