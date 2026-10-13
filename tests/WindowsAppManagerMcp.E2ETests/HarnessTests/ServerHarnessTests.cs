@@ -249,6 +249,69 @@ public class ServerHarnessTests : IDisposable
         act.Should().Throw<InvalidOperationException>().WithMessage("Refusing to touch the desktop*");
     }
 
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
+    public void RecordAgentHost_WhenTheTierIsNotOptedIn_RefusesBeforeCreatingAWrapper(DesktopTier tier)
+    {
+        // Arrange - if the gate ever let this through, creating a wrapper would throw, so nothing is read
+        object Substitute(Type type) => throw new InvalidOperationException("no wrapper may be created");
+
+        // Act
+        var act = () => ServerHarness.RecordAgentHost(tier, _ => null, Substitute);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage("Refusing to touch the desktop*");
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
+    public void RecordAgentHost_RecordsTheWindowInFrontNow_ThroughReadOnlyGuards(DesktopTier tier)
+    {
+        // Arrange - mocks behind the guards: the terminal is in front while the host is recorded
+        const nint terminal = 0x3000;
+        var windows = new Mock<INativeWindowWrapper>();
+        windows.Setup(w => w.GetForegroundWindow()).Returns(terminal);
+        windows.Setup(w => w.GetWindowThreadProcessId(terminal)).Returns(5150u);
+        var processes = new Mock<INativeProcessWrapper>();
+        object Substitute(Type type) => type == typeof(INativeWindowWrapper) ? windows.Object : processes.Object;
+
+        // Act - opted in through the reader passed in; no variable is set and no real wrapper is created
+        var host = ServerHarness.RecordAgentHost(tier, OptedIn, Substitute);
+
+        // Assert - the read reached the wrapper through the guard (the read-only policy in every tier), so a fixture started
+        // after this cannot be the window recorded in front
+        host.Host.StartupForegroundWindow.Should().NotBeNull();
+        host.Host.StartupForegroundWindow!.Handle.Should().Be(terminal);
+        host.IsHostWindow(terminal).Should().BeTrue();
+        NativeReferenceWalker.FindUnguardedWrappers(host, nameof(HostGuard)).Should().BeEmpty();
+        windows.Verify(w => w.GetForegroundWindow(), Times.Once);
+        windows.Verify(w => w.SetForegroundWindow(It.IsAny<nint>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.NoInput)]
+    [InlineData(DesktopTier.Input)]
+    public void CreateServices_WithARecordedHost_GivesTheServerThatHostGuard(DesktopTier tier)
+    {
+        // Arrange
+        var recorded = new Mock<IHostGuard>(MockBehavior.Strict).Object;
+
+        // Act
+        var services = ServerHarness.CreateServices(
+            tier, FixturePid, new FakeDesktop(), _layoutsPath, StrictWrapper, out _, uiaEngine: null, agentHost: recorded);
+        using var provider = services.BuildServiceProvider();
+
+        // Assert - the services that ask whether a window is the host ask this one, recorded before the fixture started
+        provider.GetRequiredService<IHostGuard>().Should().BeSameAs(recorded);
+        services.Should().ContainSingle(d => d.ServiceType == typeof(IHostGuard));
+        ResolveWithoutRealWrappers<IInputTargetGuard>(provider).Should().NotBeNull();
+    }
+
+    private static string? OptedIn(string variable) =>
+        variable is DesktopTestGate.EnvironmentVariable or DesktopTestGate.NoInputEnvironmentVariable ? "1" : null;
+
     /// <summary>The harness's composition with a strict mock behind each wrapper's guard.</summary>
     private ServiceCollection CreateServicesWithMockedWrappers(DesktopTier tier) =>
         ServerHarness.CreateServices(tier, FixturePid, new FakeDesktop(), _layoutsPath, StrictWrapper, out _);

@@ -3,9 +3,12 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// <summary>
 /// A virtualized list for the M3.10 tests (roadmap M3.10), as WPF's VirtualizingStackPanel shows one to UI Automation: a List
 /// node with the ItemContainer and Scroll patterns whose tree holds only the realized items, while
-/// <see cref="FindItemByProperty"/> finds every item, realized or not. An item that is not realized is a placeholder: offscreen,
-/// without bounds, with the VirtualizedItem and ScrollItem patterns. Its Realize puts it in the list's children (still offscreen,
-/// as a provider whose Realize does not scroll), and ScrollIntoView brings it on screen. Nothing here is a real element.
+/// <see cref="FindItemByProperty"/> finds every item, realized or not. An item that is not realized is a placeholder
+/// (<see cref="FakeUiaNode.Unrealized"/>): offscreen, without bounds, with the VirtualizedItem and ScrollItem patterns, and, as
+/// WPF's ItemAutomationPeer, it fails every read of its bounds, IsOffscreen, IsEnabled, focus, IsPassword or description, so
+/// only <see cref="FakeUiaTree.ReadVirtualizedItem"/> reads it. Its Realize makes it real and puts it in the list's children
+/// (still offscreen, as a provider whose Realize does not scroll), and ScrollIntoView brings it on screen. Nothing here is a
+/// real element.
 /// </summary>
 public sealed class FakeVirtualList : IUiaItemContainerPattern
 {
@@ -30,6 +33,7 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
             {
                 AutomationId = automationId?.Invoke(i),
                 ProcessId = processId,
+                Unrealized = !isRealized,
                 IsOffscreen = !isRealized,
                 Bounds = isRealized ? new UiaRect(10, 10 + i * 20, 200, 20) : UiaRect.Empty,
                 OtherPatterns = UiaPatterns.VirtualizedItem | UiaPatterns.ScrollItem
@@ -108,6 +112,7 @@ public sealed class FakeVirtualList : IUiaItemContainerPattern
 
     private void Realize(FakeUiaNode item)
     {
+        item.Unrealized = false;
         if (!List.Children.Contains(item))
         {
             List.With(item);

@@ -21,6 +21,9 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="NativeWindowHandle">The window the element is the UI Automation element of, or 0 for an element without a
 /// window of its own (most controls of WPF, WinUI and web pages). The HWND proxy lists the windows a top-level window owns
 /// (its dialogs and popups) among that window's children, with their own handles: see <see cref="Services.OwnedWindows"/>.</param>
+/// <param name="Virtualized">An item its list has not realized, read by <see cref="IUiaTree.ReadVirtualizedItem"/>: its provider
+/// left out some properties (its bounds, IsOffscreen, IsEnabled, ...), which hold their defaults here (no bounds, offscreen,
+/// enabled). False for every element a walk, a search or <see cref="IUiaTree.ReadElement"/> read.</param>
 public sealed record UiaElement(
     IUiaNode Node,
     UiaNodeProperties Properties,
@@ -29,7 +32,8 @@ public sealed record UiaElement(
     UiaPatterns Patterns,
     IReadOnlyList<int>? RuntimeId,
     int? ControlTypeId,
-    nint NativeWindowHandle = 0)
+    nint NativeWindowHandle = 0,
+    bool Virtualized = false)
 {
     /// <summary>
     /// Keyboard-focusable, or supports an action pattern (<see cref="UiaPatterns.Actions"/>): what interactableOnly
@@ -42,6 +46,14 @@ public sealed record UiaElement(
 /// <param name="Element">The node and its properties.</param>
 /// <param name="Children">Its children in the control view, in tree order, each with its own children.</param>
 public sealed record UiaElementTree(UiaElement Element, IReadOnlyList<UiaElementTree> Children);
+
+/// <summary>An item its list has not realized, as <see cref="IUiaTree.ReadVirtualizedItem"/> read it.</summary>
+/// <param name="Element">The walk's properties the provider served, the others at their defaults; marked
+/// <see cref="UiaElement.Virtualized"/> when it left any out.</param>
+/// <param name="ProcessId">The process that provides it, or 0 when the provider did not say.</param>
+/// <param name="IsPassword">Whether it is a password field, or null when the provider did not say (WPF's placeholder does
+/// not): the caller then decides, and never reads a value it cannot rule out to be a password.</param>
+public sealed record UiaVirtualizedItem(UiaElement Element, int ProcessId, bool? IsPassword);
 
 /// <summary>
 /// The control patterns a node supports, read from its Is*PatternAvailable properties. Each value has a pattern

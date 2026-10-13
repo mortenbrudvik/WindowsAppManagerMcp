@@ -65,9 +65,20 @@ public sealed partial class ElementActionService
             // Fails closed: without the identity it is not known whether the element is a password field (whose value is
             // never read), whether it is a top-level window (window_*), or which process it belongs to (the target checks)
             UiaNodeIdentity identity;
+            var passwordUnknown = false;
             try
             {
                 identity = _tree.ReadIdentity(node);
+            }
+            catch (UiaElementUnavailableException) when (element.Virtualized)
+            {
+                // An item its list has not realized fails the identity read as a whole (WPF's placeholder fails IsPassword): its
+                // process, class and framework are read property by property, and while it does not say whether it is a
+                // password field it counts as one, so no value of it is read or set (realize and scroll_into_view need none)
+                var item = _tree.ReadVirtualizedItem(node);
+                passwordUnknown = item.IsPassword == null;
+                identity = new UiaNodeIdentity(item.Element.ClassName, item.Element.Properties.FrameworkId, item.ProcessId,
+                    item.Element.NativeWindowHandle, item.IsPassword ?? true);
             }
             catch (Exception ex) when (ex is not (UiaElementUnavailableException or TimeoutException or OperationCanceledException))
             {
@@ -95,10 +106,13 @@ public sealed partial class ElementActionService
             }
 
             var isPassword = identity.IsPassword;
-            var (before, fullValue) = ReadState(node, element, isPassword);
+            var (before, fullValue) = ReadState(node, element, isPassword, passwordUnknown);
             call.Before = before;
 
-            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue);
+            var prepared = new PreparedElement(resolved.Ref, node, element, identity, isPassword, before, fullValue)
+            {
+                PasswordUnknown = passwordUnknown
+            };
             var request = call.Request;
             var properties = element.Properties;
             if (NeedsUsableElement(request.Action) && !properties.IsEnabled)
@@ -668,8 +682,12 @@ public sealed partial class ElementActionService
 
     private static TimeSpan Min(TimeSpan first, TimeSpan second) => first < second ? first : second;
 
-    /// <summary>The element's state, read through its patterns, and its whole value (null for a password field).</summary>
-    private (ElementState State, string? FullValue) ReadState(IUiaNode node, UiaElement element, bool isPassword)
+    /// <summary>
+    /// The element's state, read through its patterns, and its whole value (null for a password field).
+    /// <paramref name="passwordUnknown"/>: <paramref name="isPassword"/> is only assumed (an item its list has not realized did
+    /// not say), so no value is read and the state does not report it as a password field.
+    /// </summary>
+    private (ElementState State, string? FullValue) ReadState(IUiaNode node, UiaElement element, bool isPassword, bool passwordUnknown = false)
     {
         var properties = element.Properties;
         var patterns = element.Patterns;
@@ -686,7 +704,7 @@ public sealed partial class ElementActionService
             HasKeyboardFocus: interaction?.HasKeyboardFocus,
             Value: value,
             ValueTruncated: truncated ? true : null,
-            IsPassword: isPassword ? true : null,
+            IsPassword: isPassword && !passwordUnknown ? true : null,
             ToggleState: (patterns & UiaPatterns.Toggle) != 0 ? TryState(() => _tree.GetPattern<IUiaTogglePattern>(node)?.ToggleState) : null,
             ExpandCollapseState: (patterns & UiaPatterns.ExpandCollapse) != 0
                 ? TryState(() => _tree.GetPattern<IUiaExpandCollapsePattern>(node)?.ExpandCollapseState)
@@ -711,10 +729,25 @@ public sealed partial class ElementActionService
             }
             catch (UiaElementUnavailableException)
             {
-                return ReadOutcome<AfterRead>.Of(new AfterRead(null, null, null, Gone: true, Warning: null));
+                // An item its list has still not realized (a realize that did nothing) fails the whole read: it is there,
+                // offscreen
+                if (!element.Element.Virtualized ||
+                    TryRead(() => _tree.ReadVirtualizedItem(element.Node)) is not { Element.Virtualized: true } item)
+                {
+                    return ReadOutcome<AfterRead>.Of(new AfterRead(null, null, null, Gone: true, Warning: null));
+                }
+
+                fresh = item.Element;
             }
 
-            var (state, fullValue) = ReadState(element.Node, fresh, element.IsPassword);
+            // An item that did not say whether it is a password field is asked again once it is real
+            var (isPassword, passwordUnknown) = (element.IsPassword, element.PasswordUnknown);
+            if (passwordUnknown && !fresh.Virtualized && TryRead(() => _tree.ReadIdentity(element.Node)) is { } identity)
+            {
+                (isPassword, passwordUnknown) = (identity.IsPassword, false);
+            }
+
+            var (state, fullValue) = ReadState(element.Node, fresh, isPassword, passwordUnknown);
             var scroll = element.ScrollContainer is { } container
                 ? TryRead(() => _tree.GetPattern<IUiaScrollPattern>(container)?.State)
                 : null;
@@ -988,6 +1021,12 @@ public sealed partial class ElementActionService
         public UiaNodeIdentity Identity { get; } = identity;
 
         public bool IsPassword { get; } = isPassword;
+
+        /// <summary>
+        /// <see cref="IsPassword"/> is only assumed: the element is an item its list has not realized, whose provider did not
+        /// say whether it is a password field.
+        /// </summary>
+        public bool PasswordUnknown { get; init; }
 
         public ElementState Before { get; } = before;
 

@@ -40,6 +40,27 @@ public sealed class Uia3Tree : IUiaTree
 
     private static readonly object ComCreationLock = new();
 
+    /// <summary>
+    /// The properties an item its list has not realized usually serves (WPF's placeholder does): its identity and patterns,
+    /// read in one call by <see cref="ReadVirtualizedItem"/>.
+    /// </summary>
+    private static readonly int[] PlaceholderProperties =
+    [
+        UiaIds.ControlTypeProperty, UiaIds.LocalizedControlTypeProperty, UiaIds.NameProperty, UiaIds.AutomationIdProperty,
+        UiaIds.ClassNameProperty, UiaIds.FrameworkIdProperty, UiaIds.RuntimeIdProperty, UiaIds.ProcessIdProperty,
+        UiaIds.NativeWindowHandleProperty, .. UiaIds.PatternAvailability.Select(p => p.Property)
+    ];
+
+    /// <summary>
+    /// The properties such a placeholder usually fails (WPF's does, until the item has a container): read one at a time by
+    /// <see cref="ReadVirtualizedItem"/>.
+    /// </summary>
+    private static readonly int[] PlaceholderStateProperties =
+    [
+        UiaIds.BoundingRectangleProperty, UiaIds.IsOffscreenProperty, UiaIds.IsEnabledProperty,
+        UiaIds.IsKeyboardFocusableProperty, UiaIds.IsPasswordProperty
+    ];
+
     private readonly Func<IUIAutomation2> _createClient;
     private readonly object _startLock = new();
     private volatile Client? _client;
@@ -193,6 +214,110 @@ public sealed class Uia3Tree : IUiaTree
         var element = Unwrap(node);
         var client = Started();
         return UiaComErrors.Run(() => ToElement(element.BuildUpdatedCache(client.WalkRequest)));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The properties a placeholder usually serves are read in one cached call (<see cref="Client.PlaceholderRequest"/>), and
+    /// one at a time when the provider fails that call; the ones it usually fails (<see cref="PlaceholderStateProperties"/>)
+    /// are read one at a time.
+    /// </remarks>
+    public UiaVirtualizedItem ReadVirtualizedItem(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        var client = Started();
+        var leftOut = false;
+        var values = Served(element, client.PlaceholderRequest, PlaceholderProperties, ref leftOut);
+        foreach (var (property, value) in Served(element, request: null, PlaceholderStateProperties, ref leftOut))
+        {
+            values[property] = value;
+        }
+
+        if (values.GetValueOrDefault(UiaIds.RuntimeIdProperty) is not int[] { Length: > 0 } runtimeId ||
+            !values.TryGetValue(UiaIds.ControlTypeProperty, out var controlTypeValue))
+        {
+            throw new UiaElementUnavailableException(
+                "The element is no longer available: its provider does not serve its runtime id or its control type.");
+        }
+
+        var controlTypeId = controlTypeValue is int id ? id : (int?)null;
+        var localized = values.GetValueOrDefault(UiaIds.LocalizedControlTypeProperty) as string;
+        var patterns = UiaPatterns.None;
+        foreach (var (property, pattern) in UiaIds.PatternAvailability)
+        {
+            if (values.GetValueOrDefault(property) is true)
+            {
+                patterns |= pattern;
+            }
+        }
+
+        // A property the provider failed keeps the placeholder's default: no bounds, offscreen, enabled, not focusable
+        var properties = new UiaNodeProperties(
+            Name: values.GetValueOrDefault(UiaIds.NameProperty) as string,
+            ControlType: controlTypeId is { } known ? UiaControlTypes.GetName(known, localized) : UiaControlTypes.GetName(null, localized),
+            AutomationId: values.GetValueOrDefault(UiaIds.AutomationIdProperty) as string,
+            Bounds: ToRect(values.GetValueOrDefault(UiaIds.BoundingRectangleProperty)),
+            IsEnabled: !values.TryGetValue(UiaIds.IsEnabledProperty, out var enabled) || enabled is true,
+            IsOffscreen: !values.TryGetValue(UiaIds.IsOffscreenProperty, out var offscreen) || offscreen is true,
+            FrameworkId: values.GetValueOrDefault(UiaIds.FrameworkIdProperty) as string);
+        var item = new UiaElement(
+            new Node(element),
+            properties,
+            ClassName: values.GetValueOrDefault(UiaIds.ClassNameProperty) as string,
+            IsKeyboardFocusable: values.GetValueOrDefault(UiaIds.IsKeyboardFocusableProperty) is true,
+            Patterns: patterns,
+            RuntimeId: runtimeId,
+            ControlTypeId: controlTypeId,
+            NativeWindowHandle: values.GetValueOrDefault(UiaIds.NativeWindowHandleProperty) is int handle ? handle : 0,
+            Virtualized: leftOut);
+        return new UiaVirtualizedItem(
+            item,
+            values.GetValueOrDefault(UiaIds.ProcessIdProperty) is int processId ? processId : 0,
+            values.TryGetValue(UiaIds.IsPasswordProperty, out var password) && password is bool isPassword ? isPassword : null);
+    }
+
+    /// <summary>
+    /// The values of <paramref name="properties"/> the provider serves: in one cached call with <paramref name="request"/>, or,
+    /// without one or when the provider fails that call with "element not available" (a placeholder fails a whole request for
+    /// one property it does not serve), one call per property. A property the provider fails, or does not support the call for,
+    /// is left out of the result and sets <paramref name="leftOut"/>; one it does not support reads as the client's "not
+    /// supported" object, as in a cached read. A timeout is thrown.
+    /// </summary>
+    private static Dictionary<int, object?> Served(
+        IUIAutomationElement element, IUIAutomationCacheRequest? request, IReadOnlyList<int> properties, ref bool leftOut)
+    {
+        var values = new Dictionary<int, object?>();
+        if (request != null)
+        {
+            try
+            {
+                var cached = UiaComErrors.Run(() => element.BuildUpdatedCache(request));
+                foreach (var property in properties)
+                {
+                    values[property] = cached.GetCachedPropertyValue(property);
+                }
+
+                return values;
+            }
+            catch (UiaElementUnavailableException)
+            {
+                // Read them one at a time below
+            }
+        }
+
+        foreach (var property in properties)
+        {
+            try
+            {
+                values[property] = UiaComErrors.Run(() => element.GetCurrentPropertyValue(property));
+            }
+            catch (Exception ex) when (ex is UiaElementUnavailableException or NotSupportedException)
+            {
+                leftOut = true;
+            }
+        }
+
+        return values;
     }
 
     /// <inheritdoc />
@@ -612,6 +737,7 @@ public sealed class Uia3Tree : IUiaTree
                 UiaIds.HelpTextProperty, UiaIds.AccessKeyProperty, UiaIds.AcceleratorKeyProperty,
                 UiaIds.LocalizedControlTypeProperty
             ]);
+            PlaceholderRequest = Request(PlaceholderProperties);
         }
 
         public IUIAutomation2 Automation { get; }
@@ -636,6 +762,9 @@ public sealed class Uia3Tree : IUiaTree
 
         /// <summary>Help text, access and accelerator keys and the localized control type.</summary>
         public IUIAutomationCacheRequest DescriptionRequest { get; }
+
+        /// <summary>What an item its list has not realized usually serves (<see cref="PlaceholderProperties"/>).</summary>
+        public IUIAutomationCacheRequest PlaceholderRequest { get; }
 
         private IUIAutomationCacheRequest Request(IEnumerable<int> properties)
         {

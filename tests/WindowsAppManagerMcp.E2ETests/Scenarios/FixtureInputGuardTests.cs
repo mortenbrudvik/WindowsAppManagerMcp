@@ -47,7 +47,9 @@ public class FixtureInputGuardTests
     [DesktopNoInputFact]
     public async Task SendKeys_DestructiveChordWithoutWindowHandle_IsRefused_WhateverIsInFront()
     {
-        // Arrange - the chord that closed the user's terminal in M0
+        // Arrange - the chord that closed the user's terminal in M0. It holds whatever is in front: the guard refuses the
+        // request before it looks at a window, and if it did not, the host check or the harness's read-only policy would
+        // fail the call with another result
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
 
         // Act
@@ -61,15 +63,11 @@ public class FixtureInputGuardTests
     [DesktopNoInputFact]
     public async Task TypeText_WithoutWindowHandle_WhileTheAgentHostIsInFront_IsTargetIsAgentHost()
     {
-        // Arrange - the terminal or IDE that runs the tests is usually in front; it is the host here
+        // Arrange - the terminal or IDE that runs the tests, in front: the host here. Anything else in front fails the test,
+        // since the guard would then be checked against another window, or not at all
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output);
-        var foreground = E2ENative.GetForegroundWindow();
-        if (!e2e.Server.Get<IHostGuard>().IsHostWindow(foreground))
-        {
-            _output.WriteLine(
-                "Nothing to check: the window in front is not the test run's host: " + UiaReads.DescribeWindow(foreground));
-            return;
-        }
+        var foreground = e2e.RequireAgentHostInFront();
+        _output.WriteLine("In front: " + UiaReads.DescribeWindow(foreground));
 
         // Act
         var typed = await e2e.Server.Input.TypeTextAsync("exit", 0, InputTarget.None, releaseHeldModifiers: false, CancellationToken.None);

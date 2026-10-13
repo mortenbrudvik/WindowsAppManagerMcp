@@ -42,6 +42,13 @@ internal sealed class MainWindow : Window
         Background = Brushes.White;
         Content = BuildContent();
 
+        // Logical focus on the edit box, so it gets keyboard focus whenever the window is activated (WPF moves the focus that
+        // activation gives the window on to its focused element). Set before the window is shown, while the edit box cannot
+        // take keyboard focus: FocusManager.SetFocusedElement also calls Keyboard.Focus when nothing in the process has
+        // keyboard focus, and the Win32 SetFocus under it activates the window. A process the test host just started may
+        // still take the foreground, so with --no-activate that brought the fixture to the front over the terminal.
+        FocusManager.SetFocusedElement(this, _editBox);
+
         AddHandler(Keyboard.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnGotKeyboardFocus), handledEventsToo: true);
         Loaded += OnLoaded;
         ContentRendered += OnContentRendered;
@@ -194,9 +201,8 @@ internal sealed class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // Logical focus on the edit box, so it gets keyboard focus whenever the window is activated.
-        // Only take keyboard focus now if the window was shown activated: SetFocus activates a window.
-        FocusManager.SetFocusedElement(this, _editBox);
+        // Only take keyboard focus now if the window was shown activated: SetFocus activates a window. Without activation
+        // nothing here focuses anything (see the constructor), so the window stays behind the one in front
         if (!_options.NoActivate)
         {
             _editBox.Focus();

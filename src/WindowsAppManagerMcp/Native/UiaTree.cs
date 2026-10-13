@@ -63,6 +63,28 @@ public sealed class UiaTree : IUiaTree
         (AutomationElement.IsRangeValuePatternAvailableProperty, "RangeValue"),
     ];
 
+    /// <summary>
+    /// The properties an item its list has not realized usually serves (WPF's placeholder does): its identity and patterns,
+    /// read in one call by <see cref="ReadVirtualizedItem"/>.
+    /// </summary>
+    private static readonly AutomationProperty[] PlaceholderProperties =
+    [
+        AutomationElement.ControlTypeProperty, AutomationElement.LocalizedControlTypeProperty, AutomationElement.NameProperty,
+        AutomationElement.AutomationIdProperty, AutomationElement.ClassNameProperty, AutomationElement.FrameworkIdProperty,
+        AutomationElement.RuntimeIdProperty, AutomationElement.ProcessIdProperty, AutomationElement.NativeWindowHandleProperty,
+        .. PatternAvailability.Select(p => p.Property)
+    ];
+
+    /// <summary>
+    /// The properties such a placeholder usually fails (WPF's does, until the item has a container): read one at a time by
+    /// <see cref="ReadVirtualizedItem"/>.
+    /// </summary>
+    private static readonly AutomationProperty[] PlaceholderStateProperties =
+    [
+        AutomationElement.BoundingRectangleProperty, AutomationElement.IsOffscreenProperty, AutomationElement.IsEnabledProperty,
+        AutomationElement.IsKeyboardFocusableProperty, AutomationElement.IsPasswordProperty
+    ];
+
     private readonly UiaClientStartup _startup;
 
     public UiaTree()
@@ -235,6 +257,123 @@ public sealed class UiaTree : IUiaTree
 
         // GetUpdatedCache always asks the provider: an element that is gone throws ElementNotAvailableException
         return Translate(() => ToElement(element.GetUpdatedCache(WalkRequest(TreeScope.Element))));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// As the UIA3 engine reads it: the properties a placeholder usually serves in one cached call (GetUpdatedCache), and one
+    /// at a time when the provider fails that call; the ones it usually fails (<see cref="PlaceholderStateProperties"/>) one
+    /// at a time.
+    /// </remarks>
+    public UiaVirtualizedItem ReadVirtualizedItem(IUiaNode node)
+    {
+        var element = Unwrap(node);
+        var leftOut = false;
+        var values = Served(element, PlaceholderProperties, cached: true, ref leftOut);
+        foreach (var (property, value) in Served(element, PlaceholderStateProperties, cached: false, ref leftOut))
+        {
+            values[property] = value;
+        }
+
+        if (values.GetValueOrDefault(AutomationElement.RuntimeIdProperty) is not int[] { Length: > 0 } runtimeId ||
+            !values.TryGetValue(AutomationElement.ControlTypeProperty, out var controlTypeValue))
+        {
+            throw new UiaElementUnavailableException(
+                "The element is no longer available: its provider does not serve its runtime id or its control type.");
+        }
+
+        var controlType = controlTypeValue as ControlType;
+        var patterns = UiaPatterns.None;
+        foreach (var (property, pattern) in PatternAvailability)
+        {
+            if (values.GetValueOrDefault(property) is true)
+            {
+                patterns |= pattern;
+            }
+        }
+
+        // A property the provider failed keeps the placeholder's default: no bounds, offscreen, enabled, not focusable
+        var properties = new UiaNodeProperties(
+            Name: values.GetValueOrDefault(AutomationElement.NameProperty) as string,
+            ControlType: UiaControlTypes.GetName(
+                controlType,
+                controlType == null ? values.GetValueOrDefault(AutomationElement.LocalizedControlTypeProperty) as string : null),
+            AutomationId: values.GetValueOrDefault(AutomationElement.AutomationIdProperty) as string,
+            Bounds: values.GetValueOrDefault(AutomationElement.BoundingRectangleProperty) is System.Windows.Rect { IsEmpty: false } rect
+                ? new UiaRect(rect.X, rect.Y, rect.Width, rect.Height)
+                : UiaRect.Empty,
+            IsEnabled: !values.TryGetValue(AutomationElement.IsEnabledProperty, out var enabled) || enabled is true,
+            IsOffscreen: !values.TryGetValue(AutomationElement.IsOffscreenProperty, out var offscreen) || offscreen is true,
+            FrameworkId: values.GetValueOrDefault(AutomationElement.FrameworkIdProperty) as string);
+        var item = new UiaElement(
+            new Node(element),
+            properties,
+            ClassName: values.GetValueOrDefault(AutomationElement.ClassNameProperty) as string,
+            IsKeyboardFocusable: values.GetValueOrDefault(AutomationElement.IsKeyboardFocusableProperty) is true,
+            Patterns: patterns,
+            RuntimeId: runtimeId,
+            ControlTypeId: controlType?.Id,
+            NativeWindowHandle: values.GetValueOrDefault(AutomationElement.NativeWindowHandleProperty) is int handle ? handle : 0,
+            Virtualized: leftOut);
+        return new UiaVirtualizedItem(
+            item,
+            values.GetValueOrDefault(AutomationElement.ProcessIdProperty) is int processId ? processId : 0,
+            values.TryGetValue(AutomationElement.IsPasswordProperty, out var password) && password is bool isPassword ? isPassword : null);
+    }
+
+    /// <summary>
+    /// The values of <paramref name="properties"/> the provider serves: with <paramref name="cached"/> in one call
+    /// (GetUpdatedCache), or, without it or when the provider fails that call with "element not available" (a placeholder
+    /// fails a whole request for one property it does not serve), one call per property. A property the provider fails, or
+    /// does not support the call for, is left out of the result and sets <paramref name="leftOut"/>; one it does not support
+    /// reads as <see cref="AutomationElement.NotSupported"/>, as in a cached read.
+    /// </summary>
+    private static Dictionary<AutomationProperty, object?> Served(
+        AutomationElement element, AutomationProperty[] properties, bool cached, ref bool leftOut)
+    {
+        var values = new Dictionary<AutomationProperty, object?>();
+        if (cached)
+        {
+            var request = new CacheRequest
+            {
+                TreeFilter = Automation.ControlViewCondition,
+                TreeScope = TreeScope.Element,
+                AutomationElementMode = AutomationElementMode.Full
+            };
+            foreach (var property in properties)
+            {
+                request.Add(property);
+            }
+
+            try
+            {
+                var read = Translate(() => element.GetUpdatedCache(request));
+                foreach (var property in properties)
+                {
+                    values[property] = read.GetCachedPropertyValue(property);
+                }
+
+                return values;
+            }
+            catch (UiaElementUnavailableException)
+            {
+                // Read them one at a time below
+            }
+        }
+
+        foreach (var property in properties)
+        {
+            try
+            {
+                values[property] = Translate(() => element.GetCurrentPropertyValue(property));
+            }
+            catch (Exception ex) when (ex is UiaElementUnavailableException or NotSupportedException)
+            {
+                leftOut = true;
+            }
+        }
+
+        return values;
     }
 
     /// <inheritdoc />

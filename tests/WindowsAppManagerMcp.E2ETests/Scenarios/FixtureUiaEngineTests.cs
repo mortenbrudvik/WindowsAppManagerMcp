@@ -17,6 +17,11 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// id, no ref), and the search conditions (control types by id, automation ids ignoring case, runtime ids). Patterns are
 /// compared by their names (<see cref="UiaPatternNames.All"/>), which leave out LegacyIAccessible: the UIA3 engine reports
 /// it on nearly every element and the managed client never does, by design.</para>
+/// <para>The window's non-client area (its title bar, the system menu bar and its item, and the minimize, maximize or restore
+/// and close buttons) is not the server's or the fixture's: Windows serves it through its own proxies, natively to UIA3 and
+/// through .NET's client-side proxy to UIA2, and those differ in automation ids and framework from run to run (the 1.15.0
+/// gate's second run read 'Minimize-Restore' and no framework where UIA3 read 'Minimize' and Win32). The BothEngines_* facts
+/// compare those elements by control type and name only (<see cref="IsNonClient"/>), and everything else in full.</para>
 /// </remarks>
 public class FixtureUiaEngineTests
 {
@@ -27,6 +32,12 @@ public class FixtureUiaEngineTests
 
     /// <summary>The control types the cross-engine search looks for: every kind of control on the fixture's main window.</summary>
     private static readonly string[] SearchedControlTypes = ["Edit", "CheckBox", "ComboBox", "Button", "List"];
+
+    /// <summary>
+    /// The kinds of element Windows puts in a window's non-client area: the title bar, the system menu bar and its item, and
+    /// the minimize, maximize or restore and close buttons.
+    /// </summary>
+    private static readonly string[] NonClientControlTypes = ["TitleBar", "MenuBar", "MenuItem", "Button"];
 
     private readonly ITestOutputHelper _output;
 
@@ -75,15 +86,17 @@ public class FixtureUiaEngineTests
     {
         // Arrange - one fixture, a server per engine
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: UiaEngine.Uia3);
-        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2);
+        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2, e2e.AgentHost);
         var window = e2e.Fixture.MainWindowHandle;
+        var client = e2e.Fixture.Ready.ClientRect;
 
         // Act
         var fromUia3 = await e2e.Server.UiElements.GetUIElementsAsync(window);
         var fromUia2 = await uia2.UiElements.GetUIElementsAsync(window);
 
         // Assert - the same elements in the same order, with the same names, types, ids, frameworks and states, and a ref
-        // for each (the UIA3 engine reads the runtime id a ref needs from its walk's cache request)
+        // for each (the UIA3 engine reads the runtime id a ref needs from its walk's cache request); the title bar's by type
+        // and name only
         fromUia3.Success.Should().BeTrue(fromUia3.Error);
         fromUia2.Success.Should().BeTrue(fromUia2.Error);
         var uia3Elements = UiaReads.Flatten(fromUia3.Elements).ToList();
@@ -93,6 +106,11 @@ public class FixtureUiaEngineTests
         uia3Elements.Select(Describe).Should().Equal(uia2Elements.Select(Describe));
         for (var i = 0; i < uia3Elements.Count; i++)
         {
+            if (IsNonClient(uia3Elements[i].ControlType, uia3Elements[i].Bounds, client))
+            {
+                continue;
+            }
+
             var (a, b) = (uia3Elements[i].Bounds, uia2Elements[i].Bounds);
             (a == null).Should().Be(b == null, "element {0} ({1})", i, Describe(uia3Elements[i]));
             if (a != null && b != null)
@@ -104,9 +122,10 @@ public class FixtureUiaEngineTests
             }
         }
 
-        static string Describe(UIElementInfo e) =>
-            $"{e.ControlType} '{e.Name}' aid={e.AutomationId} enabled={e.IsEnabled} offscreen={e.IsOffscreen} " +
-            $"children={e.Children?.Count ?? 0} fw={e.FrameworkId} ref={e.Ref != null}";
+        string Describe(UIElementInfo e) => IsNonClient(e.ControlType, e.Bounds, client)
+            ? $"{e.ControlType} '{e.Name}' (non-client: type and name only)"
+            : $"{e.ControlType} '{e.Name}' aid={e.AutomationId} enabled={e.IsEnabled} offscreen={e.IsOffscreen} " +
+              $"children={e.Children?.Count ?? 0} fw={e.FrameworkId} ref={e.Ref != null}";
     }
 
     [DesktopNoInputTheory]
@@ -172,14 +191,16 @@ public class FixtureUiaEngineTests
     {
         // Arrange - one fixture, a server per engine
         using var e2e = E2ESession.Start(DesktopTier.NoInput, _output, uiaEngine: UiaEngine.Uia3);
-        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2);
+        using var uia2 = ServerHarness.Create(DesktopTier.NoInput, e2e.Fixture.ProcessId, UiaEngine.Uia2, e2e.AgentHost);
         var queries = Queries(e2e.Fixture.MainWindowHandle);
+        var client = e2e.Fixture.Ready.ClientRect;
 
         // Act
         var fromUia3 = await FindAsync(e2e.Server, queries);
         var fromUia2 = await FindAsync(uia2, queries);
 
-        // Assert - the same elements in the same order, with the same identity, patterns, state, description and bounds
+        // Assert - the same elements in the same order, with the same identity, patterns, state, description and bounds; the
+        // title bar's buttons by type and name only
         for (var query = 0; query < queries.Count; query++)
         {
             fromUia3[query].Success.Should().BeTrue("UIA3, query {0}: {1}", query, fromUia3[query].Error);
@@ -187,9 +208,14 @@ public class FixtureUiaEngineTests
             var (a, b) = (fromUia3[query].Elements!, fromUia2[query].Elements!);
             _output.WriteLine($"Query {query}: UIA3 found {a.Count}, UIA2 {b.Count}.");
             a.Should().NotBeEmpty();
-            a.Select(Snapshot).Should().Equal(b.Select(Snapshot), "query {0} must find the same elements with both engines", query);
+            a.Select(Compared).Should().Equal(b.Select(Compared), "query {0} must find the same elements with both engines", query);
             for (var i = 0; i < a.Count; i++)
             {
+                if (IsNonClient(a[i].ControlType, a[i].Bounds, client))
+                {
+                    continue;
+                }
+
                 var (x, y) = (a[i].Bounds, b[i].Bounds);
                 (x == null).Should().Be(y == null, "{0}", Snapshot(a[i]));
                 if (x != null && y != null)
@@ -201,6 +227,10 @@ public class FixtureUiaEngineTests
                 }
             }
         }
+
+        string Compared(FoundElement e) => IsNonClient(e.ControlType, e.Bounds, client)
+            ? $"{e.ControlType} '{e.Name}' (non-client: type and name only)"
+            : Snapshot(e);
     }
 
     [DesktopNoInputTheory]
@@ -282,6 +312,16 @@ public class FixtureUiaEngineTests
 
         return results;
     }
+
+    /// <summary>
+    /// Whether an element is part of the window's non-client area: one of <see cref="NonClientControlTypes"/> that lies wholly
+    /// outside the window's client area, as the fixture reports it in its ready event (every control of the fixture is inside
+    /// it). Its place, not its automation id, says so: the automation ids are what the engines' proxies disagree on.
+    /// </summary>
+    internal static bool IsNonClient(string controlType, BoundsDto? bounds, ScreenRect client) =>
+        bounds is { } b && NonClientControlTypes.Contains(controlType) &&
+        (b.Y + b.Height <= client.Y + BoundsTolerance || b.Y >= client.Y + client.Height - BoundsTolerance ||
+         b.X + b.Width <= client.X + BoundsTolerance || b.X >= client.X + client.Width - BoundsTolerance);
 
     /// <summary>
     /// What find_ui_elements reports about an element at detail full, but its ref (each server numbers its own) and its

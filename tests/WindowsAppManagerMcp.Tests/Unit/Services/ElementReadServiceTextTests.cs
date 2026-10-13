@@ -358,6 +358,52 @@ public class ElementReadServiceTextTests
         _tree.Reads.Should().NotContain(r => r.StartsWith("Value:"));
     }
 
+    /// <summary>
+    /// Puts an item its list has not realized in the window and gives it the ref find_ui_elements' searchVirtualized gives it:
+    /// a placeholder that fails a whole read, as WPF's does, so it is read property by property.
+    /// </summary>
+    private string AddUnrealizedItem(FakeUiaNode item)
+    {
+        item.Unrealized = true;
+        _window.With(new FakeUiaNode("List", "Files").With(item));
+        return _registry.Register(Handle, _tree.ReadVirtualizedItem(item).Element, new ElementOrigin(_registry.NextGeneration()))!;
+    }
+
+    [Fact]
+    public async Task ReadText_OfAnItemTheListHasNotRealized_ReadsItsName()
+    {
+        // Arrange - the gate's ref (1.15.0): its identity read fails as a whole, as its bounds and state do
+        var elementRef = AddUnrealizedItem(new FakeUiaNode("ListItem", "Item 07500") { OtherPatterns = UiaPatterns.VirtualizedItem });
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert - not "the element disappeared": its name is its text, as for any item without a Text or Value pattern
+        result.Success.Should().BeTrue(result.Error);
+        result.Ref.Should().Be(elementRef);
+        result.Source.Should().Be(ElementTextSource.Name);
+        result.Text.Should().Be("Item 07500");
+    }
+
+    [Fact]
+    public async Task ReadText_OfAnItemTheListHasNotRealized_WithAValue_ReadsNothing_WhileItDoesNotSayWhetherItIsAPassword()
+    {
+        // Arrange
+        var elementRef = AddUnrealizedItem(new FakeUiaNode("ListItem", "Secret")
+        {
+            ActionPatterns = ["Value"], OtherPatterns = UiaPatterns.VirtualizedItem, Value = "maybe secret"
+        });
+
+        // Act
+        var result = await Read(elementRef);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(UIElementErrorCode.ElementAccessFailed);
+        result.Error.Should().Contain("realize");
+        _tree.Reads.Should().NotContain(r => r.StartsWith("Value:") || r.StartsWith("Pattern:IUiaValuePattern"));
+    }
+
     #endregion
 
     #region Refs, criteria and failures

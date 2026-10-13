@@ -1990,10 +1990,15 @@ box, selection, buttons, focus, modal, document, context menu). It is the fixtur
 what reached it, independent of what the server reports. `FixtureContract.Events` documents the
 events; the harness reads them with `FixtureEventLogReader`.
 
-**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, starts the fixture
-(`FixtureAppSession`), waits for its ready event, builds the server services as Program.cs registers
-them (`ServerHarness`) and finds the fixture's main window through find_windows. Dispose kills the
-fixture.
+**The harness.** `E2ESession.Start(tier, output)` checks the tier's opt-in again, records the agent's
+host (`ServerHarness.RecordAgentHost`), starts the fixture (`FixtureAppSession`), waits for its ready
+event, builds the server services as Program.cs registers them (`ServerHarness`, with that host) and
+finds the fixture's main window through find_windows. Dispose kills the fixture. The server counts the
+window in front when it starts as part of the agent's host; the harness runs no hosted service, so it
+records the host itself, before the fixture exists, and the window in front is then the terminal that
+runs the tests. A session whose server still counts the fixture's main window as the host fails at
+once, and the scenarios that need the host in front (`E2ESession.RequireAgentHostInFront`) fail when
+another window is: keep the terminal in front, and do not click the fixture, during a run.
 
 Every native wrapper of the server sits behind a fail-closed guard (`WrapperGuard`). That includes
 the process and monitor wrappers that ProcessService and MonitorService would otherwise create
@@ -2173,12 +2178,16 @@ What to compare:
    the fixture, not an engine difference. Fix it and run the gate again. A `BothEngines_*` fact is the
    exception: it compares the engines, so it fails in both runs when they differ (point 2).
 
-One caveat for point 2: the `BothEngines_*` facts also compare the window's title bar and its buttons, which
-Windows itself serves for the Win32 non-client area, through a native proxy to uia3 and a managed proxy to uia2. On a
-Windows display language other than English those can differ (a name, a localized type) without any difference in the
-server's code. When the first difference is a `TitleBar` element or one of its buttons, record it, and compare the fixture's own
-controls in the output of the find_ui_elements theory, which writes every element it finds with each engine, before
-you change the default.
+One caveat for point 2: the window's title bar, its system menu bar and the minimize, maximize or restore and close
+buttons are not the server's or the fixture's. Windows serves that Win32 non-client area itself, through its native
+proxy to uia3 and through .NET's managed client-side proxy to uia2, and the two disagree on details that have nothing
+to do with the server's code, from run to run: in the 1.15.0 gate's second run, uia2 read the Minimize button with
+automation id `Minimize-Restore` and no framework, where uia3 read `Minimize` and `Win32`, while the first run's uia2
+agreed. So the `BothEngines_*` facts compare those elements (the TitleBar, MenuBar, MenuItem and Button elements that
+lie wholly outside the client area the fixture reports) by control type and name only, and every other element in full.
+On a Windows display language other than English a name or a localized type of the title bar can still differ: when the
+first difference is one of those elements, record it, and compare the fixture's own controls in the output of the
+find_ui_elements theory, which writes every element it finds with each engine, before you change the default.
 
 ### Tool surface snapshot
 

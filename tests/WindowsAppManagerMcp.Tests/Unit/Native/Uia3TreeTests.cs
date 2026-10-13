@@ -376,6 +376,122 @@ public class Uia3TreeTests
         FluentActions.Invoking(() => sut.ReadElement(node)).Should().Throw<UiaElementUnavailableException>();
     }
 
+    /// <summary>What a provider answers for an item its list has not realized and a property it does not serve (WPF).</summary>
+    private static COMException NotAvailable() => new("Element not available", UiaComErrors.ElementNotAvailable);
+
+    /// <summary>
+    /// WPF's placeholder of an unrealized ListBox item: its identity and patterns in one cached read, its bounds and state
+    /// failing with UIA_E_ELEMENTNOTAVAILABLE.
+    /// </summary>
+    private static Mock<IUIAutomationElement> Placeholder()
+    {
+        var cached = new Mock<IUIAutomationElement>();
+        cached.Setup(e => e.GetCachedPropertyValue(It.IsAny<int>())).Returns(NotSupported);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.NameProperty)).Returns("Item 07500");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ControlTypeProperty)).Returns(50007);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.AutomationIdProperty)).Returns("");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ClassNameProperty)).Returns("ListBoxItem");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.FrameworkIdProperty)).Returns("WPF");
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.RuntimeIdProperty)).Returns(new[] { 7, 300, 99 });
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.ProcessIdProperty)).Returns(300);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.IsVirtualizedItemPatternAvailableProperty)).Returns(true);
+        cached.Setup(e => e.GetCachedPropertyValue(UiaIds.IsSelectionItemPatternAvailableProperty)).Returns(true);
+        return cached;
+    }
+
+    [Fact]
+    public void ReadVirtualizedItem_OfWpfsPlaceholder_ReadsWhatItServes_AndLeavesItsBoundsAndStateAtTheDefaults()
+    {
+        // Arrange - the whole walk read fails (ReadElement), as the gate saw; the identity read does not
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Returns(Placeholder().Object);
+        element.Setup(e => e.GetCurrentPropertyValue(It.IsAny<int>())).Throws(NotAvailable);
+
+        // Act
+        var read = sut.ReadVirtualizedItem(node);
+
+        // Assert
+        var item = read.Element;
+        (item.Properties.Name, item.Properties.ControlType, item.ClassName, item.Properties.FrameworkId)
+            .Should().Be(("Item 07500", "ListItem", "ListBoxItem", "WPF"));
+        item.RuntimeId.Should().Equal(7, 300, 99);
+        item.Patterns.Should().Be(UiaPatterns.VirtualizedItem | UiaPatterns.SelectionItem);
+        (item.Properties.Bounds, item.Properties.IsOffscreen, item.Properties.IsEnabled, item.IsKeyboardFocusable)
+            .Should().Be((UiaRect.Empty, true, true, false));
+        item.Virtualized.Should().BeTrue();
+        (read.ProcessId, read.IsPassword).Should().Be((300, (bool?)null));
+        element.Verify(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>()), Times.Once);
+        foreach (var property in new[]
+                 {
+                     UiaIds.BoundingRectangleProperty, UiaIds.IsOffscreenProperty, UiaIds.IsEnabledProperty,
+                     UiaIds.IsKeyboardFocusableProperty, UiaIds.IsPasswordProperty
+                 })
+        {
+            element.Verify(e => e.GetCurrentPropertyValue(property), Times.Once, "each state property is read on its own");
+        }
+    }
+
+    [Fact]
+    public void ReadVirtualizedItem_WhenTheProviderFailsTheCachedRead_ReadsEachPropertyOnItsOwn()
+    {
+        // Arrange - a placeholder that fails one of the identity properties too (its class)
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Throws(NotAvailable);
+        element.Setup(e => e.GetCurrentPropertyValue(It.IsAny<int>())).Throws(NotAvailable);
+        element.Setup(e => e.GetCurrentPropertyValue(UiaIds.ControlTypeProperty)).Returns(50029);
+        element.Setup(e => e.GetCurrentPropertyValue(UiaIds.NameProperty)).Returns("Row 12");
+        element.Setup(e => e.GetCurrentPropertyValue(UiaIds.RuntimeIdProperty)).Returns(new[] { 7, 300, 12 });
+        element.Setup(e => e.GetCurrentPropertyValue(UiaIds.IsVirtualizedItemPatternAvailableProperty)).Returns(true);
+
+        // Act
+        var item = sut.ReadVirtualizedItem(node).Element;
+
+        // Assert
+        (item.Properties.Name, item.Properties.ControlType, item.ClassName).Should().Be(("Row 12", "DataItem", null));
+        item.RuntimeId.Should().Equal(7, 300, 12);
+        item.Patterns.Should().Be(UiaPatterns.VirtualizedItem);
+        item.Virtualized.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ReadVirtualizedItem_OfAnElementThatIsGone_ThrowsTheSeamsException()
+    {
+        // Arrange - every read fails: nothing names it
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Throws(NotAvailable);
+        element.Setup(e => e.GetCurrentPropertyValue(It.IsAny<int>())).Throws(NotAvailable);
+
+        // Act / Assert
+        FluentActions.Invoking(() => sut.ReadVirtualizedItem(node)).Should().Throw<UiaElementUnavailableException>();
+    }
+
+    [Fact]
+    public void ReadVirtualizedItem_OfAnItemThatServesEverything_IsNotMarkedVirtualized()
+    {
+        // Arrange - realized meanwhile: its bounds and state are served too
+        var sut = CreateSut();
+        var element = new Mock<IUIAutomationElement>();
+        var node = NodeOf(sut, element);
+        element.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Returns(Placeholder().Object);
+        element.Setup(e => e.GetCurrentPropertyValue(It.IsAny<int>())).Returns(false);
+        element.Setup(e => e.GetCurrentPropertyValue(UiaIds.BoundingRectangleProperty)).Returns(new double[] { 10, 20, 200, 24 });
+
+        // Act
+        var read = sut.ReadVirtualizedItem(node);
+
+        // Assert
+        read.Element.Virtualized.Should().BeFalse();
+        (read.Element.Properties.Bounds, read.Element.Properties.IsOffscreen, read.Element.Properties.IsEnabled)
+            .Should().Be((new UiaRect(10, 20, 200, 24), false, false));
+        read.IsPassword.Should().BeFalse();
+    }
+
     [Fact]
     public void GetClickablePoint_ReturnsThePointTheProviderGives()
     {
