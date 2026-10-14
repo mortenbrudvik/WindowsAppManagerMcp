@@ -90,16 +90,28 @@ The captures are not read-only, because they can write image files (`output: "fi
 
 ### Undeclared arguments
 
-The tools that act on the desktop refuse an argument they do not declare: [element_action](#element_action),
-[respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), the [input tools](#input-simulation) (click,
-right_click, double_click, mouse_move, scroll, type_text, send_keys), [close_window](#close_window),
-close_windows_batch, [close_application](#close_application) and [kill_process](#kill_process). Such a call fails with
-`InvalidArguments` before anything is searched, waited for or done, and the error names the argument and, when one is
-within two edits of it (ignoring letter case), the declared name it most likely stands for (`controlTypes`: did you mean
-`controlType`?). A misspelled or borrowed name would otherwise be dropped, and a criterion left out widens the search,
-so element_action could act on another element than the one meant. element_action takes no `withinRef`: find the element
-with [find_ui_elements](#find_ui_elements) `withinRef` and pass its `ref`. The other tools ignore an argument they do
-not declare. A refused call is in the [audit log](#audit-log).
+Every tool refuses an argument it does not declare, that is, a name that is not a property of its input schema. Names
+are matched exactly, letter case included, as the server binds them (`Handle` is not `handle`). Such a call fails with
+`InvalidArguments` as a tool error before anything is searched, read, captured, waited for or done, and the error names
+the argument, lists the tool's parameters and, for a near miss, names the declared one it most likely stands for: the same
+name in another letter case, one within two edits (`controlTypes`: did you mean `controlType`?), or the only one that
+ends with the argument's words or whose words end it (`handle`: did you mean `windowHandle`?, and the reverse):
+
+```json
+{
+  "success": false,
+  "error": "Invalid arguments for tool 'click'. It does not take 'handle' (did you mean 'windowHandle'?). Its parameters are x, y, windowHandle, window, allowHostTarget, releaseHeldModifiers, space, captureId, observe. Nothing was done: an argument a tool does not declare would be ignored, so the call could act on, capture or read something other than what was meant.",
+  "errorCode": "InvalidArguments",
+  "tool": "click"
+}
+```
+
+A misspelled or borrowed name would otherwise be dropped: take_screenshot with `handle` (it takes no window) captured
+the whole primary monitor, and a criterion left out widens a search, so element_action could act on another element
+than the one meant. take_screenshot's error points to [capture_window](#capture_window) for a window. element_action
+takes no `withinRef`: find the element with [find_ui_elements](#find_ui_elements) `withinRef` and pass its `ref`. The
+request's `_meta` (a progress token, for example) is not an argument and is not checked. A refused call of a tool the
+[audit log](#audit-log) records is in the log.
 
 ### Audit log
 
@@ -3753,7 +3765,7 @@ Every input call can be stopped. Cancelling the MCP request (`notifications/canc
 
 ### Input guard
 
-An argument the input tool does not declare is refused before anything else, with `InvalidArguments` naming it and, when one is within two edits, the declared name it most likely stands for (see [Undeclared arguments](#undeclared-arguments)). Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. While any modifier of the pause hotkey is down, no modifier is released that way, not even one that is not part of the hotkey: the user may be pressing it (a chord's modifiers go down one after another), and the call returns `ModifiersHeld` even with `releaseHeldModifiers: true`. Every input call reads the modifiers again right before each batch it sends, so one that goes down meanwhile (the user taking the keyboard, or starting to press the pause hotkey) stops it with `ModifiersHeld` too, instead of turning keys into shortcuts or a click into a Shift-click.
+An argument the input tool does not declare is refused before anything else, with `InvalidArguments` naming it, listing the tool's parameters and, for a near miss (`handle` for `windowHandle`), the declared name it most likely stands for (see [Undeclared arguments](#undeclared-arguments)). Before the guard, every input call checks the session (see [Input Control](#input-control)): `send_keys` with the user's pause hotkey chord is refused (`PauseChordNotAllowed`); while the user has paused input, `PausedByUser`; after waiting 30 seconds for another call, `InputBusy`; and while a modifier key (Shift, Ctrl, Alt or Windows) is held down, `ModifiersHeld`, with the keys in `heldModifiers`. With `releaseHeldModifiers: true` the server sends those keys up first and reports them in `releasedModifiers`; pass it only when nobody is pressing them (a stuck key) or the user asked, because a key the user holds is released too. While any modifier of the pause hotkey is down, no modifier is released that way, not even one that is not part of the hotkey: the user may be pressing it (a chord's modifiers go down one after another), and the call returns `ModifiersHeld` even with `releaseHeldModifiers: true`. Every input call reads the modifiers again right before each batch it sends, so one that goes down meanwhile (the user taking the keyboard, or starting to press the pause hotkey) stops it with `ModifiersHeld` too, instead of turning keys into shortcuts or a click into a Shift-click.
 
 Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
@@ -3813,7 +3825,7 @@ Every input result reports:
 | `StaleCapture` | Mouse with `captureId` (or `space` `window`/`client`): the captured window moved or resized by more than 2 pixels, closed, was minimized or was replaced, or the monitors changed, since the capture (or since the point was converted); nothing was sent | Capture again and use the new `captureId` |
 | `CaptureNotFound` | Mouse: the `captureId` is unknown, from an earlier run, older than 10 minutes or pushed out by 32 newer captures; nothing was sent | Capture again |
 | `HandleMismatch` | The `window` selector's window no longer matched it once the call held the input gate (another document or tab, another title, a reused handle); nothing was sent. As a tool error: the selector's `handle` came with filters the window no longer matches | Locate the window again; do not retry the handle |
-| `InvalidArguments` | The `window` selector's `titleRegex` ran longer than 100 ms on the window's title when it was checked again inside the input gate; nothing was sent. As a tool error: the arguments cannot be used, or the call passed an argument the tool does not declare (the error names it and, when one is within two edits, the declared name it most likely stands for; see [Error Codes](#error-codes)) | Use a simpler pattern, or `titleContains`; fix the argument's name |
+| `InvalidArguments` | The `window` selector's `titleRegex` ran longer than 100 ms on the window's title when it was checked again inside the input gate; nothing was sent. As a tool error: the arguments cannot be used, or the call passed an argument the tool does not declare (the error names it, lists the tool's parameters and, for a near miss, the declared name it most likely stands for; see [Undeclared arguments](#undeclared-arguments)) | Use a simpler pattern, or `titleContains`; fix the argument's name |
 | `WindowNotFound`, `AmbiguousWindow` | Tool errors: the `window` selector named no window, or several (`candidates`); nothing was sent | See [Window selectors](#window-selectors) |
 
 ### click
@@ -6216,6 +6228,17 @@ the new tools; their sections have the rest.
   Checked on Windows 11 (26200): a UWP app's FileOpenPicker and FileSavePicker are dialog boxes of PickerHost.exe with
   the ids of any Open or Save As dialog, and file_dialog fills them, by the app's window handle or the picker's own.
   Nothing in the tool changed.
+- **Every tool refuses an argument it does not declare (roadmap M3.F42).** Only the acting tools (element_action,
+  respond_to_dialog, file_dialog, the input, close and kill tools) refused such an argument; every other tool ignored it
+  without a word, so take_screenshot with `handle` (it has no such parameter) captured the whole primary monitor, and
+  get_window_info with a made-up argument succeeded. Every tool now fails such a call with `InvalidArguments` (a tool
+  error) before it runs, keyed on its input schema's properties and matched exactly, letter case included, as the
+  arguments are bound. The error names the argument, now lists the tool's parameters, and suggests a near miss more
+  often: besides another letter case and two edits, the only parameter that ends with the argument's words or whose
+  words end it (`handle` for `windowHandle`, and the reverse). The message starts with `Invalid arguments for tool
+  '<tool>'.`, as the other argument errors do. The request's `_meta` is not an argument and is not checked (see
+  [Undeclared arguments](#undeclared-arguments)). A client that sent extra arguments to a read, window, capture, launch,
+  layout or clipboard tool must leave them out.
 
 ## Error Codes
 
@@ -6235,7 +6258,7 @@ with the JSON body below. Its `errorCode` says what kind of failure it was:
 
 | errorCode | Meaning | What to do |
 |-----------|---------|------------|
-| `InvalidArguments` | A required argument is missing, a value has the wrong type, or a value is out of its range (for example a window `width` of 0). The tool did not run. | Fix the arguments to match the tool's input schema and call again |
+| `InvalidArguments` | A required argument is missing, a value has the wrong type, a value is out of its range (for example a window `width` of 0), or the call passed an argument the tool does not declare; that error names the argument, lists the tool's parameters and, for a near miss, the one it most likely stands for (see [Undeclared arguments](#undeclared-arguments)). The tool did not run. | Fix the arguments to match the tool's input schema and call again |
 | A parameter's own code: `InvalidState`, `InvalidSnapPosition`, `InvalidPositioning`, `InvalidMatchBy`, `InvalidFormat`, `InvalidOutputMode`, `UnsupportedBrowser` | A fixed-value parameter has a value that is not allowed. The tool did not run; `error` lists the allowed values, which the input schema also lists (`enum`) | Use one of the listed values |
 | `ToolError`, or a tool-specific code such as `PresetNotFound` | The tool reported an error on purpose. `error` is its message, unchanged | Read the message; the tool's section lists its codes |
 | `UnhandledException` | The tool threw an unexpected exception, or its result could not be serialized. The server logs the exception with its stack trace to stderr | Usually a server bug; `error` names the exception and its message |
@@ -6358,7 +6381,7 @@ table, it gives more detail.
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InputBusy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InterpreterWithArguments` | [launch_application](#launch_application), launch_applications_batch | A command interpreter, script host or other program that runs what its command line names (`cmd`, PowerShell, `wscript`, `python`, ...) was given arguments: the server does not run commands or scripts for the agent (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run the command |
-| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, with `captureId` or a `space` other than `screen` but no point, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [capture_window](#capture_window)'s `padding` without `ref` or outside 0-500, a `ref` that is not an element ref, or a `handle` or `window` that is not the ref's window, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null; an argument an acting tool does not declare (see [Undeclared arguments](#undeclared-arguments)). A batch item that is null, or misses its size, fails alone with this code |
+| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, with `captureId` or a `space` other than `screen` but no point, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [capture_window](#capture_window)'s `padding` without `ref` or outside 0-500, a `ref` that is not an element ref, or a `handle` or `window` that is not the ref's window, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null; an argument the tool does not declare (see [Undeclared arguments](#undeclared-arguments)). A batch item that is null, or misses its size, fails alone with this code |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements), [read_element_text](#read_element_text) and [element_action](#element_action) (in their result), [wait_for_element](#wait_for_element) (tool error, before it waits) | A `controlTypes` (find_ui_elements, read_element_text, element_action, wait_for_element: `controlType`) name is not a known control type; `error` lists the valid names |

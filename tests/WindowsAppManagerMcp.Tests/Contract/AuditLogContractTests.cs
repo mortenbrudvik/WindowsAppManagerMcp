@@ -434,7 +434,7 @@ public class AuditLogContractTests
 
         var (result, lines) = await CallAsync("click", arguments);
 
-        // An acting tool refuses it (M3 review), without repeating a name that is no parameter name; the line records the
+        // Every tool refuses it (roadmap M3.F42), without repeating a name that is no parameter name; the line records the
         // refusal, with the name left out
         result.Content.OfType<TextContentBlock>().Single().Text.Should().NotContain("hunter2");
         var line = lines.Single();
