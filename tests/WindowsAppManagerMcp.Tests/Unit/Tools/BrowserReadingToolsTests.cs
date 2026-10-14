@@ -447,6 +447,26 @@ public class BrowserReadingToolsTests
         result.Source.Should().Be("cdp");
         result.TargetId.Should().Be("TAB1");
         result.CdpError.Should().BeNull();
+        result.AccessibilityWarmup.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_MapsTheAccessibilityWarmup()
+    {
+        // Arrange - the UI Automation read waited for the page's tree first (roadmap M3.F24)
+        var warmup = new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Partial, WebContentHost.Chromium, 1500, 6, 40, "Read again.");
+        _mockBrowserReadingService
+            .Setup(s => s.GetBrowserContentAsync(
+                It.IsAny<nint>(), It.IsAny<BrowserContentOptions?>(), It.IsAny<CdpOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AnyContentResult with { Source = "uia", AccessibilityWarmup = warmup });
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserContent(12345);
+
+        // Assert
+        result.AccessibilityWarmup.Should().Be(warmup);
     }
 
     #endregion

@@ -2059,7 +2059,7 @@
             "default": false
           },
           "timeoutMs": {
-            "description": "Time limit in milliseconds for the CDP requests of this call (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
+            "description": "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
             "type": "integer",
             "default": 10000
           }
@@ -2309,7 +2309,7 @@
             "default": false
           },
           "timeoutMs": {
-            "description": "Time limit in milliseconds for the CDP requests of this call (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
+            "description": "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
             "type": "integer",
             "default": 10000
           }
@@ -2423,7 +2423,7 @@
             "default": false
           },
           "timeoutMs": {
-            "description": "Time limit in milliseconds for the CDP requests of this call (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
+            "description": "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.",
             "type": "integer",
             "default": 10000
           }

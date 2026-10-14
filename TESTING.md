@@ -1829,8 +1829,8 @@ dotnet test --filter "Category!=Desktop" --collect:"XPlat Code Coverage" --resul
 
 Most tests mock the native layer: `INativeInputWrapper` for mouse and keyboard input and
 `INativeWindowWrapper` for window changes. Some tests use the real stack read-only: they read
-real system state (the monitor, window and process lists, the UI Automation root in `UiaTreeTests`
-and `UIAutomationWrapperTests`, a small screen region in `ScreenCaptureWrapperIntegrationTests`,
+real system state (the monitor, window and process lists, the UI Automation root in `UiaTreeTests`,
+a small screen region in `ScreenCaptureWrapperIntegrationTests`,
 process tokens, the input desktop, the session state and the agent's host chain in
 `SecurityProbeIntegrationTests`) but change nothing. Test classes that reach the real UI Automation
 client belong to the `RealUiAutomationCollection` (`[Collection(RealUiAutomationCollection.Name)]`),
@@ -2363,7 +2363,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 206,376 bytes (`ToolList_StaysWithinItsBudget`) | 51,594 | 51,607 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 206,422 bytes (`ToolList_StaysWithinItsBudget`) | 51,606 | 51,607 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.

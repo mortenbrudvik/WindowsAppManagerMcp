@@ -335,7 +335,7 @@ public class NativeCallGuardTests
     }
 
     /// <summary>
-    /// The types that may call UI Automation actions: the browser wrapper, and the two engine adapters behind IUiaTree,
+    /// The types that may call UI Automation actions: the window-close wrapper, and the two engine adapters behind IUiaTree,
     /// whose pattern objects (IUiaPattern) the action tools of roadmap M3.6 use. Tests replace all three with mocks or
     /// FakeUiaTree, and the E2E guard classifies every pattern member (WrapperCatalog: UiaAction, refused in the no-input
     /// tier, and allowed only on elements of the fixture process in the input tier).
@@ -408,6 +408,8 @@ public class NativeCallGuardTests
     [InlineData(typeof(ElementWaitService))]
     [InlineData(typeof(ElementActionService))]
     [InlineData(typeof(AppWindowProbe))]
+    [InlineData(typeof(BrowserReadingService))]
+    [InlineData(typeof(BrowserUiaReader))]
     public void UiaTreeServices_ReadUiAutomationOnlyThroughIUiaTree(Type service)
     {
         // Act - any call into System.Windows.Automation or the COM client, reads included

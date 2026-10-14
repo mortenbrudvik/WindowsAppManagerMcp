@@ -42,8 +42,6 @@ public class RealUiAutomationCollectionTests
             .ToList();
 
         // Assert
-        reaching.Should().Contain(typeof(Unit.Services.UIAutomationWrapperTests),
-            "the scan must see the wrapper tests' calls to the real client");
         reaching.Should().Contain(typeof(Unit.Native.UiaTreeTests),
             "the scan must see the UiaTree tests' calls to the real client");
         outside.Should().BeEmpty(

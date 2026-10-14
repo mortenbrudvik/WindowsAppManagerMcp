@@ -36,7 +36,7 @@ public class BrowserReadingTools
         "If true, return the CDP error (for example CdpTimeout, CdpDialogOpen, CdpTargetNotFound) instead of falling back to UI Automation. Requires cdpPort. Default: false.";
 
     private const string TimeoutDescription =
-        "Time limit in milliseconds for the CDP requests of this call (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
+        "Time limit in ms for the CDP requests, and again for the UI Automation read (default: 10000, range: 1000-30000). A page with an open JavaScript dialog (alert/confirm/prompt/beforeunload) never answers CDP, so the call returns CdpTimeout or CdpDialogOpen instead of hanging.";
 
     [McpServerTool(Name = "get_browser_url", Title = "Get Browser URL", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Get the current URL from a browser window. Uses Windows UI Automation to read the address bar, or CDP (Chrome DevTools Protocol) if a port is specified." + CdpBehaviorDescription + " Supports Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and other Chromium/Firefox-based browsers.")]
@@ -230,7 +230,8 @@ public class BrowserReadingTools
         ErrorCode: result.ErrorCode.ToString(),
         Source: result.Source,
         TargetId: result.TargetId,
-        CdpError: result.CdpError
+        CdpError: result.CdpError,
+        AccessibilityWarmup: result.AccessibilityWarmup
     );
 
     private static DebugBrowserLaunchResultDto ToDto(DebugBrowserLaunchResult result) => new(
@@ -262,7 +263,8 @@ public record BrowserUrlResultDto(
 
 /// <summary>
 /// DTO for browser content result returned by MCP tools.
-/// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation.
+/// Source is "cdp" or "uia"; CdpError explains a fallback from CDP to UI Automation. AccessibilityWarmup is set when the
+/// UI Automation read waited for the page's accessibility tree first (roadmap M3.F24).
 /// </summary>
 public record BrowserContentResultDto(
     bool Success,
@@ -275,7 +277,8 @@ public record BrowserContentResultDto(
     string ErrorCode,
     string? Source = null,
     string? TargetId = null,
-    string? CdpError = null
+    string? CdpError = null,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 );
 
 /// <summary>
