@@ -112,6 +112,12 @@ public record ClickResult(
     /// not be converted). Null for a screen point.
     /// </summary>
     public RequestedPoint? Requested { get; init; }
+
+    /// <summary>
+    /// With observe 'state' or 'screenshot' (roadmap M3.F32): get_desktop_state's observation of the window the input was for
+    /// after it, as element_action's observed; serialized last. Null without observe.
+    /// </summary>
+    public DesktopState? Observed { get; init; }
 }
 
 /// <summary>
@@ -178,6 +184,9 @@ public record TypeTextResult(
 
     /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
     public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Observed"/>
+    public DesktopState? Observed { get; init; }
 }
 
 /// <summary>
@@ -204,6 +213,9 @@ public record SendKeysResult(
 
     /// <inheritdoc cref="ClickResult.ReleasedModifiers"/>
     public IReadOnlyList<string>? ReleasedModifiers { get; init; }
+
+    /// <inheritdoc cref="ClickResult.Observed"/>
+    public DesktopState? Observed { get; init; }
 }
 
 /// <summary>

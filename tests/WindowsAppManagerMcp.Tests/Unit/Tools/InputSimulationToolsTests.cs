@@ -87,20 +87,20 @@ public class InputSimulationToolsTests
     #region Click Tests
 
     [Fact]
-    public void Click_CallsServiceWithCorrectCoordinates()
+    public async Task Click_CallsServiceWithCorrectCoordinates()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.Click(100, 200);
+        await sut.Click(100, 200);
 
         // Assert
         _mockInputService.Verify(s => s.Click(100, 200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void Click_ReturnsServiceResult()
+    public async Task Click_ReturnsServiceResult()
     {
         // Arrange
         var expectedResult = new ClickResult(true, 100, 200, "left");
@@ -108,27 +108,27 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.Click(100, 200);
+        var result = await sut.Click(100, 200).Payload<ClickResult>();
 
         // Assert
         result.Should().Be(expectedResult);
     }
 
     [Fact]
-    public void Click_WithNegativeCoordinates_PassesToService()
+    public async Task Click_WithNegativeCoordinates_PassesToService()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.Click(-100, -200);
+        await sut.Click(-100, -200);
 
         // Assert
         _mockInputService.Verify(s => s.Click(-100, -200, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void Click_WhenServiceReturnsError_ReturnsError()
+    public async Task Click_WhenServiceReturnsError_ReturnsError()
     {
         // Arrange
         var errorResult = new ClickResult(
@@ -142,7 +142,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.Click(5000, 5000);
+        var result = await sut.Click(5000, 5000).Payload<ClickResult>();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -154,20 +154,20 @@ public class InputSimulationToolsTests
     #region RightClick Tests
 
     [Fact]
-    public void RightClick_CallsServiceWithCorrectCoordinates()
+    public async Task RightClick_CallsServiceWithCorrectCoordinates()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.RightClick(300, 400);
+        await sut.RightClick(300, 400);
 
         // Assert
         _mockInputService.Verify(s => s.RightClick(300, 400, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void RightClick_ReturnsServiceResult()
+    public async Task RightClick_ReturnsServiceResult()
     {
         // Arrange
         var expectedResult = new ClickResult(true, 300, 400, "right");
@@ -175,14 +175,14 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.RightClick(300, 400);
+        var result = await sut.RightClick(300, 400).Payload<ClickResult>();
 
         // Assert
         result.Should().Be(expectedResult);
     }
 
     [Fact]
-    public void RightClick_WhenServiceReturnsError_ReturnsError()
+    public async Task RightClick_WhenServiceReturnsError_ReturnsError()
     {
         // Arrange
         var errorResult = new ClickResult(
@@ -196,7 +196,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.RightClick(300, 400);
+        var result = await sut.RightClick(300, 400).Payload<ClickResult>();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -208,72 +208,72 @@ public class InputSimulationToolsTests
     #region DoubleClick Tests
 
     [Fact]
-    public void DoubleClick_CallsServiceWithCorrectCoordinates()
+    public async Task DoubleClick_CallsServiceWithCorrectCoordinates()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.DoubleClick(500, 600);
+        await sut.DoubleClick(500, 600);
 
         // Assert
         _mockInputService.Verify(s => s.DoubleClick(500, 600, 50, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void DoubleClick_WithCustomDelay_PassesClampedDelay()
+    public async Task DoubleClick_WithCustomDelay_PassesClampedDelay()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.DoubleClick(500, 600, delayMs: 100);
+        await sut.DoubleClick(500, 600, delayMs: 100);
 
         // Assert
         _mockInputService.Verify(s => s.DoubleClick(500, 600, 100, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void DoubleClick_WithDelayBelowMinimum_ClampsTo10()
+    public async Task DoubleClick_WithDelayBelowMinimum_ClampsTo10()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.DoubleClick(500, 600, delayMs: 1);
+        await sut.DoubleClick(500, 600, delayMs: 1);
 
         // Assert
         _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void DoubleClick_WithDelayAboveMaximum_ClampsTo500()
+    public async Task DoubleClick_WithDelayAboveMaximum_ClampsTo500()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.DoubleClick(500, 600, delayMs: 1000);
+        await sut.DoubleClick(500, 600, delayMs: 1000);
 
         // Assert
         _mockInputService.Verify(s => s.DoubleClick(500, 600, 500, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void DoubleClick_WithNegativeDelay_ClampsTo10()
+    public async Task DoubleClick_WithNegativeDelay_ClampsTo10()
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        sut.DoubleClick(500, 600, delayMs: -50);
+        await sut.DoubleClick(500, 600, delayMs: -50);
 
         // Assert
         _mockInputService.Verify(s => s.DoubleClick(500, 600, 10, InputTarget.None, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public void DoubleClick_ReturnsServiceResult()
+    public async Task DoubleClick_ReturnsServiceResult()
     {
         // Arrange
         var expectedResult = new ClickResult(true, 500, 600, "double");
@@ -281,7 +281,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = sut.DoubleClick(500, 600);
+        var result = await sut.DoubleClick(500, 600).Payload<ClickResult>();
 
         // Assert
         result.Should().Be(expectedResult);
@@ -362,13 +362,13 @@ public class InputSimulationToolsTests
     [InlineData(100, 200)]
     [InlineData(1920, 1080)]
     [InlineData(-100, -200)]
-    public void Click_ResultContainsCorrectCoordinates(int x, int y)
+    public async Task Click_ResultContainsCorrectCoordinates(int x, int y)
     {
         // Arrange
         var sut = CreateSut();
 
         // Act
-        var result = sut.Click(x, y);
+        var result = await sut.Click(x, y).Payload<ClickResult>();
 
         // Assert
         result.X.Should().Be(x);
@@ -457,7 +457,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.TypeText("Hello");
+        var result = await sut.TypeText("Hello").Payload<TypeTextResult>();
 
         // Assert
         result.Should().Be(expectedResult);
@@ -477,7 +477,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.TypeText("");
+        var result = await sut.TypeText("").Payload<TypeTextResult>();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -523,7 +523,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.SendKeys("{ENTER}");
+        var result = await sut.SendKeys("{ENTER}").Payload<SendKeysResult>();
 
         // Assert
         result.Should().Be(expectedResult);
@@ -542,7 +542,7 @@ public class InputSimulationToolsTests
         var sut = CreateSut();
 
         // Act
-        var result = await sut.SendKeys("{UNKNOWNKEY}");
+        var result = await sut.SendKeys("{UNKNOWNKEY}").Payload<SendKeysResult>();
 
         // Assert
         result.Success.Should().BeFalse();
@@ -572,16 +572,16 @@ public class InputSimulationToolsTests
     #region Session safety parameters (roadmap M1.10)
 
     [Fact]
-    public void MouseTools_PassReleaseHeldModifiersAndTheRequestToken()
+    public async Task MouseTools_PassReleaseHeldModifiersAndTheRequestToken()
     {
         // Arrange
         using var request = new CancellationTokenSource();
         var sut = CreateSut();
 
         // Act
-        sut.Click(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
-        sut.RightClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
-        sut.DoubleClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        await sut.Click(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        await sut.RightClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
+        await sut.DoubleClick(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
         sut.MouseMove(1, 2, releaseHeldModifiers: true, cancellationToken: request.Token);
 
         // Assert

@@ -50,7 +50,8 @@ public enum DesktopStateScope
 
 /// <summary>
 /// What an action tool returns about the desktop after it acted (roadmap M3.12): nothing, get_desktop_state's observation, or
-/// that observation with a capture of the window. element_action has it; other action tools may gain it later.
+/// that observation with a capture of the window. element_action has it, and so do click, right_click, double_click,
+/// type_text, send_keys and respond_to_dialog (roadmap M3.F32).
 /// </summary>
 [ToolEnum(ToolErrorReporting.InvalidArgumentsErrorCode, "observe value", NullMeans = "none")]
 public enum ObserveMode
@@ -164,7 +165,7 @@ public sealed record DesktopElements(
 public sealed record DesktopStateError(string Section, string ErrorCode, string Error);
 
 /// <summary>
-/// Result of get_desktop_state (roadmap M3.12), and element_action's <c>observed</c>: one compact observation of the desktop.
+/// Result of get_desktop_state (roadmap M3.12), and the action tools' <c>observed</c>: one compact observation of the desktop.
 /// <c>success</c> is false only when the window named is no window; a part that could not be read is listed in
 /// <paramref name="Errors"/> and the rest is still returned.
 /// </summary>

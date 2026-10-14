@@ -6,8 +6,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// get_desktop_state (roadmap M3.12): one compact observation of the desktop, the recommended first call. It reads, in one
 /// call and under one deadline: the window in front, the cursor, the modifiers that are down, Caps Lock and the pause (always);
 /// and, as asked, the user-facing windows front first, the element with keyboard focus, the target window's open popups, its
-/// interactive elements as text lines with refs, and a capture of it. element_action's <c>observe</c> returns the same
-/// observation after the action.
+/// interactive elements as text lines with refs, and a capture of it. The action tools' <c>observe</c> (element_action, and
+/// the click, keyboard and dialog tools, roadmap M3.F32) returns the same observation after the action.
 /// </summary>
 /// <remarks>
 /// <para><b>Never long.</b> The parts run side by side; whatever has not answered by the deadline is reported in the
@@ -39,7 +39,7 @@ public interface IDesktopStateService
     string? ScreenshotUnavailable();
 
     /// <summary>
-    /// Why the observation cannot be returned by another tool (element_action's observe), or null when it can: it is
+    /// Why the observation cannot be returned by another tool (the action tools' observe), or null when it can: it is
     /// get_desktop_state's read, so it follows get_desktop_state being served (not served: the elements toolset is off, or
     /// an exclusion). Those tools refuse observe with it before they do anything.
     /// </summary>

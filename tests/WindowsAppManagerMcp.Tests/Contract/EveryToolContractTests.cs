@@ -104,9 +104,12 @@ public class EveryToolContractTests
 
     /// <summary>
     /// Tools that name their text block's payload ([ToolResultPayload]) but return an image only when the call asks for one
-    /// (get_desktop_state's include screenshot, element_action's observe screenshot; DesktopStateContractTests checks those).
+    /// (get_desktop_state's include screenshot, the action tools' observe screenshot; DesktopStateContractTests checks those).
     /// </summary>
-    private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal) { "get_desktop_state", "element_action" };
+    private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal)
+    {
+        "get_desktop_state", "element_action", "click", "right_click", "double_click", "type_text", "send_keys", "respond_to_dialog"
+    };
 
     /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>
     private static readonly HashSet<string> NoFailingCall = new(StringComparer.Ordinal)

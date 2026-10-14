@@ -59,7 +59,7 @@ public class DialogToolsTests
         // would be answered blind. The real service, with nothing behind it that may be touched
         var sut = new DialogTools(Untouched.Dialogs(), _fileDialogs.Object, _windows.Object);
 
-        var result = await sut.RespondToDialog(button, window: new WindowSelector { Foreground = true });
+        var result = await sut.RespondToDialog(button, window: new WindowSelector { Foreground = true }).Payload<DialogResponseResult>();
 
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);

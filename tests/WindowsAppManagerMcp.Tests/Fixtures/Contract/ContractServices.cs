@@ -160,7 +160,7 @@ public sealed class ContractServices : IDisposable
         services.AddSingleton<IServerInfoService>(sp => new ServerInfoService(
             SystemInfo.Object, SecurityProbe.Object, Monitors.Object, Safety.Object, Session, Hotkey.Object, Layouts.Object,
             NativeWindows.Object, sp.GetService<ToolsetSelection>(), Audit));
-        // get_desktop_state and element_action's observe (roadmap M3.12): the real observation over the mocks above
+        // get_desktop_state and the action tools' observe (roadmap M3.12, M3.F32): the real observation over the mocks above
         services.AddSingleton<IDesktopStateService>(sp => new DesktopStateService(
             Windows.Object, Session, InputWrapper, Inspection.Object, UiElements.Object, Popups.Object, Screenshots,
             sp.GetRequiredService<ITargetPolicy>(), sp.GetService<ToolsetSelection>()));
