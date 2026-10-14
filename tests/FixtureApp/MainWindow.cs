@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -13,8 +14,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
 /// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal
-/// dialog, a button that opens a document with unsaved changes, a button that shows a Save As dialog, a context menu,
-/// solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
+/// dialog, a button that opens a document with unsaved changes, buttons that show a Save As dialog and a task dialog, a
+/// context menu, solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
 /// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// </summary>
 internal sealed class MainWindow : Window
@@ -103,6 +104,7 @@ internal sealed class MainWindow : Window
         var saveAs = CreateButton("Save as...", Ids.SaveAsButton, ShowSaveAs);
         saveAs.Margin = new Thickness(0, 0, 8, 12);
         dialogButtons.Children.Add(Report(Ids.SaveAsButton, saveAs));
+        dialogButtons.Children.Add(Report(Ids.TaskDialogButton, CreateButton("Task dialog...", Ids.TaskDialogButton, ShowTaskDialog)));
         left.Children.Add(dialogButtons);
 
         var contextMenuTarget = new Label
@@ -357,6 +359,27 @@ internal sealed class MainWindow : Window
         }
 
         Log(Events.SaveDialogClosed, ("result", "saved"), ("path", path));
+    }
+
+    /// <summary>Shows the task dialog (<see cref="FixtureTaskDialog"/>) modal on this window and logs the button that closed it.</summary>
+    private void ShowTaskDialog()
+    {
+        int pressed;
+        try
+        {
+            pressed = FixtureTaskDialog.Show(
+                new WindowInteropHelper(this).Handle,
+                _options.Instance,
+                dialog => _events.Write(Events.TaskDialogOpened, ("hwnd", (long)dialog)));
+        }
+        catch (Exception ex) when (ex is ExternalException or ArgumentException or EntryPointNotFoundException or DllNotFoundException)
+        {
+            // Logged as a close, so a test waiting for the dialog fails with the reason instead of a timeout
+            Log(Events.TaskDialogClosed, ("button", 0), ("message", ex.Message));
+            return;
+        }
+
+        Log(Events.TaskDialogClosed, ("button", pressed));
     }
 
     private void OpenTable()

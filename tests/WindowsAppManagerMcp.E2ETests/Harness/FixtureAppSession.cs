@@ -201,6 +201,17 @@ public sealed class FixtureAppSession : IDisposable
             $"a '{name}' event",
             ExitReason);
 
+    /// <summary>
+    /// Waits for the first event named one of <paramref name="names"/>, for something that ends in one of several events
+    /// (a window that opens, or the event that says why it could not).
+    /// </summary>
+    public FixtureEvent WaitForAnyEvent(IReadOnlyCollection<string> names, TimeSpan? timeout = null) =>
+        Events.WaitFor(
+            e => names.Contains(e.Name),
+            timeout ?? TimeSpan.FromSeconds(10),
+            $"one of the events {string.Join(", ", names.Select(n => $"'{n}'"))}",
+            ExitReason);
+
     private string? ExitReason() =>
         _process.HasExited ? $"the fixture exited with code {_process.ExitCode}" : null;
 

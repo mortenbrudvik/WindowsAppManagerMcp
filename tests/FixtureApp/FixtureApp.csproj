@@ -22,6 +22,8 @@
     <RootNamespace>WindowsAppManagerMcp.FixtureApp</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
+    <!-- Common controls version 6, for the task dialog; no DPI setting (see app.manifest) -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
 </Project>

@@ -23,6 +23,7 @@ public class FixtureUiElementsTests
         [FixtureContract.Ids.OpenModalButton] = "Button",
         [FixtureContract.Ids.OpenDocumentButton] = "Button",
         [FixtureContract.Ids.SaveAsButton] = "Button",
+        [FixtureContract.Ids.TaskDialogButton] = "Button",
         [FixtureContract.Ids.ContextMenuTarget] = "Text",
         [FixtureContract.Ids.SwatchRed] = "Text",
         [FixtureContract.Ids.SwatchGreen] = "Text",

@@ -4,8 +4,8 @@ using System.Text;
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
-/// The few user32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, the Win32 menu bar
-/// of its menu window, and the long form of a path for its save folder.
+/// The few Win32 calls the fixture needs: its DPI awareness, its own geometry for the ready event, the Win32 menu bar
+/// of its menu window, the long form of a path for its save folder, and its task dialog.
 /// </summary>
 internal static class NativeMethods
 {
@@ -17,6 +17,54 @@ internal static class NativeMethods
     public const int WM_COMMAND = 0x0111;
     public const uint MF_STRING = 0x0000;
     public const uint MF_POPUP = 0x0010;
+
+    public const uint TDF_ALLOW_DIALOG_CANCELLATION = 0x0008;
+    public const uint TDF_USE_COMMAND_LINKS = 0x0010;
+    public const uint TDF_POSITION_RELATIVE_TO_WINDOW = 0x1000;
+    public const uint TDCBF_CANCEL_BUTTON = 0x0008;
+    public const uint TDN_CREATED = 0;
+
+    /// <summary>A task dialog's notification callback (PFTASKDIALOGCALLBACK).</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    public delegate int TaskDialogCallback(nint hwnd, uint notification, nint wParam, nint lParam, nint referenceData);
+
+    /// <summary>TASKDIALOGCONFIG. commctrl.h packs it to 1 byte on every platform; every string is an HGLOBAL the caller frees.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct TASKDIALOGCONFIG
+    {
+        public uint cbSize;
+        public nint hwndParent;
+        public nint hInstance;
+        public uint dwFlags;
+        public uint dwCommonButtons;
+        public nint pszWindowTitle;
+        public nint hMainIcon;
+        public nint pszMainInstruction;
+        public nint pszContent;
+        public uint cButtons;
+        public nint pButtons;
+        public int nDefaultButton;
+        public uint cRadioButtons;
+        public nint pRadioButtons;
+        public int nDefaultRadioButton;
+        public nint pszVerificationText;
+        public nint pszExpandedInformation;
+        public nint pszExpandedControlText;
+        public nint pszCollapsedControlText;
+        public nint hFooterIcon;
+        public nint pszFooter;
+        public nint pfCallback;
+        public nint lpCallbackData;
+        public uint cxWidth;
+    }
+
+    /// <summary>TASKDIALOG_BUTTON, packed as <see cref="TASKDIALOGCONFIG"/>.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct TASKDIALOG_BUTTON
+    {
+        public int nButtonID;
+        public nint pszButtonText;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -76,6 +124,10 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetMenu(nint hwnd, nint menu);
+
+    /// <summary>Shows a task dialog; returns an HRESULT. In comctl32 version 6 only, which app.manifest asks for.</summary>
+    [DllImport("comctl32.dll")]
+    public static extern int TaskDialogIndirect(ref TASKDIALOGCONFIG config, out int button, nint radioButton, nint verificationChecked);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint length);

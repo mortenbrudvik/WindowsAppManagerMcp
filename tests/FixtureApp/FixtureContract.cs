@@ -31,6 +31,12 @@ public static class FixtureContract
     /// <summary>Start of the title of the Save As dialog the main window's Save As button shows.</summary>
     public const string SaveAsTitlePrefix = "WAM Fixture Save As";
 
+    /// <summary>Start of the title of the task dialog the main window's Task dialog button shows.</summary>
+    public const string TaskDialogTitlePrefix = "WAM Fixture Task Dialog";
+
+    /// <summary>The task dialog's main instruction.</summary>
+    public const string TaskDialogInstruction = "Keep the fixture's draft?";
+
     /// <summary>What the fixture writes into the file its Save As dialog returns.</summary>
     public const string SavedFileText = "Saved by the WAM fixture's Save As dialog.";
 
@@ -61,6 +67,9 @@ public static class FixtureContract
 
     /// <summary>Title of the Save As dialog of fixture instance <paramref name="instance"/>.</summary>
     public static string SaveAsTitle(string instance) => $"{SaveAsTitlePrefix} {instance}";
+
+    /// <summary>Title of the task dialog of fixture instance <paramref name="instance"/>.</summary>
+    public static string TaskDialogTitle(string instance) => $"{TaskDialogTitlePrefix} {instance}";
 
     /// <summary>Title of the table window of fixture instance <paramref name="instance"/>.</summary>
     public static string TableTitle(string instance) => $"{TableTitlePrefix} {instance}";
@@ -128,6 +137,20 @@ public static class FixtureContract
         };
     }
 
+    /// <summary>
+    /// The task dialog's buttons (roadmap M3.F4): two command links, each with its text and the id TaskDialogIndirect
+    /// returns, and the common Cancel button (IDCANCEL), whose AutomationId is CommandButton_2.
+    /// </summary>
+    public static class TaskDialogLinks
+    {
+        public const string Keep = "Keep the draft";
+        public const string Discard = "Discard the draft";
+
+        public const int KeepCommand = 1001;
+        public const int DiscardCommand = 1002;
+        public const int CancelCommand = 2;
+    }
+
     /// <summary>UI Automation AutomationIds of the fixture's elements.</summary>
     public static class Ids
     {
@@ -139,6 +162,7 @@ public static class FixtureContract
         public const string OpenModalButton = "openModalButton";
         public const string OpenDocumentButton = "openDocumentButton";
         public const string SaveAsButton = "saveAsButton";
+        public const string TaskDialogButton = "taskDialogButton";
         public const string ContextMenuTarget = "contextMenuTarget";
         public const string ContextMenu = "contextMenu";
         public const string ContextMenuCopy = "contextMenuCopy";
@@ -218,6 +242,15 @@ public static class FixtureContract
         /// cancel), and <c>path</c> (the path the dialog returned, unless cancelled) and <c>message</c> (when it failed).
         /// </summary>
         public const string SaveDialogClosed = "saveDialogClosed";
+
+        /// <summary>The task dialog was created (TDN_CREATED); it is shown right after. Fields: <c>hwnd</c>.</summary>
+        public const string TaskDialogOpened = "taskDialogOpened";
+
+        /// <summary>
+        /// The task dialog closed. Fields: <c>button</c> (the id of the button that closed it, see
+        /// <see cref="TaskDialogLinks"/>; 0 when it could not be shown) and <c>message</c> (why, when it could not be shown).
+        /// </summary>
+        public const string TaskDialogClosed = "taskDialogClosed";
 
         /// <summary>The table window is shown. Fields: <c>hwnd</c>.</summary>
         public const string TableOpened = "tableOpened";

@@ -6,8 +6,9 @@ namespace WindowsAppManagerMcp.E2ETests.Scenarios;
 /// <summary>
 /// respond_to_dialog and element_action's menu_path (roadmap M3.5) against the fixture, input tier: the document's save
 /// prompt is a Win32 message box (#32770, WPF's MessageBox), answered by its standard id; the WPF modal dialog is answered
-/// by its button's text; the context menu's Delete is invoked by a one-item menu path; a three-item menu path opens the
-/// menu window's Win32 menu bar and its submenu, each a #32768 popup window (roadmap M3.F4). Every press goes through
+/// by its button's text; the context menu's Delete is invoked by a one-item menu path. Against the M3.F4 surfaces: the task
+/// dialog (TaskDialogIndirect) is answered by its common button's CommandButton_2 id and by a command link's text, and a
+/// three-item menu path opens the menu window's Win32 menu bar and its submenu, each a #32768 popup window. Every press goes through
 /// element_action's service, which the harness lets act only on the fixture's elements.
 /// </summary>
 public class FixtureDialogTests
@@ -73,6 +74,71 @@ public class FixtureDialogTests
         result.Success.Should().BeTrue(result.Error);
         result.Invoked!.AutomationId.Should().Be(FixtureContract.Ids.ModalCancelButton);
         e2e.Fixture.WaitForEvent(FixtureContract.Events.ModalClosed, e => e.GetString("result") == "cancel");
+    }
+
+    /// <summary>Shows the task dialog through its button (element_action invoke) and returns it once it is shown.</summary>
+    private async Task<nint> OpenTaskDialogAsync(E2ESession e2e)
+    {
+        var main = e2e.Fixture.MainWindowHandle;
+        var button = await e2e.Server.Get<IElementSearchService>().FindAsync(
+            new ElementQuery(main, AutomationId: FixtureContract.Ids.TaskDialogButton, Timeout: Timeout));
+        button.Success.Should().BeTrue(button.Error);
+        var invoked = await e2e.Server.Get<IElementActionService>().ActAsync(
+            new ElementActionRequest(button.Elements.Should().ContainSingle().Which.Ref!, ElementActionKind.Invoke, Timeout: Timeout));
+        invoked.Success.Should().BeTrue(invoked.Error);
+
+        // The dialog exists at TDN_CREATED and is shown right after; it closes at once when it cannot be shown
+        var opened = e2e.Fixture.WaitForAnyEvent([FixtureContract.Events.TaskDialogOpened, FixtureContract.Events.TaskDialogClosed], Timeout);
+        opened.Name.Should().Be(FixtureContract.Events.TaskDialogOpened, "the task dialog could not be shown: {0}", opened.GetString("message"));
+        var dialog = opened.GetHandle("hwnd");
+        Wait.ForValue(() => e2e.Server.Windows.FindWindows(handle: dialog).FirstOrDefault(), Timeout)
+            .Should().NotBeNull("the task dialog 0x{0:X} is shown after it is created", dialog);
+        _output.WriteLine($"Task dialog 0x{dialog:X}: '{E2ENative.GetWindowText(dialog)}' ({E2ENative.GetClassName(dialog)}).");
+        return dialog;
+    }
+
+    [DesktopFact]
+    public async Task ATaskDialog_IsAnsweredCancel_ByItsCommonButtonsCommandButtonId()
+    {
+        // Arrange
+        using var e2e = E2ESession.Start(DesktopTier.Input, _output);
+        var dialog = await OpenTaskDialogAsync(e2e);
+
+        // Act
+        var result = await e2e.Server.Get<IDialogService>().RespondAsync(new DialogResponseRequest(dialog, "cancel", Timeout: Timeout));
+        Log(result);
+
+        // Assert - a task dialog's common button carries CommandButton_ and its standard id; its command links are buttons too
+        result.Success.Should().BeTrue(result.Error);
+        result.DialogHandle.Should().Be((long)dialog);
+        result.Title.Should().Be(FixtureContract.TaskDialogTitle(e2e.Fixture.Instance));
+        result.Text.Should().Contain(t => t.Contains(FixtureContract.TaskDialogInstruction));
+        result.Buttons.Should().Contain(b => b.AutomationId == DialogButtons.TaskDialogPrefix + FixtureContract.TaskDialogLinks.CancelCommand && b.Standard == "cancel");
+        result.Buttons.Should().Contain(b => b.Name != null && b.Name.Contains(FixtureContract.TaskDialogLinks.Keep));
+        result.Buttons.Should().Contain(b => b.Name != null && b.Name.Contains(FixtureContract.TaskDialogLinks.Discard));
+        result.Invoked!.Standard.Should().Be("cancel");
+        result.DialogClosed.Should().BeTrue();
+        e2e.Fixture.WaitForEvent(FixtureContract.Events.TaskDialogClosed).GetInt64("button").Should().Be(FixtureContract.TaskDialogLinks.CancelCommand);
+    }
+
+    [DesktopFact]
+    public async Task ATaskDialogsCommandLink_IsPressedByItsText()
+    {
+        // Arrange
+        using var e2e = E2ESession.Start(DesktopTier.Input, _output);
+        var dialog = await OpenTaskDialogAsync(e2e);
+
+        // Act - a command link has no standard id: its text names it
+        var result = await e2e.Server.Get<IDialogService>().RespondAsync(
+            new DialogResponseRequest(dialog, FixtureContract.TaskDialogLinks.Discard, Timeout: Timeout));
+        Log(result);
+
+        // Assert - TaskDialogIndirect returns the link's own id
+        result.Success.Should().BeTrue(result.Error);
+        result.Invoked!.Name.Should().Contain(FixtureContract.TaskDialogLinks.Discard);
+        result.Invoked.Standard.Should().BeNull("a command link is no standard button");
+        result.DialogClosed.Should().BeTrue();
+        e2e.Fixture.WaitForEvent(FixtureContract.Events.TaskDialogClosed).GetInt64("button").Should().Be(FixtureContract.TaskDialogLinks.DiscardCommand);
     }
 
     [DesktopFact]

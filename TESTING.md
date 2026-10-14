@@ -1982,7 +1982,9 @@ mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, ca
 Automation reports it as a password field, whose value the server never reads), a check box, a combo
 box, a button that opens a modal dialog (the main window is disabled while it is open), a button
 that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with unsaved
-changes, a button that shows the common Save As dialog, a context menu, three solid color swatches
+changes, a button that shows the common Save As dialog, a button that shows a task dialog with two
+command links and a Cancel button (TaskDialogIndirect; the fixture's manifest asks for version 6 of
+the common controls for it, and sets no DPI awareness), a context menu, three solid color swatches
 and a virtualized list of 10,000 items. The Save As dialog creates no test file, and the fixture
 writes the file it returns only when it is directly in the test's own folder under the temp folder,
 the folder of its event log (`FixtureSaveFolder`), so nothing is written anywhere else. A table
@@ -2104,7 +2106,7 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
 | `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
 | `FixturePopupTests` | Input | The open context menu found by the default scope and listed by get_active_popups, and the combo box list found by scope windowAndPopups (M3.5) |
-| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5); a menu_path through the menu window's Win32 menu bar and its #32768 submenus (M3.F4) |
+| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5); the task dialog answered by its common button's `CommandButton_2` id and by a command link's text, and a menu_path through the menu window's Win32 menu bar and its #32768 submenus (M3.F4) |
 | `FixtureFileDialogTests` | Input | file_dialog end to end in the fixture's Save As dialog: a new file, and a replaced one through the replace prompt (M3.14, M3.F4) |
 | `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
 | `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
