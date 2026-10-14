@@ -1,8 +1,8 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// Unit tests for <see cref="AccessibilityWarmup"/> (roadmap M3.3), over an in-memory UI Automation tree, mocked window
-/// reads and a manual clock: no real window is read and no test waits.
+/// Unit tests for <see cref="AccessibilityWarmup"/> (roadmap M3.3, M3.F23), over an in-memory UI Automation tree, mocked
+/// window and process reads and a manual clock: no real window is read and no test waits.
 /// </summary>
 public class AccessibilityWarmupTests
 {
@@ -11,11 +11,14 @@ public class AccessibilityWarmupTests
     private const nint HiddenTab = 0x102;
     private const uint BrowserProcess = 4000;
     private const uint WebViewProcess = 5000;
+    private const nint App = 0x300;
+    private const uint AppProcess = 6000;
 
     private static readonly TimeSpan Budget = TimeSpan.FromMilliseconds(1500);
 
     private readonly FakeUiaTree _tree = new();
     private readonly Mock<INativeWindowWrapper> _windows = new();
+    private readonly Mock<INativeProcessWrapper> _processes = new();
     private readonly ManualClock _clock = new();
     private readonly List<TimeSpan> _waits = [];
     private readonly Dictionary<nint, FakeWindow> _desktop = [];
@@ -66,7 +69,7 @@ public class AccessibilityWarmupTests
         }
     }
 
-    private AccessibilityWarmup CreateSut() => new(_tree, _windows.Object, _clock, (delay, token) =>
+    private AccessibilityWarmup CreateSut() => new(_tree, _windows.Object, _processes.Object, _clock, (delay, token) =>
     {
         _waits.Add(delay);
         _clock.Advance(delay);
@@ -542,6 +545,269 @@ public class AccessibilityWarmupTests
 
         // Assert
         sut.RememberedCount.Should().Be(AccessibilityWarmup.CacheCapacity);
+    }
+
+    #endregion
+
+    #region Web content hosted as a visual (roadmap M3.F23)
+
+    /// <summary>
+    /// A WinUI 3 window with a WebView2 hosted as a visual: no render widget, an msedgewebview2.exe child of the app's
+    /// process, and the page's Document (frameworkId Chrome) a few panes below the window's element.
+    /// </summary>
+    private FakeUiaNode AppWithVisualWebView(int documentChildren)
+    {
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        _desktop[0x301] = new FakeWindow("Microsoft.UI.Content.DesktopChildSiteBridge", AppProcess, App);
+        HostsWebView2(AppProcess);
+        var document = new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" };
+        AddChildren(document, documentChildren);
+        _tree.WithWindow(App, new FakeUiaNode("Window", "App") { FrameworkId = "Win32" }.With(
+            new FakeUiaNode("Pane", "Bridge") { FrameworkId = "XAML" }.With(
+                new FakeUiaNode("Button", "Not a container") { FrameworkId = "XAML" },
+                new FakeUiaNode("Pane", "WebView2") { FrameworkId = "XAML" }.With(document))));
+        return document;
+    }
+
+    /// <summary>The process list: an msedgewebview2.exe browser process that <paramref name="host"/> started, and its renderer.</summary>
+    private void HostsWebView2(uint host) =>
+        _processes.Setup(p => p.GetProcessList()).Returns(new Dictionary<int, (int ParentProcessId, string ImageName)>
+        {
+            [(int)host] = (1, "App.exe"),
+            [(int)WebViewProcess] = ((int)host, "msedgewebview2.exe"),
+            [(int)WebViewProcess + 1] = ((int)WebViewProcess, "msedgewebview2.exe")
+        });
+
+    [Fact]
+    public void WarmUp_OfAWebView2HostedAsAVisual_FindsItsDocument_AndReportsWebView2()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 3);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().Be(new AccessibilityWarmupInfo(AccessibilityWarmupStatus.Ready, WebContentHost.WebView2, 0, 1, 3));
+        _tree.CachedFetches.Should().NotContain("Not a container", "only panes and groups are searched");
+        _waits.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WarmUp_OfAnEmptyVisualWebView2_WaitsUntilItsElementsArriveAndStopChanging()
+    {
+        // Arrange - the page is read cold: empty, then 4 elements, then still 4
+        var document = AppWithVisualWebView(documentChildren: 0);
+        _afterWait = () => AddChildren(document, document.Children.Count == 0 ? 4 : 0);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.Host.Should().Be(WebContentHost.WebView2);
+        info.DocumentChildCount.Should().Be(4);
+        info.Polls.Should().Be(3);
+        _waits.Should().Equal(TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(300));
+    }
+
+    [Fact]
+    public void WarmUp_OfAVisualWebView2ThatStaysEmpty_StopsAtTheBudget_AndWarnsNotReady()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 0);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.NotReady);
+        info.Host.Should().Be(WebContentHost.WebView2);
+        info.WaitedMs.Should().Be(1500);
+        info.DocumentChildCount.Should().Be(0);
+        info.Warning.Should().Contain("no elements").And.Contain("use a screenshot").And.NotContain("forceAccessibility");
+    }
+
+    [Fact]
+    public void WarmUp_OfAVisualWebView2ThatStayedEmpty_OnlyChecksAfterThreeAttempts()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 0);
+        var sut = CreateSut();
+
+        // Act
+        var attempts = Enumerable.Range(0, AccessibilityWarmup.MaxWaitingAttempts + 1)
+            .Select(_ => sut.WarmUp(App, Budget, CancellationToken.None)!)
+            .ToList();
+
+        // Assert
+        attempts.Should().OnlyContain(i => i.Status == AccessibilityWarmupStatus.NotReady);
+        attempts.Take(AccessibilityWarmup.MaxWaitingAttempts).Should().OnlyContain(i => i.WaitedMs == 1500);
+        attempts[^1].WaitedMs.Should().Be(0);
+        attempts[^1].Warning.Should().Contain("did not wait");
+    }
+
+    [Fact]
+    public void WarmUp_OfAVisualWebView2WarmedUpBefore_DoesNotReadAgain()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 2);
+        var sut = CreateSut();
+        sut.WarmUp(App, Budget, CancellationToken.None)!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        var fetchesBefore = _tree.CachedFetches.Count;
+        var readsBefore = _tree.Reads.Count;
+
+        // Act
+        var info = sut.WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.CachedFetches.Count.Should().Be(fetchesBefore, "a remembered window is not searched again");
+        _tree.Reads.Count.Should().Be(readsBefore);
+        _processes.Verify(p => p.GetProcessList(), Times.Once(), "nor is the process list read again");
+    }
+
+    [Fact]
+    public void WarmUp_OfAWindowWhoseProcessStartedNoWebView2_MakesNoUiAutomationCall()
+    {
+        // Arrange - the same tree, but the msedgewebview2.exe processes belong to another app
+        AppWithVisualWebView(documentChildren: 3);
+        HostsWebView2(AppProcess + 1);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.Reads.Should().BeEmpty("a window without web content costs a process list, not a UI Automation call");
+        _tree.CachedFetches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WarmUp_WhenTheProcessListCannotBeRead_DoesNothing()
+    {
+        // Arrange
+        AppWithVisualWebView(documentChildren: 3);
+        _processes.Setup(p => p.GetProcessList()).Returns((IReadOnlyDictionary<int, (int ParentProcessId, string ImageName)>?)null);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.CachedFetches.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WarmUp_OfAWindowOfAWebView2HostWithoutAChromeDocument_DoesNothing()
+    {
+        // Arrange - a dialog of an app that shows WebView2 elsewhere: its only Document is a WPF rich text box
+        _desktop[App] = new FakeWindow("HwndWrapper[App;;1]", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        _tree.WithWindow(App, new FakeUiaNode("Window", "Settings") { FrameworkId = "WPF" }.With(
+            new FakeUiaNode("Document", "Notes") { FrameworkId = "WPF" }.With(new FakeUiaNode("Text", "line"))));
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull("only a Document of Chromium (frameworkId Chrome) is web content");
+        _waits.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WarmUp_LooksForAVisualDocumentOnlyAFewLevelsDeep()
+    {
+        // Arrange - the Document lies one level below the deepest level searched
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        var root = new FakeUiaNode("Window", "App");
+        var level = root;
+        for (var depth = 1; depth < AccessibilityWarmup.VisualDocumentSearchDepth; depth++)
+        {
+            var pane = new FakeUiaNode("Pane", $"Pane {depth}");
+            level.With(pane);
+            level = pane;
+        }
+
+        var document = new FakeUiaNode("Document", "Page") { FrameworkId = "Chrome" };
+        AddChildren(document, 2);
+        level.With(new FakeUiaNode("Pane", "Too deep").With(document));
+        _tree.WithWindow(App, root);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.CachedFetches.Should().HaveCount(AccessibilityWarmup.VisualDocumentSearchDepth).And.NotContain("Too deep");
+    }
+
+    [Fact]
+    public void WarmUp_ListsAtMostTheBoundOfLevels_WhenLookingForAVisualDocument()
+    {
+        // Arrange - a wide window of panes, none with web content
+        _desktop[App] = new FakeWindow("WinUIDesktopWin32WindowClass", AppProcess, 0);
+        HostsWebView2(AppProcess);
+        var root = new FakeUiaNode("Window", "App");
+        for (var i = 0; i < 40; i++)
+        {
+            root.With(new FakeUiaNode("Pane", $"Pane {i}").With(new FakeUiaNode("Group", $"Group {i}")));
+        }
+
+        _tree.WithWindow(App, root);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info.Should().BeNull();
+        _tree.CachedFetches.Should().HaveCount(AccessibilityWarmup.VisualDocumentSearchListings);
+    }
+
+    [Fact]
+    public void WarmUp_OfAWindowWithARenderWidget_DoesNotLookForAVisualDocument()
+    {
+        // Arrange - a WebView2 pane hosted in a window (HWND hosting): the render widget path, as before
+        _desktop[App] = new FakeWindow("HwndWrapper[App;;1]", AppProcess, 0);
+        _desktop[RenderWidget] = new FakeWindow(AccessibilityWarmup.RenderWidgetHostClass, WebViewProcess, App);
+        HostsWebView2(AppProcess);
+        var document = new FakeUiaNode("Document", "Mail");
+        AddChildren(document, 2);
+        _tree.WithWindow(RenderWidget, document);
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Host.Should().Be(WebContentHost.WebView2);
+        _processes.Verify(p => p.GetProcessList(), Times.Never());
+    }
+
+    [Fact]
+    public void WarmUp_OfAVisualWebView2WhoseDocumentWasReplaced_FindsTheNewOne()
+    {
+        // Arrange - the page navigates during the first wait: the old Document is gone, and a new one has elements
+        var document = AppWithVisualWebView(documentChildren: 0);
+        var webView = document.Parent!;
+        _afterWait = () =>
+        {
+            if (document.ChildrenException == null)
+            {
+                document.Vanish();
+                document.ChildrenException = new UiaElementUnavailableException("gone");
+                var next = new FakeUiaNode("Document", "Next") { FrameworkId = "Chrome" };
+                AddChildren(next, 2);
+                webView.With(next);
+            }
+        };
+
+        // Act
+        var info = CreateSut().WarmUp(App, Budget, CancellationToken.None);
+
+        // Assert
+        info!.Status.Should().Be(AccessibilityWarmupStatus.Ready);
+        info.DocumentChildCount.Should().Be(2);
     }
 
     #endregion

@@ -2017,6 +2017,14 @@ WebView2 scenarios name the runtime as a requirement, `Requires = typeof(WebView
 gate attribute: on a machine without it they are skipped with a reason that says what to install,
 rather than failed.
 
+The fixture has no WebView2 hosted as a visual (roadmap M3.F23, the CoreWebView2CompositionController
+of the WinUI 3 WebView2 control). The WPF package's WebView2CompositionControl draws the page into a
+WPF Image through a screen capture and gives UI Automation no element of the page (it has no
+automation peer, up to package 1.0.4191.47), so the server could not read its page there whatever it
+did. The warm-up's detection of such content (an msedgewebview2.exe the window's process started, and
+a Document with frameworkId Chrome below the window) is covered by the unit tests in
+`AccessibilityWarmupTests`; check it on a real desktop with a WinUI 3 app that shows a WebView2.
+
 **The event log.** The fixture writes one JSON object per line to the file given with
 `--event-log`: first a `ready` event with its process id, window handle, DPI, window and client
 rectangles and the screen rectangle of every element, then every change it receives (text, check

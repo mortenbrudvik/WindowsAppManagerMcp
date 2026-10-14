@@ -87,7 +87,8 @@ public static class ServiceRegistration
         // Warms up the web content of Chromium, Electron and WebView2 windows before the two services above read them
         // (roadmap M3.3); it remembers the windows it warmed up
         services.AddSingleton<IAccessibilityWarmup>(sp => new AccessibilityWarmup(
-            sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>()));
+            sp.GetRequiredService<IUiaTree>(), sp.GetRequiredService<INativeWindowWrapper>(),
+            sp.GetRequiredService<INativeProcessWrapper>()));
         // Element refs (roadmap M3.4): the read tools register the elements they return, find_ui_elements searches with
         // the provider evaluating its criteria, and the tools that act on a ref resolve it here. WAM_UIA_PROVIDER_CONTAINS=1
         // lets the UIA3 provider narrow a contains name search too (roadmap M3.F12; off until checked on a real desktop)

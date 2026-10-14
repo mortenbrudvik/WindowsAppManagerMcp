@@ -12,6 +12,10 @@
     The WebView2 window (roadmap M3.F4) uses the Microsoft.Web.WebView2 package, which every build
     restores and copies, but it starts WebView2, and so needs the Edge WebView2 runtime, only when the
     fixture is started with open-web-view. Its scenario is skipped on a machine without the runtime.
+
+    There is no WebView2 hosted as a visual (roadmap M3.F23): the package's WebView2CompositionControl
+    draws the page into a WPF Image and gives UI Automation no element of it (no automation peer), so
+    the server cannot read that page. AccessibilityWarmupTests cover the detection instead.
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
