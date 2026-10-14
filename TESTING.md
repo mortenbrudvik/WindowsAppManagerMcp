@@ -2103,7 +2103,8 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
-runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier and runner. It first
+runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier, UI Automation engine (`engine`: uia3,
+the default, or uia2, which the test step sets as `WAM_UIA_ENGINE`) and runner. It first
 checks that the runner has an interactive desktop and otherwise ends with a notice instead of
 running anything; use a self-hosted runner in a logged-on desktop session then (runner version 2.327.1 or later,
 which the workflows' Node.js 24 actions need). It fails when no
@@ -2120,8 +2121,12 @@ agent. The tier only starts the fixture and reads it, but the fixture's windows 
 leave the desktop alone during the runs, because a window opened over the fixture can fail a capture
 scenario.
 
-Run both from the repository root, on a real desktop: `.github/workflows/e2e.yml` has no engine choice. The trx
-logger keeps every test's output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
+`.github/workflows/e2e.yml` can run either engine: start it twice on a self-hosted runner in a logged-on desktop
+session, with tier `no-input` and engine `uia3`, then engine `uia2`. Each run uploads its trx files as
+`e2e-results-no-input-<engine>`, and its summary names the tier and the engine. The workflow sets `WAM_UIA_ENGINE` in
+both runs, so the first run's output reads `UI Automation engine: Uia3 (WAM_UIA_ENGINE)` instead of `(default)`: the
+same engine, chosen by name. Or run both from the repository root, on a real desktop. The trx logger keeps every test's
+output, so the two runs can be compared afterwards (`TestResults/` is gitignored):
 
 ```bash
 # Git Bash
@@ -2154,8 +2159,8 @@ What the runs cover:
   `FixtureDesktopStateTests` (get_desktop_state) and `FixtureVirtualizedListTests` (the virtualized list search).
   The rest of the tier (see [the scenarios](#end-to-end-tests-against-the-fixture-app)) runs too. Each test's output
   names the engine and where it came from:
-  `UI Automation engine: Uia3 (default)` in the first run, `UI Automation engine: Uia2 (WAM_UIA_ENGINE)`
-  in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
+  `UI Automation engine: Uia3 (default)` in the first run (`Uia3 (WAM_UIA_ENGINE)` from the workflow),
+  `UI Automation engine: Uia2 (WAM_UIA_ENGINE)` in the second. A value of `WAM_UIA_ENGINE` other than `uia3` or `uia2` fails these tests instead of
   falling back to uia3, so a mistyped second run cannot pass as a uia2 run.
 - `FixtureUiaEngineTests` and `FixtureUiElementsTests` choose the engine themselves, so they give the
   same results in both runs (`UiaEngineScenarioTests` keeps it so). Each of their theories runs once
