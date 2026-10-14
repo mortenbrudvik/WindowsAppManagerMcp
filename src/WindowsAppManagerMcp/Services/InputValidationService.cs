@@ -15,8 +15,9 @@ namespace WindowsAppManagerMcp.Services;
 /// for characters that cannot appear in a Windows path, so legitimate locations such as
 /// "C:\Program Files (x86)\..." or "C:\Users\O'Brien\..." are accepted. Bare names and relative
 /// paths never legitimately contain shell metacharacters, so they keep the stricter check.
-/// The real cmd.exe injection surface (arguments passed to batch files) is handled by
-/// <see cref="ProcessService"/> once the launch target has been resolved.
+/// The real cmd.exe injection surface (arguments passed to a target that may be run through cmd.exe) is handled by
+/// <see cref="ProcessService"/> once the launch target has been resolved, and so are interpreters with arguments and
+/// scripts (<see cref="InterpreterGuard"/>, roadmap M3.F8).
 /// </remarks>
 public partial class InputValidationService : IInputValidationService
 {
@@ -60,29 +61,6 @@ public partial class InputValidationService : IInputValidationService
 
     /// <summary>The URI schemes this service allows.</summary>
     public ProtocolAllowlist Protocols => _protocols;
-
-    // Suspicious executables that warrant a warning
-    private static readonly string[] SuspiciousExecutables =
-    [
-        "cmd.exe",
-        "cmd",
-        "powershell.exe",
-        "powershell",
-        "pwsh.exe",
-        "pwsh",
-        "bash.exe",
-        "bash",
-        "wscript.exe",
-        "wscript",
-        "cscript.exe",
-        "cscript",
-        "mshta.exe",
-        "mshta",
-        "regsvr32.exe",
-        "regsvr32",
-        "rundll32.exe",
-        "rundll32"
-    ];
 
     public ExecutableValidationResult ValidateExecutable(string executable)
     {
@@ -301,17 +279,12 @@ public partial class InputValidationService : IInputValidationService
         // Check if it's a simple executable name (will be resolved by PATH)
         var isSimpleName = !path.Contains('\\') && !path.Contains('/');
 
-        // Check for suspicious executables
-        var fileName = isSimpleName ? path : Path.GetFileName(normalizedPath);
-        if (IsSuspiciousExecutable(fileName))
-        {
-            warning = $"Warning: '{fileName}' is a system shell/script interpreter. Ensure this is intentional.";
-        }
+        // Interpreters and scripts are checked once the target is resolved (InterpreterGuard, roadmap M3.F8)
 
         // Warn about network paths
         if (IsNetworkPath(path))
         {
-            warning = CombineWarnings(warning, "Executable is on a network path - ensure you trust the source");
+            warning = "Executable is on a network path - ensure you trust the source";
         }
 
         // Warn about relative paths (non-simple names)
@@ -350,12 +323,6 @@ public partial class InputValidationService : IInputValidationService
     private static bool IsNetworkPath(string path)
     {
         return path.StartsWith(@"\\", StringComparison.Ordinal);
-    }
-
-    private static bool IsSuspiciousExecutable(string fileName)
-    {
-        return SuspiciousExecutables.Any(s =>
-            fileName.Equals(s, StringComparison.OrdinalIgnoreCase));
     }
 
     private static (bool IsValid, string? Error, string? ErrorCode, string? NormalizedPath) CheckPathTraversal(string path)

@@ -24,6 +24,7 @@ public class ProcessService : IProcessService
     private readonly IHostGuard? _hostGuard;
     private readonly IWindowWaitService _windowWait;
     private readonly ChromiumPrograms _chromiumPrograms;
+    private readonly InterpreterGuard _interpreterGuard;
 
     /// <param name="targetPolicy">
     /// The server's target policy, which kill_process enforces (roadmap M1.12). The server always passes
@@ -40,6 +41,8 @@ public class ProcessService : IProcessService
     /// </param>
     /// <param name="chromiumPrograms">Tells which programs forceAccessibility may add --force-renderer-accessibility to
     /// (roadmap M3.3); default the real file system.</param>
+    /// <param name="interpreterGuard">Refuses an interpreter with arguments and a script (roadmap M3.F8); default one that
+    /// expands 8.3 short names from the real file system.</param>
     public ProcessService(
         IWindowService windowService,
         IInputValidationService validationService,
@@ -49,7 +52,8 @@ public class ProcessService : IProcessService
         ITargetPolicy? targetPolicy = null,
         IHostGuard? hostGuard = null,
         IWindowWaitService? windowWait = null,
-        ChromiumPrograms? chromiumPrograms = null)
+        ChromiumPrograms? chromiumPrograms = null,
+        InterpreterGuard? interpreterGuard = null)
     {
         _windowService = windowService;
         _validationService = validationService;
@@ -60,6 +64,7 @@ public class ProcessService : IProcessService
         _hostGuard = hostGuard;
         _windowWait = windowWait ?? new WindowWaitService(new NativeWindowWrapper(), windowService, _processWrapper);
         _chromiumPrograms = chromiumPrograms ?? new ChromiumPrograms();
+        _interpreterGuard = interpreterGuard ?? new InterpreterGuard();
     }
 
     /// <summary>
@@ -700,8 +705,10 @@ public class ProcessService : IProcessService
     /// <item>Bare names are resolved to an absolute path by <see cref="IExecutableResolver"/>, never from
     /// the working directory, and the resolved path is what gets started.</item>
     /// <item>Arguments are quoted with the Windows command-line rules (<see cref="CommandLineBuilder"/>).</item>
-    /// <item>When the target is a batch file (ShellExecute runs it through cmd.exe) or cannot be verified to
-    /// be a native executable, arguments containing cmd.exe metacharacters are rejected, because cmd.exe
+    /// <item>The server does not run commands or scripts for the agent (roadmap M3.F8): a command interpreter or script
+    /// host with arguments, and a script file (a batch file included), are refused by <see cref="InterpreterGuard"/>.</item>
+    /// <item>When the target cannot be verified to be a native executable (a URI, document or unresolved name, which
+    /// may be handed to cmd.exe), arguments containing cmd.exe metacharacters are rejected, because cmd.exe
     /// ignores \" escaping and expands %VAR% even inside quotes.</item>
     /// <item><paramref name="forceAccessibility"/> (roadmap M3.3) puts --force-renderer-accessibility in front of the
     /// arguments, only for a program <see cref="ChromiumPrograms"/> recognizes (a Chromium browser, an Electron or a CEF
@@ -771,6 +778,11 @@ public class ProcessService : IProcessService
                 warning);
         }
 
+        if (_interpreterGuard.Check(executable, target.FileName, arguments) is { } refusal)
+        {
+            return LaunchPlan.Rejected(refusal.Message, refusal.ErrorCode, warning);
+        }
+
         var isNativeExecutable = target.Kind == LaunchTargetKind.NativeExecutable;
         if (!isNativeExecutable && arguments?.Length > 0)
         {
@@ -778,7 +790,7 @@ public class ProcessService : IProcessService
             if (unsafeArgument != null)
             {
                 return LaunchPlan.Rejected(
-                    BuildUnsafeBatchArgumentMessage(executable, target, unsafeArgument),
+                    BuildUnsafeBatchArgumentMessage(executable, unsafeArgument),
                     nameof(LaunchErrorCode.UnsafeBatchArguments),
                     warning);
             }
@@ -789,9 +801,7 @@ public class ProcessService : IProcessService
         {
             var whyNot = isNativeExecutable
                 ? _chromiumPrograms.WhyNot(target.FileName)
-                : target.Kind == LaunchTargetKind.BatchFile
-                    ? $"it resolves to the batch file '{target.FileName}'"
-                    : "it is not a program's .exe (a URI, document, shortcut or Store app)";
+                : "it is not a program's .exe (a URI, document, shortcut or Store app)";
             forceAccessibilityApplied = whyNot == null;
             if (whyNot != null)
             {
@@ -849,16 +859,15 @@ public class ProcessService : IProcessService
         return argument.IndexOfAny(CmdMetacharacters) >= 0 || argument.Any(char.IsControl);
     }
 
-    private static string BuildUnsafeBatchArgumentMessage(string executable, ResolvedLaunchTarget target, string argument)
+    private static string BuildUnsafeBatchArgumentMessage(string executable, string argument)
     {
         var shownArgument = argument.Length > MaxArgumentLengthInMessages
             ? argument[..MaxArgumentLengthInMessages] + "..."
             : argument;
 
-        var reason = target.Kind == LaunchTargetKind.BatchFile
-            ? $"'{executable}' resolves to the batch file '{target.FileName}'. Windows runs batch files through cmd.exe"
-            : $"'{executable}' could not be verified to be a native .exe (it is a URI, document, shortcut, script or an " +
-              "unresolved name), so it may be run through cmd.exe";
+        // A batch file never gets here: InterpreterGuard refuses it as a script
+        var reason = $"'{executable}' could not be verified to be a native .exe (it is a URI, document, shortcut or an " +
+                     "unresolved name), so it may be run through cmd.exe";
 
         return $"{reason}, which would interpret characters in the argument '{shownArgument}' " +
                "(& | < > ^ % ! \" or control characters) as commands or variables. Remove those characters, " +

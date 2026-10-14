@@ -111,15 +111,16 @@ public class ForceAccessibilityLaunchTests
     }
 
     [Fact]
-    public async Task ABatchFile_IsStartedWithoutTheFlag_AndTheWarningNamesTheExe()
+    public async Task ABatchFile_IsRefusedAsAScript_AndTheErrorNamesTheExe()
     {
-        // Act
+        // Act - a batch file shim is a script, which the server does not run (roadmap M3.F8)
         var result = await LaunchAsync(CodeCmd);
 
         // Assert
-        result.ForceAccessibilityApplied.Should().BeFalse();
-        result.Warning.Should().Contain("batch file").And.Contain("Code.exe");
-        _started.Single().Arguments.Should().BeEmpty();
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        result.ErrorMessage.Should().Contain("code.exe");
+        _started.Should().BeEmpty();
     }
 
     [Fact]

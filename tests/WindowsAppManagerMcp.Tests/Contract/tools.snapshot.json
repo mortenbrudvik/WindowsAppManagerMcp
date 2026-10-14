@@ -3232,7 +3232,7 @@
             "type": "string"
           },
           "arguments": {
-            "description": "Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.",
+            "description": "Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). No commands or scripts are run: an interpreter (cmd, powershell, wscript, python, ...) with arguments fails with InterpreterWithArguments, a script (.bat, .cmd, .ps1; for code use code.exe) with ScriptFile. For a target that is not an .exe, arguments with & | < > ^ % ! or \" fail with UnsafeBatchArguments.",
             "type": [
               "array",
               "null"
@@ -3383,7 +3383,7 @@
             "default": null
           },
           "reuseExisting": {
-            "description": "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; never a terminal for cmd or powershell) and of expectWindow.processName when set (needed for a document, a Store app or a web address). Its title must contain expectWindow.titleContains when set, else show each file or folder the launch opens as a whole name, never after another path; a web address (a page sets its own title) or a URI page such as ms-settings:display needs titleContains. The front-most match is used (one showing the full path first), nothing is started, and launchStatus is alreadyOpen; warning says when only the name matched or the title is the page's: check the window before acting",
+            "description": "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not the agent's own, of a process with the program's path or name (calc: CalculatorApp, wt: WindowsTerminal; never a terminal for cmd or powershell) and of expectWindow.processName when set (needed for a document, a Store app or a web address). Its title must contain expectWindow.titleContains when set, else show each file or folder the launch opens as a whole name, never after another path; a web address (a page sets its own title) or a URI page such as ms-settings:display needs titleContains. The front-most match is used (one showing the full path first), nothing is started, and launchStatus is alreadyOpen; warning says when only the name matched or the title is the page's: check the window before acting",
             "type": "boolean",
             "default": false
           },
