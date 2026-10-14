@@ -101,6 +101,31 @@ public static class DesktopTestGate
         };
     }
 
+    /// <summary>
+    /// Returns the skip reason for a test of <paramref name="tier"/> that also needs <paramref name="requirement"/> (an
+    /// <see cref="IDesktopTestRequirement"/> type, or null for none), or null when it can run. The tier's opt-in is checked
+    /// first, so a requirement is never probed in a run that did not opt in.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="requirement"/> is no <see cref="IDesktopTestRequirement"/> with a
+    /// public parameterless constructor.</exception>
+    public static string? GetSkipReason(DesktopTier tier, Type? requirement, Func<string, string?> readVariable)
+    {
+        var reason = GetSkipReason(tier, readVariable);
+        if (reason != null || requirement == null)
+        {
+            return reason;
+        }
+
+        if (!typeof(IDesktopTestRequirement).IsAssignableFrom(requirement) || requirement.GetConstructor(Type.EmptyTypes) == null)
+        {
+            throw new ArgumentException(
+                $"{requirement.FullName} is no {nameof(IDesktopTestRequirement)} with a public parameterless constructor.",
+                nameof(requirement));
+        }
+
+        return ((IDesktopTestRequirement)Activator.CreateInstance(requirement)!).MissingReason;
+    }
+
     /// <summary>The skip reason for the current process environment.</summary>
     public static string? CurrentSkipReason =>
         GetSkipReason(Environment.GetEnvironmentVariable(EnvironmentVariable));
@@ -128,6 +153,18 @@ public static class DesktopTestGate
 }
 
 /// <summary>
+/// Something a desktop test needs besides its tier's opt-in, such as a runtime the machine may not have (roadmap M3.F4).
+/// A test names it with its gate attribute's <c>Requires</c>, and is then skipped with <see cref="MissingReason"/> on a
+/// machine without it, rather than failed. An implementation has a public parameterless constructor and only reads the
+/// machine's state: it is created when the test is discovered, once the tier is opted in.
+/// </summary>
+public interface IDesktopTestRequirement
+{
+    /// <summary>Why the test cannot run on this machine, or null when it can.</summary>
+    string? MissingReason { get; }
+}
+
+/// <summary>
 /// A <see cref="FactAttribute"/> for a test with real desktop side effects. It is skipped
 /// unless <c>WAM_ALLOW_DESKTOP_TESTS=1</c> and always carries the trait <c>Category=Desktop</c>.
 /// </summary>
@@ -135,9 +172,25 @@ public static class DesktopTestGate
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class DesktopFactAttribute : FactAttribute, ITraitAttribute
 {
+    private Type? _requires;
+
     public DesktopFactAttribute()
     {
         Skip = DesktopTestGate.CurrentSkipReason;
+    }
+
+    /// <summary>
+    /// An <see cref="IDesktopTestRequirement"/> type the test needs besides the opt-in (roadmap M3.F4), such as a runtime
+    /// the machine may not have: the test is skipped with its reason when it is missing. Checked only once the tier is opted in.
+    /// </summary>
+    public Type? Requires
+    {
+        get => _requires;
+        set
+        {
+            _requires = value;
+            Skip = DesktopTestGate.GetSkipReason(DesktopTier.Input, value, Environment.GetEnvironmentVariable);
+        }
     }
 }
 
@@ -149,9 +202,25 @@ public sealed class DesktopFactAttribute : FactAttribute, ITraitAttribute
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class DesktopTheoryAttribute : TheoryAttribute, ITraitAttribute
 {
+    private Type? _requires;
+
     public DesktopTheoryAttribute()
     {
         Skip = DesktopTestGate.CurrentSkipReason;
+    }
+
+    /// <summary>
+    /// An <see cref="IDesktopTestRequirement"/> type the test needs besides the opt-in (roadmap M3.F4), such as a runtime
+    /// the machine may not have: the test is skipped with its reason when it is missing. Checked only once the tier is opted in.
+    /// </summary>
+    public Type? Requires
+    {
+        get => _requires;
+        set
+        {
+            _requires = value;
+            Skip = DesktopTestGate.GetSkipReason(DesktopTier.Input, value, Environment.GetEnvironmentVariable);
+        }
     }
 }
 
@@ -165,9 +234,25 @@ public sealed class DesktopTheoryAttribute : TheoryAttribute, ITraitAttribute
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class DesktopNoInputFactAttribute : FactAttribute, ITraitAttribute
 {
+    private Type? _requires;
+
     public DesktopNoInputFactAttribute()
     {
         Skip = DesktopTestGate.CurrentNoInputSkipReason;
+    }
+
+    /// <summary>
+    /// An <see cref="IDesktopTestRequirement"/> type the test needs besides the opt-in (roadmap M3.F4), such as a runtime
+    /// the machine may not have: the test is skipped with its reason when it is missing. Checked only once the tier is opted in.
+    /// </summary>
+    public Type? Requires
+    {
+        get => _requires;
+        set
+        {
+            _requires = value;
+            Skip = DesktopTestGate.GetSkipReason(DesktopTier.NoInput, value, Environment.GetEnvironmentVariable);
+        }
     }
 }
 
@@ -180,9 +265,25 @@ public sealed class DesktopNoInputFactAttribute : FactAttribute, ITraitAttribute
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class DesktopNoInputTheoryAttribute : TheoryAttribute, ITraitAttribute
 {
+    private Type? _requires;
+
     public DesktopNoInputTheoryAttribute()
     {
         Skip = DesktopTestGate.CurrentNoInputSkipReason;
+    }
+
+    /// <summary>
+    /// An <see cref="IDesktopTestRequirement"/> type the test needs besides the opt-in (roadmap M3.F4), such as a runtime
+    /// the machine may not have: the test is skipped with its reason when it is missing. Checked only once the tier is opted in.
+    /// </summary>
+    public Type? Requires
+    {
+        get => _requires;
+        set
+        {
+            _requires = value;
+            Skip = DesktopTestGate.GetSkipReason(DesktopTier.NoInput, value, Environment.GetEnvironmentVariable);
+        }
     }
 }
 

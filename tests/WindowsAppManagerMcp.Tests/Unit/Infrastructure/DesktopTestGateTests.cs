@@ -146,6 +146,99 @@ public class DesktopTestGateTests
 
     #endregion
 
+    #region Requirements
+
+    /// <summary>A requirement the machine has.</summary>
+    public sealed class MetRequirement : IDesktopTestRequirement
+    {
+        public string? MissingReason => null;
+    }
+
+    /// <summary>A requirement the machine lacks.</summary>
+    public sealed class MissingRequirement : IDesktopTestRequirement
+    {
+        public const string Reason = "The test runtime is not installed on this machine.";
+
+        public string? MissingReason => Reason;
+    }
+
+    /// <summary>A requirement that must never be probed: reading it fails the test.</summary>
+    public sealed class UnprobedRequirement : IDesktopTestRequirement
+    {
+        public string? MissingReason => throw new InvalidOperationException("The requirement was probed in a run that did not opt in.");
+    }
+
+    private static Func<string, string?> OptedIn(DesktopTier tier) =>
+        name => name == (tier == DesktopTier.Input ? DesktopTestGate.EnvironmentVariable : DesktopTestGate.NoInputEnvironmentVariable)
+            ? "1"
+            : null;
+
+    [Theory]
+    [InlineData(DesktopTier.Input)]
+    [InlineData(DesktopTier.NoInput)]
+    public void GetSkipReason_WithARequirement_WhenTheTierIsNotOptedIn_GivesTheGatesReason_WithoutProbingIt(DesktopTier tier)
+    {
+        // Act
+        var reason = DesktopTestGate.GetSkipReason(tier, typeof(UnprobedRequirement), _ => null);
+
+        // Assert
+        reason.Should().Be(DesktopTestGate.GetSkipReason(tier, _ => null));
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.Input)]
+    [InlineData(DesktopTier.NoInput)]
+    public void GetSkipReason_WhenOptedIn_AndTheRequirementIsMissing_GivesItsReason(DesktopTier tier)
+    {
+        DesktopTestGate.GetSkipReason(tier, typeof(MissingRequirement), OptedIn(tier)).Should().Be(MissingRequirement.Reason);
+    }
+
+    [Theory]
+    [InlineData(DesktopTier.Input)]
+    [InlineData(DesktopTier.NoInput)]
+    public void GetSkipReason_WhenOptedIn_AndTheRequirementIsMet_RunsTheTest(DesktopTier tier)
+    {
+        DesktopTestGate.GetSkipReason(tier, typeof(MetRequirement), OptedIn(tier)).Should().BeNull();
+    }
+
+    [Fact]
+    public void GetSkipReason_WhenOptedIn_WithoutARequirement_RunsTheTest()
+    {
+        DesktopTestGate.GetSkipReason(DesktopTier.Input, requirement: null, OptedIn(DesktopTier.Input)).Should().BeNull();
+    }
+
+    [Fact]
+    public void GetSkipReason_WhenOptedIn_WithATypeThatIsNoRequirement_Throws()
+    {
+        var act = () => DesktopTestGate.GetSkipReason(DesktopTier.NoInput, typeof(string), OptedIn(DesktopTier.NoInput));
+
+        act.Should().Throw<ArgumentException>().WithMessage("*IDesktopTestRequirement*");
+    }
+
+    [Fact]
+    public void Requires_SetsTheSkipOfEachAttribute_ByItsTierAndTheRequirement()
+    {
+        // Arrange - whatever the opt-in of this run, each attribute follows the gate with the requirement
+        var requirement = typeof(MissingRequirement);
+        var input = DesktopTestGate.GetSkipReason(DesktopTier.Input, requirement, Environment.GetEnvironmentVariable);
+        var noInput = DesktopTestGate.GetSkipReason(DesktopTier.NoInput, requirement, Environment.GetEnvironmentVariable);
+
+        // Act
+        var fact = new DesktopFactAttribute { Requires = requirement };
+        var theory = new DesktopTheoryAttribute { Requires = requirement };
+        var noInputFact = new DesktopNoInputFactAttribute { Requires = requirement };
+        var noInputTheory = new DesktopNoInputTheoryAttribute { Requires = requirement };
+
+        // Assert - skipped either way: the tier is not opted in, or the requirement is missing
+        new[] { fact.Requires, theory.Requires, noInputFact.Requires, noInputTheory.Requires }.Should().OnlyContain(t => t == requirement);
+        new[] { fact.Skip, theory.Skip }.Should().OnlyContain(skip => skip == input);
+        new[] { noInputFact.Skip, noInputTheory.Skip }.Should().OnlyContain(skip => skip == noInput);
+        input.Should().NotBeNull();
+        noInput.Should().NotBeNull();
+    }
+
+    #endregion
+
     #region Attributes follow the gate
 
     [Fact]

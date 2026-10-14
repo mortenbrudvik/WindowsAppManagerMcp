@@ -1978,16 +1978,33 @@ a real one.
 owns, `tests/FixtureApp` (WamFixtureApp, a small WPF app). This is where Windows behaviour that
 mocks cannot reproduce gets tested: the foreground lock, UI Automation trees, captures and DPI.
 
-**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a password box
-(UI Automation reports it as a password field, whose value the server never reads), a check box, a
-combo box, a button that opens a modal dialog (the main window is disabled while it is open), a
-button that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with
-unsaved changes, a context menu, three solid color swatches and a virtualized list of 10,000
-items. It has no WebView2 pane yet: that would add a package and a runtime dependency to every
-build. Its command line (`FixtureOptions`) sets an instance token that appears in every window
-title, shows the windows without activating them, opens the modal or the document at start, and
-sets the process DPI awareness. A watchdog thread ends the fixture when the test host exits or
-after its maximum lifetime (5 minutes by default), so a crashed run cannot leave it behind.
+**The fixture app** has fixed AutomationIds (`FixtureContract.Ids`): an edit box, a password box (UI
+Automation reports it as a password field, whose value the server never reads), a check box, a combo
+box, a button that opens a modal dialog (the main window is disabled while it is open), a button
+that opens a document window that shows a Yes/No/Cancel save prompt when it is closed with unsaved
+changes, a button that shows the common Save As dialog, a button that shows a task dialog, a context
+menu, three solid color swatches and a virtualized list of 10,000 items. Its command line
+(`FixtureOptions`) sets an instance token that appears in every window title, shows the windows
+without activating them, opens the modal, the document, the table window, the menu window or the
+WebView2 window at start, and sets the process DPI awareness. A watchdog thread ends the fixture
+when the test host exits or after its maximum lifetime (5 minutes by default), so a crashed run
+cannot leave it behind.
+
+**The surfaces of the M3 paths** (roadmap M3.F4). The Save As dialog is the common IFileSaveDialog;
+it creates no test file, and the fixture writes the file it returns only when it is directly in the
+test's own folder under the temp folder, the folder of its event log (`FixtureSaveFolder`), so
+nothing is written anywhere else. The task dialog (TaskDialogIndirect) has two command links and a
+Cancel button; the fixture's manifest asks for version 6 of the common controls for it, and sets no
+DPI awareness. The table window holds a WPF DataGrid of 1,000 rows with column and row headers, of
+which it realizes only the rows around what it shows. The menu window has a Win32 menu bar (a real
+HMENU, whose menus open as #32768 popup windows) with a submenu. The WebView2 window shows local
+HTML (NavigateToString: no network, no debug port) in a WebView2 pane, Chromium content in a
+Chrome_RenderWidgetHostHWND of msedgewebview2.exe, for the accessibility warm-up (M3.3); its browser
+data goes into the test's own folder. The Microsoft.Web.WebView2 package is in every build, but only
+`--open-web-view` starts WebView2, so an ordinary fixture start needs no WebView2 runtime. The
+WebView2 scenarios name the runtime as a requirement, `Requires = typeof(WebView2Runtime)` on their
+gate attribute: on a machine without it they are skipped with a reason that says what to install,
+rather than failed.
 
 **The event log.** The fixture writes one JSON object per line to the file given with
 `--event-log`: first a `ready` event with its process id, window handle, DPI, window and client
@@ -2044,7 +2061,8 @@ fails until a new kind is named in this list).
   `FixtureInputGuardTests` checks the server's guard itself against the fixture.
 - In both tiers, starting a process (including `where.exe`), registering a global hotkey and reading
   or writing the clipboard's content are refused. CDP (`ICdpService`) refuses every call, because it
-  talks to a browser's debug port over the network, outside the native wrappers, and no fixture has one yet.
+  talks to a browser's debug port over the network, outside the native wrappers, and the fixture's WebView2
+  window opens no debug port.
 
 UI Automation elements come back from the wrapper as objects that services only read: NativeCallGuardTests
 forbids acting pattern calls outside the Native wrappers and the two UI Automation engine adapters, and the
@@ -2083,7 +2101,10 @@ with `--no-activate`, and can take the foreground from the terminal. The fixture
 awareness than the one asked for (`FixtureAppSession.DpiAwarenessMismatch`). A scenario that needs a kind of window the WPF fixture cannot provide may create its own,
 as `MirroredWindowCaptureTests` does with `MirroredTestWindow`: a borderless popup of the test
 process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests` fails if a test outside `HarnessTests/` has no gate attribute. Tests in
-`HarnessTests/` are ordinary tests of the harness and must never start the fixture.
+`HarnessTests/` are ordinary tests of the harness and must never start the fixture. A scenario that needs
+something the machine may lack names it with its gate attribute's `Requires` (an
+`IDesktopTestRequirement`, such as `WebView2Runtime`), and is then skipped with the requirement's reason
+on such a machine; the requirement is only checked once the tier is opted in.
 
 **The scenarios.** Each class in `Scenarios/` covers one area; a class can hold tests of both tiers.
 
@@ -2098,14 +2119,16 @@ process, shown without activation and destroyed in `Dispose`. `E2ETestGateTests`
 | `FixtureUiaEngineTests` | No input | The two UI Automation engines read the same tree and find the same elements (roadmap M3.1, M3.2) |
 | `FixtureElementRefsTests` | No input | find_ui_elements and element refs (M3.4) |
 | `FixturePopupTests` | Input | The open context menu found by the default scope and listed by get_active_popups, and the combo box list found by scope windowAndPopups (M3.5) |
-| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5) |
+| `FixtureDialogTests` | Input | respond_to_dialog on the save prompt and the WPF modal, a one-item menu_path (M3.5); the task dialog answered by its common button's `CommandButton_2` id and by a command link's text, and a menu_path through the menu window's Win32 menu bar and its #32768 submenus (M3.F4) |
+| `FixtureFileDialogTests` | Input | file_dialog end to end in the fixture's Save As dialog: a new file, and a replaced one through the replace prompt (M3.14, M3.F4) |
 | `FixtureElementActionTests` | Input | element_action's pattern actions, checked against the fixture's event log (M3.6) |
 | `FixtureWindowWaitTests` | No input | wait_for_window (M3.7) |
 | `FixtureElementWaitTests` | No input | wait_for_element (M3.8) |
-| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9) |
+| `FixtureElementReadTests` | No input | read_element_text and read_table (M3.9); read_table of the table window's DataGrid through its realized rows, with column and row headers (M3.F4) |
 | `FixtureVirtualizedListTests` | Both | searchVirtualized in the no-input tier, element_action realize in the input tier (M3.10) |
 | `FixtureCaptureIdTests`, `FixtureSetOfMarksTests` | No input | captureId points, Set-of-Marks marks and legend centres, capture_window's ref crop (M3.11) |
 | `FixtureDesktopStateTests` | No input | get_desktop_state (M3.12) |
+| `FixtureWebViewTests` | No input | The accessibility warm-up of the WebView2 window's live Chromium content: host WebView2, status Ready, the page read, and no second wait (M3.3, M3.F4); skipped without the WebView2 runtime |
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`

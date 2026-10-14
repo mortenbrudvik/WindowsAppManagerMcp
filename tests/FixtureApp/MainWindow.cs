@@ -1,3 +1,5 @@
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -12,8 +14,8 @@ namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
 /// The fixture's main window: an edit box, a password box, a check box, a combo box, a button that opens a modal
-/// dialog, a button that opens a document with unsaved changes, a context menu, solid color swatches and a
-/// virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
+/// dialog, a button that opens a document with unsaved changes, buttons that show a Save As dialog and a task dialog, a
+/// context menu, solid color swatches and a virtualized list of <see cref="VirtualListItemCount"/> items. Every element the tests use has a fixed
 /// AutomationId (<see cref="Ids"/>), and every change is written to the event log, except the password box's content.
 /// </summary>
 internal sealed class MainWindow : Window
@@ -25,6 +27,9 @@ internal sealed class MainWindow : Window
     private readonly TextBox _editBox = new() { Width = 320, Margin = new Thickness(0, 4, 0, 12) };
     private readonly TextBlock _statusText = new() { Margin = new Thickness(0, 12, 0, 0), Text = "Starting" };
     private DocumentWindow? _document;
+    private TableWindow? _table;
+    private MenuWindow? _menuWindow;
+    private WebViewWindow? _webViewWindow;
     private bool _readyReported;
 
     public MainWindow(FixtureOptions options, FixtureEventLog events, string dpiAwareness)
@@ -94,6 +99,14 @@ internal sealed class MainWindow : Window
 
         left.Children.Add(Report(Ids.OpenModalButton, CreateButton("Open modal dialog...", Ids.OpenModalButton, OpenModal)));
         left.Children.Add(Report(Ids.OpenDocumentButton, CreateButton("Open document...", Ids.OpenDocumentButton, OpenDocument)));
+
+        // The common dialogs (roadmap M3.F4) side by side, so the column keeps its height
+        var dialogButtons = new StackPanel { Orientation = Orientation.Horizontal };
+        var saveAs = CreateButton("Save as...", Ids.SaveAsButton, ShowSaveAs);
+        saveAs.Margin = new Thickness(0, 0, 8, 12);
+        dialogButtons.Children.Add(Report(Ids.SaveAsButton, saveAs));
+        dialogButtons.Children.Add(Report(Ids.TaskDialogButton, CreateButton("Task dialog...", Ids.TaskDialogButton, ShowTaskDialog)));
+        left.Children.Add(dialogButtons);
 
         var contextMenuTarget = new Label
         {
@@ -251,6 +264,18 @@ internal sealed class MainWindow : Window
         {
             OpenDocument();
         }
+        if (_options.OpenTable)
+        {
+            OpenTable();
+        }
+        if (_options.OpenMenuWindow)
+        {
+            OpenMenuWindow();
+        }
+        if (_options.OpenWebView)
+        {
+            OpenWebView();
+        }
         if (_options.OpenModal)
         {
             // After the ready event: ShowDialog does not return until the dialog closes.
@@ -290,6 +315,113 @@ internal sealed class MainWindow : Window
         _document = new DocumentWindow(_options, _events);
         _document.Closed += (_, _) => _document = null;
         _document.Show();
+    }
+
+    /// <summary>
+    /// Shows the common Save As dialog (IFileSaveDialog, through WPF's SaveFileDialog) modal on this window, then writes
+    /// <see cref="SavedFileText"/> to the path it returns, but only in the fixture's save folder (<see cref="FixtureSaveFolder"/>).
+    /// The dialog creates no test file and adds nothing to the recent files.
+    /// </summary>
+    private void ShowSaveAs()
+    {
+        var folder = FixtureSaveFolder.For(_options);
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = SaveAsTitle(_options.Instance),
+            FileName = "fixture.txt",
+            DefaultExt = ".txt",
+            Filter = "Text files (*.txt)|*.txt",
+            OverwritePrompt = true,
+            CreateTestFile = false,
+            AddToRecent = false
+        };
+        if (folder != null)
+        {
+            dialog.InitialDirectory = folder;
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            Log(Events.SaveDialogClosed, ("result", "cancel"));
+            return;
+        }
+
+        var path = dialog.FileName;
+        if (!FixtureSaveFolder.Allows(folder, path, NativeMethods.LongPath))
+        {
+            Log(Events.SaveDialogClosed, ("result", "refused"), ("path", path));
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(path, SavedFileText);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log(Events.SaveDialogClosed, ("result", "failed"), ("path", path), ("message", ex.Message));
+            return;
+        }
+
+        Log(Events.SaveDialogClosed, ("result", "saved"), ("path", path));
+    }
+
+    /// <summary>Shows the task dialog (<see cref="FixtureTaskDialog"/>) modal on this window and logs the button that closed it.</summary>
+    private void ShowTaskDialog()
+    {
+        int pressed;
+        try
+        {
+            pressed = FixtureTaskDialog.Show(
+                new WindowInteropHelper(this).Handle,
+                _options.Instance,
+                dialog => _events.Write(Events.TaskDialogOpened, ("hwnd", (long)dialog)));
+        }
+        catch (Exception ex) when (ex is ExternalException or ArgumentException or EntryPointNotFoundException or DllNotFoundException)
+        {
+            // Logged as a close, so a test waiting for the dialog fails with the reason instead of a timeout
+            Log(Events.TaskDialogClosed, ("button", 0), ("message", ex.Message));
+            return;
+        }
+
+        Log(Events.TaskDialogClosed, ("button", pressed));
+    }
+
+    private void OpenTable()
+    {
+        if (_table != null)
+        {
+            return;
+        }
+
+        _table = new TableWindow(_options, _events);
+        _table.Closed += (_, _) => _table = null;
+        _table.Show();
+    }
+
+    private void OpenMenuWindow()
+    {
+        if (_menuWindow != null)
+        {
+            return;
+        }
+
+        _menuWindow = new MenuWindow(_options, _events);
+        _menuWindow.Closed += (_, _) => _menuWindow = null;
+        _menuWindow.Show();
+    }
+
+    /// <summary>Opens the WebView2 window: the only place the fixture starts WebView2 (see <see cref="WebViewWindow"/>).</summary>
+    private void OpenWebView()
+    {
+        if (_webViewWindow != null)
+        {
+            return;
+        }
+
+        _webViewWindow = new WebViewWindow(_options, _events);
+        _webViewWindow.Closed += (_, _) => _webViewWindow = null;
+        _webViewWindow.Show();
     }
 
     private void Log(string name, params (string Key, JsonNode? Value)[] fields)

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace WindowsAppManagerMcp.FixtureApp;
 
 /// <summary>
@@ -26,8 +28,38 @@ public static class FixtureContract
     /// <summary>Start of the title of the save prompt the document shows when it is closed with unsaved changes.</summary>
     public const string SavePromptTitlePrefix = "WAM Fixture Save Prompt";
 
+    /// <summary>Start of the title of the Save As dialog the main window's Save As button shows.</summary>
+    public const string SaveAsTitlePrefix = "WAM Fixture Save As";
+
+    /// <summary>Start of the title of the task dialog the main window's Task dialog button shows.</summary>
+    public const string TaskDialogTitlePrefix = "WAM Fixture Task Dialog";
+
+    /// <summary>The task dialog's main instruction.</summary>
+    public const string TaskDialogInstruction = "Keep the fixture's draft?";
+
+    /// <summary>What the fixture writes into the file its Save As dialog returns.</summary>
+    public const string SavedFileText = "Saved by the WAM fixture's Save As dialog.";
+
+    /// <summary>Start of the table window's title.</summary>
+    public const string TableTitlePrefix = "WAM Fixture Table";
+
+    /// <summary>Start of the menu window's title.</summary>
+    public const string MenuTitlePrefix = "WAM Fixture Menu";
+
+    /// <summary>Start of the WebView2 window's title.</summary>
+    public const string WebTitlePrefix = "WAM Fixture Web";
+
+    /// <summary>The heading of the WebView2 pane's page.</summary>
+    public const string WebHeading = "WAM fixture web content";
+
+    /// <summary>The text of the button on the WebView2 pane's page (its HTML id is <see cref="Ids.WebButton"/>).</summary>
+    public const string WebButtonName = "Web button";
+
     /// <summary>Number of items in the virtualized list.</summary>
     public const int VirtualListItemCount = 10_000;
+
+    /// <summary>Number of rows of the table window's data grid: far more than it realizes.</summary>
+    public const int TableRowCount = 1_000;
 
     /// <summary>Title of the main window of fixture instance <paramref name="instance"/>.</summary>
     public static string MainTitle(string instance) => $"{MainTitlePrefix} {instance}";
@@ -42,8 +74,37 @@ public static class FixtureContract
     /// <summary>Title of the save prompt of fixture instance <paramref name="instance"/>.</summary>
     public static string SavePromptTitle(string instance) => $"{SavePromptTitlePrefix} {instance}";
 
+    /// <summary>Title of the Save As dialog of fixture instance <paramref name="instance"/>.</summary>
+    public static string SaveAsTitle(string instance) => $"{SaveAsTitlePrefix} {instance}";
+
+    /// <summary>Title of the task dialog of fixture instance <paramref name="instance"/>.</summary>
+    public static string TaskDialogTitle(string instance) => $"{TaskDialogTitlePrefix} {instance}";
+
+    /// <summary>Title of the table window of fixture instance <paramref name="instance"/>.</summary>
+    public static string TableTitle(string instance) => $"{TableTitlePrefix} {instance}";
+
+    /// <summary>Title of the menu window of fixture instance <paramref name="instance"/>.</summary>
+    public static string MenuTitle(string instance) => $"{MenuTitlePrefix} {instance}";
+
+    /// <summary>Title of the WebView2 window of fixture instance <paramref name="instance"/>.</summary>
+    public static string WebTitle(string instance) => $"{WebTitlePrefix} {instance}";
+
     /// <summary>Text of item <paramref name="index"/> of the virtualized list.</summary>
     public static string VirtualListItem(int index) => $"Item {index:D5}";
+
+    /// <summary>The column headers of the table window's data grid, in order.</summary>
+    public static readonly IReadOnlyList<string> TableColumns = ["Name", "Quantity", "Price"];
+
+    /// <summary>The cells of row <paramref name="index"/> of the data grid, one per column of <see cref="TableColumns"/>.</summary>
+    public static IReadOnlyList<string> TableRow(int index) =>
+    [
+        $"Row {index:D4}",
+        (index % 7 + 1).ToString(CultureInfo.InvariantCulture),
+        (index * 0.25m + 1m).ToString("0.00", CultureInfo.InvariantCulture)
+    ];
+
+    /// <summary>The row header of row <paramref name="index"/> of the data grid.</summary>
+    public static string TableRowHeader(int index) => $"#{index + 1}";
 
     /// <summary>The combo box items, in order. The first one is selected at start.</summary>
     public static readonly IReadOnlyList<string> ComboBoxItems = ["Alpha", "Bravo", "Charlie", "Delta"];
@@ -59,6 +120,49 @@ public static class FixtureContract
     /// <summary>A solid color swatch: its AutomationId and color.</summary>
     public sealed record Swatch(string Id, byte R, byte G, byte B);
 
+    /// <summary>
+    /// The menu window's Win32 menu bar (a real HMENU, roadmap M3.F4): File (New, Export with As Text and As CSV) and Edit
+    /// (Select All). Each menu that opens is a #32768 popup window of its own, unlike a WPF menu.
+    /// </summary>
+    public static class Win32Menu
+    {
+        public const string File = "File";
+        public const string New = "New";
+        public const string Export = "Export";
+        public const string ExportAsText = "As Text";
+        public const string ExportAsCsv = "As CSV";
+        public const string Edit = "Edit";
+        public const string SelectAll = "Select All";
+
+        public const int NewCommand = 101;
+        public const int ExportAsTextCommand = 111;
+        public const int ExportAsCsvCommand = 112;
+        public const int SelectAllCommand = 201;
+
+        /// <summary>The menu path of each command id, as element_action's menu_path takes it.</summary>
+        public static readonly IReadOnlyDictionary<int, string> CommandPaths = new Dictionary<int, string>
+        {
+            [NewCommand] = $"{File}>{New}",
+            [ExportAsTextCommand] = $"{File}>{Export}>{ExportAsText}",
+            [ExportAsCsvCommand] = $"{File}>{Export}>{ExportAsCsv}",
+            [SelectAllCommand] = $"{Edit}>{SelectAll}"
+        };
+    }
+
+    /// <summary>
+    /// The task dialog's buttons (roadmap M3.F4): two command links, each with its text and the id TaskDialogIndirect
+    /// returns, and the common Cancel button (IDCANCEL), whose AutomationId is CommandButton_2.
+    /// </summary>
+    public static class TaskDialogLinks
+    {
+        public const string Keep = "Keep the draft";
+        public const string Discard = "Discard the draft";
+
+        public const int KeepCommand = 1001;
+        public const int DiscardCommand = 1002;
+        public const int CancelCommand = 2;
+    }
+
     /// <summary>UI Automation AutomationIds of the fixture's elements.</summary>
     public static class Ids
     {
@@ -69,6 +173,8 @@ public static class FixtureContract
         public const string ComboBox = "comboBox";
         public const string OpenModalButton = "openModalButton";
         public const string OpenDocumentButton = "openDocumentButton";
+        public const string SaveAsButton = "saveAsButton";
+        public const string TaskDialogButton = "taskDialogButton";
         public const string ContextMenuTarget = "contextMenuTarget";
         public const string ContextMenu = "contextMenu";
         public const string ContextMenuCopy = "contextMenuCopy";
@@ -88,6 +194,13 @@ public static class FixtureContract
         // Document window
         public const string DocumentTextBox = "documentTextBox";
         public const string DocumentSaveButton = "documentSaveButton";
+
+        // Table window
+        public const string DataGrid = "dataGrid";
+
+        // WebView2 window: the WPF control, and the HTML id of the page's button (Chromium reports it as the AutomationId)
+        public const string WebView = "webView";
+        public const string WebButton = "webButton";
     }
 
     /// <summary>
@@ -138,6 +251,46 @@ public static class FixtureContract
 
         /// <summary>The document window closed. Fields: <c>result</c> (saved, discarded or clean).</summary>
         public const string DocumentClosed = "documentClosed";
+
+        /// <summary>
+        /// The Save As dialog closed. Fields: <c>result</c> (saved: the file was written; refused: the path was outside the
+        /// fixture's save folder, see <see cref="FixtureSaveFolder"/>, and nothing was written; failed: writing it failed;
+        /// cancel), and <c>path</c> (the path the dialog returned, unless cancelled) and <c>message</c> (when it failed).
+        /// </summary>
+        public const string SaveDialogClosed = "saveDialogClosed";
+
+        /// <summary>The task dialog was created (TDN_CREATED); it is shown right after. Fields: <c>hwnd</c>.</summary>
+        public const string TaskDialogOpened = "taskDialogOpened";
+
+        /// <summary>
+        /// The task dialog closed. Fields: <c>button</c> (the id of the button that closed it, see
+        /// <see cref="TaskDialogLinks"/>; 0 when it could not be shown) and <c>message</c> (why, when it could not be shown).
+        /// </summary>
+        public const string TaskDialogClosed = "taskDialogClosed";
+
+        /// <summary>The table window is shown. Fields: <c>hwnd</c>.</summary>
+        public const string TableOpened = "tableOpened";
+
+        /// <summary>The menu window is shown, with its Win32 menu bar. Fields: <c>hwnd</c>.</summary>
+        public const string MenuWindowOpened = "menuWindowOpened";
+
+        /// <summary>
+        /// A command of the menu window's Win32 menu bar ran (WM_COMMAND). Fields: <c>command</c> (its id, see
+        /// <see cref="Win32Menu"/>) and <c>path</c> (its menu path, such as File&gt;Export&gt;As Text).
+        /// </summary>
+        public const string MenuCommand = "menuCommand";
+
+        /// <summary>
+        /// The WebView2 window's page finished loading. Fields: <c>hwnd</c> (the window) and <c>runtimeVersion</c> (the
+        /// WebView2 runtime's version).
+        /// </summary>
+        public const string WebViewReady = "webViewReady";
+
+        /// <summary>
+        /// The WebView2 window could not show its page. Fields: <c>runtimeMissing</c> (true when no WebView2 runtime is
+        /// installed) and <c>message</c>.
+        /// </summary>
+        public const string WebViewFailed = "webViewFailed";
 
         /// <summary>The context menu opened.</summary>
         public const string ContextMenuOpened = "contextMenuOpened";
