@@ -123,6 +123,9 @@ public class NativeCallGuardTests
         ["User32.GetThreadDpiAwarenessContext"] = "reads the DPI awareness context of the calling thread",
         ["User32.GetAwarenessFromDpiAwarenessContext"] = "reads the awareness of a context value",
         ["User32.AreDpiAwarenessContextsEqual"] = "compares two context values",
+
+        // The launch's interpreter check expands 8.3 short names (InterpreterGuard, roadmap M3.F8)
+        ["Kernel32.GetLongPathNameW"] = "reads the long form of a file path from the file system",
     };
 
     /// <summary>

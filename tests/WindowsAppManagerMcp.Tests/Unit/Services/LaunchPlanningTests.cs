@@ -1,8 +1,9 @@
 namespace WindowsAppManagerMcp.Tests.Unit.Services;
 
 /// <summary>
-/// Unit tests for ProcessService.PlanLaunch: validation, target resolution, batch-file argument
-/// rules (BatBadBut, pro-m3), binary planting (pro-m2) and argument quoting (PAL-7/PAL-8).
+/// Unit tests for ProcessService.PlanLaunch: validation, target resolution, the refusal of interpreters with arguments
+/// and of scripts (roadmap M3.F8), the cmd.exe argument rules for unverified targets (BatBadBut, pro-m3), binary planting
+/// (pro-m2) and argument quoting (PAL-7/PAL-8).
 /// PlanLaunch only builds a ProcessStartInfo; these tests never start a process. The process
 /// wrapper is a strict mock with no setups, so a test that did start or kill one would throw.
 /// </summary>
@@ -84,7 +85,94 @@ public class LaunchPlanningTests
 
     #endregion
 
-    #region Batch Files (cmd.exe re-parses arguments)
+    #region Interpreters and Scripts (roadmap M3.F8)
+
+    [Theory]
+    [InlineData(@"C:\Windows\System32\cmd.exe", "/c")]
+    [InlineData(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "-Command")]
+    [InlineData(@"C:\Program Files\nodejs\node.exe", "-e")]
+    [InlineData(@"C:\Windows\System32\wsl.exe", "-e")]
+    public void PlanLaunch_InterpreterWithArguments_IsRefused(string interpreter, string option)
+    {
+        // Arrange
+        ResolveAs(interpreter, LaunchTargetKind.NativeExecutable);
+
+        // Act
+        var plan = CreateSut().PlanLaunch(Path.GetFileNameWithoutExtension(interpreter), [option, "calc"]);
+
+        // Assert
+        plan.IsValid.Should().BeFalse();
+        plan.StartInfo.Should().BeNull();
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        plan.ErrorMessage.Should().Contain(interpreter).And.Contain("Nothing was started");
+    }
+
+    [Fact]
+    public void PlanLaunch_InterpreterWithoutArguments_IsAllowed()
+    {
+        // Arrange
+        ResolveAs(@"C:\Windows\System32\cmd.exe", LaunchTargetKind.NativeExecutable);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("cmd");
+
+        // Assert - an empty console, without the old warning
+        plan.IsValid.Should().BeTrue(plan.ErrorMessage);
+        plan.StartInfo!.Arguments.Should().BeEmpty();
+        plan.Warning.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PlanLaunch_BatchFile_IsRefused_WithOrWithoutArguments(bool withArguments)
+    {
+        // Arrange - 'code' resolves to VS Code's bin\code.cmd, which Windows runs through cmd.exe
+        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("code", withArguments ? ["--new-window", @"C:\Projects\MyApp"] : null);
+
+        // Assert
+        plan.IsValid.Should().BeFalse();
+        plan.StartInfo.Should().BeNull();
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        plan.ErrorMessage.Should().Contain(CodeCmd).And.Contain("code.exe");
+    }
+
+    [Theory]
+    [InlineData("file:///C:/Users/me/Desktop/run.ps1", @"C:\Users\me\Desktop\run.ps1")]
+    [InlineData(@"C:\Users\me\Desktop\run.vbs", @"C:\Users\me\Desktop\run.vbs")]
+    [InlineData(@"C:\Users\me\Desktop\tool", @"C:\Users\me\Desktop\tool.cmd")]
+    public void PlanLaunch_ScriptFile_IsRefused(string executable, string resolved)
+    {
+        // Arrange - a file: URI is validated as its path; a path without an extension may resolve to a script
+        ResolveAs(resolved, Path.GetExtension(resolved) == ".cmd" ? LaunchTargetKind.BatchFile : LaunchTargetKind.Other);
+
+        // Act
+        var plan = CreateSut().PlanLaunch(executable);
+
+        // Assert
+        plan.IsValid.Should().BeFalse();
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+    }
+
+    [Fact]
+    public void PlanLaunch_ForceAccessibilityOnABatchFile_IsRefusedAsAScript()
+    {
+        // Arrange
+        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
+
+        // Act
+        var plan = CreateSut().PlanLaunch("code", forceAccessibility: true);
+
+        // Assert
+        plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+    }
+
+    #endregion
+
+    #region Unverified Targets (cmd.exe may re-parse arguments)
 
     [Theory]
     [InlineData(@"C:\R&D\proj")]
@@ -98,56 +186,41 @@ public class LaunchPlanningTests
     [InlineData("\" & calc & \"")]
     [InlineData("line\nbreak")]
     [InlineData("carriage\rreturn")]
-    public void PlanLaunch_BatchFileWithCmdMetacharacters_IsRejected(string argument)
+    public void PlanLaunch_UnverifiedTargetWithCmdMetacharacters_IsRejected(string argument)
     {
-        // Arrange - 'code' resolves to VS Code's bin\code.cmd
-        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
+        // Arrange - a document is handed to whatever program is registered for it, which may be cmd.exe
+        ResolveAs(@"D:\Reports\q3.pdf", LaunchTargetKind.Other);
 
         // Act
-        var plan = CreateSut().PlanLaunch("code", ["--new-window", argument]);
+        var plan = CreateSut().PlanLaunch(@"D:\Reports\q3.pdf", ["--new-window", argument]);
 
         // Assert
         plan.IsValid.Should().BeFalse();
         plan.StartInfo.Should().BeNull();
         plan.ErrorCode.Should().Be(nameof(LaunchErrorCode.UnsafeBatchArguments));
-        plan.ErrorMessage.Should().Contain("batch file").And.Contain(CodeCmd).And.Contain("cmd.exe");
+        plan.ErrorMessage.Should().Contain("could not be verified").And.Contain("cmd.exe");
     }
 
     [Fact]
-    public void PlanLaunch_BatchFileWithSafeArguments_QuotesForCmd()
+    public void PlanLaunch_UnverifiedTargetWithSafeArguments_QuotesForCmd()
     {
         // Arrange
-        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
+        ResolveAs(@"D:\Reports\q3.pdf", LaunchTargetKind.Other);
 
         // Act
         var plan = CreateSut().PlanLaunch(
-            "code",
+            @"D:\Reports\q3.pdf",
             [@"C:\Program Files (x86)\proj", "--new-window", "a;b", @"C:\Users\O'Brien\notes.md", "plain"]);
 
         // Assert
         plan.IsValid.Should().BeTrue(plan.ErrorMessage);
-        plan.StartInfo!.FileName.Should().Be(CodeCmd);
+        plan.StartInfo!.FileName.Should().Be(@"D:\Reports\q3.pdf");
         plan.StartInfo.Arguments.Should().Be(
             "\"C:\\Program Files (x86)\\proj\" --new-window \"a;b\" C:\\Users\\O'Brien\\notes.md plain");
     }
 
     [Fact]
-    public void PlanLaunch_BatchFileWithoutArguments_IsAllowed()
-    {
-        // Arrange
-        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
-
-        // Act
-        var plan = CreateSut().PlanLaunch("code");
-
-        // Assert
-        plan.IsValid.Should().BeTrue();
-        plan.StartInfo!.Arguments.Should().BeEmpty();
-        plan.TargetKind.Should().Be(LaunchTargetKind.BatchFile);
-    }
-
-    [Fact]
-    public void PlanLaunch_UnverifiedTargetWithCmdMetacharacters_IsRejected()
+    public void PlanLaunch_UnresolvedNameWithCmdMetacharacters_IsRejected()
     {
         // Arrange - a name that could not be resolved may still end up in cmd.exe
         ResolveAs("someapp", LaunchTargetKind.Other);
@@ -179,11 +252,11 @@ public class LaunchPlanningTests
     public void PlanLaunch_LongUnsafeArgument_IsTruncatedInMessage()
     {
         // Arrange
-        ResolveAs(CodeCmd, LaunchTargetKind.BatchFile);
+        ResolveAs(@"D:\Reports\q3.pdf", LaunchTargetKind.Other);
         var longArgument = "&" + new string('x', 500);
 
         // Act
-        var plan = CreateSut().PlanLaunch("code", [longArgument]);
+        var plan = CreateSut().PlanLaunch(@"D:\Reports\q3.pdf", [longArgument]);
 
         // Assert
         plan.ErrorMessage!.Length.Should().BeLessThan(600);

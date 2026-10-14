@@ -191,7 +191,8 @@ public enum LaunchErrorCode
 
     /// <summary>
     /// An argument contains characters that cmd.exe would interpret (&amp; | &lt; &gt; ^ % ! " or control characters),
-    /// and the target is a batch file (.bat/.cmd) or could not be verified to be a native executable.
+    /// and the target could not be verified to be a native executable. A batch file (.bat/.cmd) is refused before that as a
+    /// script (<see cref="ScriptFile"/>, roadmap M3.F8).
     /// </summary>
     UnsafeBatchArguments = 11,
 
@@ -217,7 +218,20 @@ public enum LaunchErrorCode
     /// A bare name was not found in the Windows directory, System32, the absolute PATH entries or App Paths. It is not
     /// passed to Windows unresolved, because Windows would also search the current directory.
     /// </summary>
-    ExecutableNotFound = 15
+    ExecutableNotFound = 15,
+
+    /// <summary>
+    /// The target is a command interpreter, script host or other program that runs what its command line names (cmd,
+    /// PowerShell, Windows Script Host, Python, ...), and it was given arguments: the server does not run commands or
+    /// scripts for the agent (roadmap M3.F8). Nothing was started; without arguments it starts as usual.
+    /// </summary>
+    InterpreterWithArguments = 16,
+
+    /// <summary>
+    /// The launch would run a script file (.bat, .cmd, .ps1, .vbs, .py, ...), as the target or through explorer.exe, which
+    /// opens its argument with the program registered for it (roadmap M3.F8). Nothing was started.
+    /// </summary>
+    ScriptFile = 17
 }
 
 /// <summary>

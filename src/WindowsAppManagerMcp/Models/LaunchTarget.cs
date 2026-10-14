@@ -13,7 +13,7 @@ public enum LaunchTargetKind
 
     /// <summary>
     /// A batch file (.bat, .cmd). ShellExecute runs it through cmd.exe, which interprets
-    /// &amp; | &lt; &gt; ^ % ! and quotes in its arguments.
+    /// &amp; | &lt; &gt; ^ % ! and quotes in its arguments. The launch refuses it as a script (roadmap M3.F8).
     /// </summary>
     BatchFile,
 

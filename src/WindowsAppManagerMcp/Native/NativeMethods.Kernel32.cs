@@ -40,5 +40,12 @@ internal static partial class NativeMethods
         /// <summary>The window of the console the calling process is attached to, or zero when it has none.</summary>
         [LibraryImport("kernel32.dll")]
         public static partial nint GetConsoleWindow();
+
+        /// <summary>
+        /// The long form of a path that may hold 8.3 short names (POWERS~1.EXE), written to <paramref name="lpszLongPath"/>;
+        /// returns its length, the buffer size needed when the buffer is too small, or 0 when the path does not exist.
+        /// </summary>
+        [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+        public static partial uint GetLongPathNameW(string lpszShortPath, [Out] char[] lpszLongPath, uint cchBuffer);
     }
 }

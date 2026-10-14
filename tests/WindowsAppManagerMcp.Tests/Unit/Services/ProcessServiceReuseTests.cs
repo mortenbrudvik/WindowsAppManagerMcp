@@ -212,7 +212,7 @@ public class ProcessServiceReuseTests
     {
         Open(0x10, "Code", title);
 
-        var result = await LaunchAsync("code.cmd", [@"C:\Projects\MyApp"]);
+        var result = await LaunchAsync("Code.exe", [@"C:\Projects\MyApp"]);
 
         result.Status.Should().Be(reused ? LaunchStatus.AlreadyOpen : LaunchStatus.Started);
     }
@@ -314,7 +314,7 @@ public class ProcessServiceReuseTests
         var window = Open(0x10, "Code", "README.md - ProjectB - Visual Studio Code");
 
         // Act
-        var result = await LaunchAsync("code.cmd", [@"C:\Projects\A\README.md"]);
+        var result = await LaunchAsync("Code.exe", [@"C:\Projects\A\README.md"]);
 
         // Assert
         result.Status.Should().Be(LaunchStatus.AlreadyOpen);
@@ -506,7 +506,7 @@ public class ProcessServiceReuseTests
         Open(0x10, "Code", "a.cs - other - Visual Studio Code");
         var project = Open(0x11, "Code", "b.cs - MyProject - Visual Studio Code");
 
-        var result = await LaunchAsync("code.cmd", [@"C:\src\my-project"], new LaunchWindowHint(TitleContains: "MyProject"));
+        var result = await LaunchAsync("Code.exe", [@"C:\src\my-project"], new LaunchWindowHint(TitleContains: "MyProject"));
 
         result.Window.Should().Be(project);
         VerifyNothingStarted();

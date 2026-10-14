@@ -429,6 +429,62 @@ public class ProcessServiceTests
     }
 
     [Fact]
+    public async Task LaunchApplication_AnInterpreterWithArguments_StartsNothing()
+    {
+        // Arrange
+        _mockResolver.Setup(r => r.Resolve("powershell", It.IsAny<string?>()))
+            .Returns(new ResolvedLaunchTarget(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", LaunchTargetKind.NativeExecutable));
+
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync("powershell", ["-Command", "Start-Process calc"], waitForWindow: true);
+
+        // Assert - refused before the window baseline or the start (roadmap M3.F8)
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        result.ErrorMessage.Should().Contain("Nothing was started");
+        VerifyNothingStarted();
+        _mockWindowWait.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AnInterpreterWithArguments_IsRefused_EvenWithReuseExisting()
+    {
+        // Act
+        var result = await CreateSut().LaunchApplicationAsync(
+            new LaunchRequest("cmd.exe", ["/c", "calc"], ReuseExisting: true), waitForWindow: false, waitTimeoutMs: 0);
+
+        // Assert
+        result.ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        VerifyNothingStarted();
+    }
+
+    [Fact]
+    public async Task LaunchApplication_AnInterpreterWithoutArguments_Starts()
+    {
+        // Act - an empty console is allowed
+        var result = await CreateSut().LaunchApplicationAsync("cmd.exe");
+
+        // Assert
+        result.Success.Should().BeTrue(result.ErrorMessage);
+        _startedWith!.FileName.Should().Be("cmd.exe");
+    }
+
+    [Fact]
+    public async Task LaunchApplicationsBatch_AnInterpreterWithArguments_FailsAlone()
+    {
+        // Act
+        var results = await CreateSut().LaunchApplicationsBatchAsync(
+            [new LaunchRequest("notepad.exe"), new LaunchRequest("wscript.exe", [@"C:\Users\me\run.vbs"]), new LaunchRequest(@"C:\Users\me\run.bat")]);
+
+        // Assert - notepad starts; the script host with a script and the batch file do not
+        results.Select(r => r.Success).Should().Equal(true, false, false);
+        results[1].ErrorCode.Should().Be(nameof(LaunchErrorCode.InterpreterWithArguments));
+        results[2].ErrorCode.Should().Be(nameof(LaunchErrorCode.ScriptFile));
+        _mockProcessWrapper.Verify(w => w.StartProcess(It.IsAny<ProcessStartInfo>()), Times.Once);
+        _startedWith!.FileName.Should().Be("notepad.exe");
+    }
+
+    [Fact]
     public async Task LaunchApplicationsBatch_ReportsProgressAfterEachApplication()
     {
         // Arrange - the second application is refused by validation, the others start

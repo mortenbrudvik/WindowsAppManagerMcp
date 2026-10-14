@@ -29,7 +29,7 @@ public class AppLauncherTools
 
     private const string ReuseDescription =
         "Use an open window of the app instead of starting another copy (default false): a window on the current desktop, not " +
-        "the agent's own, of a process with the program's path or name (calc: CalculatorApp, code: Code, wt: WindowsTerminal; " +
+        "the agent's own, of a process with the program's path or name (calc: CalculatorApp, wt: WindowsTerminal; " +
         "never a terminal for cmd or powershell) and of expectWindow.processName when set (needed for a document, a Store app or " +
         "a web address). Its title must contain expectWindow.titleContains when set, else show each file or folder the launch " +
         "opens as a whole name, never after another path; a web address (a page sets its own title) or a URI page such as " +
@@ -92,7 +92,7 @@ public class AppLauncherTools
     public async Task<LaunchResultDto> LaunchApplication(
         [Description("Path to executable, application name, or protocol URI (e.g., 'notepad', 'C:\\Program Files\\App\\app.exe', 'https://example.com', 'ms-settings:display'). A bare name is looked up in the Windows folder, System32, PATH and App Paths, never in the current folder; one that is not found there fails with ExecutableNotFound")]
         string executable,
-        [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). If the target is a batch file such as 'code' (code.cmd) or 'npm' (npm.cmd), arguments containing & | < > ^ % ! or \" are refused (errorCode UnsafeBatchArguments); launch the program's .exe by full path instead.")]
+        [Description("Command line arguments, one array element per argument (quoting is handled for you; do not add quotes). No commands or scripts are run: an interpreter (cmd, powershell, wscript, python, ...) with arguments fails with InterpreterWithArguments, a script (.bat, .cmd, .ps1; for code use code.exe) with ScriptFile. For a target that is not an .exe, arguments with & | < > ^ % ! or \" fail with UnsafeBatchArguments.")]
         string[]? arguments = null,
         [Description("Working directory for the application (default: the program's own folder)")]
         string? workingDirectory = null,

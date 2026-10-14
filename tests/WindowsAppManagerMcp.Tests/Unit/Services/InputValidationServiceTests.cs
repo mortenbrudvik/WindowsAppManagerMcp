@@ -330,7 +330,7 @@ public class InputValidationServiceTests
 
     #endregion
 
-    #region ValidateExecutable - Suspicious Executables (Warnings)
+    #region ValidateExecutable - Interpreters (refused with arguments by the launch, not warned about here)
 
     [Theory]
     [InlineData("cmd.exe")]
@@ -344,15 +344,14 @@ public class InputValidationServiceTests
     [InlineData("mshta.exe")]
     [InlineData("regsvr32.exe")]
     [InlineData("rundll32.exe")]
-    public void ValidateExecutable_SuspiciousExecutable_ReturnsValidWithWarning(string executable)
+    public void ValidateExecutable_Interpreter_IsValid_WithoutAWarning(string executable)
     {
-        // Arrange & Act
+        // Arrange & Act - started bare it opens an empty console; with arguments the launch refuses it (roadmap M3.F8)
         var result = _sut.ValidateExecutable(executable);
 
         // Assert
         result.IsValid.Should().BeTrue();
-        result.Warning.Should().NotBeNull();
-        result.Warning.Should().Contain("shell/script interpreter");
+        result.Warning.Should().BeNull();
     }
 
     #endregion
@@ -541,15 +540,15 @@ public class InputValidationServiceTests
     }
 
     [Fact]
-    public void ValidateExecutable_FileUriToShell_ReturnsSuspiciousExecutableWarning()
+    public void ValidateExecutable_FileUriToShell_IsValidatedAsItsPath()
     {
         // Arrange & Act
         var result = _sut.ValidateExecutable("file:///C:/Windows/System32/cmd.exe");
 
-        // Assert
+        // Assert - the launch checks the path for an interpreter (roadmap M3.F8)
         result.IsValid.Should().BeTrue();
         result.SanitizedExecutable.Should().Be(@"C:\Windows\System32\cmd.exe");
-        result.Warning.Should().Contain("shell/script interpreter");
+        result.Warning.Should().BeNull();
     }
 
     [Fact]
