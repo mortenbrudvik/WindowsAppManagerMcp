@@ -283,6 +283,9 @@ public sealed record ElementActionResult(
 /// <param name="AllowHostTarget">Lifts the host guard for the element's window (the tool allows it only for a window named by
 /// handle or ref).</param>
 /// <param name="Timeout">How long the action may block (a dialog it opened), and the bound of each read.</param>
+/// <param name="ScrollPercent">scroll: the position (0-100) to scroll to on the axis of <paramref name="Direction"/>, through the
+/// Scroll pattern's SetScrollPercent, instead of a page or a line. The tool takes it from no argument: realize's scroll fallback
+/// puts the list back where it was with it (roadmap M3.F19).</param>
 public sealed record ElementActionRequest(
     string Ref,
     ElementActionKind Action,
@@ -292,4 +295,5 @@ public sealed record ElementActionRequest(
     ElementScrollAmount Amount = ElementScrollAmount.Page,
     ElementActionFallback Fallback = ElementActionFallback.None,
     bool AllowHostTarget = false,
-    TimeSpan? Timeout = null);
+    TimeSpan? Timeout = null,
+    double? ScrollPercent = null);

@@ -159,6 +159,19 @@ public sealed partial class ElementActionService : IElementActionService
             return $"direction is for scroll, not {action}.";
         }
 
+        if (request.ScrollPercent is { } percent)
+        {
+            if (request.Action != ElementActionKind.Scroll)
+            {
+                return $"scrollPercent is for scroll, not {action}.";
+            }
+
+            if (!double.IsFinite(percent) || percent is < 0 or > 100)
+            {
+                return $"scrollPercent is a position from 0 to 100 (got {percent.ToString(CultureInfo.InvariantCulture)}).";
+            }
+        }
+
         if (request.Fallback == ElementActionFallback.Mouse && request.Action is not (ElementActionKind.Invoke or ElementActionKind.Click
                 or ElementActionKind.Select))
         {

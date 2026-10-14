@@ -25,6 +25,7 @@ public class ElementActionRealizeToolTests
     private Func<int, bool> _atEnd = _ => false;
     private Func<ElementActionRequest, ElementActionResult?> _refuse = _ => null;
     private Func<ElementQuery, FindElementsResult?> _firstSearch = _ => null;
+    private double? _startPercent;
 
     public ElementActionRealizeToolTests()
     {
@@ -56,8 +57,12 @@ public class ElementActionRealizeToolTests
             .Callback((ElementActionRequest request, CancellationToken _) => _requests.Add(request))
             .ReturnsAsync((ElementActionRequest request, CancellationToken _) =>
                 _refuse(request) ?? (request.Action == ElementActionKind.Scroll
-                    ? new ElementActionResult(true, "scroll", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.Scroll,
-                        Scroll: new ElementScrollPosition(null, 10, _atEnd(++pages)))
+                    ? request.ScrollPercent is { } percent
+                        ? new ElementActionResult(true, "scroll", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.Scroll,
+                            OutcomeVerified: true, Scroll: new ElementScrollPosition(null, percent, false))
+                        : new ElementActionResult(true, "scroll", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.Scroll,
+                            Before: new ElementState("Messages", true, false, VerticalScrollPercent: pages == 0 ? _startPercent : 10),
+                            Scroll: new ElementScrollPosition(null, 10, _atEnd(++pages)))
                     : new ElementActionResult(true, "realize", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.VirtualizedItem)));
         _registry.Setup(r => r.Lookup(It.IsAny<string>())).Returns((string r) => new ElementLookup(r, Handle, null, 1));
     }
@@ -157,6 +162,120 @@ public class ElementActionRealizeToolTests
         result.Error.Should().Contain("4 pages").And.Contain("maxScrolls 4");
         _requests.Select(r => r.Direction).Should().Equal(
             ElementScrollDirection.Down, ElementScrollDirection.Down, ElementScrollDirection.Up, ElementScrollDirection.Up);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_PutsTheListBackWhereItWas_WhenTheItemIsNotFound()
+    {
+        // Arrange - the list was 40% down before the search (roadmap M3.F19); the item is never found
+        _foundOnPage = 100;
+        _startPercent = 40;
+        _atEnd = page => page == 2;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4,
+            allowHostTarget: true).Payload<ElementActionResult>();
+
+        // Assert - one more element_action scroll, to the position it was at, with every check
+        result.ErrorCode.Should().Be("ElementNotFound");
+        result.Error.Should().Contain("put back where it was (40% down)").And.NotContain("left where the search ended");
+        _requests.Should().HaveCount(5);
+        var putBack = _requests[^1];
+        (putBack.Action, putBack.Ref, putBack.ScrollPercent, putBack.AllowHostTarget).Should().Be((ElementActionKind.Scroll, "w1e2", 40.0, true));
+        putBack.Direction.Should().Be(ElementScrollDirection.Up, "the position is on the axis the search scrolled");
+        _requests.Take(4).Should().OnlyContain(r => r.ScrollPercent == null);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_PutsTheListBack_AlsoWhenTheTimeoutPasses()
+    {
+        // Arrange - every page takes longer than the whole search may
+        _foundOnPage = 100;
+        _startPercent = 0;
+        _refuse = request =>
+        {
+            if (request.ScrollPercent == null)
+            {
+                Thread.Sleep(1100);
+            }
+
+            return null;
+        };
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            timeoutMs: 1000).Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be("OperationTimedOut");
+        result.Error.Should().Contain("put back where it was (0% down)");
+        _requests[^1].ScrollPercent.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_SaysWhy_WhenTheListCannotBePutBack()
+    {
+        // Arrange - the user paused input during the search's last page: the scroll back is refused like any action
+        _foundOnPage = 100;
+        _startPercent = 40;
+        _atEnd = page => page == 1;
+        _refuse = request => request.ScrollPercent != null
+            ? new ElementActionResult(false, "scroll", request.Ref, Handle, Error: "Input is paused by the user.", ErrorCode: "PausedByUser")
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4).Payload<ElementActionResult>();
+
+        // Assert - the search's own outcome, and why the list stays where the search ended
+        result.ErrorCode.Should().Be("ElementNotFound");
+        result.Error.Should().Contain("could not be put back").And.Contain("paused").And.Contain("left where the search ended");
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_SaysWhereTheListIs_WhenTheScrollBackStopsNearWhereItWas()
+    {
+        // Arrange - a list that scrolls by items stops near the position rather than on it
+        _foundOnPage = 100;
+        _startPercent = 40;
+        _atEnd = page => page == 1;
+        _refuse = request => request.ScrollPercent != null
+            ? new ElementActionResult(true, "scroll", request.Ref, Handle, ElementActionStatus.Done, ElementActionMethod.Scroll,
+                OutcomeVerified: false, Scroll: new ElementScrollPosition(null, 37.5, false))
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4).Payload<ElementActionResult>();
+
+        // Assert
+        result.Error.Should().Contain("toward where it was (40% down)").And.Contain("37.5% down now");
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_LeavesTheList_WhenWhereItWasIsNotKnown()
+    {
+        // Arrange - the first page's state has no vertical position (the list did not report one)
+        _foundOnPage = 100;
+        _startPercent = null;
+        _atEnd = page => page == 2;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 4).Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be("ElementNotFound");
+        result.Error.Should().Contain("left where the search ended");
+        _requests.Should().HaveCount(4).And.OnlyContain(r => r.ScrollPercent == null);
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_DoesNotPutTheListBack_WhenTheItemIsFound()
+    {
+        _startPercent = 40;
+
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
+
+        result.Success.Should().BeTrue(result.Error);
+        _requests.Should().OnlyContain(r => r.ScrollPercent == null);
     }
 
     [Fact]

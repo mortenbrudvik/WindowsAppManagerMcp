@@ -796,6 +796,59 @@ public sealed class ElementActionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Scroll_OfAnItem_ReportsItsScrollableAncestorsPercent_BeforeAndAfter()
+    {
+        // Arrange - the item has no Scroll pattern: before and after carry the position of the list it scrolls (roadmap M3.F19)
+        var scroll = new FakeScrollPattern(vertical: 40);
+        var list = new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll, ProcessId = Pid }.WithPattern<IUiaScrollPattern>(scroll);
+        _window.With(list);
+        var item = RefOf(new FakeUiaNode("ListItem", "a.txt") { ProcessId = Pid }, list);
+
+        // Act
+        var result = await ActAsync(item, ElementActionKind.Scroll, direction: ElementScrollDirection.Down);
+
+        // Assert
+        result.Before!.VerticalScrollPercent.Should().Be(40);
+        result.After!.VerticalScrollPercent.Should().Be(65);
+        result.Before.HorizontalScrollPercent.Should().BeNull("the list does not scroll horizontally");
+    }
+
+    [Fact]
+    public async Task Scroll_ToAPercent_SetsTheScrollPercentOnTheAxisOfItsDirection_AndIsVerified()
+    {
+        // Arrange - realize's scroll fallback puts a list back where it was (roadmap M3.F19)
+        var scroll = new FakeScrollPattern(vertical: 100);
+        var list = RefOf(new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll }.WithPattern<IUiaScrollPattern>(scroll));
+
+        // Act
+        var result = await CreateSut().ActAsync(new ElementActionRequest(list, ElementActionKind.Scroll, Direction: ElementScrollDirection.Up,
+            ScrollPercent: 40));
+
+        // Assert - one SetScrollPercent, not a page
+        result.Success.Should().BeTrue(result.Error);
+        result.Method.Should().Be(ElementActionMethod.Scroll);
+        scroll.Vertical.Should().Be(40);
+        scroll.Scrolls.Should().BeEmpty();
+        result.Scroll!.VerticalPercent.Should().Be(40);
+        result.OutcomeVerified.Should().BeTrue();
+        _runner.Runs.Should().Be(1, "it is a pattern action like any scroll");
+    }
+
+    [Fact]
+    public async Task Scroll_ToThePercentItIsAt_DoesNothing()
+    {
+        var scroll = new FakeScrollPattern(vertical: 40);
+        var list = RefOf(new FakeUiaNode("List", "Files") { OtherPatterns = UiaPatterns.Scroll }.WithPattern<IUiaScrollPattern>(scroll));
+
+        var result = await CreateSut().ActAsync(new ElementActionRequest(list, ElementActionKind.Scroll, Direction: ElementScrollDirection.Up,
+            ScrollPercent: 40));
+
+        result.Method.Should().Be(ElementActionMethod.None);
+        result.OutcomeVerified.Should().BeTrue();
+        _runner.Runs.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Scroll_AtTheEnd_DoesNothing_AndSaysAtEnd()
     {
         var scroll = new FakeScrollPattern(vertical: 100);
@@ -1804,6 +1857,17 @@ public sealed class ElementActionServiceTests : IDisposable
         ElementActionKind action, string? value, ElementValueMode mode, ElementScrollDirection? direction, string expected)
     {
         ElementActionService.ArgumentError(new ElementActionRequest("w1e1", action, value, mode, direction))
+            .Should().Contain(expected);
+    }
+
+    [Theory]
+    [InlineData(ElementActionKind.Invoke, null, 40.0, "scrollPercent is for scroll")]
+    [InlineData(ElementActionKind.Scroll, ElementScrollDirection.Up, 140.0, "0 to 100")]
+    [InlineData(ElementActionKind.Scroll, ElementScrollDirection.Up, double.NaN, "0 to 100")]
+    public void ArgumentError_RefusesAScrollPercent_OtherThanForScroll_OrOutsideTheRange(
+        ElementActionKind action, ElementScrollDirection? direction, double percent, string expected)
+    {
+        ElementActionService.ArgumentError(new ElementActionRequest("w1e1", action, Direction: direction, ScrollPercent: percent))
             .Should().Contain(expected);
     }
 
