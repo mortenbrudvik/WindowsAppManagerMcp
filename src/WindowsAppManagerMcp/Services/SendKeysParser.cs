@@ -63,20 +63,20 @@ public static class SendKeysParser
         ArgumentNullException.ThrowIfNull(events);
 
         var chords = new List<(KeyChord, int)>();
-        var held = KeyModifiers.None;
+        var down = new List<ushort>();
         for (var i = 0; i < events.Count; i++)
         {
             var e = events[i];
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
-            if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) is var modifier && modifier != KeyModifiers.None)
+            if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) != KeyModifiers.None)
             {
-                held = isUp ? held & ~modifier : held | modifier;
+                Track(down, e.Code, isUp);
                 continue;
             }
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                chords.Add((Press(held, e), i));
+                chords.Add((Press(Held(down), e), i));
             }
         }
 
@@ -93,24 +93,23 @@ public static class SendKeysParser
         ArgumentNullException.ThrowIfNull(events);
 
         var presses = new List<KeyChord>();
-        var held = KeyModifiers.None;
+        var down = new List<ushort>();
         var tapCandidate = (ushort)0;
         foreach (var e in events)
         {
             var isUp = (e.Flags & NativeEnums.KEYEVENTF_KEYUP) != 0;
-            if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) is var modifier && modifier != KeyModifiers.None)
+            if (e.Kind == InputEventKind.VirtualKey && ModifierOf(e.Code) != KeyModifiers.None)
             {
+                Track(down, e.Code, isUp);
                 if (!isUp)
                 {
-                    held |= modifier;
                     tapCandidate = e.Code;
                     continue;
                 }
 
-                held &= ~modifier;
                 if (tapCandidate == e.Code)
                 {
-                    presses.Add(new KeyChord(held, InputEventKind.VirtualKey, e.Code));
+                    presses.Add(new KeyChord(Held(down), InputEventKind.VirtualKey, e.Code));
                 }
 
                 tapCandidate = 0;
@@ -119,7 +118,7 @@ public static class SendKeysParser
 
             if (e.Kind != InputEventKind.Mouse && !isUp)
             {
-                presses.Add(Press(held, e));
+                presses.Add(Press(Held(down), e));
                 tapCandidate = 0;
             }
         }
@@ -163,6 +162,41 @@ public static class SendKeysParser
             : $"{{{KeyTable.NameOf(code) ?? KeyNames.Of(code)}}}";
         return modifiers + key;
     }
+
+    private static void Track(List<ushort> down, ushort virtualKey, bool isUp)
+    {
+        if (isUp)
+        {
+            down.RemoveAll(key => ModifierOf(key) == ModifierOf(virtualKey) && (key == virtualKey || !IsSided(virtualKey) || !IsSided(key)));
+        }
+        else if (!down.Contains(virtualKey))
+        {
+            down.Add(virtualKey);
+        }
+    }
+
+    /// <summary>
+    /// The modifiers <paramref name="down"/> holds. The left Ctrl together with the right Alt is AltGr, the way send_keys
+    /// types a character such as '@' on a German or Norwegian keyboard: that pair holds nothing, so typing an address is
+    /// not a Ctrl+Alt chord (Ctrl+Alt+Q would otherwise count as Ctrl+Q). An explicit ^ or % is the generic Ctrl or the left
+    /// Alt, which still count.
+    /// </summary>
+    private static KeyModifiers Held(List<ushort> down)
+    {
+        var altGr = down.Contains(NativeEnums.VK_LCONTROL) && down.Contains(NativeEnums.VK_RMENU);
+        var held = KeyModifiers.None;
+        foreach (var key in down)
+        {
+            if (!(altGr && key is NativeEnums.VK_LCONTROL or NativeEnums.VK_RMENU))
+            {
+                held |= ModifierOf(key);
+            }
+        }
+
+        return held;
+    }
+
+    private static bool IsSided(ushort virtualKey) => virtualKey is >= NativeEnums.VK_LSHIFT and <= NativeEnums.VK_RMENU;
 
     /// <summary>The modifier <paramref name="virtualKey"/> is, generic or left/right; None for any other key.</summary>
     public static KeyModifiers ModifierOf(ushort virtualKey) => virtualKey switch

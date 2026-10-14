@@ -64,6 +64,9 @@ public static class KeySpecParser
         private List<InputEvent> _current = new();
         private int _i;
 
+        /// <summary>Caps Lock as the keys so far leave it: each press of {CAPSLOCK} toggles it, as on a keyboard.</summary>
+        private bool _capsLock = layout.CapsLock;
+
         public KeySpec Run()
         {
             ParseSequence(topLevel: true);
@@ -204,7 +207,8 @@ public static class KeySpecParser
                 throw new KeySyntaxException($"The braces at position {open} are empty. Write the character }} as {{}}}}.");
             }
 
-            var character = name.Length == 1 ? name[0] : (char?)null;
+            // A single character, or an emoji's surrogate pair, is itself
+            var character = name.Length == 1 || (name.Length == 2 && char.IsSurrogatePair(name[0], name[1])) ? name : null;
             ushort virtualKey = 0;
             if (character == null)
             {
@@ -254,9 +258,13 @@ public static class KeySpecParser
 
             void Press()
             {
-                if (character is { } c)
+                if (character?.Length == 2)
                 {
-                    PressCharacter(c, modifiers);
+                    PressUnicode(character.ToCharArray(), modifiers);
+                }
+                else if (character != null)
+                {
+                    PressCharacter(character[0], modifiers);
                 }
                 else
                 {
@@ -356,7 +364,7 @@ public static class KeySpecParser
 
             // Caps Lock matters only to text: a shortcut is the same key whatever Caps Lock says
             var plain = modifiers.Count == 0 && !_held.Any(KeyTable.IsModifier);
-            var stroke = layout.Map(c, capsLockApplies: plain);
+            var stroke = layout.Map(c, capsLock: plain && _capsLock);
             if (stroke == null && char.IsAsciiLetterOrDigit(c) && HoldsShortcutModifier(modifiers))
             {
                 // A shortcut on a layout without Latin letters (Cyrillic, Greek): the key Windows calls A-Z or 0-9
@@ -385,8 +393,14 @@ public static class KeySpecParser
             var pressed = PressModifiers(modifiers);
             if (stroke.IsAltGr)
             {
-                PressIfNotDown(NativeEnums.VK_CONTROL, KeyModifiers.Control, pressed);
-                PressIfNotDown(NativeEnums.VK_RMENU, KeyModifiers.Alt, pressed);
+                // The left Ctrl and the right Alt, as a keyboard sends AltGr: the chord checks read that pair as a character,
+                // not as Ctrl+Alt. The right Alt goes down under an explicit % too, so %@ stays Alt with an AltGr character
+                PressIfNotDown(NativeEnums.VK_LCONTROL, KeyModifiers.Control, pressed);
+                if (!_held.Concat(pressed).Contains(NativeEnums.VK_RMENU))
+                {
+                    Down(NativeEnums.VK_RMENU);
+                    pressed.Add(NativeEnums.VK_RMENU);
+                }
             }
 
             if ((stroke.Modifiers & KeyModifiers.Shift) != 0)
@@ -442,7 +456,14 @@ public static class KeySpecParser
             }
         }
 
-        private void Down(ushort virtualKey) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN));
+        private void Down(ushort virtualKey)
+        {
+            _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN));
+            if (virtualKey == NativeEnums.VK_CAPITAL)
+            {
+                _capsLock = !_capsLock;
+            }
+        }
 
         private void Up(ushort virtualKey) => _current.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP));
 

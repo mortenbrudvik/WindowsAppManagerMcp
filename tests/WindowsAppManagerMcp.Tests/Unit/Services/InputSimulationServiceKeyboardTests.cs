@@ -9,7 +9,7 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class InputSimulationServiceKeyboardTests
 {
     private const uint Extended = 0x0001, KeyUp = 0x0002;
-    private const ushort VkShift = 0x10, VkControl = 0x11, VkRMenu = 0xA5, VkReturn = 0x0D, VkTab = 0x09, VkCapital = 0x14;
+    private const ushort VkShift = 0x10, VkControl = 0x11, VkRMenu = 0xA5, VkLControl = 0xA2, VkReturn = 0x0D, VkTab = 0x09, VkCapital = 0x14;
     private static readonly nint Target = 0x200;
 
     private readonly FakeInputWrapper _input = new();
@@ -56,9 +56,9 @@ public class InputSimulationServiceKeyboardTests
         result.Success.Should().BeTrue();
         _layouts.LayoutQueries.Should().Equal(Target);
         _input.Events.Should().Equal(
-            InputEvent.Key(VkControl, 0, 0x1D), InputEvent.Key(VkRMenu, Extended, 0x38),
+            InputEvent.Key(VkLControl, 0, 0x1D), InputEvent.Key(VkRMenu, Extended, 0x38),
             InputEvent.Key('2', 0, 0x03), InputEvent.Key('2', KeyUp, 0x03),
-            InputEvent.Key(VkRMenu, Extended | KeyUp, 0x38), InputEvent.Key(VkControl, KeyUp, 0x1D));
+            InputEvent.Key(VkRMenu, Extended | KeyUp, 0x38), InputEvent.Key(VkLControl, KeyUp, 0x1D));
         VerifyNothingIsDown();
     }
 

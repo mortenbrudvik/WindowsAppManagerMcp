@@ -7,10 +7,11 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 public class KeySpecParserTests
 {
     private const uint Extended = 0x0001, KeyUp = 0x0002;
-    private const ushort VkShift = 0x10, VkControl = 0x11, VkMenu = 0x12, VkRMenu = 0xA5, VkLWin = 0x5B, VkReturn = 0x0D;
+    private const ushort VkShift = 0x10, VkControl = 0x11, VkMenu = 0x12, VkRMenu = 0xA5, VkLControl = 0xA2, VkLWin = 0x5B, VkReturn = 0x0D;
 
     private static readonly InputEvent ShiftDown = Down(VkShift, 0x2A), ShiftUp = Up(VkShift, 0x2A);
     private static readonly InputEvent CtrlDown = Down(VkControl, 0x1D), CtrlUp = Up(VkControl, 0x1D);
+    private static readonly InputEvent LCtrlDown = Down(VkLControl, 0x1D), LCtrlUp = Up(VkLControl, 0x1D);
     private static readonly InputEvent AltDown = Down(VkMenu, 0x38), AltUp = Up(VkMenu, 0x38);
     private static readonly InputEvent AltGrDown = Down(VkRMenu, 0x38, extended: true), AltGrUp = Up(VkRMenu, 0x38, extended: true);
     private static readonly InputEvent WinDown = Down(VkLWin, 0x5B, extended: true), WinUp = Up(VkLWin, 0x5B, extended: true);
@@ -90,8 +91,33 @@ public class KeySpecParserTests
     {
         // Norwegian: @ is AltGr+2, { AltGr+7, $ AltGr+4
         Norwegian("@{{}").Should().Equal(Seq(
-            One(CtrlDown), One(AltGrDown), Tap('2', 0x03), One(AltGrUp), One(CtrlUp),
-            One(CtrlDown), One(AltGrDown), Tap('7', 0x08), One(AltGrUp), One(CtrlUp)));
+            One(LCtrlDown), One(AltGrDown), Tap('2', 0x03), One(AltGrUp), One(LCtrlUp),
+            One(LCtrlDown), One(AltGrDown), Tap('7', 0x08), One(AltGrUp), One(LCtrlUp)));
+    }
+
+    [Fact]
+    public void AnExplicitAlt_WithAnAltGrCharacter_KeepsTheRightAltForTheCharacter()
+    {
+        // %@ is Alt with '@': the left Alt for the chord, the left Ctrl and the right Alt for AltGr
+        Norwegian("%@").Should().Equal(Seq(
+            One(AltDown), One(LCtrlDown), One(AltGrDown), Tap('2', 0x03), One(AltGrUp), One(LCtrlUp), One(AltUp)));
+    }
+
+    [Fact]
+    public void ACapsLockPress_ChangesHowTheLettersAfterItAreMapped()
+    {
+        // Windows toggles Caps Lock when the key goes down, so the letters after it need Shift flipped
+        Us("{CAPSLOCK}ab").Should().Equal(Seq(
+            Tap(0x14, 0), One(ShiftDown), Tap('A', 0x1E), One(ShiftUp), One(ShiftDown), Tap('B', 0x30), One(ShiftUp)));
+        Us("{CAPSLOCK}a", capsLock: true).Should().Equal(Seq(Tap(0x14, 0), Tap('A', 0x1E)));
+        Us("{CAPSLOCK down}{CAPSLOCK up}A").Should().Equal(Seq(Tap(0x14, 0), Tap('A', 0x1E)));
+    }
+
+    [Fact]
+    public void AnEmojiInBraces_IsTheEmoji()
+    {
+        Us("{\U0001F600}").Should().Equal(Seq(Unicode('\uD83D'), Unicode('\uDE00')));
+        Us("{\U0001F600 2}").Should().HaveCount(8);
     }
 
     [Fact]
@@ -112,7 +138,7 @@ public class KeySpecParserTests
     public void ACharacterNotOnTheLayout_IsUnicode()
     {
         Us("€é").Should().Equal(Seq(Unicode('€'), Unicode('é')));
-        Norwegian("€").Should().Equal(Seq(One(CtrlDown), One(AltGrDown), Tap('5', 0x06), One(AltGrUp), One(CtrlUp)));
+        Norwegian("€").Should().Equal(Seq(One(LCtrlDown), One(AltGrDown), Tap('5', 0x06), One(AltGrUp), One(LCtrlUp)));
     }
 
     [Fact]

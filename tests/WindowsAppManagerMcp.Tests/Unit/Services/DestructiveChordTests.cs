@@ -16,7 +16,13 @@ public class DestructiveChordTests
         InputGuardOptions.FromEnvironment(name => name == InputGuardOptions.DestructiveChordsVariable ? value : null);
 
     private static DestructiveChord? Find(string keys, InputGuardOptions? options = null) =>
-        (options ?? InputGuardOptions.Default).FindDestructiveChord(SendKeysParser.Parse(keys));
+        Find(SendKeysParser.Parse(keys), options);
+
+    private static DestructiveChord? Find(IReadOnlyList<InputEvent> events, InputGuardOptions? options = null) =>
+        (options ?? InputGuardOptions.Default).FindDestructiveChord(events);
+
+    private static KeyboardLayout Layout(nint layout) =>
+        KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = layout }, 0, capsLock: false);
 
     #region Chords
 
@@ -143,6 +149,46 @@ public class DestructiveChordTests
     {
         // Ctrl+Space configured as destructive: a literal space with Ctrl held is the same key press
         Find("^ ", Options("^{SPACE}")).Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData("user@example.de")] // '@' is AltGr+Q on a German keyboard: not Ctrl+Alt+Q, so not ^q
+    [InlineData("{{}\\{}}[]{~}|€")]
+    public void FindDestructiveChord_AnAltGrCharacter_IsACharacter_NotACtrlAltChord(string keys)
+    {
+        // roadmap M4.1: AltGr goes out as the left Ctrl and the right Alt, which the chord readers read as a character
+        var events = KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.German)).Events;
+
+        Find(events).Should().BeNull();
+        InputGuardOptions.Default.FindKeysAfterFocusChange(events).Should().BeNull();
+        SendKeysParser.Chords(events).Should().OnlyContain(c => c.Modifiers == KeyModifiers.None || c.Modifiers == KeyModifiers.Shift);
+    }
+
+    [Theory]
+    [InlineData("a@b{{}c\\d")]
+    [InlineData("€$[]")]
+    public void FindKeysAfterFocusChange_NorwegianAltGrCharacters_AreCharacters(string keys)
+    {
+        var events = KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.Norwegian)).Events;
+
+        InputGuardOptions.Default.FindKeysAfterFocusChange(events).Should().BeNull();
+        SendKeysParser.Chords(events).Should().OnlyContain(c => c.Modifiers == KeyModifiers.None || c.Modifiers == KeyModifiers.Shift);
+    }
+
+    [Theory]
+    [InlineData("^%q")]
+    [InlineData("^q")]
+    [InlineData("^@")] // Ctrl with the AltGr character on the Q key: the explicit Ctrl is the generic one, and counts
+    public void FindDestructiveChord_AnExplicitCtrl_OnAnAltGrLayout_StillMatches(string keys)
+    {
+        Find(KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.German)).Events)!.Spec.Should().Be("^q");
+    }
+
+    [Fact]
+    public void Chords_AnExplicitAltWithAnAltGrCharacter_IsAnAltChord()
+    {
+        SendKeysParser.Chords(KeySpecParser.Parse("%@", Layout(FakeKeyboardLayoutWrapper.Norwegian)).Events).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, '2'));
     }
 
     [Theory]

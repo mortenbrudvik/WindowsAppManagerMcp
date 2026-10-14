@@ -53,19 +53,18 @@ public sealed class KeyboardLayout
         return new KeyboardLayout(layout == 0 ? null : native, layout, capsLock);
     }
 
-    /// <summary>True when Caps Lock was on at the start of the call.</summary>
+    /// <summary>True when Caps Lock was on at the start of the call; the parser follows the call's own {CAPSLOCK} presses.</summary>
     public bool CapsLock { get; }
 
     /// <summary>
     /// The key that types <paramref name="character"/>, or null when no key of the layout types exactly that character
     /// without a dead key (an accent that waits for the next key): it is then sent as Unicode. With
-    /// <paramref name="capsLockApplies"/> and <see cref="CapsLock"/> on, the key is the one that types the character while
-    /// Caps Lock is on: Shift is added or dropped wherever the layout lets Caps Lock flip the key (letters, and on some
-    /// layouts the digit row).
+    /// <paramref name="capsLock"/>, the key is the one that types the character while Caps Lock is on: Shift is added or
+    /// dropped wherever the layout lets Caps Lock flip the key (letters, and on some layouts the digit row).
     /// </summary>
-    public KeyStroke? Map(char character, bool capsLockApplies)
+    public KeyStroke? Map(char character, bool capsLock)
     {
-        var caps = capsLockApplies && CapsLock;
+        var caps = capsLock;
         if (_native == null)
         {
             // Not cached: the invariant layout is shared by every call

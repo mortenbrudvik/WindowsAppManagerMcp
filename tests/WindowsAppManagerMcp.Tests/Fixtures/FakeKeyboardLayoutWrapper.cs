@@ -1,9 +1,10 @@
 namespace WindowsAppManagerMcp.Tests.Fixtures;
 
 /// <summary>
-/// A fake of the keyboard layout queries (roadmap M4.1) that models three layouts the way Windows reports them: US
-/// English, Norwegian (AltGr for @ { [ ] } $ €, dead keys for ¨ ^ ~ ` ´) and French AZERTY (digits with Shift, the digit
-/// row flipped by Caps Lock, A and Q, Z and W swapped). Each key has its scan code, its virtual key and what it types
+/// A fake of the keyboard layout queries (roadmap M4.1) that models four layouts the way Windows reports them: US
+/// English, Norwegian (AltGr for @ { [ ] } $ €, dead keys for ¨ ^ ~ ` ´), German (QWERTZ, AltGr for @ on the Q key,
+/// { [ ] } \ ~ | €, dead keys for ^ ´ `) and French AZERTY (digits with Shift, the digit row flipped by Caps Lock, A and
+/// Q, Z and W swapped). Each key has its scan code, its virtual key and what it types
 /// unshifted, with Shift and with AltGr; VkKeyScan, ScanCode and KeyText answer from that table, so the server's mapping is
 /// tested against the layout's own answers rather than against a copy of its logic.
 /// </summary>
@@ -12,6 +13,7 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
     public static readonly nint Us = 0x04090409;
     public static readonly nint Norwegian = 0x04140414;
     public static readonly nint French = 0x040C040C;
+    public static readonly nint German = 0x04070407;
 
     /// <summary>A layout handle the fake does not know: no key types anything on it.</summary>
     public static readonly nint Empty = 0x7777;
@@ -25,6 +27,7 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
     {
         [Us] = UsKeys(),
         [Norwegian] = NorwegianKeys(),
+        [German] = GermanKeys(),
         [French] = FrenchKeys()
     };
 
@@ -145,6 +148,27 @@ public sealed class FakeKeyboardLayoutWrapper : INativeKeyboardLayoutWrapper
         new(0x1B, 0xBA, Dead, Dead, Dead, DeadChars: "¨^~"),
         new(0x29, 0xDC, '|', '§'), new(0x2B, 0xBF, '\'', '*'), new(0x56, 0xE2, '<', '>'),
         new(0x33, 0xBC, ',', ';'), new(0x34, 0xBE, '.', ':'), new(0x35, 0xBD, '-', '_'), new(0x39, 0x20, ' ', ' ')
+    ];
+
+    /// <summary>The scan codes of the QWERTZ letters: Y and Z swapped.</summary>
+    private static uint GermanScan(char c) => c switch
+    {
+        'y' => 0x2C, 'z' => 0x15,
+        _ => UsScan(c)
+    };
+
+    private static Key[] GermanKeys() =>
+    [
+        .. Letters("abcdfghijklmnoprstuvwxyz", GermanScan),
+        new(0x10, 'Q', 'q', 'Q', '@', CapsLock: true), new(0x12, 'E', 'e', 'E', '€', CapsLock: true),
+        new(0x1A, 0xBA, 'ü', 'Ü', CapsLock: true), new(0x27, 0xC0, 'ö', 'Ö', CapsLock: true), new(0x28, 0xDE, 'ä', 'Ä', CapsLock: true),
+        new(0x02, '1', '1', '!'), new(0x03, '2', '2', '"', '²'), new(0x04, '3', '3', '§', '³'), new(0x05, '4', '4', '$'),
+        new(0x06, '5', '5', '%'), new(0x07, '6', '6', '&'), new(0x08, '7', '7', '/', '{'), new(0x09, '8', '8', '(', '['),
+        new(0x0A, '9', '9', ')', ']'), new(0x0B, '0', '0', '=', '}'),
+        new(0x0C, 0xDB, 'ß', '?', '\\'), new(0x0D, 0xDD, Dead, Dead, DeadChars: "´` "),
+        new(0x1B, 0xBB, '+', '*', '~'), new(0x29, 0xDC, Dead, '°', DeadChars: "^  "), new(0x2B, 0xBF, '#', '\''),
+        new(0x56, 0xE2, '<', '>', '|'), new(0x33, 0xBC, ',', ';'), new(0x34, 0xBE, '.', ':'), new(0x35, 0xBD, '-', '_'),
+        new(0x39, 0x20, ' ', ' ')
     ];
 
     /// <summary>The scan codes of the AZERTY letters: A and Q, Z and W swapped, M where US has ';'.</summary>
