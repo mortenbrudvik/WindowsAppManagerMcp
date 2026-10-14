@@ -168,13 +168,7 @@ public static class WrapperCatalog
             },
             [typeof(IUIAutomationWrapper)] = new Dictionary<string, WrapperMember>
             {
-                // The element comes back as an object the services only read: acting UIA pattern calls
-                // outside the Native wrappers are forbidden by NativeCallGuardTests.
-                [nameof(IUIAutomationWrapper.TryGetElementFromHandle)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.GetBrowserUrl)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.GetWindowTitle)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.GetBrowserContent)] = WrapperMember.Read,
-                [nameof(IUIAutomationWrapper.IsAvailable)] = WrapperMember.Read,
+                // The browser reads moved onto IUiaTree (roadmap M3.F24), whose members are classified below.
                 // WindowPattern.Close: asks the window to close, like WM_CLOSE (close_application's fallback for a
                 // packaged app's frame), so it changes a window and must name a fixture window
                 [nameof(IUIAutomationWrapper.CloseWindow)] = WrapperMember.WindowAction("hwnd")

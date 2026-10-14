@@ -342,38 +342,6 @@ public static class TestDataFactory
 
     #region Browser Reading Factories
 
-    public static Mock<IUIAutomationWrapper> CreateMockUIAutomationWrapper(
-        bool isAvailable = true,
-        string? defaultUrl = "https://example.com",
-        string? defaultContent = "Page content")
-    {
-        var mock = new Mock<IUIAutomationWrapper>();
-
-        mock.Setup(u => u.IsAvailable()).Returns(isAvailable);
-
-        // Default GetBrowserUrl returns the specified URL for any valid call
-        if (defaultUrl != null)
-        {
-            mock.Setup(u => u.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<string>()))
-                .Returns(defaultUrl);
-        }
-
-        // Default GetBrowserContent returns the specified content
-        if (defaultContent != null)
-        {
-            mock.Setup(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()))
-                .Returns(defaultContent);
-        }
-
-        // TryGetElementFromHandle returns false for zero handle, true otherwise
-        mock.Setup(u => u.TryGetElementFromHandle(nint.Zero, out It.Ref<object?>.IsAny))
-            .Returns(false);
-        mock.Setup(u => u.TryGetElementFromHandle(It.Is<nint>(h => h != nint.Zero), out It.Ref<object?>.IsAny))
-            .Returns(true);
-
-        return mock;
-    }
-
     public static Mock<IBrowserReadingService> CreateMockBrowserReadingService(
         bool success = true,
         string? url = "https://example.com",

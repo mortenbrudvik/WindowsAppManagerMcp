@@ -33,6 +33,8 @@ public record BrowserUrlResult(
 /// <param name="Source">"cdp" or "uia": the method that produced (or failed to produce) the result.</param>
 /// <param name="TargetId">The CDP target (tab) ID when the result came from CDP.</param>
 /// <param name="CdpError">Why CDP was not used ("Code: message") when a cdpPort was given but the result came from UI Automation.</param>
+/// <param name="AccessibilityWarmup">Set when the page is web content (Chromium) and the UI Automation read waited for its
+/// accessibility tree first (roadmap M3.3, M3.F24); also on a failed read.</param>
 public record BrowserContentResult(
     bool Success,
     string? Content,
@@ -44,7 +46,8 @@ public record BrowserContentResult(
     BrowserErrorCode ErrorCode,
     string? Source = null,
     string? TargetId = null,
-    string? CdpError = null
+    string? CdpError = null,
+    AccessibilityWarmupInfo? AccessibilityWarmup = null
 );
 
 /// <summary>
@@ -60,7 +63,8 @@ public record BrowserContentOptions(
 /// </summary>
 /// <param name="Port">The browser's debug port, or null to use UI Automation only.</param>
 /// <param name="Required">If true, a CDP failure is returned as an error instead of falling back to UI Automation.</param>
-/// <param name="TimeoutMs">Time budget for all CDP requests of one call. Clamped to [MinTimeoutMs, MaxTimeoutMs].</param>
+/// <param name="TimeoutMs">Time budget for all CDP requests of one call, and another for its UI Automation read (roadmap
+/// M3.F24). Clamped to [MinTimeoutMs, MaxTimeoutMs].</param>
 public record CdpOptions(
     int? Port = null,
     bool Required = false,

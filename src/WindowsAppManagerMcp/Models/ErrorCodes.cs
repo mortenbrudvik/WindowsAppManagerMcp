@@ -480,6 +480,26 @@ public enum BrowserErrorCode
     /// <summary>Failed to launch browser with debug mode.</summary>
     DebugLaunchFailed = 13,
 
+    // The UI Automation read of a browser window (roadmap M3.F24), under the names the UI Automation tools give these codes
+
+    /// <summary>
+    /// The user's target policy refuses the UI Automation read of the browser window: the policy covers the UI Automation
+    /// reads of a window as it covers input and captures. Nothing was read through UI Automation.
+    /// </summary>
+    TargetDeniedByPolicy = 14,
+
+    /// <summary>
+    /// The browser window does not respond: Windows reports it hung, or it did not answer a message within 500 ms. Nothing
+    /// was read through UI Automation, because every call would block until it recovers.
+    /// </summary>
+    NotResponding = 15,
+
+    /// <summary>
+    /// The UI Automation read of the browser window did not finish within timeoutMs, or earlier reads of the browser are
+    /// still stuck; the browser may be busy or hung.
+    /// </summary>
+    OperationTimedOut = 16,
+
     // CDP (Chrome DevTools Protocol) errors are numbered from 30 so that other
     // browser error codes can be added above without renumbering.
 

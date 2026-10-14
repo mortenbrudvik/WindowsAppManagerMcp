@@ -105,14 +105,29 @@ public class WrapperGuardTests
         inner.VerifyNoOtherCalls();
     }
 
+    /// <summary>
+    /// A wrapper member with an out parameter. No server wrapper has one since the browser reads moved onto IUiaTree
+    /// (roadmap M3.F24), but the guard must still pass one back should a wrapper gain it.
+    /// </summary>
+    public interface IOutParameterWrapper
+    {
+        bool TryGetElementFromHandle(nint hwnd, out object? element);
+    }
+
+    /// <summary>Allows every call, for a test of what the guard passes through rather than what it refuses.</summary>
+    private sealed class AllowAllCallPolicy : IWrapperCallPolicy
+    {
+        public string? Check(WrapperCall call) => null;
+    }
+
     [Fact]
     public void Guard_PassesOutParametersBack()
     {
         // Arrange
         object? element = "the element";
-        var inner = new Mock<IUIAutomationWrapper>(MockBehavior.Strict);
+        var inner = new Mock<IOutParameterWrapper>(MockBehavior.Strict);
         inner.Setup(w => w.TryGetElementFromHandle(FixtureWindow, out element)).Returns(true);
-        var guarded = WrapperGuard.Create(inner.Object, new ReadOnlyCallPolicy());
+        var guarded = WrapperGuard.Create(inner.Object, new AllowAllCallPolicy());
 
         // Act
         var found = guarded.TryGetElementFromHandle(FixtureWindow, out var result);

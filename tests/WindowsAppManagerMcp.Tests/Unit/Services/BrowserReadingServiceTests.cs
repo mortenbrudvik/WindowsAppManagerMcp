@@ -4,31 +4,57 @@ namespace WindowsAppManagerMcp.Tests.Unit.Services;
 /// Unit tests for BrowserReadingService.
 /// Tests the service layer that coordinates browser URL and content extraction.
 /// The window's process name comes from the mocked INativeWindowWrapper, so the results do not
-/// depend on which real process happens to own the fake process ID.
+/// depend on which real process happens to own the fake process ID. The UI Automation reads run on
+/// an in-memory tree (roadmap M3.F24): no real browser or UI Automation client is read.
 /// </summary>
 public class BrowserReadingServiceTests
 {
-    private readonly Mock<IUIAutomationWrapper> _mockUIAutomation;
     private readonly Mock<INativeWindowWrapper> _mockNativeWrapper;
     private readonly Mock<IBrowserDetectionService> _mockBrowserDetection;
     private readonly Mock<ICdpService> _mockCdpService;
+    private readonly FakeUiaTree _tree = new();
+    private readonly InlineUiaWorker _worker = new();
+    private readonly Mock<IAccessibilityWarmup> _warmup = new();
+    private ITargetPolicy? _policy;
 
     public BrowserReadingServiceTests()
     {
-        _mockUIAutomation = new Mock<IUIAutomationWrapper>();
         _mockNativeWrapper = new Mock<INativeWindowWrapper>();
         _mockBrowserDetection = new Mock<IBrowserDetectionService>();
         _mockCdpService = new Mock<ICdpService>();
-
-        // Default setup: UI Automation is available
-        _mockUIAutomation.Setup(u => u.IsAvailable()).Returns(true);
     }
 
-    private BrowserReadingService CreateSut() => new(
-        _mockUIAutomation.Object,
+    private BrowserReadingService CreateSut(IUiaWorker? worker = null) => new(
         _mockNativeWrapper.Object,
         _mockBrowserDetection.Object,
-        _mockCdpService.Object);
+        _mockCdpService.Object,
+        _tree,
+        worker ?? _worker,
+        _warmup.Object,
+        _policy);
+
+    /// <summary>
+    /// Shows a page in the browser window <paramref name="handle"/>: Window <paramref name="title"/> > ToolBar > Edit
+    /// "Address and search bar" with <paramref name="url"/> (none when null), and a Document with <paramref name="content"/>
+    /// as its text (none when null).
+    /// </summary>
+    private void ShowPage(nint handle, string? url, string? content = null, string? title = "Example - Google Chrome")
+    {
+        var window = new FakeUiaNode("Window", title);
+        if (url != null)
+        {
+            window.With(new FakeUiaNode("ToolBar").With(
+                new FakeUiaNode("Edit", "Address and search bar") { ActionPatterns = ["Value"] }
+                    .WithPattern<IUiaValuePattern>(new FakeValuePattern(url))));
+        }
+
+        if (content != null)
+        {
+            window.With(new FakeUiaNode("Document", "Example").WithPattern<IUiaTextPattern>(new FakeTextPattern(content)));
+        }
+
+        _tree.WithWindow(handle, window);
+    }
 
     #region GetBrowserUrl Tests
 
@@ -70,7 +96,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.IsWindow(handle)).Returns(true);
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockBrowserDetection.Setup(b => b.IsBrowser(It.IsAny<string>())).Returns(true);
-        _mockUIAutomation.Setup(u => u.IsAvailable()).Returns(false);
+        _tree.Available = false;
         var sut = CreateSut();
 
         // Act
@@ -105,7 +131,7 @@ public class BrowserReadingServiceTests
         // Arrange
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns((string?)null);
+        ShowPage(handle, url: null);
         var sut = CreateSut();
 
         // Act
@@ -118,6 +144,23 @@ public class BrowserReadingServiceTests
     }
 
     [Fact]
+    public async Task GetBrowserUrl_ReturnsUrlBarNotFound_WithTheWindowText_WhenTheWindowHasNoElement()
+    {
+        // Arrange - UI Automation has no element for the handle (the window closed meanwhile)
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
+        result.PageTitle.Should().Be("Test Page - chrome");
+        result.Source.Should().Be("uia");
+    }
+
+    [Fact]
     public async Task GetBrowserUrl_ReturnsSuccess_WithValidUrl()
     {
         // Arrange
@@ -125,8 +168,7 @@ public class BrowserReadingServiceTests
         var expectedUrl = "https://example.com";
         var expectedTitle = "Example Page - Google Chrome";
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns(expectedUrl);
-        _mockUIAutomation.Setup(u => u.GetWindowTitle(handle)).Returns(expectedTitle);
+        ShowPage(handle, expectedUrl, title: expectedTitle);
         var sut = CreateSut();
 
         // Act
@@ -185,7 +227,7 @@ public class BrowserReadingServiceTests
         // Arrange
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns((string?)null);
+        ShowPage(handle, "https://example.com", content: null);
         var sut = CreateSut();
 
         // Act
@@ -204,8 +246,7 @@ public class BrowserReadingServiceTests
         var expectedContent = "Page content here";
         var expectedUrl = "https://example.com";
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns(expectedUrl);
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns(expectedContent);
+        ShowPage(handle, expectedUrl, expectedContent);
         var sut = CreateSut();
 
         // Act
@@ -225,7 +266,7 @@ public class BrowserReadingServiceTests
         var handle = new nint(12345);
         var options = new BrowserContentOptions(MaxLength: 100);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", 100)).Returns("truncated content");
+        ShowPage(handle, "https://example.com", new string('x', 150));
         var sut = CreateSut();
 
         // Act
@@ -233,7 +274,8 @@ public class BrowserReadingServiceTests
 
         // Assert
         result.Success.Should().BeTrue();
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(handle, "chrome", 100), Times.Once);
+        result.Content.Should().Be(new string('x', 100));
+        result.ContentLength.Should().Be(100);
     }
 
     #endregion
@@ -281,7 +323,7 @@ public class BrowserReadingServiceTests
         var expectedUrl = "https://example.com";
         _mockNativeWrapper.Setup(n => n.GetForegroundWindow()).Returns(foregroundHandle);
         SetupValidBrowserWindow(foregroundHandle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(foregroundHandle, "chrome")).Returns(expectedUrl);
+        ShowPage(foregroundHandle, expectedUrl);
         var sut = CreateSut();
 
         // Act
@@ -409,7 +451,7 @@ public class BrowserReadingServiceTests
         _mockNativeWrapper.Setup(n => n.GetWindowThreadProcessId(handle)).Returns(1000u);
         _mockNativeWrapper.Setup(n => n.GetProcessName(1000u)).Returns("msedge");
         _mockBrowserDetection.Setup(b => b.IsBrowser("msedge")).Returns(true);
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "edge")).Returns("https://example.com");
+        ShowPage(handle, "https://example.com");
         var sut = CreateSut();
 
         // Act
@@ -418,7 +460,8 @@ public class BrowserReadingServiceTests
         // Assert
         result.Success.Should().BeTrue();
         result.BrowserType.Should().Be("edge");
-        _mockNativeWrapper.Verify(n => n.GetProcessName(1000u), Times.Once);
+        // The UI Automation read's checks (a UWP frame's app process, the hung-window check) ask the wrapper too
+        _mockNativeWrapper.Verify(n => n.GetProcessName(1000u), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -532,7 +575,7 @@ public class BrowserReadingServiceTests
         result.Source.Should().Be("cdp");
         result.TargetId.Should().Be("TAB1");
         result.CdpError.Should().BeNull();
-        _mockUIAutomation.Verify(u => u.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<string>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -555,7 +598,7 @@ public class BrowserReadingServiceTests
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         SetupCdpMatch(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpTargetNotFound, "No tab has the window title"));
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns("https://example.com/uia");
+        ShowPage(handle, "https://example.com/uia");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort));
@@ -573,7 +616,7 @@ public class BrowserReadingServiceTests
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         SetupCdpMatch(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpPortOwnerMismatch, "CDP port 9222 belongs to process 999"));
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns("https://example.com/uia");
+        ShowPage(handle, "https://example.com/uia");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort, Required: true));
@@ -582,7 +625,7 @@ public class BrowserReadingServiceTests
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpPortOwnerMismatch);
         result.Error.Should().Contain("999");
         result.Source.Should().Be("cdp");
-        _mockUIAutomation.Verify(u => u.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<string>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -597,7 +640,7 @@ public class BrowserReadingServiceTests
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpUnavailable);
         result.Error.Should().Contain("cdpPort");
-        _mockUIAutomation.Verify(u => u.GetBrowserUrl(It.IsAny<nint>(), It.IsAny<string>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -605,7 +648,7 @@ public class BrowserReadingServiceTests
     {
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserUrl(handle, "chrome")).Returns("https://example.com");
+        ShowPage(handle, "https://example.com");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserUrlAsync(handle);
@@ -685,7 +728,7 @@ public class BrowserReadingServiceTests
         result.PageTitle.Should().Be("Live title");
         result.Source.Should().Be("cdp");
         result.TargetId.Should().Be("TAB1");
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -721,7 +764,7 @@ public class BrowserReadingServiceTests
         result.Success.Should().BeTrue();
         result.Content.Should().BeEmpty();
         result.Source.Should().Be("cdp");
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -731,7 +774,7 @@ public class BrowserReadingServiceTests
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
         SetupCdpSnapshot(CdpResult<CdpPageSnapshot>.Fail(BrowserErrorCode.CdpTimeout, "The page did not answer within 10000 ms."));
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns("UIA text");
+        ShowPage(handle, "https://example.com", "UIA text");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort));
@@ -758,7 +801,7 @@ public class BrowserReadingServiceTests
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpDialogOpen);
         result.Source.Should().Be("cdp");
         result.TargetId.Should().Be("TAB1");
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -767,7 +810,7 @@ public class BrowserReadingServiceTests
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         SetupCdpMatch(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpTargetAmbiguous, "2 tabs have the title"));
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns("UIA text");
+        ShowPage(handle, "https://example.com", "UIA text");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserContentAsync(handle, cdp: new CdpOptions(Port: CdpPort));
@@ -783,7 +826,7 @@ public class BrowserReadingServiceTests
     {
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns("UIA text");
+        ShowPage(handle, "https://example.com", "UIA text");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserContentAsync(handle, new BrowserContentOptions(TextOnly: false));
@@ -791,7 +834,7 @@ public class BrowserReadingServiceTests
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
         result.Error.Should().Contain("textOnly=true");
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -800,7 +843,7 @@ public class BrowserReadingServiceTests
         var handle = new nint(12345);
         SetupValidBrowserWindow(handle, "chrome", "chrome");
         SetupCdpMatch(CdpResult<CdpTarget>.Fail(BrowserErrorCode.CdpUnavailable, "Could not connect"));
-        _mockUIAutomation.Setup(u => u.GetBrowserContent(handle, "chrome", null)).Returns("UIA text");
+        ShowPage(handle, "https://example.com", "UIA text");
         var sut = CreateSut();
 
         var result = await sut.GetBrowserContentAsync(
@@ -810,7 +853,7 @@ public class BrowserReadingServiceTests
         result.ErrorCode.Should().Be(BrowserErrorCode.HtmlRequiresCdp);
         result.Error.Should().Contain("CdpUnavailable: Could not connect");
         result.CdpError.Should().Be("CdpUnavailable: Could not connect");
-        _mockUIAutomation.Verify(u => u.GetBrowserContent(It.IsAny<nint>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        _worker.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -865,6 +908,291 @@ public class BrowserReadingServiceTests
         result.ErrorCode.Should().Be(BrowserErrorCode.CdpTimeout);
         _mockCdpService.Verify(c => c.GetPageSnapshotAsync(
             It.IsAny<CdpTarget>(), It.IsAny<bool>(), It.IsAny<int?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    #endregion
+
+    #region UI Automation path on the seam (roadmap M3.F24)
+
+    private static readonly AccessibilityWarmupInfo Warmed =
+        new(AccessibilityWarmupStatus.Ready, WebContentHost.Chromium, WaitedMs: 400, Polls: 3, DocumentChildCount: 12);
+
+    [Fact]
+    public async Task GetBrowserUrl_ReadsOnTheUiaWorker_CountedAgainstTheBrowsersProcess()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com");
+        var sut = CreateSut();
+
+        // Act
+        var result = await sut.GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _worker.Calls.Should().Be(1);
+        _worker.LastTargetProcessId.Should().Be(1000);
+        _worker.LastGrace.Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ReturnsOperationTimedOut_WhenTheReadMissesTimeoutMs()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var worker = new FailingUiaWorker(new TimeoutException("The UI Automation read did not return."));
+        var sut = CreateSut(worker);
+
+        // Act
+        var result = await sut.GetBrowserUrlAsync(handle, new CdpOptions(TimeoutMs: 3000));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Contain("3000 ms").And.Contain("did not return");
+        result.Source.Should().Be("uia");
+        result.BrowserType.Should().Be("chrome");
+        result.PageTitle.Should().Be("Test Page - chrome");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ReturnsOperationTimedOut_WhenTheReadStopsAtItsDeadline()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut(new FailingUiaWorker(new OperationCanceledException()));
+
+        var result = await sut.GetBrowserUrlAsync(handle);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsOperationTimedOut_WhenEarlierReadsOfTheBrowserAreStuck()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var sut = CreateSut(new FailingUiaWorker(new UiaReadRefusedException("Earlier reads of process 1000 are still stuck.")));
+
+        // Act
+        var result = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.Error.Should().Be("Earlier reads of process 1000 are still stuck.");
+        result.Source.Should().Be("uia");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ThrowsOperationCanceled_WhenTheCallerCancelsDuringTheRead()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var sut = CreateSut(new FailingUiaWorker(new TimeoutException("Abandoned.")));
+
+        // Act
+        var act = () => sut.GetBrowserUrlAsync(handle, cancellationToken: cancellation.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_ReturnsUrlBarNotFound_WhenTheWindowsElementIsGone()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _tree.FromHandleException = FakeUiaTree.Vanished("window");
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.UrlBarNotFound);
+        result.PageTitle.Should().Be("Test Page - chrome");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_StillReadsTheAddressBar_WhenTheWindowsNameCannotBeRead()
+    {
+        // Arrange - the name search starts at the window, so only the edit box lookup can find the bar
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        var window = new FakeUiaNode("Window", "Example - Google Chrome") { ReadException = FakeUiaTree.Vanished("window's name") }
+            .With(new FakeUiaNode("ToolBar").With(
+                new FakeUiaNode("Edit", "Omnibox") { Bounds = new UiaRect(200, 40, 800, 28), ActionPatterns = ["Value"] }
+                    .WithPattern<IUiaValuePattern>(new FakeValuePattern("example.com/path"))));
+        _tree.WithWindow(handle, window);
+
+        // Act
+        var result = await CreateSut().GetBrowserUrlAsync(handle);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Url.Should().Be("example.com/path");
+        result.PageTitle.Should().Be("Test Page - chrome");
+    }
+
+    [Fact]
+    public async Task GetBrowserUrlAndContent_RefuseAWindowThePolicyDenies_BeforeAnyRead()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", "Page text");
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["chrome"] });
+        var sut = CreateSut();
+
+        // Act
+        var url = await sut.GetBrowserUrlAsync(handle);
+        var content = await sut.GetBrowserContentAsync(handle);
+
+        // Assert
+        url.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        url.Error.Should().Contain("'chrome'");
+        url.Source.Should().Be("uia");
+        content.ErrorCode.Should().Be(BrowserErrorCode.TargetDeniedByPolicy);
+        content.Content.Should().BeNull();
+        _worker.Calls.Should().Be(0);
+        _tree.Reads.Should().BeEmpty();
+        _warmup.Verify(w => w.WarmUp(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_StillReadsThroughCdp_WhenThePolicyDeniesTheBrowser()
+    {
+        // The policy covers the UI Automation reads only; CDP reads the debug browser the agent started
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        SetupCdpMatch(CdpResult<CdpTarget>.Ok(CdpTab));
+        _policy = new TargetPolicy(TargetPolicySettings.Default with { DeniedProcesses = ["chrome"] });
+
+        var result = await CreateSut().GetBrowserUrlAsync(handle, new CdpOptions(Port: CdpPort));
+
+        result.Success.Should().BeTrue();
+        result.Source.Should().Be("cdp");
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReturnsNotResponding_WhenTheBrowserIsHung()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", "Page text");
+        _mockNativeWrapper.Setup(n => n.IsHungAppWindow(handle)).Returns(true);
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.NotResponding);
+        result.Error.Should().Contain("not responding");
+        result.Source.Should().Be("uia");
+        _tree.Reads.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetBrowserUrl_DoesNotWarmUpThePage()
+    {
+        // The address bar is the browser's own UI, which Chromium serves without the page's tree
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com");
+
+        await CreateSut().GetBrowserUrlAsync(handle);
+
+        _warmup.Verify(w => w.WarmUp(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_WarmsUpThePageBeforeReadingIt_AndReportsIt()
+    {
+        // Arrange
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", "Page text");
+        IReadOnlyList<string>? readsBeforeWarmup = null;
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Callback(() => readsBeforeWarmup = _tree.Reads)
+            .Returns(Warmed);
+
+        // Act
+        var result = await CreateSut().GetBrowserContentAsync(handle, cdp: new CdpOptions(TimeoutMs: 3000));
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.Content.Should().Be("Page text");
+        result.AccessibilityWarmup.Should().Be(Warmed);
+        readsBeforeWarmup.Should().BeEmpty();
+        _warmup.Verify(w => w.WarmUp(handle, AccessibilityWarmup.BudgetFor(TimeSpan.FromMilliseconds(3000)), _worker.LastToken), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReportsTheWarmup_WhenNoContentWasFound()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", content: null);
+        var notReady = Warmed with { Status = AccessibilityWarmupStatus.NotReady, DocumentChildCount = 0, Warning = "Read again." };
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(notReady);
+
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.ContentExtractionFailed);
+        result.Url.Should().Be("https://example.com");
+        result.AccessibilityWarmup.Should().Be(notReady);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_ReportsTheWarmup_WhenTheReadIsAbandonedAtItsDeadline()
+    {
+        // Arrange - the worker gives up after the warm-up and the read ran
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        ShowPage(handle, "https://example.com", "Page text");
+        _warmup.Setup(w => w.WarmUp(handle, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).Returns(Warmed);
+
+        // Act
+        var result = await CreateSut(new AbandoningUiaWorker()).GetBrowserContentAsync(handle);
+
+        // Assert
+        result.ErrorCode.Should().Be(BrowserErrorCode.OperationTimedOut);
+        result.AccessibilityWarmup.Should().Be(Warmed);
+    }
+
+    [Fact]
+    public async Task GetBrowserContent_DoesNotWarmUp_WhenUiAutomationIsNotAvailable()
+    {
+        var handle = new nint(12345);
+        SetupValidBrowserWindow(handle, "chrome", "chrome");
+        _tree.Available = false;
+
+        var result = await CreateSut().GetBrowserContentAsync(handle);
+
+        result.ErrorCode.Should().Be(BrowserErrorCode.AutomationUnavailable);
+        _warmup.Verify(w => w.WarmUp(It.IsAny<nint>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>A worker whose every read fails with <paramref name="exception"/> without running.</summary>
+    private sealed class FailingUiaWorker(Exception exception) : IUiaWorker
+    {
+        public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace) =>
+            Task.FromException<T>(exception);
+    }
+
+    /// <summary>A worker that runs the read, then reports it abandoned at its deadline, as a read stuck at its end would be.</summary>
+    private sealed class AbandoningUiaWorker : IUiaWorker
+    {
+        public Task<T> RunAsync<T>(int targetProcessId, Func<CancellationToken, T> read, CancellationToken cancellationToken, TimeSpan grace)
+        {
+            read(cancellationToken);
+            return Task.FromException<T>(new TimeoutException("The UI Automation read did not return."));
+        }
     }
 
     #endregion
