@@ -113,6 +113,8 @@ public partial class ElementActionTools
         bool allowHostTarget = false,
         [Description(MaxScrollsDescription)]
         int maxScrolls = 0,
+        [Description(ListRefDescription)]
+        string? listRef = null,
         [Description("How long the action may block, for example on a dialog it opened, and the bound of each read, in " +
                      "milliseconds (default: 5000, min: 1000, max: 30000). realize with maxScrolls: the whole search.")]
         int timeoutMs = DefaultTimeoutMs,
@@ -135,6 +137,20 @@ public partial class ElementActionTools
             throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
                 "maxScrolls is for realize with element criteria (it scrolls the list to find the item), not for " +
                 $"{(@ref != null ? "a ref, which names its element already" : ToolEnum<ElementActionKind>.Name(action))}. Nothing was done.");
+        }
+
+        string? scrollListRef = null;
+        if (listRef != null)
+        {
+            if (maxScrolls <= 0)
+            {
+                throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                    "listRef names the list that realize scrolls with maxScrolls; pass maxScrolls too. Nothing was done.");
+            }
+
+            scrollListRef = ElementRefs.Normalize(listRef) ?? throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"listRef '{listRef}' is not an element ref: refs look like '{ElementRefs.Example}' (find_ui_elements' " +
+                "virtualized.containers lists the window's lists). Nothing was done.");
         }
 
         if (ObserveError(observe) is { } observeError)
@@ -208,6 +224,13 @@ public partial class ElementActionTools
         }
 
         var windowHandle = WindowTargeting.Require(_windowService, handle, window);
+        if (scrollListRef != null && _registry.Lookup(scrollListRef) is { Success: true } listLookup && listLookup.WindowHandle != windowHandle)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"listRef {scrollListRef} is an element of another window ({listLookup.WindowHandle}), not of window {windowHandle} " +
+                "that the criteria search. Nothing was done.");
+        }
+
         var query = new ElementQuery(
             WindowHandle: windowHandle,
             Name: name,
@@ -234,7 +257,8 @@ public partial class ElementActionTools
         {
             NoteWindow(windowHandle);
             return await ObserveAsync(
-                await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), stopwatch, found.Failure, cancellationToken)
+                await RealizeByScrollingAsync(query, request, Math.Min(maxScrolls, MaxScrollsLimit), scrollListRef, stopwatch, found.Failure,
+                        cancellationToken)
                     .ConfigureAwait(false),
                 observe, cancellationToken).ConfigureAwait(false);
         }

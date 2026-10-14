@@ -17,27 +17,37 @@ public partial class ElementActionTools
     /// <summary>The list control types realize scrolls.</summary>
     private static readonly string[] ScrollableLists = ["List", "Tree", "DataGrid", "Table"];
 
+    /// <summary>How many of the window's visible lists the scroll fallback reads to choose the one to scroll.</summary>
+    private const int MaxListsRead = 20;
+
     internal const string MaxScrollsDescription =
         "realize with element criteria only: when the item is found neither in the tree nor through its list's ItemContainer " +
-        "pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table) a page at a time, " +
+        "pattern (a web or custom list), scroll the window's one visible list (List, Tree, DataGrid or Table; of several, the " +
+        "one that scrolls itself; or listRef) a page at a time, " +
         "at most this many pages (down to its end, then back up), searching it after each page, and realize the item once " +
         "exactly one matches (two: AmbiguousElement). " +
         "Every page is an element_action scroll with every check; the list stays where the item was found (or where the search " +
         "ended). Default: 0 (no scrolling); max 100. timeoutMs bounds the whole search (each step gets what is left, at least " +
         "a second): raise it for long lists.";
 
+    internal const string ListRefDescription =
+        "realize with maxScrolls: the list to scroll when the window has several that scroll (a ref from find_ui_elements' " +
+        "virtualized.containers).";
+
     /// <summary>Whether criteria can be searched for through a list's ItemContainer pattern (one whole property).</summary>
     private static bool FitsVirtualizedSearch(string? name, ElementNameMatch nameMatch, string? automationId) =>
         !string.IsNullOrEmpty(automationId) || (!string.IsNullOrEmpty(name) && nameMatch == ElementNameMatch.Exact);
 
     /// <summary>
-    /// The scroll fallback: the window's one visible list scrolled a page at a time (down to its end, then up), searched below
-    /// its ref after each page, until the criteria match or <paramref name="maxScrolls"/> pages or the timeout have passed.
+    /// The scroll fallback: the list (<paramref name="namedList"/>, or the window's one visible list, or of several the one with
+    /// a Scroll pattern of its own) scrolled a page at a time (down to its end, then up), searched below its ref after each
+    /// page, until the criteria match or <paramref name="maxScrolls"/> pages or the timeout have passed.
     /// </summary>
+    /// <param name="namedList">listRef: the list the agent named, used without looking for lists (roadmap M3.F18).</param>
     /// <param name="notFound">The first search's ElementNotFound, returned when there is no list to scroll.</param>
     private async Task<ElementActionResult> RealizeByScrollingAsync(
-        ElementQuery query, ElementActionRequest request, int maxScrolls, Stopwatch stopwatch, ElementActionResult notFound,
-        CancellationToken cancellationToken)
+        ElementQuery query, ElementActionRequest request, int maxScrolls, string? namedList, Stopwatch stopwatch,
+        ElementActionResult notFound, CancellationToken cancellationToken)
     {
         var timeout = request.Timeout ?? ElementActionService.DefaultTimeout;
         var actionName = ToolEnum<ElementActionKind>.Name(ElementActionKind.Realize);
@@ -45,34 +55,46 @@ public partial class ElementActionTools
             new(false, actionName, WindowHandle: (long)query.WindowHandle, Error: error, ErrorCode: code,
                 ElapsedMilliseconds: Math.Round(stopwatch.Elapsed.TotalMilliseconds, 2));
 
-        var lists = await _search.FindAsync(new ElementQuery(
-            WindowHandle: query.WindowHandle,
-            ControlTypes: ScrollableLists,
-            VisibleOnly: true,
-            MaxResults: 5,
-            Timeout: Remaining(timeout, stopwatch),
-            // The window's own lists, not a dropdown's
-            Scope: ElementSearchScope.Window), cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!lists.Success || lists.Elements is not { Count: > 0 } found || found[0].Ref is not { } listRef)
+        string listRef;
+        string listName;
+        if (namedList != null)
         {
-            return notFound with
+            listRef = namedList;
+            listName = $"list {namedList}";
+        }
+        else
+        {
+            var lists = await _search.FindAsync(new ElementQuery(
+                WindowHandle: query.WindowHandle,
+                ControlTypes: ScrollableLists,
+                VisibleOnly: true,
+                MaxResults: MaxListsRead,
+                Timeout: Remaining(timeout, stopwatch),
+                // The window's own lists, not a dropdown's
+                Scope: ElementSearchScope.Window), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!lists.Success || lists.Elements is not { Count: > 0 } found || found[0].Ref == null)
             {
-                Error = notFound.Error + " No visible list (List, Tree, DataGrid or Table) was found in the window to scroll, so " +
-                        "maxScrolls did nothing."
-            };
+                return notFound with
+                {
+                    Error = notFound.Error + " No visible list (List, Tree, DataGrid or Table) was found in the window to scroll, so " +
+                            "maxScrolls did nothing."
+                };
+            }
+
+            if (ListToScroll(lists.MatchCount, found) is not { Ref: { } chosenRef } chosen)
+            {
+                var refs = string.Join(", ", found.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"));
+                return Fail(nameof(UIElementErrorCode.AmbiguousElement),
+                    $"The item was not found, and the window shows {lists.MatchCount} lists ({refs}), more than one of which may " +
+                    "scroll, so it is not known which one to scroll. Nothing was scrolled. Pass listRef with the list you mean " +
+                    "(find_ui_elements' virtualized.containers lists them), or narrow the window.");
+            }
+
+            listRef = chosenRef;
+            listName = $"{chosen.ControlType}{(string.IsNullOrEmpty(chosen.Name) ? string.Empty : $" '{chosen.Name}'")} ({listRef})";
         }
 
-        if (lists.MatchCount > 1)
-        {
-            var refs = string.Join(", ", found.Select(e => $"{e.Ref} {e.ControlType} '{e.Name}'"));
-            return Fail(nameof(UIElementErrorCode.AmbiguousElement),
-                $"The item was not found, and the window shows {lists.MatchCount} lists ({refs}), so it is not known which one to " +
-                "scroll. Nothing was scrolled. Scroll the one you mean (element_action scroll with its ref) and search it " +
-                "(find_ui_elements withinRef), or narrow the window.");
-        }
-
-        var listName = $"{found[0].ControlType}{(string.IsNullOrEmpty(found[0].Name) ? string.Empty : $" '{found[0].Name}'")} ({listRef})";
         var direction = ElementScrollDirection.Down;
         var turned = false;
         var pages = 0;
@@ -140,6 +162,28 @@ public partial class ElementActionTools
             $"No element matches the criteria after {pages} pages of {listName} were searched" +
             (pages >= maxScrolls ? $" (maxScrolls {maxScrolls} reached)" : " (down to its end and back up to its start)") +
             ". The list was left where the search ended. Nothing was realized. Check the criteria with find_ui_elements.");
+    }
+
+    /// <summary>
+    /// The list to scroll of the visible lists <paramref name="found"/> (<paramref name="matchCount"/> in all), or null when it is
+    /// not known: the only one, or of several the only one with a Scroll pattern of its own (roadmap M3.F18: a web page's
+    /// navigation or footer list scrolls with the page, not by itself). When the search returned only some of the lists, one
+    /// it left out may scroll too, so there is no choice.
+    /// </summary>
+    private static FoundElement? ListToScroll(int matchCount, IReadOnlyList<FoundElement> found)
+    {
+        if (matchCount == 1)
+        {
+            return found[0];
+        }
+
+        if (matchCount > found.Count)
+        {
+            return null;
+        }
+
+        var scrolling = found.Where(e => e.Patterns.Contains("Scroll", StringComparer.Ordinal)).Take(2).ToList();
+        return scrolling.Count == 1 ? scrolling[0] : null;
     }
 
     /// <summary>What is left of the timeout, at least a second (a search's shortest timeout): every page, search and the final

@@ -19,6 +19,8 @@ public class ElementActionRealizeToolTests
     private readonly List<ElementQuery> _queries = [];
     private readonly List<ElementActionRequest> _requests = [];
     private int _listCount = 1;
+    private Func<int, string[]> _listPatterns = _ => ["Scroll"];
+    private string _itemList = "w1e2";
     private int _foundOnPage = 3;
     private Func<int, bool> _atEnd = _ => false;
     private Func<ElementActionRequest, ElementActionResult?> _refuse = _ => null;
@@ -39,12 +41,12 @@ public class ElementActionRealizeToolTests
                 if (query.ControlTypes is { } types && types.Contains("List"))
                 {
                     return Found(_listCount, Enumerable.Range(0, _listCount)
-                        .Select(i => new FoundElement($"w1e{2 + i}", "Messages", "List", null, null, null, null, true, false, ["Scroll"]))
+                        .Select(i => new FoundElement($"w1e{2 + i}", "Messages", "List", null, null, null, null, true, false, _listPatterns(i)))
                         .ToArray());
                 }
 
                 // Below the list, the item appears on the _foundOnPage-th page; the first search finds nothing
-                return query.WithinRef == "w1e2" && ++listSearches == _foundOnPage
+                return query.WithinRef == _itemList && ++listSearches == _foundOnPage
                     ? Found(1, new FoundElement("w1e9", "Old message", "ListItem", null, null, null, null, true, true, []))
                     : Found(0);
             });
@@ -158,14 +160,100 @@ public class ElementActionRealizeToolTests
     }
 
     [Fact]
-    public async Task Realize_WithMaxScrolls_AndSeveralLists_IsAmbiguous_AndNothingIsScrolled()
+    public async Task Realize_WithMaxScrolls_AndSeveralListsThatScroll_IsAmbiguous_AndNothingIsScrolled()
     {
         _listCount = 2;
 
         var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
 
         result.ErrorCode.Should().Be("AmbiguousElement");
-        result.Error.Should().Contain("w1e2").And.Contain("w1e3").And.Contain("Nothing was scrolled");
+        result.Error.Should().Contain("w1e2").And.Contain("w1e3").And.Contain("Nothing was scrolled").And.Contain("listRef");
+        _requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_AndSeveralLists_ScrollsTheOneThatScrollsItself()
+    {
+        // Arrange - a web page's navigation list beside its results (roadmap M3.F18): only the results list has a Scroll
+        // pattern of its own; the navigation list scrolls with the page
+        _listCount = 2;
+        _listPatterns = i => i == 1 ? ["Scroll"] : [];
+        _itemList = "w1e3";
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        _requests.Where(r => r.Action == ElementActionKind.Scroll).Should().OnlyContain(r => r.Ref == "w1e3");
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_AndSeveralListsOfWhichMoreWereNotReturned_IsAmbiguous()
+    {
+        // Arrange - the search returned only some of the lists: one of those it left out may scroll too
+        _listCount = 2;
+        _listPatterns = i => i == 1 ? ["Scroll"] : [];
+        _firstSearch = query => query.ControlTypes is { } types && types.Contains("List")
+            ? Found(30,
+                new FoundElement("w1e2", "Nav", "List", null, null, null, null, true, false, []),
+                new FoundElement("w1e3", "Results", "List", null, null, null, null, true, false, ["Scroll"]))
+            : null;
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10).Payload<ElementActionResult>();
+
+        // Assert
+        result.ErrorCode.Should().Be("AmbiguousElement");
+        _requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Realize_WithMaxScrolls_AndListRef_ScrollsThatList_WithoutLookingForLists()
+    {
+        // Arrange - Explorer's navigation tree and file list both scroll: the agent names the list
+        _listCount = 2;
+        _itemList = "w1e3";
+
+        // Act
+        var result = await CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message", maxScrolls: 10,
+            listRef: "w1e3").Payload<ElementActionResult>();
+
+        // Assert
+        result.Success.Should().BeTrue(result.Error);
+        result.Ref.Should().Be("w1e9");
+        _requests.Where(r => r.Action == ElementActionKind.Scroll).Should().OnlyContain(r => r.Ref == "w1e3");
+        _queries.Should().NotContain(q => q.ControlTypes != null && q.ControlTypes.Contains("List"));
+    }
+
+    [Theory]
+    [InlineData(0, null)]           // without maxScrolls nothing is scrolled
+    [InlineData(10, "w1e7")]        // with a ref there is nothing to search for
+    public async Task ListRef_IsOnlyForRealizeByCriteriaWithMaxScrolls(int maxScrolls, string? elementRef)
+    {
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.Realize, @ref: elementRef,
+            handle: elementRef == null ? Handle : null, name: elementRef == null ? "Old message" : null, maxScrolls: maxScrolls,
+            listRef: "w1e3"));
+
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().EndWith("Nothing was done.");
+        _actions.VerifyNoOtherCalls();
+        _search.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ListRef_OfAnotherWindow_IsRefused_AndNothingIsScrolled()
+    {
+        // Arrange
+        _registry.Setup(r => r.Lookup("w5e3")).Returns(new ElementLookup("w5e3", 0x9900, null, 5));
+
+        // Act
+        var error = await RefusedAsync(() => CreateSut().ElementAction(ElementActionKind.Realize, handle: Handle, name: "Old message",
+            maxScrolls: 10, listRef: "w5e3"));
+
+        // Assert
+        error.ErrorCode.Should().Be(ToolErrorReporting.InvalidArgumentsErrorCode);
+        error.Message.Should().Contain("w5e3").And.Contain("another window");
         _requests.Should().BeEmpty();
     }
 
