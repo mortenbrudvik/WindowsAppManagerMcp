@@ -383,13 +383,13 @@ public class AppLauncherTools
                  "Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, " +
                  "and each result has its own launchStatus, window and errorCode. " +
                  "An item that is null fails alone with InvalidArguments; the others are still launched. " +
-                 "Each item can have a placement and reuseExisting, as launch_application takes them: an item whose placement is invalid " +
-                 "fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a " +
-                 "placement on any item every window is waited for; the windows are placed after all of them were found, in order, and " +
-                 "checked again together once.")]
+                 "Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item " +
+                 "whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, " +
+                 "nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them " +
+                 "were found, in order, and checked again together once.")]
     public async Task<BatchLaunchResult> LaunchApplicationsBatch(
-        [Description("The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement " +
-                     "and reuseExisting")]
+        [Description("The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement, " +
+                     "reuseExisting and forceAccessibility")]
         ApplicationLaunchRequest[] applications,
         [Description("Whether to wait for each application window to appear (default: false)")]
         bool waitForWindows = false,
@@ -437,7 +437,7 @@ public class AppLauncherTools
         var requested = Enumerable.Range(0, applications.Length).Where(i => refusals[i] == null).ToList();
         var serviceApplications = requested
             .Select(i => applications[i])
-            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow, a.ReuseExisting))
+            .Select(a => new LaunchRequest(a.Executable, a.Arguments, a.WorkingDirectory, a.ExpectWindow, a.ReuseExisting, a.ForceAccessibility))
             .ToList();
 
         // Started one after another, then the windows are waited for together; the client gets "i of n" as each one is
@@ -477,7 +477,8 @@ public class AppLauncherTools
                 LaunchStatus: r.Status?.ToWireName(),
                 Window: r.Window is { } window ? WindowFinderTools.ToDto(window) : null,
                 LauncherExited: r.LauncherExited,
-                Placement: placed[next]));
+                Placement: placed[next],
+                ForceAccessibilityApplied: r.ForceAccessibilityApplied));
             next++;
         }
 

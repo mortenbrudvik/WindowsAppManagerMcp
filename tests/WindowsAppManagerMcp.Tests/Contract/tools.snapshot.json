@@ -3383,12 +3383,12 @@
     {
       "name": "launch_applications_batch",
       "title": "Launch Applications (Batch)",
-      "description": "Launch multiple applications in a single batch operation. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched. Each item can have a placement and reuseExisting, as launch_application takes them: an item whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them were found, in order, and checked again together once.",
+      "description": "Launch multiple applications in a single batch operation. Each item is launched as by launch_application, in order; with waitForWindows the windows are then waited for together, and each result has its own launchStatus, window and errorCode. An item that is null fails alone with InvalidArguments; the others are still launched. Each item can have a placement, reuseExisting and forceAccessibility, as launch_application takes them: an item whose placement is invalid fails alone and is not launched, and at most one item may ask for focus (InvalidArguments, nothing launched). With a placement on any item every window is waited for; the windows are placed after all of them were found, in order, and checked again together once.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "applications": {
-            "description": "The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement and reuseExisting",
+            "description": "The applications to launch: executable, and optionally arguments, workingDirectory, expectWindow, placement, reuseExisting and forceAccessibility",
             "type": "array",
             "items": {
               "type": "object",
@@ -3533,6 +3533,11 @@
                 },
                 "reuseExisting": {
                   "description": "Use an open window of the app instead of starting it, as launch_application's reuseExisting (default false)",
+                  "type": "boolean",
+                  "default": false
+                },
+                "forceAccessibility": {
+                  "description": "Start a Chromium, Electron or CEF .exe with --force-renderer-accessibility, as launch_application's forceAccessibility (default false)",
                   "type": "boolean",
                   "default": false
                 }

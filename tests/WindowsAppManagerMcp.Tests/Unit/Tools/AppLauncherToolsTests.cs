@@ -234,6 +234,30 @@ public class AppLauncherToolsTests
         result.Results[1].LauncherExited.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task LaunchApplicationsBatch_PassesEachItemsForceAccessibility_AndReportsWhetherItWasApplied()
+    {
+        // Arrange - roadmap M3.F25: an item takes forceAccessibility as launch_application does
+        IReadOnlyList<LaunchRequest>? requested = null;
+        _mockProcessService.Setup(p => p.LaunchApplicationsBatchAsync(
+                It.IsAny<IReadOnlyList<LaunchRequest>>(), It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<IProgress<OperationProgress>?>(), It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<LaunchRequest> apps, bool _, int _, IProgress<OperationProgress>? _, CancellationToken _) => requested = apps)
+            .ReturnsAsync([
+                new LaunchResult(true, 1234, Status: LaunchStatus.Started, ForceAccessibilityApplied: true),
+                new LaunchResult(true, 1235, Status: LaunchStatus.Started)
+            ]);
+
+        // Act
+        var result = await CreateSut().LaunchApplicationsBatch(
+            [new ApplicationLaunchRequest(@"C:\Apps\VS Code\Code.exe", ForceAccessibility: true), new ApplicationLaunchRequest("notepad")]);
+
+        // Assert
+        requested!.Select(r => r.ForceAccessibility).Should().Equal(true, false);
+        result.Results[0].ForceAccessibilityApplied.Should().BeTrue();
+        result.Results[1].ForceAccessibilityApplied.Should().BeNull("forceAccessibility was not asked for");
+    }
+
     #endregion
 
     #region ListProcesses Tests
