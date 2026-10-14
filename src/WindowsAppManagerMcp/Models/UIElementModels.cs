@@ -57,6 +57,9 @@ public record UIElementInfo(
 /// theirs only where it changes (<see cref="UIElementInfo.FrameworkId"/>). Null when the window did not report one.</param>
 /// <param name="AccessibilityWarmup">Set when the window shows web content (Chromium, Electron or WebView2) and this call
 /// waited for its accessibility tree (roadmap M3.3); null otherwise, also for a window an earlier call warmed up.</param>
+/// <param name="OwnedWindows">The windows the window owns (an open dialog or popup) that UI Automation listed among its
+/// children, which the walk left out with everything inside them (roadmap M3.F9): each is a window of its own, read by its
+/// handle, and its elements get refs only there. Null when there were none.</param>
 public record UIElementResult(
     bool Success,
     long WindowHandle,
@@ -74,7 +77,8 @@ public record UIElementResult(
     WindowState? WindowState = null,
     string? Text = null,
     string? FrameworkId = null,
-    AccessibilityWarmupInfo? AccessibilityWarmup = null
+    AccessibilityWarmupInfo? AccessibilityWarmup = null,
+    IReadOnlyList<long>? OwnedWindows = null
 );
 
 /// <summary>

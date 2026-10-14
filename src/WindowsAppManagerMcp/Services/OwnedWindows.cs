@@ -10,7 +10,9 @@ namespace WindowsAppManagerMcp.Services;
 /// of the owner and its popups would find them twice. The searches of a window (find_ui_elements' search and its proof that
 /// a match is unique, searchVirtualized's lists, and the element registry's searches when it finds an element again) leave
 /// such a child of the window's root out (<see cref="ElementSearch"/>): an owned window is searched only as its own window,
-/// a popup of the windowAndPopups scope or a window of the desktop scope.
+/// a popup of the windowAndPopups scope or a window of the desktop scope. The tree walk of get_ui_elements,
+/// capture_with_elements and get_desktop_state leaves it out of the window's children the same way (<see cref="UIElementService"/>,
+/// roadmap M3.F9), so its elements get refs only under its own window.
 /// </summary>
 /// <remarks>Only Win32 reads that wait for no application: GetWindow(GW_OWNER) of the children that have a window
 /// handle of their own. A child window (WS_CHILD, such as an edit control) has no owner, so it stays in the search.</remarks>

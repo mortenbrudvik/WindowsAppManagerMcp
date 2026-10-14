@@ -130,6 +130,9 @@ public record VirtualScreenBounds(
 /// the automation id and the mark's centre in pixels of the returned image (a click there with <see cref="CaptureId"/>
 /// lands on it); see Tools.ElementMarkLegend. Null when there are no marks. capture_with_elements leaves
 /// <see cref="Elements"/> out unless detail is full.
+/// <see cref="OwnedWindows"/> names the windows the window owns (an open dialog or popup) that the walk left out, as
+/// <see cref="UIElementResult.OwnedWindows"/> (roadmap M3.F9): they get no marks, and are captured and marked by their
+/// own handle. Null when there were none.
 /// </summary>
 public record AnnotatedScreenshotResult(
     bool Success,
@@ -161,7 +164,8 @@ public record AnnotatedScreenshotResult(
     string? TruncationReason = null,
     AccessibilityWarmupInfo? AccessibilityWarmup = null,
     string? CaptureId = null,
-    string? Legend = null
+    string? Legend = null,
+    IReadOnlyList<long>? OwnedWindows = null
 ) : ICaptureMetadata;
 
 /// <summary>

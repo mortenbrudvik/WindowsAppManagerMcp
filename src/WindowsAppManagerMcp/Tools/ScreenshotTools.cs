@@ -581,7 +581,8 @@ public class ScreenshotTools
             };
         }
 
-        metadata = metadata with { AccessibilityWarmup = walk.AccessibilityWarmup };
+        // The windows the window owns are left out of its walk (roadmap M3.F9): named, so they can be captured on their own
+        metadata = metadata with { AccessibilityWarmup = walk.AccessibilityWarmup, OwnedWindows = walk.OwnedWindows };
         return walk.Truncated
             ? metadata with { Truncated = true, TruncationReason = walk.TruncationReason?.ToString() }
             : metadata;

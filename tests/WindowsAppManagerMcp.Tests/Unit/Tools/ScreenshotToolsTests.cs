@@ -622,6 +622,27 @@ public class ScreenshotToolsTests
         full.GetProperty("legend").GetString().Should().Be(byDefault.GetProperty("legend").GetString());
     }
 
+    [Fact]
+    public async Task CaptureWithElements_NamesTheOwnedWindowsTheWalkLeftOut_AndOnlyWhenThereAreAny()
+    {
+        // Arrange - a dialog the window owns, which the walk leaves out (roadmap M3.F9)
+        var withDialog = TestDataFactory.CreateUIElementResult() with { OwnedWindows = [67890] };
+        var sut = CreateSut();
+        var plain = Metadata(await sut.CaptureWithElements(handle: 12345));
+        _mockUIElementService.Setup(u => u.GetUIElementsAsync(
+                It.IsAny<nint>(), It.IsAny<int>(), It.IsAny<UIElementFilter?>(), It.IsAny<IProgress<OperationProgress>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(withDialog);
+
+        // Act
+        var json = Metadata(await sut.CaptureWithElements(handle: 12345));
+
+        // Assert
+        plain.TryGetProperty("ownedWindows", out _).Should().BeFalse();
+        json.GetProperty("ownedWindows").EnumerateArray().Select(h => h.GetInt64()).Should().Equal(67890);
+        json.GetProperty("elementCount").GetInt32().Should().Be(3);
+    }
+
     #endregion
 
     private void VerifyNoWalk()
