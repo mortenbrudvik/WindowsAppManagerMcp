@@ -15,7 +15,8 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// </summary>
 public sealed class RawMcpConnection : IAsyncDisposable
 {
-    private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(10);
+    /// <summary>How long each step may take before the test fails, as in <see cref="InProcessMcpServer"/> (roadmap M3.F29).</summary>
+    private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IHost _host;
     private readonly Stream _toServer;

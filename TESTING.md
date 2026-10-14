@@ -1957,14 +1957,20 @@ Rules for new tests:
   start-up (seconds, not 100 ms). Prefer a fake clock (`ManualClock`) or an explicit signal from the code
   under test over sleeping.
 
-**Timing-sensitive tests under heavy load.** A few tests still fail now and then when the machine is very busy (a
-build, another test run, a virus scan), and pass on a rerun: the deadline tests of `DesktopStateServiceTests`
-(`APartThatDoesNotAnswer_IsReportedAtTheDeadline_AndTheRestIsReturned` and the `TheElementsWalk_*` and
-`TheUiAutomationParts_*` tests, which bound a call's wall time), and contract tests that time out after about 11 to 14
-seconds in an in-process server (close_windows_batch in `UserConfirmationContractTests`, the click case of
-`ToolPayloadBudgetTests` and `EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`).
-When one of these fails alone in a full run, run it again on its own (`--filter "FullyQualifiedName~<class>"`) before
-you look for a regression; a failure that repeats on an idle machine is a real one.
+**Timing-sensitive tests under heavy load.** A test that waits for a deadline should not let a busy machine (a build,
+another test run, a virus scan) decide when the deadline passes (roadmap M3.F29). The deadline tests of
+`DesktopStateServiceTests` run get_desktop_state's deadline on a `ManualTimerClock` (`Fixtures/`), whose timers fire only
+when the test moves it: the test moves it to the parts' budget or to the deadline once the parts are where it expects
+them, and checks that the call returns then and not before, instead of bounding the call's wall time. The real time a
+test then waits for the call (`HangGuard`, 30 s) only guards against a call that never returns. Each step of the
+in-process MCP server (`InProcessMcpServer`, `RawMcpConnection`: starting the host, connecting, stopping) may take 30 s,
+as long as a call: at 10 s, contract tests failed now and then after 11 to 14 seconds on a busy machine
+(close_windows_batch in `UserConfirmationContractTests`, the click case of `ToolPayloadBudgetTests` and
+`EveryToolContractTests`, `CaptureCoordinateContractTests`, `LayoutToolErrorContractTests`), where a full run under load
+takes some contract tests up to 10 s. `LayoutToolErrorContractTests` also ignores the slow-call Warning when it checks
+that a not-found is not logged as a server error. When a test still fails alone in a full run, run it again on its own
+(`--filter "FullyQualifiedName~<class>"`) before you look for a regression; a failure that repeats on an idle machine is
+a real one.
 
 ### End-to-end tests against the fixture app
 

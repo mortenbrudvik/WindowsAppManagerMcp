@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using WindowsAppManagerMcp.Infrastructure;
@@ -43,6 +42,7 @@ public sealed class DesktopStateService : IDesktopStateService
     private readonly IPopupService _popups;
     private readonly IScreenshotService _screenshots;
     private readonly ITargetPolicy _policy;
+    private readonly TimeProvider _time;
     private readonly bool _captureServed;
     private readonly bool _stateServed;
 
@@ -56,6 +56,8 @@ public sealed class DesktopStateService : IDesktopStateService
     /// <param name="policy">The user's target policy: never a read or a capture of a denied window, named or not.</param>
     /// <param name="toolsets">The tools the server serves; the capture follows capture_window, and the observation other tools
     /// return follows get_desktop_state. Null: every tool.</param>
+    /// <param name="time">The clock the deadline and the parts' budget run on; default the system clock. Tests pass one they
+    /// move by hand, so a busy machine cannot move a deadline (roadmap M3.F29).</param>
     public DesktopStateService(
         IWindowService windows,
         IInputSession session,
@@ -65,7 +67,8 @@ public sealed class DesktopStateService : IDesktopStateService
         IPopupService popups,
         IScreenshotService screenshots,
         ITargetPolicy policy,
-        ToolsetSelection? toolsets = null)
+        ToolsetSelection? toolsets = null,
+        TimeProvider? time = null)
     {
         _windows = windows ?? throw new ArgumentNullException(nameof(windows));
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -75,6 +78,7 @@ public sealed class DesktopStateService : IDesktopStateService
         _popups = popups ?? throw new ArgumentNullException(nameof(popups));
         _screenshots = screenshots ?? throw new ArgumentNullException(nameof(screenshots));
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+        _time = time ?? TimeProvider.System;
         _captureServed = toolsets?.Serves(CaptureTool, readOnlyHint: false) ?? true;
         _stateServed = toolsets?.Serves(StateTool, readOnlyHint: true) ?? true;
     }
@@ -113,7 +117,7 @@ public sealed class DesktopStateService : IDesktopStateService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var watch = Stopwatch.StartNew();
+        var start = _time.GetTimestamp();
         var include = request.Include;
 
         // The cheap parts: Win32 reads that no window's thread answers
@@ -122,7 +126,7 @@ public sealed class DesktopStateService : IDesktopStateService
         var input = ReadInputState();
         if (target.Invalid)
         {
-            return new DesktopStateSnapshot(Failed(request.Window!.Value, input, watch), null);
+            return new DesktopStateSnapshot(Failed(request.Window!.Value, input, _time.GetElapsedTime(start)), null);
         }
 
         var cursor = Read(_input.GetCursorPos) is { } point ? new ScreenPoint(point.X, point.Y) : null;
@@ -144,19 +148,19 @@ public sealed class DesktopStateService : IDesktopStateService
             readFocus = false;
         }
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(request.Timeout);
+        using var deadlineTimer = new CancellationTokenSource(request.Timeout, _time);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineTimer.Token);
 
         // The parts stop from the call's start, as the deadline counts, not from after the cheap reads
-        var partBudget = PartBudget(request.Timeout) - watch.Elapsed;
+        var partBudget = PartBudget(request.Timeout) - _time.GetElapsedTime(start);
         if (partBudget < TimeSpan.Zero)
         {
             partBudget = TimeSpan.Zero;
         }
 
         var stopGrace = StopGrace(request.Timeout);
-        using var partStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        partStop.CancelAfter(partBudget);
+        using var partTimer = new CancellationTokenSource(partBudget, _time);
+        using var partStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, partTimer.Token);
 
         var handle = target.Handle;
         var hasTarget = handle != nint.Zero;
@@ -190,8 +194,8 @@ public sealed class DesktopStateService : IDesktopStateService
         Task?[] parts = [windowsTask, focusTask, popupsTask, elementsTask, captureTask];
         try
         {
-            var remaining = request.Timeout - watch.Elapsed;
-            await Task.WhenAll(parts.OfType<Task>()).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, cancellationToken)
+            var remaining = request.Timeout - _time.GetElapsedTime(start);
+            await Task.WhenAll(parts.OfType<Task>()).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, _time, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -256,7 +260,7 @@ public sealed class DesktopStateService : IDesktopStateService
             Elements: walk?.Elements,
             Screenshot: screenshot,
             Errors: errors.Count == 0 ? null : Ordered(errors),
-            ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1),
+            ElapsedMilliseconds: Math.Round(_time.GetElapsedTime(start).TotalMilliseconds, 1),
             PopupsExcluded: popupsExcluded > 0 ? popupsExcluded : null);
         return new DesktopStateSnapshot(state, image);
     }
@@ -608,7 +612,7 @@ public sealed class DesktopStateService : IDesktopStateService
     private static IReadOnlyList<DesktopStateError> Ordered(List<DesktopStateError> errors) =>
         errors.OrderBy(e => Array.IndexOf(SectionOrder, e.Section)).ToList();
 
-    private static DesktopState Failed(nint window, DesktopInputState input, Stopwatch watch) => new(
+    private static DesktopState Failed(nint window, DesktopInputState input, TimeSpan elapsed) => new(
         Success: false,
         WindowHandle: window,
         WindowTitle: null,
@@ -622,7 +626,7 @@ public sealed class DesktopStateService : IDesktopStateService
         Elements: null,
         Screenshot: null,
         Errors: null,
-        ElapsedMilliseconds: Math.Round(watch.Elapsed.TotalMilliseconds, 1),
+        ElapsedMilliseconds: Math.Round(elapsed.TotalMilliseconds, 1),
         Error: $"{(long)window} is no window (it closed, or the handle is wrong). Nothing was read. Call get_desktop_state without " +
                "handle or window for the window in front, or find the window again with find_windows.",
         ErrorCode: nameof(UIElementErrorCode.InvalidHandle));

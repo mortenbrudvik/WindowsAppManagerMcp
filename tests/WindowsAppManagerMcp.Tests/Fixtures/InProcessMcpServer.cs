@@ -19,7 +19,12 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 /// </summary>
 public sealed class InProcessMcpServer : IAsyncDisposable
 {
-    private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(10);
+    /// <summary>
+    /// How long each step (start, connect, stop, a round trip) may take before the test fails: as long as a call
+    /// (<see cref="DefaultCallTimeout"/>), so a machine under heavy load can still start a host and connect. At 10 s, contract
+    /// tests failed now and then at 11 to 14 s on a busy machine and passed on a rerun (roadmap M3.F29).
+    /// </summary>
+    private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>How long <see cref="CallToolAsync"/> waits for a tool call by default.</summary>
     public static readonly TimeSpan DefaultCallTimeout = TimeSpan.FromSeconds(30);
