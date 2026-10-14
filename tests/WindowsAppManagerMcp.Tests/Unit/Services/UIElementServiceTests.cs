@@ -1807,4 +1807,144 @@ public class UIElementServiceTests
     }
 
     #endregion
+
+    #region Owned windows (roadmap M3.F9)
+
+    private static readonly nint Dialog = 0x5678;
+
+    /// <summary>GetWindow's GW_OWNER.</summary>
+    private const uint GwOwner = 4;
+
+    /// <summary>
+    /// An owned dialog as UI Automation's HWND proxy shows it: a window element with its own window handle, listed among the
+    /// children of the window that owns it, ahead of that window's own children.
+    /// </summary>
+    private static FakeUiaNode OwnedDialog(Mock<INativeWindowWrapper> windows, string title, params FakeUiaNode[] children)
+    {
+        windows.Setup(w => w.GetWindow(Dialog, GwOwner)).Returns(Handle);
+        return new FakeUiaNode("Window", title) { NativeWindowHandle = Dialog }.With(children);
+    }
+
+    [Fact]
+    public async Task GetUIElements_LeavesAnOwnedDialogListedInTheWindowsTreeOut_AndNamesIt()
+    {
+        // Arrange - Explorer's Delete File dialog, owned by the window read
+        var windows = RespondingWindow();
+        Window(
+            OwnedDialog(windows, "Delete File", Node("Button", "Yes"), Node("Button", "No")),
+            Node("Edit", "Name"),
+            Node("Button", "Save"));
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert - the dialog is a window of its own: read by its handle, not as part of its owner
+        result.Success.Should().BeTrue();
+        Shape(result.Elements).Should().Be("Name,Save");
+        result.TotalElementCount.Should().Be(2);
+        result.OwnedWindows.Should().Equal((long)Dialog);
+        _tree.ReadNodes.Should().NotContain(["Yes", "No"], "nothing inside the dialog is read");
+    }
+
+    [Fact]
+    public async Task GetUIElements_KeepsAChildWindowWithAHandleOfItsOwn()
+    {
+        // Arrange - an edit control is a child window (WS_CHILD): it has a handle, but no owner
+        var windows = RespondingWindow();
+        Window(new FakeUiaNode("Edit", "Text") { NativeWindowHandle = 0x9ABC }, Node("Button", "Save"));
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Text,Save");
+        result.OwnedWindows.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_LeavesOwnedWindowsOutOnlyDirectlyBelowTheWindow()
+    {
+        // Arrange - a pane deeper in the tree whose element has the dialog's handle is not one of the window's children
+        var windows = RespondingWindow();
+        windows.Setup(w => w.GetWindow(Dialog, GwOwner)).Returns(Handle);
+        Window(Node("Pane", "Host").With(new FakeUiaNode("Pane", "Embedded") { NativeWindowHandle = Dialog }));
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Host(Embedded)");
+        result.OwnedWindows.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_InALevelReadOneElementAtATime_StillLeavesTheOwnedDialogOut_ReadingEachChildOnce()
+    {
+        // Arrange - wider than one cached read, the owned dialog listed first as the HWND proxy lists it
+        var windows = RespondingWindow();
+        Window(new[] { OwnedDialog(windows, "Find", Node("Button", "Find Next")) }
+            .Concat(Enumerable.Range(0, UIElementService.CachedLevelLimit + 1).Select(i => Node("Edit", $"Field {i}")))
+            .ToArray());
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert - the first field, read to tell it is no owned window, is not read again
+        result.TotalElementCount.Should().Be(UIElementService.CachedLevelLimit + 1);
+        result.Elements!.Select(e => e.Name).Should().NotContain("Find");
+        result.OwnedWindows.Should().Equal((long)Dialog);
+        _tree.Reads.Count(r => r.EndsWith(":Field 0", StringComparison.Ordinal)).Should().Be(1);
+        _tree.Reads.Should().NotContain("Element:Field 1", "only the children listed first are read to tell an owned window");
+    }
+
+    [Fact]
+    public async Task GetUIElements_WhenTheWindowsLevelFailsItsCachedRead_StillLeavesTheOwnedDialogOut()
+    {
+        // Arrange
+        var windows = RespondingWindow();
+        var window = Window(OwnedDialog(windows, "Delete File", Node("Button", "Yes")), Node("Button", "Save"));
+        window.CachedChildrenException = new System.Runtime.InteropServices.COMException("cache request failed");
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Save");
+        result.OwnedWindows.Should().Equal((long)Dialog);
+    }
+
+    [Fact]
+    public async Task GetUIElements_OfTheOwnedDialogItself_ReadsItsElements()
+    {
+        // Arrange - the dialog read by its own handle
+        var windows = RespondingWindow();
+        windows.Setup(w => w.IsWindow(Dialog)).Returns(true);
+        windows.Setup(w => w.RespondsWithin(Dialog, It.IsAny<uint>())).Returns(true);
+        var dialog = OwnedDialog(windows, "Delete File", Node("Button", "Yes"), Node("Button", "No"));
+        Window(dialog, Node("Button", "Save"));
+        _tree.WithWindow(Dialog, dialog);
+
+        // Act
+        var result = await new UIElementService(_tree, _worker, windows.Object).GetUIElementsAsync(Dialog);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Yes,No");
+        result.OwnedWindows.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUIElements_WithoutTheWin32Reads_LeavesNothingOut()
+    {
+        // Arrange - no window wrapper: whether a child is owned cannot be told
+        Window(new FakeUiaNode("Window", "Delete File") { NativeWindowHandle = Dialog }.With(Node("Button", "Yes")), Node("Button", "Save"));
+
+        // Act
+        var result = await CreateSut().GetUIElementsAsync(Handle);
+
+        // Assert
+        Shape(result.Elements).Should().Be("Delete File(Yes),Save");
+        result.OwnedWindows.Should().BeNull();
+    }
+
+    #endregion
 }

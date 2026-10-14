@@ -44,6 +44,12 @@ namespace WindowsAppManagerMcp.Services;
 /// says what came of it (accessibilityWarmup) instead of returning a silently thin tree.</item>
 /// <item>Each element names its UI framework only where it changes from the returned element it is inside (or, at the top,
 /// from the window's), so a web page inside a native frame shows where it starts without repeating it on every element.</item>
+/// <item>A window the walked window owns (a dialog or popup, which the HWND proxy lists among the window's children with its
+/// whole tree) is left out with everything inside it, as the searches leave it out (<see cref="OwnedWindows"/>, roadmap
+/// M3.F9): it is a window of its own, read by its handle, and its elements get refs only there. The result names it
+/// (<see cref="UIElementResult.OwnedWindows"/>). A level fetched with its properties is tested on them; of a level read one
+/// element at a time, the first children are read one at a time while they are owned windows (the HWND proxy lists them
+/// first, at most <see cref="ElementSearch.MaxOwnedWindows"/>). Without the Win32 reads nothing is left out.</item>
 /// </list>
 /// </remarks>
 public class UIElementService : IUIElementService
@@ -88,8 +94,8 @@ public class UIElementService : IUIElementService
     /// <param name="worker">Runs the walk under a deadline.</param>
     /// <param name="windows">Checks that the window responds before it is read, and identifies the application
     /// whose window is read (for a UWP app its own process, see <see cref="UwpFrames"/>), so a hung application blocks
-    /// only reads of itself (see <see cref="IUiaWorker"/>). Without it all reads share one count and nothing is
-    /// checked first.</param>
+    /// only reads of itself (see <see cref="IUiaWorker"/>), and tells the windows the window owns, which the walk leaves
+    /// out (roadmap M3.F9). Without it all reads share one count, nothing is checked first and nothing is left out.</param>
     /// <param name="warmup">Warms up the web content of Chromium, Electron and WebView2 windows before they are read
     /// (roadmap M3.3). The server always passes it; without it no window is warmed up.</param>
     /// <param name="registry">Gives every returned element its ref (roadmap M3.4). Without it the elements have none.</param>
@@ -313,7 +319,8 @@ public class UIElementService : IUIElementService
             var (windowTitle, windowFramework) = TryReadWindow(window);
             var refs = _registry == null ? null : new WalkRefs(_registry, windowHandle, _registry.NextGeneration());
             var walk = new Walk(
-                _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, progress, cancellationToken);
+                _tree, maxDepth, filter, controlTypes, windowTitle, windowFramework, refs, OwnedWindows.Below(_windows, windowHandle),
+                progress, cancellationToken);
             started.Walk = walk;
 
             // Errors reading the window's own children propagate: an empty tree would look like a
@@ -350,7 +357,8 @@ public class UIElementService : IUIElementService
                 DepthReached: walk.DepthReached,
                 Truncated: truncationReason != null,
                 TruncationReason: truncationReason,
-                FrameworkId: windowFramework);
+                FrameworkId: windowFramework,
+                OwnedWindows: walk.OwnedWindowHandles);
         }
         catch (UiaElementUnavailableException ex)
         {
@@ -415,6 +423,7 @@ public class UIElementService : IUIElementService
         string? windowTitle,
         string? windowFramework,
         WalkRefs? refs,
+        Func<UiaElement, bool>? leaveOut,
         IProgress<OperationProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -425,6 +434,9 @@ public class UIElementService : IUIElementService
 
         /// <summary>The elements whose children are still to be read, in breadth-first order, with their level's number.</summary>
         private readonly Queue<(WalkNode Parent, IUiaNode Node, int Level)> _pending = new();
+
+        /// <summary>The handles of the windows the window owns, left out of its children (<see cref="OwnedWindows"/>).</summary>
+        private readonly List<long> _ownedWindows = [];
 
         private int _elementCount;
         private int _skippedElementCount;
@@ -466,6 +478,18 @@ public class UIElementService : IUIElementService
                 lock (_gate)
                 {
                     return _depthReached;
+                }
+            }
+        }
+
+        /// <summary>The windows the window owns that were left out of its children, or null when there were none.</summary>
+        public IReadOnlyList<long>? OwnedWindowHandles
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _ownedWindows.Count > 0 ? _ownedWindows.ToList() : null;
                 }
             }
         }
@@ -581,7 +605,8 @@ public class UIElementService : IUIElementService
                     DepthReached: DepthReached,
                     Truncated: true,
                     TruncationReason: UIElementTruncationReason.Timeout,
-                    FrameworkId: windowFramework);
+                    FrameworkId: windowFramework,
+                    OwnedWindows: OwnedWindowHandles);
         }
 
         /// <summary>
@@ -610,6 +635,12 @@ public class UIElementService : IUIElementService
                 // This element's children could not be read; the element itself is still returned
                 Count(ref _skippedElementCount);
                 return;
+            }
+
+            // A window the window owns is read only as its own window
+            if (isWindow && leaveOut != null)
+            {
+                children = WithoutOwnedWindows(children);
             }
 
             for (var index = 0; index < children.Count; index++)
@@ -660,6 +691,55 @@ public class UIElementService : IUIElementService
             }
 
             return children.Select(n => new Candidate(n, null)).ToList();
+        }
+
+        /// <summary>
+        /// The window's children without the windows it owns, whose handles are noted. A child fetched with its properties is
+        /// tested on them. Of a level read one element at a time, the first children are read one at a time while they are
+        /// owned windows (the HWND proxy lists them first, at most <see cref="ElementSearch.MaxOwnedWindows"/>); the first
+        /// that is none keeps its read, so it is not read again, and one that cannot be read ends the reads and is visited as
+        /// any other.
+        /// </summary>
+        private List<Candidate> WithoutOwnedWindows(IReadOnlyList<Candidate> children)
+        {
+            var kept = new List<Candidate>(children.Count);
+            var reading = children.Count > 0 && children[0].Cached == null;
+            var owned = 0;
+            foreach (var child in children)
+            {
+                var element = child.Cached;
+                if (reading)
+                {
+                    reading = false;
+                    if (owned < ElementSearch.MaxOwnedWindows && !cancellationToken.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            element = tree.ReadElement(child.Node);
+                        }
+                        catch (Exception)
+                        {
+                            // Not known to be owned: walked with the window, and read again there
+                        }
+                    }
+                }
+
+                if (element != null && leaveOut!(element))
+                {
+                    owned++;
+                    reading = child.Cached == null;
+                    lock (_gate)
+                    {
+                        _ownedWindows.Add((long)element.NativeWindowHandle);
+                    }
+
+                    continue;
+                }
+
+                kept.Add(element == null ? child : child with { Cached = element });
+            }
+
+            return kept;
         }
 
         /// <summary>

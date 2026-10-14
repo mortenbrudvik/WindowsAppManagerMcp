@@ -92,6 +92,32 @@ public class ElementRefReadTests
     }
 
     [Fact]
+    public async Task Walk_GivesTheElementsOfAnOwnedDialogNoRefUnderItsOwner_OnlyUnderTheDialogsOwnWindow()
+    {
+        // Arrange - a dialog the window owns, which the HWND proxy lists first among the window's children (roadmap M3.F9)
+        var dialogHandle = (nint)0x6200;
+        _windows.Setup(w => w.IsWindow(dialogHandle)).Returns(true);
+        _windows.Setup(w => w.GetWindowThreadProcessId(dialogHandle)).Returns(55u);
+        _windows.Setup(w => w.RespondsWithin(dialogHandle, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.GetWindow(dialogHandle, 4)).Returns(Handle);
+        var yes = new FakeUiaNode("Button", "Yes") { AutomationId = "6" };
+        var dialog = new FakeUiaNode("Window", "Delete File") { NativeWindowHandle = dialogHandle }.With(yes);
+        _tree.WithWindow(Handle, new FakeUiaNode("Window", "Main").With(dialog, new FakeUiaNode("Text", "Label"), new FakeUiaNode("Button", "Go")));
+        _tree.WithWindow(dialogHandle, dialog);
+
+        // Act
+        var owner = Flatten((await Walk().GetUIElementsAsync(Handle)).Elements!).ToList();
+        var ownDialog = Flatten((await Walk().GetUIElementsAsync(dialogHandle)).Elements!).ToList();
+
+        // Assert - the owner's elements keep their places in its own tree; the Yes button's ref is the dialog's
+        owner.Select(e => e.Name).Should().Equal("Label", "Go");
+        _registry.Lookup(owner[1].Ref!).Fingerprint!.IndexPath.Should().Equal(1);
+        var yesRef = ownDialog.Should().ContainSingle().Which.Ref!;
+        _registry.Lookup(yesRef).WindowHandle.Should().Be(dialogHandle);
+        _registry.Count.Should().Be(3);
+    }
+
+    [Fact]
     public async Task TheDesktopStateWalk_AndTheMarksWalk_GiveAnElementTheSameRef_InEitherOrder()
     {
         // Arrange - get_desktop_state's elements (roadmap M3.12: interactableOnly, visibleOnly) and capture_with_elements'

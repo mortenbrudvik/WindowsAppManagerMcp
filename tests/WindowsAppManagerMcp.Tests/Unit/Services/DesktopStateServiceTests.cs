@@ -624,6 +624,45 @@ public class DesktopStateServiceTests
     }
 
     [Fact]
+    public async Task AnOwnedDialogInFront_IsWalkedOnceAsAPopup_NotAgainInsideItsOwnersTree()
+    {
+        // Arrange - the real walk over a fake tree: Notepad's Save As dialog, which the HWND proxy also lists among Notepad's
+        // children (roadmap M3.F9)
+        var dialogHandle = (nint)0x1A0C00;
+        var native = new Mock<INativeWindowWrapper>();
+        foreach (var handle in new[] { Notepad, dialogHandle })
+        {
+            native.Setup(w => w.IsWindow(handle)).Returns(true);
+            native.Setup(w => w.RespondsWithin(handle, It.IsAny<uint>())).Returns(true);
+        }
+
+        native.Setup(w => w.GetWindow(dialogHandle, 4)).Returns(Notepad);
+        var dialog = new FakeUiaNode("Window", "Save As") { NativeWindowHandle = dialogHandle }.With(
+            new FakeUiaNode("Button", "Save") { ActionPatterns = ["Invoke"] });
+        var tree = new FakeUiaTree()
+            .WithWindow(Notepad, new FakeUiaNode("Window", "notes.txt - Notepad").With(
+                dialog, new FakeUiaNode("Document", "Text editor") { ActionPatterns = ["Value"] }))
+            .WithWindow(dialogHandle, dialog);
+        _popups.Setup(p => p.IsInForeground(Notepad)).Returns(true);
+        _popups.Setup(p => p.GetPopupList(Notepad)).Returns(new PopupList(
+            [new PopupWindow(dialogHandle, PopupKind.Dialog, "Save As", "#32770", 4242, Notepad, PopupRelation.Owned, null, false)], false));
+        var sut = new DesktopStateService(_windows.Object, _session, _input, _inspection.Object,
+            new UIElementService(tree, new UiaWorker(), native.Object), _popups.Object, _screenshots.Object, _policy);
+
+        // Act
+        var (state, _) = await sut.GetStateAsync(Request(window: Notepad), CancellationToken.None);
+
+        // Assert
+        var lines = state.Elements!.Text!.Split('\n');
+        lines.Should().HaveCount(4);
+        lines[0].Should().StartWith($"# popup {(long)dialogHandle} Dialog");
+        lines[1].Should().Contain("Button 'Save'");
+        lines[2].Should().StartWith($"# window {(long)Notepad}");
+        lines[3].Should().Contain("Document 'Text editor'");
+        state.Elements.Count.Should().Be(2);
+    }
+
+    [Fact]
     public async Task TheUiAutomationParts_GetAStopGraceThatEndsBeforeTheDeadline()
     {
         // Arrange
