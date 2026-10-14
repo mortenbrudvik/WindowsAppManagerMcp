@@ -1525,19 +1525,22 @@ public class WindowService : IWindowService
     /// <summary>
     /// The process a window belongs to. A UWP frame window (ApplicationFrameWindow) belongs to
     /// ApplicationFrameHost, but the app runs in the process of the CoreWindow that the frame hosts:
-    /// report that process, with ApplicationFrameHost as the host.
+    /// report that process, with ApplicationFrameHost as the host. A window of ApplicationFrameHost of another
+    /// class, such as the frame a prompt may come up in, is attributed the same way to a CoreWindow child of
+    /// another process (roadmap M3.F7). The process name that check reads is read once per process in a call, and is
+    /// the one the window is reported with anyway.
     /// </summary>
     private WindowProcess ResolveProcess(nint hWnd, string className, string title, uint windowProcessId, ReadSession session)
     {
-        if (!WindowClassification.IsApplicationFrameWindow(className))
+        if (!UwpFrames.IsFrame(className, windowProcessId, session.ProcessName))
             return new WindowProcess(windowProcessId, HostProcessId: null);
 
-        return FindHostedAppProcessId(hWnd, title, windowProcessId, session) is { } appProcessId
+        return FindHostedAppProcessId(hWnd, className, title, windowProcessId, session) is { } appProcessId
             ? new WindowProcess(appProcessId, HostProcessId: windowProcessId)
             : new WindowProcess(windowProcessId, HostProcessId: null);
     }
 
-    private uint? FindHostedAppProcessId(nint frame, string title, uint hostProcessId, ReadSession session)
+    private uint? FindHostedAppProcessId(nint frame, string className, string title, uint hostProcessId, ReadSession session)
     {
         // While the app runs, its CoreWindow is a child of the frame.
         if (UwpFrames.FindHostedAppProcessId(_nativeWrapper, frame, hostProcessId) is { } runningAppProcessId)
@@ -1545,8 +1548,9 @@ public class WindowService : IWindowService
 
         // While the app is minimized or suspended, Windows moves its CoreWindow out of the frame to the
         // top level. Match it by title, and only when exactly one other process has such a window; an
-        // ambiguous title leaves the frame attributed to its host.
-        if (string.IsNullOrEmpty(title))
+        // ambiguous title leaves the frame attributed to its host. Only an app's frame (ApplicationFrameWindow)
+        // is minimized that way; the frame host's other windows are matched by their CoreWindow child alone.
+        if (string.IsNullOrEmpty(title) || !WindowClassification.IsApplicationFrameWindow(className))
             return null;
 
         var candidates = session.TopLevelCoreWindows

@@ -74,6 +74,43 @@ public class UiaTargetsTests
         verdict.ProcessName.Should().Be(app);
     }
 
+    /// <summary>
+    /// A window of ApplicationFrameHost of another class than ApplicationFrameWindow that hosts the CoreWindow of
+    /// <paramref name="app"/>, as a prompt may come up (roadmap M3.F7).
+    /// </summary>
+    private void FrameOfAnotherClass(string app)
+    {
+        UwpFrame(app);
+        Window(Frame, "PromptFrameWindow", 500, "ApplicationFrameHost");
+    }
+
+    [Fact]
+    public void ReadVerdict_FrameHostWindowOfAnotherClassThatHostsADeniedPrompt_IsRefusedByDefault()
+    {
+        // Arrange
+        FrameOfAnotherClass("CredDialogHost");
+
+        // Act
+        var verdict = UiaTargets.ReadVerdict(_windows.Object, Policy(), Frame);
+
+        // Assert
+        verdict.Allowed.Should().BeFalse();
+        verdict.ProcessName.Should().Be("CredDialogHost");
+    }
+
+    [Fact]
+    public void NotRespondingReason_OfAFrameHostWindowOfAnotherClassWhoseAppIsHung_IsGiven()
+    {
+        // Arrange
+        FrameOfAnotherClass("CredDialogHost");
+        _windows.Setup(w => w.RespondsWithin(Frame, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.RespondsWithin(CoreWindow, It.IsAny<uint>())).Returns(true);
+        _windows.Setup(w => w.IsHungAppWindow(CoreWindow)).Returns(true);
+
+        // Act & Assert
+        UiaTargets.NotRespondingReason(_windows.Object, Frame).Should().Contain("not responding");
+    }
+
     [Fact]
     public void ReadVerdict_WindowWhoseProcessCannotBeNamed_FailsClosed_WhileThePolicyDeniesAnything()
     {
