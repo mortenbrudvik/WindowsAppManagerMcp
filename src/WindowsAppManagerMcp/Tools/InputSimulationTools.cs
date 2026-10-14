@@ -477,6 +477,10 @@ public class InputSimulationTools
         string text,
         [Description("Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.")]
         int delayMs = 0,
+        [Description("What line breaks and tabs do; required when the text has any. 'unicode': typed as characters, no " +
+                     "Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a " +
+                     "form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. Default: none")]
+        TextControlChars? controlChars = null,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
         [Description(WindowTargeting.InputWindowDescription)]
@@ -492,14 +496,14 @@ public class InputSimulationTools
         ActionObservation.Check(_desktopState, observe, NothingSent);
         delayMs = Math.Clamp(delayMs, 0, 100);
         var target = Target(windowHandle, window, allowHostTarget);
-        var result = await _inputService.TypeTextAsync(text, delayMs, target, releaseHeldModifiers, cancellationToken).ConfigureAwait(false);
+        var result = await _inputService.TypeTextAsync(text, delayMs, target, releaseHeldModifiers, controlChars, cancellationToken).ConfigureAwait(false);
         return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
             ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (typed, observed) => typed with { Observed = observed },
             _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "send_keys", Title = "Send Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
-    [Description("Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home)." + KeyboardTargetNote +
+    [Description("Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '+{HOME}' (Shift+Home), '{DOWN 3}{ENTER}'." + KeyboardTargetNote +
                  " Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget)." +
                  " A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call." +
                  " Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination." +
@@ -508,7 +512,11 @@ public class InputSimulationTools
                  " Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.")]
     [ToolResultPayload(typeof(SendKeysResult))]
     public async Task<CallToolResult> SendKeys(
-        [Description("Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).")]
+        [Description("Keys to send. Characters type themselves on the window's keyboard layout. ^ Ctrl, % Alt, + Shift, # Win " +
+                     "hold for the next key or (group): '^s', '+(abc)'. {NAME} is a key (ENTER, TAB, ESC, BACKSPACE, DELETE, UP, " +
+                     "DOWN, LEFT, RIGHT, HOME, END, PGUP, PGDN, F1-F24, NUMPAD0-9, WIN, APPS, VOLUME_MUTE...), {NAME n} presses it " +
+                     "n times (1-100), {SHIFT down}...{SHIFT up} holds it. ~ is Enter. Type + ^ % # ~ ( ) { } as {+} {^} {%} {#} " +
+                     "{~} {(} {)} {{} {}}: '100{%}'.")]
         string keys,
         [Description(KeyboardWindowHandleDescription)]
         long? windowHandle = null,
@@ -520,11 +528,15 @@ public class InputSimulationTools
         bool releaseHeldModifiers = false,
         [Description(ActionObservation.ObserveDescription)]
         ObserveMode observe = ObserveMode.None,
+        [Description("Milliseconds between keys, each press of {NAME n} counting (0-500, default 0: one batch). For apps " +
+                     "that drop fast keys.")]
+        int delayMs = 0,
         CancellationToken cancellationToken = default)
     {
         ActionObservation.Check(_desktopState, observe, NothingSent);
+        delayMs = Math.Clamp(delayMs, 0, InputSimulationService.MaxSendKeysDelayMs);
         var target = Target(windowHandle, window, allowHostTarget);
-        var result = await _inputService.SendKeysAsync(keys, target, releaseHeldModifiers, cancellationToken).ConfigureAwait(false);
+        var result = await _inputService.SendKeysAsync(keys, target, releaseHeldModifiers, delayMs, cancellationToken).ConfigureAwait(false);
         return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
             ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (sent, observed) => sent with { Observed = observed },
             _desktopState, _windowService, cancellationToken).ConfigureAwait(false);

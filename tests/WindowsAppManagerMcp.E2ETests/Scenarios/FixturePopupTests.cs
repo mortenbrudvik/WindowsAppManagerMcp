@@ -69,7 +69,7 @@ public class FixturePopupTests
         }
         finally
         {
-            await e2e.Server.Input.SendKeysAsync("{ESC}", InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
+            await e2e.Server.Input.SendKeysAsync("{ESC}", InputTarget.Window(main), releaseHeldModifiers: false, 0, CancellationToken.None);
         }
     }
 
@@ -109,7 +109,7 @@ public class FixturePopupTests
         }
         finally
         {
-            await e2e.Server.Input.SendKeysAsync("{ESC}", InputTarget.Window(main), releaseHeldModifiers: false, CancellationToken.None);
+            await e2e.Server.Input.SendKeysAsync("{ESC}", InputTarget.Window(main), releaseHeldModifiers: false, 0, CancellationToken.None);
         }
     }
 }

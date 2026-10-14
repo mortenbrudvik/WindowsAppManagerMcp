@@ -16,7 +16,13 @@ public class DestructiveChordTests
         InputGuardOptions.FromEnvironment(name => name == InputGuardOptions.DestructiveChordsVariable ? value : null);
 
     private static DestructiveChord? Find(string keys, InputGuardOptions? options = null) =>
-        (options ?? InputGuardOptions.Default).FindDestructiveChord(SendKeysParser.Parse(keys));
+        Find(SendKeysParser.Parse(keys), options);
+
+    private static DestructiveChord? Find(IReadOnlyList<InputEvent> events, InputGuardOptions? options = null) =>
+        (options ?? InputGuardOptions.Default).FindDestructiveChord(events);
+
+    private static KeyboardLayout Layout(nint layout) =>
+        KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = layout }, 0, capsLock: false);
 
     #region Chords
 
@@ -30,9 +36,10 @@ public class DestructiveChordTests
     [Fact]
     public void Chords_ModifiersApplyToTheNextKeyOnly()
     {
+        // A capital is its key with Shift (roadmap M4.1)
         SendKeysParser.Chords(SendKeysParser.Parse("^wW")).Should().Equal(
             new KeyChord(KeyModifiers.Control, InputEventKind.VirtualKey, VkW),
-            new KeyChord(KeyModifiers.None, InputEventKind.VirtualKey, VkW));
+            new KeyChord(KeyModifiers.Shift, InputEventKind.VirtualKey, VkW));
     }
 
     [Fact]
@@ -44,9 +51,11 @@ public class DestructiveChordTests
     }
 
     [Fact]
-    public void Parse_WithoutTheWindowsModifier_SendsHashAsACharacter()
+    public void Parse_Hash_IsTheWindowsModifier_AndBracedHashTheCharacter()
     {
-        SendKeysParser.Parse("#l").First().Should().Be(InputEvent.Unicode('#', 0));
+        // roadmap M4.1: # holds the Windows key, as in the destructive-chord settings; {#} types the character
+        SendKeysParser.Parse("#l").First().Should().Be(InputEvent.Key(VkLwin, 0x0001));
+        SendKeysParser.Parse("{#}").Should().Equal(InputEvent.Unicode('#', 0), InputEvent.Unicode('#', 0x0002));
     }
 
     [Fact]
@@ -63,7 +72,7 @@ public class DestructiveChordTests
     {
         SendKeysParser.KeyPresses(SendKeysParser.Parse("%{TAB}")).Should().Equal(
             new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, VkTab));
-        SendKeysParser.KeyPresses(SendKeysParser.Parse("#l", windowsModifier: true)).Should().Equal(
+        SendKeysParser.KeyPresses(SendKeysParser.Parse("#l")).Should().Equal(
             new KeyChord(KeyModifiers.Windows, InputEventKind.VirtualKey, 0x4C));
     }
 
@@ -83,6 +92,10 @@ public class DestructiveChordTests
     [InlineData("%{F4}n", "%{F4}")] // after a close, the next window gets the keys
     [InlineData("^w^w", "^w")]
     [InlineData("a%{TAB}b", "%{TAB}")]
+    [InlineData("#rnotepad{ENTER}", "#r")] // Win+R opens Run: the keys would go there (roadmap M4.1)
+    [InlineData("#{UP}x", "#{UP}")]
+    [InlineData("+#sx", "+#s")]
+    [InlineData("#hashtag", "#h")] // # is the Windows key; the character is {#}
     public void FindKeysAfterFocusChange_KeysAfterTheChord_FindsIt(string keys, string expectedSpec)
     {
         InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().Be(expectedSpec);
@@ -96,6 +109,8 @@ public class DestructiveChordTests
     [InlineData("^a{DELETE}")]
     [InlineData("{ALT}{TAB}x")] // Alt is released before Tab: not Alt+Tab
     [InlineData("^c{ESC}{ENTER}")]
+    [InlineData("#r")] // a Windows-key chord as the last key
+    [InlineData("{#}hashtag")]
     public void FindKeysAfterFocusChange_TheChordLastOrNoChord_FindsNothing(string keys)
     {
         InputGuardOptions.Default.FindKeysAfterFocusChange(SendKeysParser.Parse(keys)).Should().BeNull();
@@ -136,6 +151,58 @@ public class DestructiveChordTests
         Find("^ ", Options("^{SPACE}")).Should().NotBeNull();
     }
 
+    [Theory]
+    [InlineData("user@example.de")] // '@' is AltGr+Q on a German keyboard: not Ctrl+Alt+Q, so not ^q
+    [InlineData("{{}\\{}}[]{~}|€")]
+    public void FindDestructiveChord_AnAltGrCharacter_IsACharacter_NotACtrlAltChord(string keys)
+    {
+        // roadmap M4.1: AltGr goes out as the left Ctrl and the right Alt, which the chord readers read as a character
+        var events = KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.German)).Events;
+
+        Find(events).Should().BeNull();
+        InputGuardOptions.Default.FindKeysAfterFocusChange(events).Should().BeNull();
+        SendKeysParser.Chords(events).Should().OnlyContain(c => c.Modifiers == KeyModifiers.None || c.Modifiers == KeyModifiers.Shift);
+    }
+
+    [Theory]
+    [InlineData("a@b{{}c\\d")]
+    [InlineData("€$[]")]
+    public void FindKeysAfterFocusChange_NorwegianAltGrCharacters_AreCharacters(string keys)
+    {
+        var events = KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.Norwegian)).Events;
+
+        InputGuardOptions.Default.FindKeysAfterFocusChange(events).Should().BeNull();
+        SendKeysParser.Chords(events).Should().OnlyContain(c => c.Modifiers == KeyModifiers.None || c.Modifiers == KeyModifiers.Shift);
+    }
+
+    [Theory]
+    [InlineData("^%q")]
+    [InlineData("^q")]
+    [InlineData("^@")] // Ctrl with the AltGr character on the Q key: the explicit Ctrl is the generic one, and counts
+    public void FindDestructiveChord_AnExplicitCtrl_OnAnAltGrLayout_StillMatches(string keys)
+    {
+        Find(KeySpecParser.Parse(keys, Layout(FakeKeyboardLayoutWrapper.German)).Events)!.Spec.Should().Be("^q");
+    }
+
+    [Fact]
+    public void Chords_AnExplicitAltWithAnAltGrCharacter_IsAnAltChord()
+    {
+        SendKeysParser.Chords(KeySpecParser.Parse("%@", Layout(FakeKeyboardLayoutWrapper.Norwegian)).Events).Should().Equal(
+            new KeyChord(KeyModifiers.Alt, InputEventKind.VirtualKey, '2'));
+    }
+
+    [Theory]
+    [InlineData("%-", "%-")]
+    [InlineData("^{+}", "^{+}")]
+    [InlineData("^{OEM_2}", "^/")] // other punctuation is named by its key
+    public void FindDestructiveChord_AConfiguredPunctuationChord_MatchesTheKeyOfTheLayout(string configured, string keys)
+    {
+        // send_keys sends punctuation as the key of the target's layout (roadmap M4.1), not as Unicode
+        var layout = KeyboardLayout.Of(new FakeKeyboardLayoutWrapper { Layout = FakeKeyboardLayoutWrapper.Us }, 0, capsLock: false);
+
+        Options(configured).FindDestructiveChord(KeySpecParser.Parse(keys, layout).Events)!.Spec.Should().Be(configured);
+    }
+
     [Fact]
     public void FindKeysAfterFocusChange_ConfiguredDestructiveChords_CountToo()
     {
@@ -172,7 +239,7 @@ public class DestructiveChordTests
     [InlineData("{ALT}{F4}")]
     [InlineData("^{ESC}")] // Start menu, not Task Manager
     [InlineData("^c")]
-    [InlineData("#l")] // send_keys has no Windows-key modifier: this types '#' and 'l'
+    [InlineData("{#}l")] // the character '#', then 'l'
     public void FindDestructiveChord_DefaultList_IgnoresOtherKeys(string keys)
     {
         Find(keys).Should().BeNull();

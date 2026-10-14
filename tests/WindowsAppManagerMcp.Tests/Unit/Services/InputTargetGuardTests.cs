@@ -328,6 +328,17 @@ public class InputTargetGuardTests
     }
 
     [Fact]
+    public void Keyboard_KeysAfterAWindowsKeyChord_AreRefused_AndTheMessageNamesTheEscapeForTheCharacter()
+    {
+        // roadmap M4.1: # is the Windows key, so '#hashtag' is Win+H and then keys for whatever Windows opened
+        var result = CreateSut().CheckKeyboard(To(Notepad), KeyboardInputKind.Keys, SendKeysParser.Parse("#hashtag"));
+
+        result.ErrorCode.Should().Be(InputErrorCode.KeysAfterFocusChange);
+        result.Error.Should().Contain("#h").And.Contain("{#}");
+        VerifyNoActivation();
+    }
+
+    [Fact]
     public void Keyboard_UntargetedDestructiveChordWithMoreKeys_IsDestructiveChordNeedsTarget()
     {
         _inFront = Notepad;

@@ -38,6 +38,7 @@ public partial class InputSimulationService : IInputSimulationService
     private readonly INativeSystemInfoWrapper? _systemInfo;
     private readonly IClipboardOrigin? _clipboardOrigin;
     private readonly IClipboardPasteGuard? _pasteGuard;
+    private readonly INativeKeyboardLayoutWrapper? _keyboardLayout;
 
     /// <param name="monitorService">The monitors, for coordinate checks.</param>
     /// <param name="inputWrapper">The native input layer, for cursor reads; input itself goes through <paramref name="session"/>.</param>
@@ -56,6 +57,10 @@ public partial class InputSimulationService : IInputSimulationService
     /// Checks the batches that paste, right before they are sent, so the agent pastes only what get_clipboard would return
     /// (PasteNotAllowed). The server always passes it.
     /// </param>
+    /// <param name="keyboardLayout">
+    /// The keyboard layout queries send_keys maps characters with (roadmap M4.1). The server always passes it; without it
+    /// keys are mapped with <see cref="KeyboardLayout.Invariant"/>.
+    /// </param>
     public InputSimulationService(
         IMonitorService monitorService,
         INativeInputWrapper inputWrapper,
@@ -65,7 +70,8 @@ public partial class InputSimulationService : IInputSimulationService
         INativeHitTestWrapper? hitTest = null,
         INativeSystemInfoWrapper? systemInfo = null,
         IClipboardOrigin? clipboardOrigin = null,
-        IClipboardPasteGuard? pasteGuard = null)
+        IClipboardPasteGuard? pasteGuard = null,
+        INativeKeyboardLayoutWrapper? keyboardLayout = null)
     {
         _monitorService = monitorService;
         _inputWrapper = inputWrapper;
@@ -76,6 +82,7 @@ public partial class InputSimulationService : IInputSimulationService
         _systemInfo = systemInfo;
         _clipboardOrigin = clipboardOrigin;
         _pasteGuard = pasteGuard;
+        _keyboardLayout = keyboardLayout;
     }
 
     /// <summary>
@@ -444,7 +451,7 @@ public partial class InputSimulationService : IInputSimulationService
     }
 
     public async Task<TypeTextResult> TypeTextAsync(string text, int delayBetweenKeysMs = 0, InputTarget target = default,
-        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+        bool releaseHeldModifiers = false, TextControlChars? controlChars = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -456,9 +463,19 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.EmptyText);
         }
 
+        // charactersTyped counts this text: a Windows line break is one character, as it is one key press
+        var typed = NormalizeLineBreaks(text);
+        if (controlChars == null && typed.AsSpan().IndexOfAny('\n', '\t') >= 0)
+        {
+            return new TypeTextResult(false, text, 0, ControlCharsNeededMessage, InputErrorCode.InvalidArguments);
+        }
+
+        var mode = controlChars ?? TextControlChars.Unicode;
+        var layout = mode == TextControlChars.Unicode ? KeyboardLayout.Invariant : LayoutFor(target);
+
         // The text goes out in several batches, each checked on its own: a copy (ETX, CAN) in one and the paste (SYN) in a
         // later one would paste what the copy took unchecked, so the order is checked on the whole text first
-        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(UnicodeInputs(text), receivingClass: null,
+        if (_pasteGuard != null && ClipboardPasteGuard.CopyThenPasteRefusal(TextInputs(typed, mode, layout), receivingClass: null,
                 "Nothing was typed.") is { } copyThenPaste)
         {
             return new TypeTextResult(false, text, 0, copyThenPaste, InputErrorCode.PasteNotAllowed);
@@ -508,7 +525,7 @@ public partial class InputSimulationService : IInputSimulationService
                         : held.Apply(Finish(new TypeTextResult(false, text, 0, approved.Error, approved.ErrorCode), approved));
                 }
 
-                foreach (var batch in Batches(text, delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
+                foreach (var batch in Batches(typed, delayBetweenKeysMs == 0 ? TypeTextBatchSize : 1))
                 {
                     if (charactersTyped > 0 && delayBetweenKeysMs > 0)
                     {
@@ -522,7 +539,7 @@ public partial class InputSimulationService : IInputSimulationService
                     if (!recheck.Allowed)
                     {
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(text, charactersTyped, approved)} {recheck.Error}", recheck.ErrorCode), recheck));
+                            $"{TypedSoFar(typed, charactersTyped, approved)} {recheck.Error}", recheck.ErrorCode), recheck));
                     }
 
                     approved = recheck;
@@ -531,33 +548,33 @@ public partial class InputSimulationService : IInputSimulationService
                     if (ModifiersDownNow("typed") is { } downNow)
                     {
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(text, charactersTyped, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                            $"{TypedSoFar(typed, charactersTyped, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
                         {
                             HeldModifiers = downNow.Names
                         }, approved));
                     }
 
-                    var inputs = UnicodeInputs(batch);
+                    var inputs = TextInputs(batch, mode, layout);
 
                     // The SYN character pastes in an edit control, as Ctrl+V does
                     if (PasteRefusal(inputs, approved) is { } pasteRefused)
                     {
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            $"{TypedSoFar(text, charactersTyped, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed), approved));
+                            $"{TypedSoFar(typed, charactersTyped, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed), approved));
                     }
 
                     var sent = _session.Send(inputs);
                     if (sent.PausedByUser)
                     {
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
-                            PausedMessage(TypedSoFar(text, charactersTyped, approved)), InputErrorCode.PausedByUser), approved));
+                            PausedMessage(TypedSoFar(typed, charactersTyped, approved)), InputErrorCode.PausedByUser), approved));
                     }
 
                     if (!sent.Complete)
                     {
-                        // A character counts once its key-down and key-up were both inserted; the session has
-                        // already sent the key-up of a character whose key-down went in alone
-                        charactersTyped += sent.Inserted / 2;
+                        // A character counts once all its events were inserted; the session has already sent the key-ups
+                        // of whatever went down alone
+                        charactersTyped += CharactersWithin(batch, mode, sent.Inserted);
                         return held.Apply(Finish(new TypeTextResult(false, text, charactersTyped,
                             $"SendInput failed at character {charactersTyped}", InputErrorCode.SendInputFailed), approved));
                     }
@@ -570,7 +587,7 @@ public partial class InputSimulationService : IInputSimulationService
             catch (OperationCanceledException) when (call.IsPaused)
             {
                 var paused = new TypeTextResult(false, text, charactersTyped,
-                    PausedMessage(TypedSoFar(text, charactersTyped, approved)), InputErrorCode.PausedByUser);
+                    PausedMessage(TypedSoFar(typed, charactersTyped, approved)), InputErrorCode.PausedByUser);
                 return held.Apply(approved == null ? paused : Finish(paused, approved));
             }
             finally
@@ -580,8 +597,15 @@ public partial class InputSimulationService : IInputSimulationService
         }
     }
 
+    /// <summary>type_text's refusal of text with a line break or a tab and no controlChars (InvalidArguments).</summary>
+    public const string ControlCharsNeededMessage =
+        "The text contains a line break or a tab: pass controlChars to say what they do. 'unicode' types them as characters " +
+        "(most editors insert them; no Enter or Tab key is pressed), 'keys' presses Enter and Tab (which can send a chat " +
+        "message, submit a form or move to the next field or cell), 'shiftEnter' presses Shift+Enter for a line break (a new " +
+        "line in chat apps) and types tabs as characters. Nothing was typed.";
+
     public async Task<SendKeysResult> SendKeysAsync(string keys, InputTarget target = default, bool releaseHeldModifiers = false,
-        CancellationToken cancellationToken = default)
+        int delayMs = 0, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(keys))
         {
@@ -592,10 +616,10 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.EmptyText);
         }
 
-        List<InputEvent> inputs;
+        KeySpec spec;
         try
         {
-            inputs = SendKeysParser.Parse(keys);
+            spec = KeySpecParser.Parse(keys, LayoutFor(target));
         }
         catch (KeySyntaxException ex)
         {
@@ -614,6 +638,7 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.UnknownKey);
         }
 
+        var inputs = spec.Events;
         if (inputs.Count == 0)
         {
             return new SendKeysResult(
@@ -630,6 +655,12 @@ public partial class InputSimulationService : IInputSimulationService
                 $"The keys press {pauseChord}, the user's pause hotkey, which pauses and resumes this server's input. Only the user " +
                 "may press it. Nothing was sent.", InputErrorCode.PauseChordNotAllowed);
         }
+
+        // Without a delay every key goes in one SendInput call, so no other input can come between them
+        delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
+        var batches = delayMs == 0 ? [inputs] : spec.Steps;
+        var total = spec.Steps.Count;
+        var keysSent = 0;
 
         using var call = new InputCall(_session, cancellationToken);
         if (call.IsPaused)
@@ -672,51 +703,80 @@ public partial class InputSimulationService : IInputSimulationService
                         : held.Apply(Finish(new SendKeysResult(false, keys, approved.Error, approved.ErrorCode), approved));
                 }
 
-                call.Token.ThrowIfCancellationRequested();
-
-                // Right before the keys: the window in front may have changed while the guard read it
-                var recheck = _guard.RecheckKeyboard(approved);
-                if (!recheck.Allowed)
+                for (var b = 0; b < batches.Count; b++)
                 {
-                    return held.Apply(Finish(new SendKeysResult(false, keys, $"Nothing was sent. {recheck.Error}", recheck.ErrorCode), recheck));
-                }
-
-                approved = recheck;
-
-                // Again right before the keys: a modifier the user pressed while the guard activated the target would
-                // turn them into shortcuts, and the keys' own modifier key-ups would release it
-                if (ModifiersDownNow("sent") is { } downNow)
-                {
-                    return held.Apply(Finish(new SendKeysResult(false, keys, downNow.Error, InputErrorCode.ModifiersHeld)
+                    var batch = batches[b];
+                    if (b > 0)
                     {
-                        HeldModifiers = downNow.Names
-                    }, approved));
+                        await Task.Delay(delayMs, call.Token).ConfigureAwait(false);
+                    }
+
+                    call.Token.ThrowIfCancellationRequested();
+
+                    // Right before every batch: the window in front may have changed while the guard read it, or since the
+                    // last batch
+                    var recheck = _guard.RecheckKeyboard(approved);
+                    if (!recheck.Allowed)
+                    {
+                        return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
+                            recheck.ErrorCode) { KeysSent = keysSent }, recheck));
+                    }
+
+                    approved = recheck;
+
+                    // Again right before the keys: a modifier the user pressed while the guard activated the target would
+                    // turn them into shortcuts, and the keys' own modifier key-ups would release it. A modifier an earlier
+                    // batch of these keys holds down ({SHIFT down}) is the server's own.
+                    if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
+                    {
+                        return held.Apply(Finish(new SendKeysResult(false, keys,
+                            b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                        {
+                            HeldModifiers = downNow.Names,
+                            KeysSent = keysSent
+                        }, approved));
+                    }
+
+                    // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
+                    // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
+                    if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
+                    {
+                        return held.Apply(Finish(new SendKeysResult(false, keys,
+                            b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
+                        {
+                            KeysSent = keysSent
+                        }, approved));
+                    }
+
+                    var sent = Send(batch, approved);
+                    if (sent.PausedByUser)
+                    {
+                        return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)),
+                            InputErrorCode.PausedByUser) { KeysSent = keysSent }, approved));
+                    }
+
+                    if (!sent.Complete)
+                    {
+                        if (delayMs == 0)
+                        {
+                            keysSent = StepsWithin(spec, sent.Inserted);
+                        }
+
+                        return held.Apply(Finish(new SendKeysResult(false, keys,
+                            $"SendInput inserted only {sent.Inserted} of {sent.Requested} events, so {keysSent} of {total} keys were sent " +
+                            "completely; the keys it had pressed were released again. Check the window before sending the rest.",
+                            InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
+                    }
+
+                    keysSent = delayMs == 0 ? total : keysSent + 1;
                 }
 
-                // Right before the keys: a paste must not put the user's clipboard where the agent can read it
-                if (PasteRefusal(inputs, approved) is { } pasteRefused)
-                {
-                    return held.Apply(Finish(new SendKeysResult(false, keys, pasteRefused, InputErrorCode.PasteNotAllowed), approved));
-                }
-
-                var sent = Send(inputs, approved);
-                if (sent.PausedByUser)
-                {
-                    return held.Apply(Finish(new SendKeysResult(false, keys, PausedMessage("Nothing was sent."), InputErrorCode.PausedByUser), approved));
-                }
-
-                if (!sent.Complete)
-                {
-                    return held.Apply(Finish(new SendKeysResult(false, keys,
-                        "SendInput failed to send all keystrokes; the keys it had pressed were released again", InputErrorCode.SendInputFailed), approved));
-                }
-
-                return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys), approved));
+                return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
-                var paused = new SendKeysResult(false, keys, PausedMessage("Nothing was sent."), InputErrorCode.PausedByUser);
-                return held.Apply(approved == null ? paused : Finish(paused, approved));
+                var paused = new SendKeysResult(false, keys, PausedMessage(KeysSentSoFar(keysSent, total, approved)), InputErrorCode.PausedByUser);
+                return held.Apply(approved == null ? paused : Finish(paused with { KeysSent = keysSent }, approved));
             }
             finally
             {
@@ -724,6 +784,39 @@ public partial class InputSimulationService : IInputSimulationService
             }
         }
     }
+
+    /// <summary>send_keys waits at most this long between keys (delayMs).</summary>
+    public const int MaxSendKeysDelayMs = 500;
+
+    /// <summary>
+    /// The layout keys are mapped with: that of the target window's thread, or of the foreground window's when there is no
+    /// target, with Caps Lock as it is now; the invariant layout when the server has no layout queries (tests).
+    /// </summary>
+    private KeyboardLayout LayoutFor(InputTarget target) => _keyboardLayout == null
+        ? KeyboardLayout.Invariant
+        : KeyboardLayout.Of(_keyboardLayout, target.WindowHandle ?? 0, _inputWrapper.IsKeyToggled(NativeEnums.VK_CAPITAL) == true);
+
+    /// <summary>How many steps of <paramref name="spec"/> lie wholly within its first <paramref name="inserted"/> events.</summary>
+    private static int StepsWithin(KeySpec spec, int inserted)
+    {
+        var steps = 0;
+        foreach (var step in spec.Steps)
+        {
+            inserted -= step.Count;
+            if (inserted < 0)
+            {
+                break;
+            }
+
+            steps++;
+        }
+
+        return steps;
+    }
+
+    private static string KeysSentSoFar(int keysSent, int total, InputGuardResult? approved) => keysSent == 0
+        ? "Nothing was sent."
+        : $"Sending stopped after {keysSent} of {total} keys, which went to {Describe(approved?.ReceivingWindow)}.";
 
     /// <summary>
     /// One, two or three clicks at a point: the guard checks the window at the point before the cursor moves, and again
@@ -1006,11 +1099,19 @@ public partial class InputSimulationService : IInputSimulationService
     }
 
     /// <summary>
-    /// The modifier keys that are down right before a batch, with the ModifiersHeld message; null when none is.
+    /// The modifier keys that are down right before a batch, with the ModifiersHeld message; null when none is. With
+    /// <paramref name="ignoreServerHeld"/>, modifiers of the kinds the server itself holds down are left out.
     /// </summary>
-    private (IReadOnlyList<string> Names, string Error)? ModifiersDownNow(string action)
+    private (IReadOnlyList<string> Names, string Error)? ModifiersDownNow(string action, bool ignoreServerHeld = false)
     {
         var down = _session.ReadModifiersDown();
+        if (ignoreServerHeld)
+        {
+            // A modifier of the kind the server holds down is taken for the server's own
+            var own = _session.ServerHeld.Where(h => h.IsModifier).Select(h => SendKeysParser.ModifierOf(h.Code)).ToList();
+            down = down.Where(key => !own.Contains(SendKeysParser.ModifierOf(key.Code))).ToList();
+        }
+
         if (down.Count == 0)
         {
             return null;
@@ -1206,17 +1307,69 @@ public partial class InputSimulationService : IInputSimulationService
         }
     }
 
-    /// <summary>A key-down and key-up as Unicode for every UTF-16 code unit of <paramref name="text"/>.</summary>
-    private static List<InputEvent> UnicodeInputs(string text)
+    /// <summary>The text with every Windows line break (\r\n) and every lone \r as \n.</summary>
+    private static string NormalizeLineBreaks(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    /// <summary>
+    /// The events that type <paramref name="text"/>: a key-down and key-up as Unicode for every UTF-16 code unit, except a
+    /// line break or tab that <paramref name="mode"/> presses as a key.
+    /// </summary>
+    private static List<InputEvent> TextInputs(string text, TextControlChars mode, KeyboardLayout layout)
     {
         var inputs = new List<InputEvent>(text.Length * 2);
         foreach (var character in text)
         {
-            inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
-            inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
+            switch (character)
+            {
+                case '\n' when mode == TextControlChars.Keys:
+                    AddPress(NativeEnums.VK_RETURN);
+                    break;
+                case '\n' when mode == TextControlChars.ShiftEnter:
+                    inputs.Add(KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYDOWN, layout));
+                    AddPress(NativeEnums.VK_RETURN);
+                    inputs.Add(KeyEvent(NativeEnums.VK_SHIFT, NativeEnums.KEYEVENTF_KEYUP, layout));
+                    break;
+                case '\t' when mode == TextControlChars.Keys:
+                    AddPress(NativeEnums.VK_TAB);
+                    break;
+                default:
+                    inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYDOWN));
+                    inputs.Add(InputEvent.Unicode(character, NativeEnums.KEYEVENTF_KEYUP));
+                    break;
+            }
         }
 
         return inputs;
+
+        void AddPress(ushort virtualKey)
+        {
+            inputs.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYDOWN, layout));
+            inputs.Add(KeyEvent(virtualKey, NativeEnums.KEYEVENTF_KEYUP, layout));
+        }
+    }
+
+    private static InputEvent KeyEvent(ushort virtualKey, uint flags, KeyboardLayout layout)
+    {
+        var (scan, extended) = layout.ScanOf(virtualKey);
+        return InputEvent.Key(virtualKey, flags | (extended ? NativeEnums.KEYEVENTF_EXTENDEDKEY : 0), scan);
+    }
+
+    /// <summary>How many characters of <paramref name="batch"/> have all their events within the first <paramref name="inserted"/>.</summary>
+    private static int CharactersWithin(string batch, TextControlChars mode, int inserted)
+    {
+        var characters = 0;
+        foreach (var character in batch)
+        {
+            inserted -= character == '\n' && mode == TextControlChars.ShiftEnter ? 4 : 2;
+            if (inserted < 0)
+            {
+                break;
+            }
+
+            characters++;
+        }
+
+        return characters;
     }
 
     private static string Describe(WindowSummary? window) => window switch

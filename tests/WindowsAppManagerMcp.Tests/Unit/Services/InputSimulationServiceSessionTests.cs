@@ -61,10 +61,10 @@ public class InputSimulationServiceSessionTests
                 var scroll = sut.Scroll(100, 100, 3, 0, InputTarget.None, releaseHeldModifiers, token);
                 return (scroll.Success, scroll.ErrorCode, scroll.Error, scroll.HeldModifiers, scroll.ReleasedModifiers);
             case "type_text":
-                var typed = await sut.TypeTextAsync("hello", 0, InputTarget.None, releaseHeldModifiers, token);
+                var typed = await sut.TypeTextAsync("hello", 0, InputTarget.None, releaseHeldModifiers, null, token);
                 return (typed.Success, typed.ErrorCode, typed.Error, typed.HeldModifiers, typed.ReleasedModifiers);
             default:
-                var keys = await sut.SendKeysAsync("^c", InputTarget.None, releaseHeldModifiers, token);
+                var keys = await sut.SendKeysAsync("^c", InputTarget.None, releaseHeldModifiers, 0, token);
                 return (keys.Success, keys.ErrorCode, keys.Error, keys.HeldModifiers, keys.ReleasedModifiers);
         }
     }
@@ -211,7 +211,7 @@ public class InputSimulationServiceSessionTests
         };
 
         // Act
-        var act = () => CreateSut().TypeTextAsync("abcdefghij", 10, InputTarget.None, false, cancel.Token);
+        var act = () => CreateSut().TypeTextAsync("abcdefghij", 10, InputTarget.None, false, null, cancel.Token);
 
         // Assert - the SDK reports the cancellation; nothing more is typed and nothing stays down
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -241,7 +241,7 @@ public class InputSimulationServiceSessionTests
         using var gate = InputGate.Enter();
         using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
-        var act = () => CreateSut(Timeout).SendKeysAsync("^c", InputTarget.None, false, cancel.Token);
+        var act = () => CreateSut(Timeout).SendKeysAsync("^c", InputTarget.None, false, 0, cancel.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>().WaitAsync(Timeout);
         _input.Batches.Should().BeEmpty();

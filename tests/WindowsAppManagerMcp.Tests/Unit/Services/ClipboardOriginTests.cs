@@ -764,7 +764,7 @@ public class ClipboardOriginTests
     [Fact]
     public void WinV_OpensClipboardHistory()
     {
-        ClipboardOrigin.PasteTrigger(SendKeysParser.Parse("#v", windowsModifier: true)).Should().Be(ClipboardPasteKind.History);
+        ClipboardOrigin.PasteTrigger(SendKeysParser.Parse("#v")).Should().Be(ClipboardPasteKind.History);
     }
 
     [Fact]

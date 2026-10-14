@@ -105,19 +105,26 @@ public interface IInputSimulationService
     /// <param name="delayBetweenKeysMs">Delay between keystrokes in milliseconds (0-100).</param>
     /// <param name="target">The target window, or <see cref="InputTarget.None"/>.</param>
     /// <param name="releaseHeldModifiers">Release modifier keys that are down before typing, instead of returning ModifiersHeld.</param>
+    /// <param name="controlChars">
+    /// What the text's line breaks (a Windows line break and a lone carriage return count as a line feed) and tabs do;
+    /// null refuses text that has any (InvalidArguments).
+    /// </param>
     /// <param name="cancellationToken">The request's token: cancelling it stops typing between batches.</param>
     Task<TypeTextResult> TypeTextAsync(string text, int delayBetweenKeysMs, InputTarget target, bool releaseHeldModifiers,
-        CancellationToken cancellationToken);
+        TextControlChars? controlChars, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sends key combinations using SendKeys-style syntax.
-    /// Supports special keys like {ENTER}, {TAB}, {F1}-{F12}, and modifiers ^ (Ctrl), % (Alt), + (Shift).
-    /// Destructive chords need a target (DestructiveChordNeedsTarget); the user's pause hotkey chord is
-    /// refused (PauseChordNotAllowed).
+    /// Sends keys and key combinations in send_keys' grammar (<see cref="KeySpecParser"/>), every character mapped with the
+    /// keyboard layout of the window they go to. Destructive chords need a target (DestructiveChordNeedsTarget); the user's
+    /// pause hotkey chord is refused (PauseChordNotAllowed).
     /// </summary>
-    /// <param name="keys">The keys to send in SendKeys format.</param>
+    /// <param name="keys">The keys to send.</param>
     /// <param name="target">The target window, or <see cref="InputTarget.None"/>.</param>
     /// <param name="releaseHeldModifiers">Release modifier keys that are down first, instead of returning ModifiersHeld.</param>
-    /// <param name="cancellationToken">The request's token.</param>
-    Task<SendKeysResult> SendKeysAsync(string keys, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
+    /// <param name="delayMs">
+    /// Milliseconds to wait between keys (0 to <see cref="InputSimulationService.MaxSendKeysDelayMs"/>); 0 sends them all in
+    /// one SendInput call.
+    /// </param>
+    /// <param name="cancellationToken">The request's token: cancelling it stops the keys between batches.</param>
+    Task<SendKeysResult> SendKeysAsync(string keys, InputTarget target, bool releaseHeldModifiers, int delayMs, CancellationToken cancellationToken);
 }

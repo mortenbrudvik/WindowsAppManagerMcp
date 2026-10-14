@@ -5332,12 +5332,12 @@
     {
       "name": "send_keys",
       "title": "Send Keys",
-      "description": "Send keys and key combinations. Use {KEY} for special keys (ENTER, TAB, F1-F12, DELETE, etc.), ^ for Ctrl, % for Alt, + for Shift. Examples: '^c' (Ctrl+C), '{TAB}' (Tab key), '+{HOME}' (Shift+Home). Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle; the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call. Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination. The user's pause hotkey chord is refused (PauseChordNotAllowed). A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed). Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.",
+      "description": "Send keys and key combinations (syntax under keys). Examples: '^c' (Ctrl+C), '{TAB}', '+{HOME}' (Shift+Home), '{DOWN 3}{ENTER}'. Pass windowHandle with the window you mean. Without it the keys go to the current foreground window, whichever it is, so call get_foreground_window immediately before and check its handle; the keys are refused when that window is the agent's own host (terminal, editor or chat app; TargetIsAgentHost). Refused, with nothing sent, for windows of apps running as administrator (TargetElevated), apps the user's policy denies (TargetDeniedByPolicy), a locked session (SessionLocked) or a UAC prompt (DesktopUnavailable). The result reports receivingWindow (where the input went) and foregroundAfter. While the user has paused input with the pause hotkey, nothing is sent (PausedByUser): stop and ask the user, and never try to resume. Refused while a modifier key is held down (ModifiersHeld) unless releaseHeldModifiers is true, and after waiting 30 s for another call (InputBusy). Chords that close, quit or lock (closing a window or tab, quitting an app, Task Manager) are refused without windowHandle (DestructiveChordNeedsTarget). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key, Alt+Space, or a closing chord) must be the last key: keys after it are refused (KeysAfterFocusChange), so send them in a new call. Never send keys that close, quit, submit or delete to a window you have not targeted. To close a window, use close_window with its handle instead of a key combination. The user's pause hotkey chord is refused (PauseChordNotAllowed). A paste (^v, +{INSERT}) is sent only when the clipboard holds what set_clipboard put there, your own copy, or content the user let get_clipboard read; otherwise, and for content marked private, it is refused (PasteNotAllowed). Keys that copy and then paste (^c^v) are refused too (PasteNotAllowed): send the copy and the paste in separate calls.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "keys": {
-            "description": "Keys to send in SendKeys format. Special keys: {ENTER}, {TAB}, {ESC}, {BACKSPACE}, {DELETE}, {INSERT}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {HOME}, {END}, {PGUP}, {PGDN}, {F1}-{F12}, {SPACE}. Modifiers: ^ (Ctrl), % (Alt), + (Shift).",
+            "description": "Keys to send. Characters type themselves on the window's keyboard layout. ^ Ctrl, % Alt, + Shift, # Win hold for the next key or (group): '^s', '+(abc)'. {NAME} is a key (ENTER, TAB, ESC, BACKSPACE, DELETE, UP, DOWN, LEFT, RIGHT, HOME, END, PGUP, PGDN, F1-F24, NUMPAD0-9, WIN, APPS, VOLUME_MUTE...), {NAME n} presses it n times (1-100), {SHIFT down}...{SHIFT up} holds it. ~ is Enter. Type + ^ % # ~ ( ) { } as {+} {^} {%} {#} {~} {(} {)} {{} {}}: '100{%}'.",
             "type": "string"
           },
           "windowHandle": {
@@ -5438,6 +5438,11 @@
               "state",
               "screenshot"
             ]
+          },
+          "delayMs": {
+            "description": "Milliseconds between keys, each press of {NAME n} counting (0-500, default 0: one batch). For apps that drop fast keys.",
+            "type": "integer",
+            "default": 0
           }
         },
         "required": [
@@ -6360,6 +6365,20 @@
             "description": "Delay between keystrokes in milliseconds (0-100, default 0). Use for visible typing effect.",
             "type": "integer",
             "default": 0
+          },
+          "controlChars": {
+            "description": "What line breaks and tabs do; required when the text has any. 'unicode': typed as characters, no Enter or Tab key (editors insert them). 'keys': Enter and Tab (can send a chat message or submit a form). 'shiftEnter': Shift+Enter (a new line in chat apps), tabs as characters. Default: none",
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "unicode",
+              "keys",
+              "shiftEnter",
+              null
+            ]
           },
           "windowHandle": {
             "description": "The window the input is for (handle from find_windows). Strongly recommended: the server brings it to the foreground first and sends the keys only while it, or a dialog it owns, is the foreground window (otherwise errorCode TargetNotForeground, or BlockedByModal when a modal dialog disables it). A child window's handle stands for its top-level window; click the field first to put the caret in it. Default: none",

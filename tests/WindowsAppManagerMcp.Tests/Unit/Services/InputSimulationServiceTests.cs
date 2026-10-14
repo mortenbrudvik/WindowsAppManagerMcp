@@ -1001,7 +1001,7 @@ public class InputSimulationServiceTests
         // Assert - a syntax error to fix, not a key name to change (roadmap M2.2)
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.InvalidKeySpecification);
-        result.Error.Should().Contain("Unclosed brace");
+        result.Error.Should().Contain("is not closed");
         VerifyNoInputSent();
     }
 

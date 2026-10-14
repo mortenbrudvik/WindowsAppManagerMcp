@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using static WindowsAppManagerMcp.FixtureApp.FixtureContract;
 
@@ -65,6 +66,9 @@ internal sealed class DocumentWindow : Window
         panel.Children.Add(save);
         panel.Children.Add(text);
         Content = panel;
+
+        // The text box has keyboard focus when the window is activated, so typing into the document reaches it
+        FocusManager.SetFocusedElement(this, text);
 
         ContentRendered += (_, _) => events.Write(Events.DocumentOpened, ("hwnd", (long)Handle));
         Closing += OnClosing;

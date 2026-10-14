@@ -36,12 +36,12 @@ public class ActionObserveToolTests
         _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget _, bool _, CancellationToken _) => new ClickResult(true, x, y, "double") { ReceivingWindow = notepad });
-        _input.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _input.Setup(s => s.TypeTextAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<TextControlChars?>(), It.IsAny<CancellationToken>()))
             .Callback(() => _order.Add("type"))
-            .ReturnsAsync((string text, int _, InputTarget _, bool _, CancellationToken _) =>
+            .ReturnsAsync((string text, int _, InputTarget _, bool _, TextControlChars? _, CancellationToken _) =>
                 new TypeTextResult(true, text, text.Length) { ReceivingWindow = notepad });
-        _input.Setup(s => s.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string keys, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(true, keys) { ReceivingWindow = notepad });
+        _input.Setup(s => s.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string keys, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(true, keys) { ReceivingWindow = notepad });
         _dialogs.Setup(d => d.RespondAsync(It.IsAny<DialogResponseRequest>(), It.IsAny<CancellationToken>()))
             .Callback(() => _order.Add("press"))
             .ReturnsAsync(new DialogResponseResult(true, Dialog, "Notepad", DialogClosed: true));

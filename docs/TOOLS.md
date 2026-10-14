@@ -49,7 +49,7 @@ The user, not the agent, decides which applications the agent may act on. The se
 |----------|---------|---------|
 | `WAM_DENY_PROCESSES` | `1Password, Bitwarden, KeePass, KeePassXC, LastPass, Dashlane, Keeper, KeeperPasswordManager, Enpass, NordPass, ProtonPass, Proton Pass, RoboForm, pwsafe, CredentialUIBroker, CredDialogHost, consent, CHXSmartScreen, smartscreen, SecHealthUI, SecurityHealthHost, Microsoft.AAD.BrokerPlugin, WWAHost` | Image names (with or without `.exe`, separated by commas or semicolons; a name may contain spaces, and whitespace right after `.exe` also separates) the agent may not act on. The default covers common password managers, the Windows credential prompts (`CredentialUIBroker`, `CredDialogHost`), the elevation prompt (`consent`), the SmartScreen prompt "Windows protected your PC" (`CHXSmartScreen`, and `smartscreen`, the reputation broker that starts it) and the Windows Security app (`SecHealthUI`) and its notifications and prompts (`SecurityHealthHost`), and the Entra ID and Microsoft account sign-in windows (`Microsoft.AAD.BrokerPlugin`, and `WWAHost`, which shows the one of Settings' "Access work or school" and other web-based system UIs; both take passwords); with it, the policy also refuses Windows' "Open File - Security Warning" in any process (see below). A value replaces the default list, so a list without the entry `default` drops these; `default` puts the default list back in, and `none` alone turns it off |
 | `WAM_ALLOW_PROCESSES` | not set | When set, the only image names the agent may act on. The deny list still wins |
-| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key here; `send_keys` itself has no Windows-key modifier, so `#l` waits for one). `default` and `none` work as above. An entry that is not one chord (such as a comma-separated list) is ignored and logged, and the default chords then stay in force as well |
+| `WAM_DESTRUCTIVE_CHORDS` | `%{F4} ^w ^q ^{F4} ^+{ESC} #l` | The `send_keys` chords that need `windowHandle`, in `send_keys` syntax, separated by spaces (`#` is the Windows key, as in `send_keys`; Windows ignores an injected Win+L, so `#l` is listed in case it does not; name a punctuation key other than `{+}` `,` `-` `.` by its key, such as `^{OEM_2}`, because `send_keys` sends the key of the target's layout). `default` and `none` work as above. An entry that is not one chord (such as a comma-separated list) is ignored and logged, and the default chords then stay in force as well |
 
 The server logs the deny list, the allow list and the chords in force to stderr when it starts, so a mistyped value shows up there.
 
@@ -3773,7 +3773,7 @@ An argument the input tool does not declare is refused before anything else, wit
 
 Right before every batch of input it sends, each input tool checks where the input would land. The checks run in this order; the first one that fails is returned with `success: false`, and nothing (more) is sent:
 
-1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
+1. **The request.** `send_keys` with a chord that closes, quits or locks and no `windowHandle`: `DestructiveChordNeedsTarget`. The default chords are `%{F4}`, `^w`, `^q`, `^{F4}`, `^+{ESC}` and `#l`; the same key with more modifiers counts too, such as `^+w`. The user can change the list with `WAM_DESTRUCTIVE_CHORDS` (see [Target policy](#target-policy)). Then, with or without `windowHandle`, `send_keys` with more keys after a chord that hands the keyboard to another window: Alt+Tab, Alt+Esc, Ctrl+Esc, the Windows key (`{WIN}`) or any chord with it (`#r` opens Run), Alt+Space (the window menu) or one of the destructive chords (`KeysAfterFocusChange`). Those keys would reach a window the guard never checked, such as the agent's own terminal after Alt+Tab. Make that chord the last key and send the rest in a new call, which is checked again.
 2. **The desktop.** The session is locked (`SessionLocked`), or the input desktop cannot be reached because a UAC prompt or the Ctrl+Alt+Del screen is shown or the session is disconnected (`DesktopUnavailable`).
 3. **The target** (`windowHandle`, when given). It must be a window (`InvalidHandle`); a child window's handle stands for its top-level window. A target named by a `window` selector is resolved before the call waits for the input gate, and checked against the selector again once it holds the gate, before the first batch: a window that no longer matches (another document or tab, another title, a reused handle) is refused with `HandleMismatch`, and a `titleRegex` that runs longer than 100 ms on the window's title then with `InvalidArguments`, as the window tools report it; nothing is sent. Then the window checks below. Then it must not be disabled by a modal dialog (`BlockedByModal`, with the dialog in `blockingWindow`): clicks on such a window are ignored, and keys would go to the dialog.
 4. **The receiving window.** For keys, the foreground window: with a target, the server first brings the target to the front (as [focus_window](#focus_window) does), and the foreground window must then be the target or a window it owns, such as its dialog (`TargetNotForeground`); a modal dialog of a window the target owns is `BlockedByModal`, so keys never answer a modal prompt. For the mouse, the top-level window at the point (no window there: `TargetOccluded`). With a target it must be the target, a window the target owns, or a popup (no title bar) of the target's process or of a program the target started itself (a direct child process, such as the WebView2 process that shows an app's dropdowns), otherwise `TargetOccluded`. Another main window of the same process counts as covering the target, and so do the desktop and the taskbar. The child-process rule does not apply to File Explorer windows and the desktop shell (explorer.exe), which start almost every program. Then the window checks below.
@@ -3817,7 +3817,7 @@ Every input result reports:
 | `BlockedByModal` | A modal dialog disables the target, or opened while typing | Deal with `blockingWindow` first (read it with [respond_to_dialog](#respond_to_dialog) and its handle), or ask the user |
 | `TargetLostFocus` | Keys: another window came to the front before or while the keys were sent; `charactersTyped` characters were typed | Check the field, then type the rest |
 | `DestructiveChordNeedsTarget` | `send_keys`: a closing, quitting or locking chord without `windowHandle` | Pass `windowHandle`; to close a window, use [close_window](#close_window) |
-| `KeysAfterFocusChange` | `send_keys`: keys after a chord that hands the keyboard to another window | Make that chord the last key; send the rest in a new call |
+| `KeysAfterFocusChange` | `send_keys`: keys after a chord that hands the keyboard to another window, a Windows-key chord included | Make that chord the last key; send the rest in a new call. For the character #, write `{#}` |
 | `CursorNotAtPoint` | Mouse: the pointer does not stay at the point; nothing was sent | Try again; if it repeats, ask the user (a game or remote session may hold the mouse) |
 | `CursorClamped` | Mouse: the input **was sent**, but right after it the pointer is not at the point (`actualX`, `actualY`): it was confined to a window just then, or the user or the application moved it at once. The click or wheel may have landed where the pointer is | Look at the window (a capture or get_ui_elements) before you send it again; do not simply retry |
 | `WheelFollowsFocus` | `scroll`: Windows sends the wheel to the focused window ("Scroll inactive windows" is off, or cannot be read), and the window at the point is not in front | Bring the window to the front with [focus_window](#focus_window), then scroll again |
@@ -3830,7 +3830,7 @@ Every input result reports:
 | `StaleCapture` | Mouse with `captureId` (or `space` `window`/`client`): the captured window moved or resized by more than 2 pixels, closed, was minimized or was replaced, or the monitors changed, since the capture (or since the point was converted); nothing was sent | Capture again and use the new `captureId` |
 | `CaptureNotFound` | Mouse: the `captureId` is unknown, from an earlier run, older than 10 minutes or pushed out by 32 newer captures; nothing was sent | Capture again |
 | `HandleMismatch` | The `window` selector's window no longer matched it once the call held the input gate (another document or tab, another title, a reused handle); nothing was sent. As a tool error: the selector's `handle` came with filters the window no longer matches | Locate the window again; do not retry the handle |
-| `InvalidArguments` | The `window` selector's `titleRegex` ran longer than 100 ms on the window's title when it was checked again inside the input gate; nothing was sent. As a tool error: the arguments cannot be used, or the call passed an argument the tool does not declare (the error names it, lists the tool's parameters and, for a near miss, the declared name it most likely stands for; see [Undeclared arguments](#undeclared-arguments)) | Use a simpler pattern, or `titleContains`; fix the argument's name |
+| `InvalidArguments` | `type_text`: the text has a line break or a tab and no `controlChars` (see [Line breaks and tabs](#line-breaks-and-tabs)); nothing was typed. The `window` selector's `titleRegex` ran longer than 100 ms on the window's title when it was checked again inside the input gate; nothing was sent. As a tool error: the arguments cannot be used, or the call passed an argument the tool does not declare (the error names it, lists the tool's parameters and, for a near miss, the declared name it most likely stands for; see [Undeclared arguments](#undeclared-arguments)) | Use a simpler pattern, or `titleContains`; fix the argument's name |
 | `WindowNotFound`, `AmbiguousWindow` | Tool errors: the `window` selector named no window, or several (`candidates`); nothing was sent | See [Window selectors](#window-selectors) |
 
 ### click
@@ -4295,7 +4295,7 @@ The wheel over a combo box, slider or number box changes its value, so point at 
 
 ### type_text
 
-Type text by simulating keyboard input, using Unicode characters, so any language works. Pass `windowHandle`: the server brings that window to the front first, and checks the foreground window again every 32 characters ([Input guard](#input-guard)). Without `windowHandle` the text goes to whatever window is in the foreground; confirm it with `get_foreground_window` first.
+Type text by simulating keyboard input, using Unicode characters, so any language works. Pass `windowHandle`: the server brings that window to the front first, and checks the foreground window again every 32 characters ([Input guard](#input-guard)). Without `windowHandle` the text goes to whatever window is in the foreground; confirm it with `get_foreground_window` first. Text with a line break or a tab needs `controlChars` (see [Line breaks and tabs](#line-breaks-and-tabs)).
 
 <!-- tools:begin params:type_text -->
 **Parameters:**
@@ -4303,6 +4303,7 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 |-----------|------|----------|---------|-------------|
 | text | string | Yes | - | The text to type |
 | delayMs | integer | No | 0 | Delay between keystrokes in milliseconds (0-100). Use for visible typing effect. |
+| controlChars | string (one of: `"unicode"`, `"keys"`, `"shiftEnter"`) | No | none | What line breaks and tabs do; required when the text has any (`InvalidArguments` otherwise, nothing typed). See [Line breaks and tabs](#line-breaks-and-tabs) |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
@@ -4362,62 +4363,107 @@ Type text by simulating keyboard input, using Unicode characters, so any languag
 }
 ```
 
-When another window comes to the front while typing, the call stops with `TargetLostFocus`; when a modal dialog of the target opens (such as a "Save changes?" prompt), it stops with `BlockedByModal` and the dialog in `blockingWindow`. `charactersTyped` says how many characters were typed (into the window that was in front) before it stopped. The user's [pause hotkey](#pause-hotkey) stops typing between batches (`PausedByUser`), and so does a modifier key going down (`ModifiersHeld`); cancelling the request stops it too. An empty `text` returns `EmptyText`.
+#### Line breaks and tabs
+
+A Windows line break (`\r\n`) and a lone `\r` count as one `\n`, and `charactersTyped` counts the text that way (`text` echoes it as given). Text that contains a `\n` or a tab needs `controlChars`; without it the call is refused with `InvalidArguments` and nothing is typed (roadmap M4.1). There is no default because each choice does something different in a different app: Enter sends a chat message or submits a form, and Tab moves to the next field or Excel cell.
+
+| controlChars | A line break (`\n`) | A tab |
+|--------------|----------------------|-------|
+| `unicode` | The character U+000A, typed like any other character: no Enter key is pressed. Most editors insert a line break; a dialog's default button, a form and a chat box's send do not react to it, and some single-line fields ignore it | The character U+0009: no Tab key, so the focus does not move; editors insert a tab |
+| `keys` | The Enter key, as a person typing presses it: it can send a chat message, submit a form, or move down a column in Excel | The Tab key: it moves to the next field or cell |
+| `shiftEnter` | Shift+Enter: a new line without sending in chat apps (Teams, Slack, Discord) and in browser text areas. Excel moves up a cell on it, so do not use it there | The character U+0009, as with `unicode` |
+
+**Example with line breaks:**
+> "Write a two-line message in the chat box without sending it"
+
+```json
+{
+  "name": "type_text",
+  "arguments": {
+    "text": "Hi team,\nthe build is green.",
+    "controlChars": "shiftEnter",
+    "windowHandle": 12345
+  }
+}
+```
+
+When another window comes to the front while typing, the call stops with `TargetLostFocus`; when a modal dialog of the target opens (such as a "Save changes?" prompt), it stops with `BlockedByModal` and the dialog in `blockingWindow`. `charactersTyped` says how many characters were typed (into the window that was in front) before it stopped. The user's [pause hotkey](#pause-hotkey) stops typing between batches (`PausedByUser`), and so does a modifier key going down (`ModifiersHeld`); cancelling the request stops it too. An empty `text` returns `EmptyText`, and text with a line break or tab but no `controlChars` returns `InvalidArguments`.
 
 ---
 
 ### send_keys
 
-Send keys and key combinations, using SendKeys-style syntax. Pass `windowHandle`: the server brings that window to the front first and sends the keys only while it, or a dialog it owns, is in front ([Input guard](#input-guard)). Without `windowHandle` the keys go to whatever window is in the foreground; confirm it with `get_foreground_window` first. Chords that close, quit or lock (such as Alt+F4) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, `{WIN}`, Alt+Space, or a closing chord) must be the last key of the call (`KeysAfterFocusChange`).
+Send keys and key combinations. Pass `windowHandle`: the server brings that window to the front first and sends the keys only while it, or a dialog it owns, is in front ([Input guard](#input-guard)). Without `windowHandle` the keys go to whatever window is in the foreground; confirm it with `get_foreground_window` first. Chords that close, quit or lock (such as Alt+F4) are refused without `windowHandle` (`DestructiveChordNeedsTarget`). A chord that hands the keyboard to another window (Alt+Tab, Alt+Esc, Ctrl+Esc, `{WIN}` or any Windows-key chord, Alt+Space, or a closing chord) must be the last key of the call (`KeysAfterFocusChange`).
+
+**The keyboard layout** (roadmap M4.1). Every character is typed with the key that types it on the keyboard layout of the target window (of the window in front without `windowHandle`), with the Shift or AltGr it needs and the key's scan code, as a keyboard sends it. So `Hello` keeps its capital, `^-` and `%.` reach the application as Ctrl and Alt chords of the real key (a shortcut does not fire on a Unicode character), `@` is AltGr+2 on a Norwegian keyboard and `1` is Shift+& on a French one, and applications that read keys rather than characters (Office KeyTips, games, remote desktop and virtual machine clients) get them. Caps Lock is allowed for: with it on, `Hello` still comes out as written (Shift is added or dropped wherever the layout lets Caps Lock flip the key; never in a chord), and a `{CAPSLOCK}` in the keys counts for the characters after it. A character the layout has no key for, or only a dead key (an accent key that waits for the next key, such as `~` and `^` on a Norwegian keyboard), is sent as Unicode. In a chord with Ctrl, Alt or Win, a letter or digit the layout has no key for is its Latin A-Z or 0-9 key, so `^c` copies on a Russian or Greek layout too. AltGr is sent as the left Ctrl and the right Alt key, and the chord checks read that pair as a character, not as Ctrl+Alt: `user@example.de` on a German keyboard (where `@` is AltGr+Q) is not Ctrl+Q. An explicit `^` or `%` still counts (`^@` is a chord).
 
 <!-- tools:begin params:send_keys -->
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| keys | string | Yes | - | Keys to send in SendKeys format (see syntax below) |
+| keys | string | Yes | - | Keys to send (see the syntax below) |
 | windowHandle | integer | No | none | The window the keys are for. The server brings it to the front first and sends only while it, or a dialog it owns, is in front (see [Input guard](#input-guard)) |
 | window | object | No | - | Alternative to windowHandle: the window as a selector, resolved to exactly one window or refused (WindowNotFound; AmbiguousWindow with candidates), then used as windowHandle. Filters as in find_windows (processName is the whole name); index picks a match in z-order; foreground is the window in front, and alone counts as no windowHandle; handle plus filters must still match (HandleMismatch). |
 | allowHostTarget | boolean | No | false | Allow the agent's own host window, only when it is `windowHandle` (or `window.handle`; refused beside a selector without a handle). Set it only when the user explicitly asked |
 | releaseHeldModifiers | boolean | No | false | Send modifier keys that are down (Shift, Ctrl, Alt, Windows) up first, instead of refusing with `ModifiersHeld`. Only when nobody is pressing them (a stuck key) or the user asked (see [Input guard](#input-guard)) |
 | observe | string (one of: `"none"`, `"state"`, `"screenshot"`) | No | "none" | What to return after the action: 'none' (default), 'state' (get_desktop_state's default observation of the window acted on, or of the window in front once that closed, as observed; needs get_desktop_state to be served) or 'screenshot' (as state, plus a capture of that window as image content; needs capture_window too). |
+| delayMs | integer | No | 0 | Milliseconds to wait between keys, 0-500 (more is clamped to 500). 0 sends every key in one batch; see [Pacing](#pacing-and-progress) |
 <!-- tools:end params:send_keys -->
 
-**SendKeys Syntax:**
+**Syntax:**
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `{KEY}` | Special key by name | `{ENTER}`, `{TAB}`, `{F1}` |
-| `^` | Control modifier | `^c` = Ctrl+C |
-| `%` | Alt modifier | `%f` = Alt+F |
-| `+` | Shift modifier | `+{HOME}` = Shift+Home |
-| Regular characters | Sent directly | `abc` types "abc" |
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| A character | Types itself, with the key of the layout (see above) | `abc`, `Hello, world!` |
+| `^` `%` `+` `#` | Ctrl, Alt, Shift and the Windows key: held down for the next key or group | `^c` Ctrl+C, `+{HOME}`, `^+{END}`, `#e` Win+E |
+| `(...)` | A group: the modifiers before it stay down for every key in it | `+(abc)` types ABC, `^(ac)` |
+| `{NAME}` | A named key (table below); names are case-insensitive, and `VK_` and underscores are optional | `{ENTER}`, `{F5}`, `{numpad7}`, `{VK_OEM_1}` |
+| `{NAME n}` | The key pressed n times, 1 to 100 | `{DOWN 3}`, `{BACKSPACE 10}`, `{a 3}` |
+| `{NAME down}`, `{NAME up}` | Press and release a key apart, within the call; a key still down at the end of the call is released there | `{SHIFT down}{RIGHT 5}{SHIFT up}` |
+| `~` | Enter | `abc~` |
+| `{c}` (one character) | The character itself: the way to type the characters the grammar uses | `{+}` `{^}` `{%}` `{#}` `{~}` `{(}` `{)}` `{{}` `{}}`; `100{%}` types 100% |
+| A tab, a line break | The Tab and Enter keys (a Windows line break is one Enter) | |
 
-**Supported Special Keys:**
+`%` is always Alt and `#` always the Windows key: `100%{ENTER}` is "100" and Alt+Enter, so write `100{%}{ENTER}`. A syntax error is `InvalidKeySpecification` and an unknown name `UnknownKey`, both before anything is checked or sent. Syntax errors: a `{` without its `}`, a modifier with no key after it (`abc^`, `100%`), a `(` without its `)`, a `)` or `}` that closes nothing (write them `{)}` and `{}}`), an empty group, a count outside 1-100, `down` or `up` after a single character or with a modifier before it (hold modifiers with their own `{CTRL down}`), `{NAME up}` without `{NAME down}` before it in the call, and `{NAME down}` twice.
+
+**Key names:**
 
 | Key Name | Aliases | Description |
 |----------|---------|-------------|
-| `{ENTER}` | `{RETURN}` | Enter key |
+| `{ENTER}` | `{RETURN}`, `~` | Enter key |
 | `{TAB}` | - | Tab key |
 | `{ESC}` | `{ESCAPE}` | Escape key |
-| `{BACKSPACE}` | `{BS}`, `{BKSP}` | Backspace |
+| `{BACKSPACE}` | `{BS}`, `{BKSP}`, `{BACK}` | Backspace |
 | `{DELETE}` | `{DEL}` | Delete key |
 | `{INSERT}` | `{INS}` | Insert key |
-| `{UP}` | - | Up arrow |
-| `{DOWN}` | - | Down arrow |
-| `{LEFT}` | - | Left arrow |
-| `{RIGHT}` | - | Right arrow |
-| `{HOME}` | - | Home key |
-| `{END}` | - | End key |
-| `{PGUP}` | `{PAGEUP}` | Page Up |
-| `{PGDN}` | `{PAGEDOWN}` | Page Down |
+| `{UP}`, `{DOWN}`, `{LEFT}`, `{RIGHT}` | - | Arrow keys |
+| `{HOME}`, `{END}` | - | Home and End |
+| `{PGUP}` | `{PAGEUP}`, `{PRIOR}` | Page Up |
+| `{PGDN}` | `{PAGEDOWN}`, `{NEXT}` | Page Down |
 | `{SPACE}` | - | Space bar |
-| `{F1}` - `{F12}` | - | Function keys |
-| `{CAPSLOCK}` | `{CAPS}` | Caps Lock |
+| `{F1}` - `{F24}` | - | Function keys |
+| `{CAPSLOCK}` | `{CAPS}`, `{CAPITAL}` | Caps Lock (it toggles the user's Caps Lock) |
 | `{NUMLOCK}` | - | Num Lock |
 | `{SCROLLLOCK}` | `{SCROLL}` | Scroll Lock |
-| `{PRTSC}` | `{PRINTSCREEN}` | Print Screen |
+| `{PRTSC}` | `{PRINTSCREEN}`, `{PRTSCN}`, `{SNAPSHOT}` | Print Screen |
 | `{PAUSE}` | `{BREAK}` | Pause/Break |
-| `{WIN}` | `{LWIN}` | Windows key |
+| `{CLEAR}` | - | Clear (numeric keypad 5 with Num Lock off) |
+| `{APPS}` | `{CONTEXTMENU}` | The context-menu key |
+| `{WIN}` | `{LWIN}` | Windows key (left); `{RWIN}` the right one |
+| `{CTRL}`, `{ALT}`, `{SHIFT}` | `{CONTROL}`, `{MENU}` | A modifier pressed and released on its own; `{LCTRL}`, `{RCTRL}`, `{LALT}`, `{RALT}`, `{LSHIFT}`, `{RSHIFT}` for one side. Hold one with `{CTRL down}` |
+| `{NUMPAD0}` - `{NUMPAD9}` | - | Numeric keypad digits |
+| `{ADD}`, `{SUBTRACT}`, `{MULTIPLY}`, `{DIVIDE}`, `{DECIMAL}`, `{SEPARATOR}` | - | Numeric keypad operators |
+| `{OEM_1}` - `{OEM_8}`, `{OEM_102}`, `{OEM_PLUS}`, `{OEM_COMMA}`, `{OEM_MINUS}`, `{OEM_PERIOD}` | - | Punctuation keys by position: what they type depends on the layout (`{OEM_1}` is `;` on a US keyboard). Prefer the character itself |
+| `{VOLUME_MUTE}`, `{VOLUME_DOWN}`, `{VOLUME_UP}` | - | Volume keys (they change the user's volume) |
+| `{MEDIA_PLAY_PAUSE}`, `{MEDIA_STOP}`, `{MEDIA_NEXT_TRACK}`, `{MEDIA_PREV_TRACK}` | `{MEDIA_NEXT}`, `{MEDIA_PREV}` | Media keys |
+| `{BROWSER_BACK}`, `{BROWSER_FORWARD}`, `{BROWSER_REFRESH}`, `{BROWSER_STOP}`, `{BROWSER_SEARCH}`, `{BROWSER_FAVORITES}`, `{BROWSER_HOME}` | - | Browser keys |
+| `{LAUNCH_MAIL}`, `{LAUNCH_MEDIA_SELECT}`, `{LAUNCH_APP1}`, `{LAUNCH_APP2}` | - | Launch keys (they start the user's mail or media app, or the apps the keyboard assigns) |
+
+The Sleep key has no name. Win+L (lock) and Ctrl+Alt+Del cannot be injected: Windows ignores them.
+
+#### Pacing and progress
+
+Without `delayMs`, every key of the call goes in one SendInput call, which no other input can come between. With `delayMs` (1-500 ms; more is clamped to 500), the keys go one at a time with that wait between them, for applications that drop keys that come too fast: each top-level character, chord or group is one key, and so is each press of `{NAME n}`. Before each, the window is checked again as before the first (`TargetLostFocus`, `BlockedByModal`), a modifier the user presses meanwhile stops the call (`ModifiersHeld`), and so do the user's pause (`PausedByUser`) and cancelling the request; a modifier the call itself holds with `{NAME down}` stays down between keys. The result's `keysSent` says how many keys were sent completely: all of them on success, how far it got when it stopped. When SendInput inserts only part of the keys (`SendInputFailed`), the keys it had pressed are released again, so nothing stays down, and `keysSent` counts the keys that went in whole. Whatever the call holds down is released when it ends, however it ends.
 
 **Example 1:** Press Enter
 > "Press Enter to confirm"
@@ -4490,12 +4536,27 @@ This deletes everything in the focused control. Pass `windowHandle`, and check w
 }
 ```
 
+**Example 6:** Repeat a key, slowly
+> "Move down three rows in a list that drops fast keys, then open the item"
+
+```json
+{
+  "name": "send_keys",
+  "arguments": {
+    "keys": "{DOWN 3}{ENTER}",
+    "delayMs": 100,
+    "windowHandle": 12345
+  }
+}
+```
+
 **Response:**
 ```json
 {
   "success": true,
   "keys": "^c",
   "errorCode": "None",
+  "keysSent": 1,
   "receivingWindow": { "handle": 12345, "title": "Untitled - Notepad", "processName": "Notepad", "processId": 4120 },
   "foregroundAfter": { "handle": 12345, "title": "Untitled - Notepad", "processName": "Notepad", "processId": 4120 }
 }
@@ -4511,7 +4572,17 @@ This deletes everything in the focused control. Pass `windowHandle`, and check w
 }
 ```
 
-`UnknownKey`, `InvalidKeySpecification` and `EmptyText` are reported before anything is checked or sent; the guard's codes are listed under [Input guard](#input-guard). `#` is an ordinary character in `send_keys`: there is no Windows-key modifier. Keys that press the user's [pause hotkey](#pause-hotkey) (`^%+{PAUSE}` for the default chord, also written with `{BREAK}` or with more modifiers) are refused with `PauseChordNotAllowed` and nothing is sent: they would reach the hotkey like the user's own key press, so the agent could pause or resume itself.
+**Error Response:** a modifier with no key after it.
+```json
+{
+  "success": false,
+  "keys": "100%",
+  "error": "'%' at position 3 has no key after it to hold down. Write the characters + ^ % # as {+} {^} {%} {#}.",
+  "errorCode": "InvalidKeySpecification"
+}
+```
+
+`UnknownKey`, `InvalidKeySpecification` and `EmptyText` are reported before anything is checked or sent; the guard's codes are listed under [Input guard](#input-guard). `#` is the Windows key (roadmap M4.1; it was an ordinary character before): type the character as `{#}`. A Windows-key chord opens a part of Windows (Run, Search, Explorer, the clipboard history), so it must be the last key of the call: `#hashtag` is Win+H followed by more keys and is refused with `KeysAfterFocusChange`, while `{#}hashtag` types it. Keys that press the user's [pause hotkey](#pause-hotkey) (`^%+{PAUSE}` for the default chord, also written with `{BREAK}` or with more modifiers) are refused with `PauseChordNotAllowed` and nothing is sent: they would reach the hotkey like the user's own key press, so the agent could pause or resume itself.
 
 ---
 
@@ -5901,6 +5972,7 @@ type_text { "text": "Hello World", "windowHandle": 12345 }
 send_keys { "keys": "^a", "windowHandle": 12345 }       // Select all
 send_keys { "keys": "^c", "windowHandle": 12345 }       // Copy
 send_keys { "keys": "{TAB}", "windowHandle": 12345 }    // Move to next field
+send_keys { "keys": "{DOWN 3}", "windowHandle": 12345 } // Down three times
 send_keys { "keys": "^v", "windowHandle": 12345 }       // Paste
 send_keys { "keys": "{ENTER}", "windowHandle": 12345 }  // Submit
 ```
@@ -6447,6 +6519,30 @@ the new tools; their sections have the rest.
   was sent: the result has `success: false` and says so, and the click may have landed where the pointer is. mouse_move
   returns it where it returned `CursorNotAtPoint` (a confined pointer) and `SendInputFailed` where it returned
   `CursorPositionFailed`. No parameter was added or removed.
+- **send_keys and type_text: the keyboard engine (roadmap M4.1).** send_keys typed letters and digits by their keys
+  without Shift (so `Hello` came out `hello`, and AZERTY digits came out as symbols), sent every other character as
+  Unicode (so Ctrl or Alt with punctuation, `^-` or `%.`, never fired a shortcut), and sent no scan codes. Now every
+  character is typed with the key of the target window's keyboard layout (VkKeyScanEx), with the Shift or AltGr it
+  needs and the key's scan code (MapVirtualKeyEx), allowing for Caps Lock (and a `{CAPSLOCK}` earlier in the keys); AltGr goes
+  out as the left Ctrl and the right Alt, which the chord checks read as a character, not a Ctrl+Alt chord; only a character the layout has no key for,
+  or only a dead key, is Unicode (see [send_keys](#send_keys)). The grammar gains `#` for the Windows key, `(...)`
+  groups, `{NAME n}` repeats (1 to 100), `{NAME down}` and `{NAME up}` within one call (a key still down is released at
+  the end), `~` for Enter, the escapes `{+} {^} {%} {#} {~} {(} {)} {{} {}}` (any single character in braces, an emoji too, is that
+  character), and the keys F13-F24, NUMPAD0-9, ADD, SUBTRACT, MULTIPLY, DIVIDE, DECIMAL, SEPARATOR, CLEAR, the OEM keys
+  and the browser, volume, media and launch keys; key names may be written with `VK_` and underscores. New `delayMs`
+  (0-500) paces the keys, with the window checked again before each, and new `keysSent` in the result says how many
+  keys were sent, also when SendInput stops part way (`SendInputFailed`, with what it pressed released again).
+  **Breaking:** `#` was an ordinary character and is now the Windows key: send `{#}` for the character; and as any
+  chord with the Windows key opens a part of Windows, keys after one are refused (`KeysAfterFocusChange`), so `#tag`
+  is refused instead of typing "#tag". `%` was always Alt (`100%{ENTER}` is Alt+Enter): write `100{%}{ENTER}`. A
+  modifier with no key after it (`abc^`), a `)` or `}` that closes nothing, an unclosed group and a bad count are now
+  `InvalidKeySpecification` (a trailing modifier used to be pressed and released, and a `}` was typed). A tab and a line
+  break in `keys` are the Tab and Enter keys (they were Unicode characters). **type_text** stays Unicode, but text with
+  a line break or tab now needs `controlChars` (`unicode`, `keys` or `shiftEnter`; see [Line breaks and
+  tabs](#line-breaks-and-tabs)) and is refused with `InvalidArguments` without it, because a line break typed as Enter
+  sends a chat message or submits a form; `\r\n` and a lone `\r` are typed as one `\n`, which `charactersTyped` counts.
+  A client that typed multi-line text must pass `controlChars: "unicode"` for what it did before (without the `\r`).
+  element_action's keyboard typing (`mode: "type"`) types line breaks as `unicode` does.
 - **mouse_click and drag (roadmap M4.3, mouse_click and drag).** Two new input tools in the `input` toolset, both
   destructive, audited and inside the input gate like click. [mouse_click](#mouse_click) clicks any button (`primary`,
   `secondary`, `middle`, `x1`, `x2`) one to three times (`clickCount`) with modifier keys held (`modifiers`: `ctrl`,
@@ -6605,14 +6701,14 @@ table, it gives more detail.
 | `HtmlRequiresCdp` | [get_browser_content](#get_browser_content) | `textOnly: false` was requested, but CDP could not be used |
 | `InputBusy` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog); tool error from every tool that changes windows or starts or stops processes ([Window Control](#window-control), [Batch Operations](#batch-operations), [close_application](#close_application), [apply_layout](#apply_layout), [launch_application](#launch_application), [kill_process](#kill_process), [launch_browser_with_debug](#launch_browser_with_debug)), from [set_clipboard](#set_clipboard), and from [capture_window](#capture_window) and [capture_with_elements](#capture_with_elements) with `restoreIfMinimized` | Another input or window call held the input gate for 30 seconds, so nothing was sent or done; retry when it has finished |
 | `InterpreterWithArguments` | [launch_application](#launch_application), launch_applications_batch | A command interpreter, script host or other program that runs what its command line names (`cmd`, PowerShell, `wscript`, `python`, ...) was given arguments: the server does not run commands or scripts for the agent (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run the command |
-| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, with `captureId` or a `space` other than `screen` but no point, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [capture_window](#capture_window)'s `padding` without `ref` or outside 0-500, a `ref` that is not an element ref, or a `handle` or `window` that is not the ref's window, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null; an argument the tool does not declare (see [Undeclared arguments](#undeclared-arguments)). A batch item that is null, or misses its size, fails alone with this code |
+| `InvalidArguments` | any tool (tool error); batch items (per item) | A required argument is missing or has the wrong type, so the tool did not run (see [Tool errors](#tool-errors)). Also both `handle` (or `windowHandle`) and `window`, or neither for a tool that needs a window; a `window` selector that is empty, has an unknown field, a `processId` or `handle` below 1, a negative `index`, `index` or `foreground` with `handle`, or a `titleRegex` that is invalid or runs longer than 100 ms (in the result of the [Input Simulation](#input-simulation) tools when it times out in their check inside the input gate); and a [find_windows](#find_windows) `limit` below 1 or a `sort` that is not zorder, title or process. Also a value out of its range: a window `width` or `height` below 1, [get_browser_content](#get_browser_content) `maxLength` below 1, [launch_browser_with_debug](#launch_browser_with_debug) `port` outside 1-65535, a `url` that starts with `-` or `/` or a `userDataDir` inside a `User Data` folder, [scroll](#scroll) without a point and `windowHandle`, with only one of `x` and `y`, with `captureId` or a `space` other than `screen` but no point, or with no notches or more than 100, a mouse tool's `space` that is not screen, window, client or image, `space` `image` without `captureId`, a `captureId` with another `space`, `window` or `client` without a window, or a `captureId` of one window with another window as `windowHandle`, [capture_window](#capture_window)'s `padding` without `ref` or outside 0-500, a `ref` that is not an element ref, or a `handle` or `window` that is not the ref's window, [get_clipboard](#get_clipboard) `maxLength` outside 1-1000000, a [set_clipboard](#set_clipboard) `text` that is empty or longer than 1000000 characters, or a batch array that is null; an argument the tool does not declare (see [Undeclared arguments](#undeclared-arguments)). A batch item that is null, or misses its size, fails alone with this code. [type_text](#type_text): text with a line break or a tab and no `controlChars`; nothing was typed |
 | `InvalidArgumentValue` | [launch_application](#launch_application), launch_applications_batch | An element of `arguments` is null or contains a NUL character. Not the same as `InvalidArguments` |
 | `InvalidCharacters` | [launch_application](#launch_application), launch_applications_batch | A character not valid in a Windows path, or a shell metacharacter in a bare name or relative path |
 | `InvalidControlType` | [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [capture_with_elements](#capture_with_elements), [read_element_text](#read_element_text) and [element_action](#element_action) (in their result), [wait_for_element](#wait_for_element) (tool error, before it waits) | A `controlTypes` (find_ui_elements, read_element_text, element_action, wait_for_element: `controlType`) name is not a known control type; `error` lists the valid names |
 | `InvalidFormat` | [Screenshot](#screenshot) tools, [get_clipboard](#get_clipboard) (tool error) | `format` is not auto, png, jpeg or jpg (get_clipboard: text, html or files); `error` lists them |
 | `InvalidHandle` | [Window Control](#window-control) tools, close_windows_batch (per window), [get_owned_windows](#get_owned_windows), [get_window_info](#get_window_info), [close_application](#close_application) (tool error), [Browser Reading](#browser-reading) tools, [get_ui_elements](#get_ui_elements), [find_ui_elements](#find_ui_elements), [get_desktop_state](#get_desktop_state), [get_active_popups](#get_active_popups), [capture_window](#capture_window), [capture_with_elements](#capture_with_elements), the [Input Simulation](#input-simulation) tools (`windowHandle`), [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog), [wait_for_window](#wait_for_window), [wait_for_element](#wait_for_element) | The window handle is zero or invalid, or the window no longer exists. wait_for_window and wait_for_element: the window its `window.handle` names (or title_changed's window) closed, so the condition can never hold; the wait ended at once |
 | `InvalidImageSize` | [Screenshot](#screenshot) tools | `maxDimension` is negative or `maxWidth` is not positive |
-| `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string is not valid syntax, such as a `{` without its `}`, or nothing could be read from it; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
+| `InvalidKeySpecification` | [send_keys](#send_keys) | The keys string breaks the [syntax](#send_keys), such as a `{` without its `}`, a modifier with no key after it (`100%`; write `100{%}`), an unclosed group or a count outside 1-100; nothing was sent. Fix the string (an unknown key name in braces is `UnknownKey`) |
 | `InvalidMatchBy` | [apply_layout](#apply_layout) (tool error) | `matchBy` is not process_and_title, process_only or title_only; nothing was arranged |
 | `InvalidMonitorIndex` | [take_screenshot](#take_screenshot), [snap_window](#snap_window), [move_window_to_monitor](#move_window_to_monitor), snap_windows_batch (per window), [apply_layout](#apply_layout) (per placement: its `monitorIndex`), [launch_application](#launch_application) and launch_applications_batch (a `placement`; tool error or per item, nothing launched) | `monitorIndex` is not a monitor; `error` gives the valid range (see [get_monitors](#get_monitors) or [list_screens](#list_screens)). Nothing was changed: the window is never put on another monitor instead |
 | `InvalidName` | [save_layout](#save_layout), [delete_layout](#delete_layout) | The name is empty or longer than 128 characters |
@@ -6664,7 +6760,7 @@ table, it gives more detail.
 | `ResumeNeedsUser` | [resume_input](#resume_input) | The MCP client cannot ask the user (no elicitation support), so only the user can resume, with the pause hotkey |
 | `SaveFailed` | [save_layout](#save_layout) | The preset file could not be written |
 | `ScriptFile` | [launch_application](#launch_application), launch_applications_batch, [apply_layout](#apply_layout) (in `LaunchFailed`'s `error`) | The launch would run a script (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.py`, ...), as the target, through a bare name that resolves to one (`code` is `code.cmd`: use `code.exe`) or through `explorer` (see [Commands and scripts](#commands-and-scripts)). Nothing was started; ask the user to run it |
-| `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
+| `SendInputFailed` | [Input Simulation](#input-simulation) tools, [release_all_input](#release_all_input) | Windows did not accept the input (SendInput failed; send_keys reports `keysSent`, type_text `charactersTyped`, and the keys pressed are released again); release_all_input: some keys or buttons could not be released (`stillHeld`). A pointer that could not be moved is `CursorPositionFailed` |
 | `SessionLocked` | [Input Simulation](#input-simulation) tools, [element_action](#element_action), [respond_to_dialog](#respond_to_dialog), [file_dialog](#file_dialog) | The session is locked; nothing was sent |
 | `StaleCapture` | [click](#click), right_click, double_click, [mouse_click](#mouse_click), [drag](#drag), mouse_move, [scroll](#scroll) | The point was given with a `captureId` and what the capture showed changed: the captured window moved or resized by more than 2 pixels, closed, was minimized or its handle now belongs to another process, a client-area capture's client area moved, or the monitors changed since a monitor or region capture; or, with `space` `window` or `client` (or a `captureId`), the window moved while the call waited for the input gate. Nothing was sent. Capture again and use the new `captureId` (see [Coordinate spaces for the mouse tools](#coordinate-spaces-for-the-mouse-tools)) |
 | `StateChangeFailed` | [set_window_state](#set_window_state), set_windows_state_batch (per window) | The window was not seen in the requested state within 300 ms: the application refused or delayed it, or it runs with higher privileges; `error` says the state it is in |
@@ -6681,7 +6777,7 @@ table, it gives more detail.
 | `TerminationNotConfirmed` | [kill_process](#kill_process) | Force mode: the process had not exited when the wait ended |
 | `ToolError` | any tool (tool error) | The tool reported an error without a more specific code (see [Tool errors](#tool-errors)) |
 | `UnhandledException` | any tool (tool error) | The tool threw an unexpected exception, or its result could not be serialized (see [Tool errors](#tool-errors)) |
-| `UnknownKey` | [send_keys](#send_keys) | Unknown special key name in braces |
+| `UnknownKey` | [send_keys](#send_keys) | Unknown key name in braces; nothing was sent (see the [key names](#send_keys)) |
 | `UnknownProtocol` | [launch_application](#launch_application), launch_applications_batch | The URI scheme is not one of the built-in schemes (http, https, mailto, tel, ms-settings, `shell:AppsFolder\<AppUserModelID>`; file URIs are checked as paths) or the schemes the user allows in `WAM_ALLOWED_PROTOCOLS`; `get_server_info` lists them as `safety.allowedProtocols` |
 | `UnsafeBatchArguments` | [launch_application](#launch_application), launch_applications_batch | An argument would be interpreted by `cmd.exe` (see [launch_application](#launch_application)) |
 | `UnsupportedBrowser` | [launch_browser_with_debug](#launch_browser_with_debug) (tool error) | `browser` is not chrome, edge or brave |

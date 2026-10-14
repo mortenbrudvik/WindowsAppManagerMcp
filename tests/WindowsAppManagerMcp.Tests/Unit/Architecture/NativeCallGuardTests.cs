@@ -125,6 +125,15 @@ public class NativeCallGuardTests
         ["User32.GetAwarenessFromDpiAwarenessContext"] = "reads the awareness of a context value",
         ["User32.AreDpiAwarenessContextsEqual"] = "compares two context values",
 
+        // The keyboard layout send_keys maps characters with (NativeKeyboardLayoutWrapper, roadmap M4.1)
+        ["Keyboard.GetForegroundWindow"] = "reads which window is in the foreground, for its keyboard layout",
+        ["Keyboard.GetWindowThreadProcessId"] = "reads which thread owns a window, for its keyboard layout",
+        ["Keyboard.GetKeyboardLayout"] = "reads the input locale of a thread",
+        ["Keyboard.VkKeyScanExW"] = "reads which key of a layout types a character",
+        ["Keyboard.MapVirtualKeyExW"] = "reads the scan code of a key on a layout",
+        ["Keyboard.ToUnicodeEx"] = "reads what a key types on a layout from a key state the server builds; the wrapper passes " +
+                                   "the flag that leaves the keyboard state (a pending dead key included) unchanged",
+
         // The launch's interpreter check expands 8.3 short names (InterpreterGuard, roadmap M3.F8)
         ["Kernel32.GetLongPathNameW"] = "reads the long form of a file path from the file system",
     };
