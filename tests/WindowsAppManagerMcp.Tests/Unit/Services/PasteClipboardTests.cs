@@ -69,6 +69,49 @@ public class PasteClipboardTests
     }
 
     [Fact]
+    public void Lend_AfterARestore_LendsTheRestoredText_AgainAndAgain_AndItStaysTheUsers()
+    {
+        // Arrange - the restored text carries the privacy markers (no history entry), which on a real desktop made the next
+        // paste refuse it as private: the paste clipboard knows the content it put back
+        _clipboard.UserCopies("the user's text");
+        var sut = CreateSut();
+        sut.GiveBack(sut.Lend(Pasted)).Restored.Should().BeTrue();
+        _clipboard.Markers.Should().NotBe(ClipboardPrivacyMarkers.None);
+
+        // Act
+        var second = sut.Lend("second paste");
+        var secondBack = sut.GiveBack(second);
+        var third = sut.Lend("third paste");
+        var thirdBack = sut.GiveBack(third);
+
+        // Assert
+        second.Lent.Should().BeTrue(second.Refusal);
+        third.Lent.Should().BeTrue(third.Refusal);
+        secondBack.Restored.Should().BeTrue();
+        thirdBack.Restored.Should().BeTrue();
+        _clipboard.Text.Should().Be("the user's text");
+        _origin.Classify(_clipboard.Sequence).Should().Be(ClipboardOriginKind.NotFromAgent, "the restored text is still the user's");
+    }
+
+    [Fact]
+    public void Lend_PrivateContentCopiedAfterARestore_IsStillRefused()
+    {
+        // Arrange - a password manager copies after the paste clipboard put the user's text back
+        _clipboard.UserCopies("the user's text");
+        var sut = CreateSut();
+        sut.GiveBack(sut.Lend(Pasted));
+        _clipboard.UserCopies("secret", ClipboardPrivacyMarkers.ExcludeFromMonitorProcessing);
+
+        // Act
+        var loan = sut.Lend(Pasted);
+
+        // Assert
+        loan.Lent.Should().BeFalse();
+        loan.Refusal.Should().Contain("private");
+        _clipboard.Text.Should().Be("secret");
+    }
+
+    [Fact]
     public void GiveBack_SetClipboardsText_StaysTheAgents()
     {
         // Arrange - set_clipboard's text, which carries the privacy markers on purpose

@@ -35,6 +35,15 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
     private const string HtmlFormat = "HTML Format";
 
     /// <summary>
+    /// Windows Information Protection's label on copied content: empty on a copy no enterprise identity protects, which
+    /// Windows 11 adds to every copy (found by roadmap M4.4's check on a real desktop, a copy from Notepad).
+    /// </summary>
+    private const string EnterpriseDataProtectionFormat = "EnterpriseDataProtectionId";
+
+    /// <summary>The largest protection label read to see whether it is empty; a longer one names an identity.</summary>
+    private const int MaxEmptyLabelBytes = 1024;
+
+    /// <summary>
     /// The registered formats that say nothing about the content: the privacy markers, and the formats OLE adds for its
     /// data object (OleSetClipboard), whose real formats are listed on their own.
     /// </summary>
@@ -229,16 +238,73 @@ public sealed class NativeClipboardWrapper : INativeClipboardWrapper
     private static bool HasOtherFormats()
     {
         var bookkeeping = BookkeepingFormats.Select(NativeMethods.Clipboard.RegisterClipboardFormatW).Where(f => f != 0).ToHashSet();
+        var protectionLabel = NativeMethods.Clipboard.RegisterClipboardFormatW(EnterpriseDataProtectionFormat);
         for (var format = NativeMethods.Clipboard.EnumClipboardFormats(0); format != 0; format = NativeMethods.Clipboard.EnumClipboardFormats(format))
         {
-            if (format is not (NativeMethods.Clipboard.CF_UNICODETEXT or NativeMethods.Clipboard.CF_TEXT or
-                    NativeMethods.Clipboard.CF_OEMTEXT or NativeMethods.Clipboard.CF_LOCALE) && !bookkeeping.Contains(format))
+            if (format is NativeMethods.Clipboard.CF_UNICODETEXT or NativeMethods.Clipboard.CF_TEXT or
+                    NativeMethods.Clipboard.CF_OEMTEXT or NativeMethods.Clipboard.CF_LOCALE || bookkeeping.Contains(format))
             {
-                return true;
+                continue;
             }
+
+            // Windows 11 puts an empty protection label on every copy (Notepad's too): only a label that names an
+            // enterprise identity protects the content, and that one counts, so a paste never strips it
+            if (protectionLabel != 0 && format == protectionLabel && IsEmptyData(format))
+            {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// True when the open clipboard's <paramref name="format"/> holds no data: none rendered, or only zero bytes. A
+    /// format with data that cannot be read, or with more than <see cref="MaxEmptyLabelBytes"/> bytes, is not empty.
+    /// </summary>
+    private static bool IsEmptyData(uint format)
+    {
+        var handle = NativeMethods.Clipboard.GetClipboardData(format);
+        if (handle == nint.Zero)
+        {
+            return true;
+        }
+
+        var size = (long)NativeMethods.Clipboard.GlobalSize(handle);
+        if (size == 0)
+        {
+            return true;
+        }
+
+        if (size > MaxEmptyLabelBytes)
+        {
+            return false;
+        }
+
+        var data = NativeMethods.Clipboard.GlobalLock(handle);
+        if (data == nint.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            for (var i = 0; i < size; i++)
+            {
+                if (Marshal.ReadByte(data, i) != 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            NativeMethods.Clipboard.GlobalUnlock(handle);
+        }
     }
 
     private static bool IsAvailableOrUnknown(string name, out uint format)

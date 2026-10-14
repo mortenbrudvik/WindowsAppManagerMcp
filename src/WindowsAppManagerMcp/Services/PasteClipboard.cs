@@ -118,6 +118,11 @@ public sealed class PasteClipboard : IPasteClipboard
     private readonly IClipboardOrigin _origin;
     private readonly INativeWindowWrapper _windows;
 
+    // The content this class put back last (its clipboard sequence number; 0 for none), and whether it was the agent's. It
+    // carries the privacy markers, so without this the next paste would refuse the user's own text as private
+    private uint _restoredSequence;
+    private bool _restoredIsAgents;
+
     public PasteClipboard(INativeClipboardWrapper clipboard, IClipboardOrigin origin, INativeWindowWrapper windows)
     {
         _clipboard = clipboard ?? throw new ArgumentNullException(nameof(clipboard));
@@ -151,15 +156,18 @@ public sealed class PasteClipboard : IPasteClipboard
         // set_clipboard's own text carries the privacy markers, and may be read; nothing else marked private is
         var before = _clipboard.GetSequenceNumber();
         var kind = _origin.Classify(before);
-        var saved = _clipboard.Read(ClipboardFormat.Text, MaxRestorableLength, kind == ClipboardOriginKind.SetClipboard ? before : 0);
+        var (restoredSequence, restoredIsAgents) = Restored();
+        var restoredHere = before != 0 && before == restoredSequence;
+        var saved = _clipboard.Read(ClipboardFormat.Text, MaxRestorableLength,
+            kind == ClipboardOriginKind.SetClipboard || restoredHere ? before : 0);
         if (!saved.Opened)
         {
             return ClipboardLoan.Refused("another application held the clipboard open, so it could not be saved; try again in a moment");
         }
 
         var unchanged = saved.SequenceNumber == before;
-        var ours = unchanged && kind == ClipboardOriginKind.SetClipboard && saved.HasText && !saved.HasOtherFormats &&
-                   _origin.IsServerText(saved.Text, saved.TextLength);
+        var ours = unchanged && saved.HasText && !saved.HasOtherFormats &&
+                   ((kind == ClipboardOriginKind.SetClipboard && _origin.IsServerText(saved.Text, saved.TextLength)) || restoredHere);
         if (Unrestorable(saved, ours) is { } why)
         {
             return ClipboardLoan.Refused(why);
@@ -190,7 +198,8 @@ public sealed class PasteClipboard : IPasteClipboard
 
         // The paste rule pastes only the agent's content: this text is, while it is there
         _origin.ServerWrote(lent.SequenceNumber, text);
-        return ClipboardLoan.Of(savedText, ours || (unchanged && kind == ClipboardOriginKind.AgentInput), lent.SequenceNumber);
+        var savedIsAgents = restoredHere ? restoredIsAgents : ours || (unchanged && kind == ClipboardOriginKind.AgentInput);
+        return ClipboardLoan.Of(savedText, savedIsAgents, lent.SequenceNumber);
     }
 
     public ClipboardReturn GiveBack(ClipboardLoan loan)
@@ -232,7 +241,23 @@ public sealed class PasteClipboard : IPasteClipboard
             _origin.ServerWrote(0, string.Empty);
         }
 
+        lock (_restoredLock)
+        {
+            _restoredSequence = loan.SavedText != null ? back.SequenceNumber : 0;
+            _restoredIsAgents = loan.SavedIsAgents;
+        }
+
         return new ClipboardReturn(true);
+    }
+
+    private readonly object _restoredLock = new();
+
+    private (uint Sequence, bool IsAgents) Restored()
+    {
+        lock (_restoredLock)
+        {
+            return (_restoredSequence, _restoredIsAgents);
+        }
     }
 
     /// <summary>Why the clipboard of <paramref name="saved"/> cannot be put back exactly after a paste; null when it can.</summary>

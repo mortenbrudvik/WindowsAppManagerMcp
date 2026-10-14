@@ -20,7 +20,8 @@ namespace WindowsAppManagerMcp.Services.Interfaces;
 /// <param name="Error">Why the content of a format the clipboard holds could not be read (with the Win32 error); null when it was.</param>
 /// <param name="HasOtherFormats">
 /// The clipboard holds a format besides plain text: HTML, files, an image, rich text or an application's own data. The
-/// text formats Windows makes from text, the privacy markers and OLE's bookkeeping formats do not count. Only a clipboard
+/// text formats Windows makes from text, the privacy markers, OLE's bookkeeping formats and an empty
+/// EnterpriseDataProtectionId (Windows 11 adds one to every copy; one that names an enterprise identity counts) do not count. Only a clipboard
 /// without it can be put back after type_text's paste (roadmap M4.4).
 /// </param>
 public sealed record ClipboardSnapshot(
