@@ -53,7 +53,7 @@ public class AuditLogContractTests
     public void TheAuditedTools_AreTheInputCloseKillLaunchLayoutScrollAndClipboardTools()
     {
         AuditLogToolFilter.AuditedTools.Should().BeEquivalentTo(
-            "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "scroll",
+            "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
             "release_all_input", "element_action", "respond_to_dialog", "file_dialog", "close_window", "close_windows_batch", "close_application", "kill_process",
             "launch_application", "launch_applications_batch", "launch_browser_with_debug",
             "apply_layout", "save_layout", "delete_layout", "set_clipboard", "get_clipboard");

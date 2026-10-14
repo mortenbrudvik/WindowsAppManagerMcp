@@ -16,7 +16,7 @@ namespace WindowsAppManagerMcp.Tests.Contract;
 public class InputToolGuardContractTests
 {
     private static readonly string[] InputTools =
-        ["click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys"];
+        ["click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys"];
 
     private static readonly nint Terminal = 0x100;
     private static readonly nint Notepad = 0x200;
@@ -210,6 +210,49 @@ public class InputToolGuardContractTests
         }));
         sent.GetProperty("success").GetBoolean().Should().BeTrue();
         _input.Verify(i => i.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PressKeys_TheSameChordReading_CtrlWNeedsWindowHandle_AndKeysAfterAltTabAreRefused()
+    {
+        // press_keys' chords become the same input events as send_keys', which the guard reads the same way (roadmap M4.3)
+        _inFront = Notepad;
+        await using var server = await StartServerAsync();
+
+        var closing = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = "ctrl+w" }));
+        var asArray = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = new[] { "ctrl", "w" } }));
+        var afterAltTab = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?>
+        {
+            ["keys"] = "alt+tab enter",
+            ["windowHandle"] = (long)Notepad
+        }));
+
+        closing.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.DestructiveChordNeedsTarget));
+        asArray.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.DestructiveChordNeedsTarget));
+        asArray.GetProperty("keys").GetString().Should().Be("ctrl+w");
+        afterAltTab.GetProperty("errorCode").GetString().Should().Be(nameof(InputErrorCode.KeysAfterFocusChange));
+        VerifyNothingSent();
+
+        // ... and ctrl+w is sent with windowHandle
+        var sent = ParsePayload(await server.CallToolAsync("press_keys", new Dictionary<string, object?>
+        {
+            ["keys"] = "ctrl+w",
+            ["windowHandle"] = (long)Notepad
+        }));
+        sent.GetProperty("success").GetBoolean().Should().BeTrue();
+        sent.GetProperty("keysSent").GetInt32().Should().Be(1);
+        _input.Verify(i => i.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PressKeys_KeysThatAreNeitherAStringNorAnArrayOfStrings_AreAToolError()
+    {
+        await using var server = await StartServerAsync();
+
+        var result = await server.CallToolAsync("press_keys", new Dictionary<string, object?> { ["keys"] = 5 });
+
+        result.IsError.Should().BeTrue();
+        VerifyNothingSent();
     }
 
     [Fact]

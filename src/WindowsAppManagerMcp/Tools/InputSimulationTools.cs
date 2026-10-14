@@ -542,6 +542,68 @@ public class InputSimulationTools
             _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
     }
 
+    [McpServerTool(Name = "press_keys", Title = "Press Keys", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
+    [Description("Press keys by name: a chord such as 'ctrl+shift+t' (or ['ctrl','shift','t']), or a sequence such as 'tab*3 enter' " +
+                 "or 'ctrl+a delete'. Every key is released before the call returns; holdMs keeps a chord down within the call." +
+                 KeyboardTargetNote +
+                 " As for send_keys: chords that close, quit or lock need windowHandle (DestructiveChordNeedsTarget), a chord that " +
+                 "hands the keyboard to another window (alt+tab, win, alt+space) must be the last (KeysAfterFocusChange), the " +
+                 "user's pause hotkey is refused (PauseChordNotAllowed) and a paste follows the paste rule (PasteNotAllowed). To " +
+                 "close a window, use close_window. Windows never lets injected keys press Ctrl+Alt+Del or lock the session.")]
+    [ToolResultPayload(typeof(SendKeysResult))]
+    public async Task<CallToolResult> PressKeys(
+        [Description("A chord of names joined by '+' (modifiers ctrl, shift, alt, win, then one key), or chords separated by " +
+                     "spaces, each optionally '*n' (n presses, 1-100); or an array: one chord (['ctrl','shift','t']) or a sequence " +
+                     "(['ctrl+a','delete']). Keys: enter, tab, esc, space, backspace, delete, up, down, left, right, home, end, " +
+                     "pgup, pgdn, f1-f24 and send_keys' other names, or one character (a letter or digit is its key, so 'ctrl+1' " +
+                     "works on any layout); write + , * as plus, comma, star.")]
+        KeyList keys,
+        [Description("How often to press the whole sequence, 1-100 (at most 200 presses in all). Default: 1")]
+        int repeat = 1,
+        [Description("Milliseconds each chord's keys stay down before they are released, 0-5000. Default: 0")]
+        int holdMs = 0,
+        [Description("Milliseconds between presses, 0-1000 (default 0: one batch). presses x (holdMs + delayBetweenMs) is at most 10000")]
+        int delayBetweenMs = 0,
+        [Description(KeyboardWindowHandleDescription)]
+        long? windowHandle = null,
+        [Description(WindowTargeting.InputWindowDescription)]
+        WindowSelector? window = null,
+        [Description(AllowHostTargetDescription)]
+        bool allowHostTarget = false,
+        [Description(ReleaseHeldModifiersDescription)]
+        bool releaseHeldModifiers = false,
+        [Description(ActionObservation.ObserveDescription)]
+        ObserveMode observe = ObserveMode.None,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (repeat is < 1 or > PressKeysParser.MaxRepeat || holdMs is < 0 or > InputSimulationService.MaxPressKeysHoldMs ||
+            delayBetweenMs is < 0 or > InputSimulationService.MaxPressKeysDelayMs)
+        {
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode,
+                $"repeat must be 1 to {PressKeysParser.MaxRepeat}, holdMs 0 to {InputSimulationService.MaxPressKeysHoldMs} and " +
+                $"delayBetweenMs 0 to {InputSimulationService.MaxPressKeysDelayMs} (got {repeat}, {holdMs}, {delayBetweenMs}). {NothingSent}");
+        }
+
+        ActionObservation.Check(_desktopState, observe, NothingSent);
+        var target = Target(windowHandle, window, allowHostTarget);
+        SendKeysResult result;
+        try
+        {
+            result = await _inputService.PressKeysAsync(keys, repeat, holdMs, delayBetweenMs, target, releaseHeldModifiers, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (ArgumentException ex) when (ex is not ArgumentOutOfRangeException)
+        {
+            // The presses would take too long
+            throw new ToolErrorException(ToolErrorReporting.InvalidArgumentsErrorCode, $"{ex.Message} {NothingSent}");
+        }
+
+        return await ActionObservation.ResultAsync(result, result.Success, Acted(target, result.ReceivingWindow),
+            ActionObservation.RefusesWindow(result.ErrorCode.ToString()), observe, (pressed, observed) => pressed with { Observed = observed },
+            _desktopState, _windowService, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// The click's tool result, with observe (roadmap M3.F32) get_desktop_state's observation of the window it was for after
     /// it (<see cref="ActionObservation"/>).

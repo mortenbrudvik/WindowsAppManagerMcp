@@ -79,6 +79,7 @@ public class EveryToolContractTests
             ["mouse_move"] = Args("""{ "x": 560, "y": 110, "windowHandle": 1706796 }"""),
             ["type_text"] = Args("""{ "text": "Meeting notes for Monday", "windowHandle": 1706796 }"""),
             ["send_keys"] = Args("""{ "keys": "^s", "windowHandle": 1706796 }"""),
+            ["press_keys"] = Args("""{ "keys": "ctrl+shift+t", "windowHandle": 1706796 }"""),
             ["scroll"] = Args("""{ "windowHandle": 1706796, "deltaY": 3 }"""),
             ["get_clipboard"] = Args("{}"),
             ["set_clipboard"] = Args("""{ "text": "Meeting notes for Monday" }"""),
@@ -111,7 +112,7 @@ public class EveryToolContractTests
     private static readonly HashSet<string> ImageOnRequest = new(StringComparer.Ordinal)
     {
         "get_desktop_state", "element_action", "click", "right_click", "double_click", "mouse_click", "drag", "type_text", "send_keys",
-        "respond_to_dialog"
+        "press_keys", "respond_to_dialog"
     };
 
     /// <summary>Tools with a success field that the mocked services cannot make fail.</summary>

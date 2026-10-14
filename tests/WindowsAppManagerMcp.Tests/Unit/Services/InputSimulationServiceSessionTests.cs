@@ -31,7 +31,7 @@ public class InputSimulationServiceSessionTests
 
     /// <summary>Every input path, as the tools call it.</summary>
     public static TheoryData<string> InputPaths() =>
-        new() { "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys" };
+        new() { "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "scroll", "type_text", "send_keys", "press_keys" };
 
     private static async Task<(bool Success, InputErrorCode Code, string? Error, IReadOnlyList<string>? Held, IReadOnlyList<string>? Released)> Call(
         InputSimulationService sut, string path, bool releaseHeldModifiers = false, CancellationToken token = default)
@@ -54,6 +54,9 @@ public class InputSimulationServiceSessionTests
                 var drag = await sut.DragAsync(new DragRequest(100, 100, 200, 100, MouseButton.Primary, [], 2, 0, 0), InputTarget.None,
                     InputTarget.None, releaseHeldModifiers, token);
                 return (drag.Success, drag.ErrorCode, drag.Error, drag.HeldModifiers, drag.ReleasedModifiers);
+            case "press_keys":
+                var pressed = await sut.PressKeysAsync(KeyList.Of("ctrl+c"), 1, 0, 0, InputTarget.None, releaseHeldModifiers, token);
+                return (pressed.Success, pressed.ErrorCode, pressed.Error, pressed.HeldModifiers, pressed.ReleasedModifiers);
             case "mouse_move":
                 var move = sut.MoveMouse(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (move.Success, move.ErrorCode, move.Error, move.HeldModifiers, move.ReleasedModifiers);
@@ -514,6 +517,7 @@ public class InputSimulationServiceSessionTests
     [Theory]
     [InlineData("type_text")]
     [InlineData("send_keys")]
+    [InlineData("press_keys")]
     public async Task AHeldMouseButton_DoesNotStopKeys(string path)
     {
         // Keys go to the window with keyboard focus, which the mouse capture does not change

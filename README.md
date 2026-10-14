@@ -20,7 +20,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 - **Multi-Monitor Support** - Move windows between monitors, get display information
 - **Screenshot Capture** - Capture screens, regions, windows or one element of a window; Set-of-Marks captures box each control with its ref and list it in a legend; captures come back as images the model sees, sized for vision, with a `captureId` that the mouse tools take to click a point seen in the image
 - **UI Automation** - Retrieve UI element trees with bounding boxes and refs, list a window's open menus, dropdowns and dialogs, and check which element has keyboard focus or sits at a screen point; read through the UI Automation 3 COM client with per-call timeouts by default (`WAM_UIA_ENGINE`); the first read of a page in a Chromium browser or an Electron app waits briefly for its accessibility tree (`launch_application` `forceAccessibility` builds it from the start)
-- **Input Simulation** - Click, right-click, double-click, click any button with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text and send key combinations, aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
+- **Input Simulation** - Click, right-click, double-click, click any button with modifier keys (Ctrl+click, middle and triple clicks), drag and drop, move the mouse cursor, scroll, type text, send key combinations and press key chords by name (`ctrl+shift+t`), aimed at a named window and kept off the agent's own terminal, elevated windows and denied apps
 - **Clipboard** - Read what the agent copied and put text on the clipboard to paste it; the user's own clipboard is read, and pasted, only with the user's consent, and content password managers mark as private never
 - **Browser Reading** - Read the URL and page text of browser windows through UI Automation or the Chrome DevTools Protocol
 - **Application Launch** - Start applications with arguments, open URLs, Settings pages and Store apps, and get back the window the launch opened, whichever process owns it; place it in the same call (snap, bounds, monitor, state, focus), or use a window of the app that is already open
@@ -103,7 +103,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 `X.Y.Z+<commit before the release commit>` for the plugin exe).
 
 <!-- tools:begin tool-table (generated from tools/list: run the tests with UPDATE_SNAPSHOTS=1, see TESTING.md) -->
-## Available Tools (66)
+## Available Tools (67)
 
 | Category | Tools |
 |----------|-------|
@@ -114,7 +114,7 @@ so `serverInfo.version` shows a different commit SHA (`X.Y.Z+<tag commit>` for t
 | Screenshot | `list_screens`, `take_screenshot`, `capture_region`, `capture_window`, `capture_with_elements` |
 | UI Automation | `get_desktop_state`, `get_ui_elements`, `find_ui_elements`, `element_action`, `respond_to_dialog`, `file_dialog`, `get_focused_element`, `get_element_at_point`, `get_active_popups`, `read_element_text`, `read_table`, `wait_for_element` |
 | Browser Reading | `get_browser_url`, `get_active_browser_url`, `get_browser_content`, `launch_browser_with_debug` |
-| Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys` |
+| Input Simulation | `click`, `right_click`, `double_click`, `mouse_click`, `drag`, `mouse_move`, `scroll`, `type_text`, `send_keys`, `press_keys` |
 | Input Control | `get_control_status`, `resume_input`, `release_all_input` |
 | App Launch | `launch_application`, `list_processes`, `kill_process`, `close_application` |
 | Clipboard | `get_clipboard`, `set_clipboard` |
@@ -205,6 +205,7 @@ Once configured, you can ask Claude to:
 - "Move the mouse to 800, 600"
 - "Type 'Hello World' into the text field"
 - "Press Ctrl+C to copy"
+- "Press Ctrl+Shift+T to reopen the closed tab"
 - "Press Enter to confirm"
 - "Scroll the Settings list down until Bluetooth is visible"
 - "Copy the error lines in the terminal and read them"

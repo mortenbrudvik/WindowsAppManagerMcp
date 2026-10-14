@@ -39,6 +39,19 @@ public interface IInputSimulationService
     ClickResult DoubleClick(int x, int y, InputTarget target, bool releaseHeldModifiers, CancellationToken cancellationToken);
 
     /// <summary>
+    /// press_keys (roadmap M4.3): structured chords such as 'ctrl+shift+t', ['ctrl','shift','t'] or 'tab*3 enter'
+    /// (<see cref="PressKeysParser"/>), mapped with the target window's keyboard layout and sent exactly as send_keys sends
+    /// its keys: the pause chord is refused, the guard checks every chord first (DestructiveChordNeedsTarget,
+    /// KeysAfterFocusChange), and each batch is checked again before it is sent. Without holdMs and delayBetweenMs every
+    /// press goes in one batch; with holdMs a chord's keys stay down that long, within this call only. KeysSent counts the
+    /// presses sent.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">repeat, holdMs or delayBetweenMs is out of range.</exception>
+    /// <exception cref="ArgumentException">The presses would take longer than <see cref="InputSimulationService.MaxPressKeysDurationMs"/>.</exception>
+    Task<SendKeysResult> PressKeysAsync(KeyList keys, int repeat, int holdMs, int delayBetweenMs, InputTarget target, bool releaseHeldModifiers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// mouse_click (roadmap M4.3): <paramref name="clickCount"/> clicks (1 to 3) of any button at a screen point, with
     /// <paramref name="modifiers"/> held around them. The modifier key-downs, the move to the point, the clicks and the
     /// modifier key-ups go in one SendInput batch, after every check <see cref="Click"/> makes; a right or middle click in a

@@ -11,10 +11,13 @@ public class InputSessionDescriptionTests
     [InlineData("click")]
     [InlineData("right_click")]
     [InlineData("double_click")]
+    [InlineData("mouse_click")]
+    [InlineData("drag")]
     [InlineData("mouse_move")]
     [InlineData("scroll")]
     [InlineData("type_text")]
     [InlineData("send_keys")]
+    [InlineData("press_keys")]
     public void InputToolDescription_SaysPausedByUserMeansStop(string toolName)
     {
         var description = ServerToolCatalog.Description(toolName);
@@ -31,6 +34,7 @@ public class InputSessionDescriptionTests
     public void SendKeysDescription_SaysThePauseChordIsRefused()
     {
         ServerToolCatalog.Description("send_keys").Should().Contain("PauseChordNotAllowed");
+        ServerToolCatalog.Description("press_keys").Should().Contain("PauseChordNotAllowed");
     }
 
     [Fact]

@@ -436,6 +436,12 @@ public sealed class ContractServices : IDisposable
             {
                 ReceivingWindow = receiving, ForegroundAfter = receiving
             });
+        Input.Setup(i => i.PressKeysAsync(It.IsAny<KeyList>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((KeyList keys, int repeat, int _, int _, InputTarget _, bool _, CancellationToken _) => new SendKeysResult(true, keys.Text)
+            {
+                KeysSent = repeat, ReceivingWindow = receiving, ForegroundAfter = receiving
+            });
         Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) => new ScrollResult(true, x ?? 1280, y ?? 760, deltaY, deltaX)
             {
@@ -609,6 +615,10 @@ public sealed class ContractServices : IDisposable
             .ReturnsAsync((string text, int _, InputTarget _, bool _, TextControlChars? _, CancellationToken _) => new TypeTextResult(false, text, 0, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.SendKeysAsync(It.IsAny<string>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string keys, InputTarget _, bool _, int _, CancellationToken _) => new SendKeysResult(false, keys, host, InputErrorCode.TargetIsAgentHost));
+        Input.Setup(i => i.PressKeysAsync(It.IsAny<KeyList>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((KeyList keys, int _, int _, int _, InputTarget _, bool _, CancellationToken _) =>
+                new SendKeysResult(false, keys.Text, host, InputErrorCode.TargetIsAgentHost));
         Input.Setup(i => i.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int? x, int? y, int deltaY, int deltaX, InputTarget _, bool _, CancellationToken _) =>
                 new ScrollResult(false, x ?? 0, y ?? 0, deltaY, deltaX, host, InputErrorCode.TargetIsAgentHost));

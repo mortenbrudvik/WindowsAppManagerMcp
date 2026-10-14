@@ -648,6 +648,24 @@ public partial class InputSimulationService : IInputSimulationService
                 ErrorCode: InputErrorCode.InvalidKeySpecification);
         }
 
+        return await SendStepsAsync(keys, spec, target, releaseHeldModifiers, Math.Clamp(delayMs, 0, MaxSendKeysDelayMs), holdMs: 0,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends the steps of send_keys or press_keys (roadmap M4.1, M4.3), after the pause chord, the held input and the guard
+    /// (destructive chords, keys after a focus change) have checked all of them. Without <paramref name="delayMs"/> and
+    /// <paramref name="holdMs"/> every step goes in one SendInput call, so no other input can come between them; otherwise
+    /// each step is a batch of its own, checked again right before it, with <paramref name="delayMs"/> before every step but
+    /// the first. With <paramref name="holdMs"/> a step's leading key-downs go first, and its key-ups follow that much later
+    /// without a check of their own (they only release what went down; the session releases them anyway if the call stops
+    /// meanwhile).
+    /// </summary>
+    private async Task<SendKeysResult> SendStepsAsync(string keys, KeySpec spec, InputTarget target, bool releaseHeldModifiers,
+        int delayMs, int holdMs, CancellationToken cancellationToken)
+    {
+        var inputs = spec.Events;
+
         // The agent must never pause or resume itself: the chord would reach the hotkey like a real key press
         if (_session.FindPauseChord(inputs) is { } pauseChord)
         {
@@ -656,9 +674,8 @@ public partial class InputSimulationService : IInputSimulationService
                 "may press it. Nothing was sent.", InputErrorCode.PauseChordNotAllowed);
         }
 
-        // Without a delay every key goes in one SendInput call, so no other input can come between them
-        delayMs = Math.Clamp(delayMs, 0, MaxSendKeysDelayMs);
-        var batches = delayMs == 0 ? [inputs] : spec.Steps;
+        var batches = KeyBatches(spec, delayMs, holdMs);
+        var oneBatch = delayMs == 0 && holdMs == 0;
         var total = spec.Steps.Count;
         var keysSent = 0;
 
@@ -705,47 +722,51 @@ public partial class InputSimulationService : IInputSimulationService
 
                 for (var b = 0; b < batches.Count; b++)
                 {
-                    var batch = batches[b];
-                    if (b > 0)
+                    var (batch, wait, release, endsStep) = batches[b];
+                    if (wait > 0)
                     {
-                        await Task.Delay(delayMs, call.Token).ConfigureAwait(false);
+                        await Task.Delay(wait, call.Token).ConfigureAwait(false);
                     }
 
                     call.Token.ThrowIfCancellationRequested();
 
-                    // Right before every batch: the window in front may have changed while the guard read it, or since the
-                    // last batch
-                    var recheck = _guard.RecheckKeyboard(approved);
-                    if (!recheck.Allowed)
+                    // A release batch only lets go of what the step before it pressed
+                    if (!release)
                     {
-                        return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
-                            recheck.ErrorCode) { KeysSent = keysSent }, recheck));
-                    }
-
-                    approved = recheck;
-
-                    // Again right before the keys: a modifier the user pressed while the guard activated the target would
-                    // turn them into shortcuts, and the keys' own modifier key-ups would release it. A modifier an earlier
-                    // batch of these keys holds down ({SHIFT down}) is the server's own.
-                    if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
-                    {
-                        return held.Apply(Finish(new SendKeysResult(false, keys,
-                            b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                        // Right before every batch: the window in front may have changed while the guard read it, or since the
+                        // last batch
+                        var recheck = _guard.RecheckKeyboard(approved);
+                        if (!recheck.Allowed)
                         {
-                            HeldModifiers = downNow.Names,
-                            KeysSent = keysSent
-                        }, approved));
-                    }
+                            return held.Apply(Finish(new SendKeysResult(false, keys, $"{KeysSentSoFar(keysSent, total, approved)} {recheck.Error}",
+                                recheck.ErrorCode) { KeysSent = keysSent }, recheck));
+                        }
 
-                    // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
-                    // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
-                    if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
-                    {
-                        return held.Apply(Finish(new SendKeysResult(false, keys,
-                            b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
+                        approved = recheck;
+
+                        // Again right before the keys: a modifier the user pressed while the guard activated the target would
+                        // turn them into shortcuts, and the keys' own modifier key-ups would release it. A modifier an earlier
+                        // batch of these keys holds down ({SHIFT down}) is the server's own.
+                        if (ModifiersDownNow("sent", ignoreServerHeld: b > 0) is { } downNow)
                         {
-                            KeysSent = keysSent
-                        }, approved));
+                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                                b == 0 ? downNow.Error : $"{KeysSentSoFar(keysSent, total, approved)} {downNow.Error}", InputErrorCode.ModifiersHeld)
+                            {
+                                HeldModifiers = downNow.Names,
+                                KeysSent = keysSent
+                            }, approved));
+                        }
+
+                        // Right before the keys: a paste must not put the user's clipboard where the agent can read it. The first
+                        // check reads the whole call, so a copy in one batch and its paste in a later one are refused together
+                        if (PasteRefusal(b == 0 ? inputs : batch, approved) is { } pasteRefused)
+                        {
+                            return held.Apply(Finish(new SendKeysResult(false, keys,
+                                b == 0 ? pasteRefused : $"{KeysSentSoFar(keysSent, total, approved)} {pasteRefused}", InputErrorCode.PasteNotAllowed)
+                            {
+                                KeysSent = keysSent
+                            }, approved));
+                        }
                     }
 
                     var sent = Send(batch, approved);
@@ -757,7 +778,7 @@ public partial class InputSimulationService : IInputSimulationService
 
                     if (!sent.Complete)
                     {
-                        if (delayMs == 0)
+                        if (oneBatch)
                         {
                             keysSent = StepsWithin(spec, sent.Inserted);
                         }
@@ -768,7 +789,10 @@ public partial class InputSimulationService : IInputSimulationService
                             InputErrorCode.SendInputFailed) { KeysSent = keysSent }, approved));
                     }
 
-                    keysSent = delayMs == 0 ? total : keysSent + 1;
+                    if (endsStep)
+                    {
+                        keysSent = oneBatch ? total : keysSent + 1;
+                    }
                 }
 
                 return held.Apply(Finish(new SendKeysResult(Success: true, Keys: keys) { KeysSent = keysSent }, approved));
@@ -787,6 +811,90 @@ public partial class InputSimulationService : IInputSimulationService
 
     /// <summary>send_keys waits at most this long between keys (delayMs).</summary>
     public const int MaxSendKeysDelayMs = 500;
+
+    /// <summary>press_keys holds a chord's keys down at most this long (holdMs).</summary>
+    public const int MaxPressKeysHoldMs = 5000;
+
+    /// <summary>press_keys waits at most this long between chords (delayBetweenMs).</summary>
+    public const int MaxPressKeysDelayMs = 1000;
+
+    /// <summary>
+    /// The longest a press_keys call may take by its waits: presses x (holdMs + delayBetweenMs). The input gate is held
+    /// throughout, so every other input and window call waits for it.
+    /// </summary>
+    public const int MaxPressKeysDurationMs = 10_000;
+
+    public async Task<SendKeysResult> PressKeysAsync(KeyList keys, int repeat, int holdMs, int delayBetweenMs, InputTarget target = default,
+        bool releaseHeldModifiers = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentOutOfRangeException.ThrowIfLessThan(repeat, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(repeat, PressKeysParser.MaxRepeat);
+        ArgumentOutOfRangeException.ThrowIfLessThan(holdMs, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(holdMs, MaxPressKeysHoldMs);
+        ArgumentOutOfRangeException.ThrowIfLessThan(delayBetweenMs, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(delayBetweenMs, MaxPressKeysDelayMs);
+
+        KeySpec spec;
+        try
+        {
+            spec = PressKeysParser.Parse(keys, repeat, LayoutFor(target));
+        }
+        catch (KeySyntaxException ex)
+        {
+            return new SendKeysResult(false, keys.Text, $"{ex.Message} Nothing was sent.", InputErrorCode.InvalidKeySpecification);
+        }
+        catch (ArgumentException ex) when (ex is not ArgumentOutOfRangeException)
+        {
+            return new SendKeysResult(false, keys.Text,
+                $"{ex.Message}. Key names: ctrl, shift, alt, win, enter, tab, esc, space, backspace, delete, up, down, left, right, " +
+                "home, end, pgup, pgdn, f1-f24, plus, comma, star, or a single character. Nothing was sent.", InputErrorCode.UnknownKey);
+        }
+
+        var duration = (long)spec.Steps.Count * (holdMs + delayBetweenMs);
+        if (duration > MaxPressKeysDurationMs)
+        {
+            throw new ArgumentException(
+                $"{spec.Steps.Count} presses x (holdMs {holdMs} + delayBetweenMs {delayBetweenMs}) is {duration} ms; one call takes at " +
+                $"most {MaxPressKeysDurationMs} ms, because every other input call waits for it.", nameof(holdMs));
+        }
+
+        return await SendStepsAsync(keys.Text, spec, target, releaseHeldModifiers, delayBetweenMs, holdMs, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The SendInput batches of <paramref name="spec"/>: all its steps in one without waits; otherwise each step, after
+    /// <paramref name="delayMs"/> (not before the first), split with <paramref name="holdMs"/> into its leading key-downs and,
+    /// that much later, the rest (a release batch, which <see cref="SendStepsAsync"/> does not check again).
+    /// </summary>
+    private static List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)> KeyBatches(KeySpec spec, int delayMs,
+        int holdMs)
+    {
+        var batches = new List<(IReadOnlyList<InputEvent> Events, int Wait, bool Release, bool EndsStep)>();
+        if (delayMs == 0 && holdMs == 0)
+        {
+            batches.Add((spec.Events, 0, false, true));
+            return batches;
+        }
+
+        for (var i = 0; i < spec.Steps.Count; i++)
+        {
+            var step = spec.Steps[i];
+            var wait = i == 0 ? 0 : delayMs;
+            var downs = holdMs == 0 ? step.Count : step.TakeWhile(e => (e.Flags & NativeEnums.KEYEVENTF_KEYUP) == 0).Count();
+            if (downs == step.Count || downs == 0)
+            {
+                batches.Add((step, wait, false, true));
+                continue;
+            }
+
+            batches.Add((step.Take(downs).ToList(), wait, false, false));
+            batches.Add((step.Skip(downs).ToList(), holdMs, true, true));
+        }
+
+        return batches;
+    }
 
     /// <summary>
     /// The layout keys are mapped with: that of the target window's thread, or of the foreground window's when there is no

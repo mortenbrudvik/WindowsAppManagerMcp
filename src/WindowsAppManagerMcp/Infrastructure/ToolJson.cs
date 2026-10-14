@@ -165,6 +165,17 @@ public static class ToolJson
     private static JsonNode ListToolEnumValues(AIJsonSchemaCreateContext context, JsonNode schema)
     {
         var type = context.TypeInfo.Type;
+
+        // press_keys' keys (roadmap M4.3): a string or an array of strings, which its converter reads
+        if (type == typeof(KeyList))
+        {
+            var keys = schema as JsonObject ?? [];
+            keys.Remove("properties");
+            keys.Remove("required");
+            keys["type"] = new JsonArray("string", "array");
+            keys["items"] = new JsonObject { ["type"] = "string" };
+            return keys;
+        }
         if (type.IsArray && type.GetElementType() is { } element && ToolEnumInfo.IsToolEnum(element) && schema is JsonObject array)
         {
             array["items"] = new JsonObject

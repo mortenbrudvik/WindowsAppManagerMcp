@@ -57,6 +57,18 @@ public class FixtureKeyboardTests
     }
 
     [DesktopFact]
+    public async Task PressKeys_ChordsRepeatsAndAHeldChord_Arrive()
+    {
+        // roadmap M4.3: named keys only, so the test passes on any layout and with Caps Lock either way
+        using var e2e = StartOnTheEditBox(out var main);
+        await SendAndExpect(e2e, main, ["abcdef"], "abcdef");
+
+        await PressAndExpect(e2e, main, KeyList.Of("home shift+right*2 delete"), "cdef");
+        await PressAndExpect(e2e, main, KeyList.Of(["ctrl", "a"]), "cdef", holdMs: 150);
+        await PressAndExpect(e2e, main, KeyList.Of("backspace"), "", delayBetweenMs: 30);
+    }
+
+    [DesktopFact]
     public async Task TypeText_WithControlCharsKeys_PressesEnter_InAMultiLineTextBox()
     {
         // Arrange - the document window's text box accepts Enter
@@ -115,6 +127,18 @@ public class FixtureKeyboardTests
             FixtureContract.Events.TextChanged,
             e => e.GetString("id") == FixtureContract.Ids.EditBox && e.GetString("text") == expected);
         UiaReads.ReadValue(main, FixtureContract.Ids.EditBox).Should().Be(expected);
+    }
+
+    /// <summary>Presses <paramref name="keys"/> with press_keys in the fixture's main window, then checks its edit box.</summary>
+    private async Task PressAndExpect(E2ESession e2e, nint main, KeyList keys, string expected, int holdMs = 0, int delayBetweenMs = 0)
+    {
+        var pressed = await e2e.Server.Input.PressKeysAsync(keys, 1, holdMs, delayBetweenMs, InputTarget.Window(main), releaseHeldModifiers: false,
+            CancellationToken.None);
+        _output.WriteLine($"press_keys {keys.Text}: {pressed.ErrorCode} {pressed.Error}; keysSent {pressed.KeysSent}");
+        pressed.Success.Should().BeTrue(pressed.Error);
+
+        Wait.Until(() => UiaReads.ReadValue(main, FixtureContract.Ids.EditBox) == expected, SettleTimeout).Should().BeTrue(
+            $"the edit box should hold '{expected}', but it holds '{UiaReads.ReadValue(main, FixtureContract.Ids.EditBox)}'");
     }
 
     /// <summary>Starts the fixture and brings it to the front with the caret in its (empty) edit box.</summary>

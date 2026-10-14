@@ -37,8 +37,8 @@ public static class AuditLogToolFilter
     public static IReadOnlySet<string> AuditedTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         // Input, and actions on UI elements through UI Automation patterns (roadmap M3.6)
-        "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "scroll", "release_all_input",
-        "element_action",
+        "click", "right_click", "double_click", "mouse_click", "drag", "mouse_move", "type_text", "send_keys", "press_keys", "scroll",
+        "release_all_input", "element_action",
         // Dialogs answered and file dialogs completed through element_action (roadmap M3.5, M3.14)
         "respond_to_dialog", "file_dialog",
         // Close and kill
