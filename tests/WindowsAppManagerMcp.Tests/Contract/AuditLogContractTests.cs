@@ -115,12 +115,58 @@ public class AuditLogContractTests
         var (result, lines) = await CallAsync(tool, arguments);
 
         // Assert
+        ShouldBeOneLineWithoutStringArguments(tool, arguments, result, lines);
+    }
+
+    /// <summary>
+    /// For each argument of <see cref="AuditRecord.ContentArguments"/>: the tool's typical call with that argument added,
+    /// whose value the line must not hold although the name is one <see cref="AuditRecord.NamedStringArguments"/> keeps
+    /// for other tools (roadmap M3.F29).
+    /// </summary>
+    public static TheoryData<string, string> ContentArgumentsOfServedTools()
+    {
+        var data = new TheoryData<string, string>();
+        foreach (var (tool, names) in AuditRecord.ContentArguments.OrderBy(c => c.Key, StringComparer.Ordinal))
+        {
+            foreach (var name in names.Order(StringComparer.Ordinal))
+            {
+                data.Add(tool, name);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(ContentArgumentsOfServedTools))]
+    public async Task ACallWithAContentArgument_WritesOneLine_WithoutItsValue(string tool, string argument)
+    {
+        // Arrange - the typical call, with its element named by the content argument in its window instead of by its ref
+        var arguments = new Dictionary<string, object?>(EveryToolContractTests.ArgumentsFor(tool))
+        {
+            [argument] = "meeting-notes.docx"
+        };
+        arguments.Remove("ref");
+        arguments["handle"] = TypicalDesktop.NotepadHandle;
+
+        // Act
+        var (result, lines) = await CallAsync(tool, arguments);
+
+        // Assert
+        ShouldBeOneLineWithoutStringArguments(tool, arguments, result, lines);
+        lines.Single().GetRawText().Should().NotContain("meeting-notes");
+    }
+
+    /// <summary>The call wrote one line, with its tool and outcome, that holds none of <see cref="UnnamedStrings"/>.</summary>
+    private static void ShouldBeOneLineWithoutStringArguments(
+        string tool, IReadOnlyDictionary<string, object?> arguments, CallToolResult result, IReadOnlyList<JsonElement> lines)
+    {
         var line = lines.Should().ContainSingle("one call is one line").Subject;
         line.GetProperty("tool").GetString().Should().Be(tool);
         line.GetProperty("outcome").GetString().Should().Be(result.IsError == true ? AuditOutcome.Error : AuditOutcome.Ok);
         line.GetProperty("durationMs").GetInt64().Should().BeGreaterThanOrEqualTo(0);
         var text = line.GetRawText();
-        foreach (var value in UnnamedStrings(arguments).Where(v => v.Length >= 4))
+        foreach (var value in UnnamedStrings(tool, arguments).Where(v => v.Length >= 4))
         {
             text.Should().NotContain(value, "the audit log never holds a string argument of '{0}' (only its length)", tool);
         }
@@ -606,14 +652,23 @@ public class AuditLogContractTests
     private static JsonElement Json(CallToolResult result) =>
         JsonDocument.Parse(result.Content.OfType<TextContentBlock>().Single().Text).RootElement.Clone();
 
-    /// <summary>The string values of the arguments, at any depth, except those the log keeps (process and preset names, fixed values).</summary>
-    private static IEnumerable<string> UnnamedStrings(IReadOnlyDictionary<string, object?> arguments) =>
-        arguments.Where(a => !AuditRecord.NamedStringArguments.Contains(a.Key)).SelectMany(a => a.Value switch
-        {
-            string s => [s],
-            JsonElement e => UnnamedStrings(e),
-            _ => []
-        });
+    /// <summary>
+    /// The string values of the arguments, at any depth, except those the log keeps (process and preset names, fixed
+    /// values). A top-level argument that is content for <paramref name="tool"/> (<see cref="AuditRecord.ContentArguments"/>:
+    /// element_action's name criterion) is never kept, as AuditRecord.SummarizeArguments records its length only, so its
+    /// value is checked too (roadmap M3.F29).
+    /// </summary>
+    private static IEnumerable<string> UnnamedStrings(string tool, IReadOnlyDictionary<string, object?> arguments)
+    {
+        var content = AuditRecord.ContentArguments.TryGetValue(tool, out var names) ? names : new HashSet<string>();
+        return arguments.Where(a => !AuditRecord.NamedStringArguments.Contains(a.Key) || content.Contains(a.Key))
+            .SelectMany(a => a.Value switch
+            {
+                string s => [s],
+                JsonElement e => UnnamedStrings(e),
+                _ => []
+            });
+    }
 
     private static IEnumerable<string> UnnamedStrings(JsonElement value) => value.ValueKind switch
     {
