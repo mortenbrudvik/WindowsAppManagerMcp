@@ -50,8 +50,8 @@ public readonly record struct InputTarget(nint? WindowHandle, bool AllowHostTarg
     /// For a point converted from image, window or client coordinates (roadmap M3.11): checks that what the point was
     /// measured on is unchanged, and returns why not (errorCode StaleCapture), or null when it is. The point is converted
     /// before the call waits for the input gate; the input guard runs this inside the gate for mouse input, after the
-    /// target's own checks, and again before every press (the second click of a double click too), so input never reaches a
-    /// point that a window moving meanwhile turned into another spot.
+    /// target's own checks, and again right before the batch with the press (which holds both clicks of a double click), so
+    /// input never reaches a point that a window moving meanwhile turned into another spot.
     /// </summary>
     public Func<SelectorRefusal?>? PointRecheck { get; init; }
 
@@ -460,5 +460,33 @@ public enum InputErrorCode
     /// The captureId names no capture: it is mistyped, from an earlier server run, older than 10 minutes, or 32 newer
     /// captures pushed it out. Nothing was sent: capture again.
     /// </summary>
-    CaptureNotFound = 47
+    CaptureNotFound = 47,
+
+    // Mouse correctness (roadmap M4.2). Unlike every code above, the input WAS sent.
+
+    /// <summary>
+    /// Mouse input: the batch (the move to the point with its clicks, wheel notches or nothing more) was sent, but afterwards
+    /// the pointer is not at the point (ActualX, ActualY say where it is): Windows kept it off the point (ClipCursor confines
+    /// it to a window, as games and remote sessions do, or the point is on no monitor), or the user or the application moved
+    /// it at once. The input may have landed where the pointer is. Not CursorNotAtPoint, which is found before anything is
+    /// sent.
+    /// </summary>
+    CursorClamped = 48
+}
+
+/// <summary>
+/// A mouse button as the user knows it (roadmap M4.2). Primary is the button the user clicks with: the left one, or the
+/// right one when the user swapped the buttons in Windows' mouse settings. SendInput names physical buttons, so
+/// <see cref="Services.InputBatchBuilder"/> sends a primary click as the right button's events when they are swapped.
+/// </summary>
+public enum MouseButton
+{
+    /// <summary>The button that clicks, selects and drags: the left one unless the buttons are swapped.</summary>
+    Primary,
+
+    /// <summary>The button that opens context menus: the right one unless the buttons are swapped.</summary>
+    Secondary,
+
+    /// <summary>The middle button (the wheel), which swapping does not change.</summary>
+    Middle
 }

@@ -26,8 +26,8 @@ public class InputSimulationToolsSpaceTests
             .Returns((int x, int y, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new ClickResult(true, x, y, "left")));
         _input.Setup(s => s.RightClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new ClickResult(true, x, y, "right")));
-        _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Returns((int x, int y, int _, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new ClickResult(true, x, y, "double")));
+        _input.Setup(s => s.DoubleClick(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns((int x, int y, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new ClickResult(true, x, y, "double")));
         _input.Setup(s => s.MoveMouse(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns((int x, int y, InputTarget target, bool _, CancellationToken _) => Sent(x, y, target, new MouseMoveResult(true, x, y)));
         _input.Setup(s => s.Scroll(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<InputTarget>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))

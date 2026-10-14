@@ -23,7 +23,7 @@ public class InputSimulationServiceGuardTests
     private readonly Mock<IInputTargetGuard> _guard = TestDataFactory.CreateAllowingInputGuard(Notepad);
     private readonly List<IReadOnlyList<InputEvent>> _batches = [];
 
-    // Where the fake pointer is: it starts off the point and follows SetCursorPos
+    // Where the fake pointer is: it starts off the point and follows SetCursorPos and absolute moves (1920x1080)
     private (int X, int Y)? _cursor = (501, 302);
 
     public InputSimulationServiceGuardTests()
@@ -33,7 +33,14 @@ public class InputSimulationServiceGuardTests
             .Returns(true);
         _input.Setup(w => w.GetCursorPos()).Returns(() => _cursor);
         _input.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
-            .Callback((IReadOnlyList<InputEvent> events) => _batches.Add(events.ToList()))
+            .Callback((IReadOnlyList<InputEvent> events) =>
+            {
+                _batches.Add(events.ToList());
+                foreach (var move in events.Where(e => e.Flags == InputEvent.MouseMoveAbsoluteFlags))
+                {
+                    _cursor = ((int)((long)move.Dx * 1920 / 65536), (int)((long)move.Dy * 1080 / 65536));
+                }
+            })
             .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
         _guard.Setup(g => g.DescribeForeground()).Returns(Terminal);
     }
@@ -149,21 +156,27 @@ public class InputSimulationServiceGuardTests
     }
 
     [Fact]
-    public void DoubleClick_WindowChangesAfterTheFirstClick_TheSecondIsNotSent()
+    public void DoubleClick_IsCheckedOnce_RightBeforeTheBatchThatHoldsBothClicks()
     {
-        // Arrange
-        var rechecks = 0;
-        _guard.Setup(g => g.RecheckMouse(500, 300, It.IsAny<InputGuardResult>()))
-            .Returns((int _, int _, InputGuardResult approved) =>
-                ++rechecks == 1 ? approved : Refused(InputErrorCode.TargetOccluded, Terminal));
+        // Roadmap M4.2: both clicks go in one batch, so nothing can come between them to check
+        var result = CreateSut().DoubleClick(500, 300, InputTarget.Window(0x200));
 
-        // Act
-        var result = CreateSut().DoubleClick(500, 300, 10, InputTarget.Window(0x200));
+        result.Success.Should().BeTrue(result.Error);
+        _guard.Verify(g => g.RecheckMouse(500, 300, It.IsAny<InputGuardResult>()), Times.Once);
+        _batches.Should().ContainSingle().Which.Select(e => e.Flags).Should().Equal(
+            InputEvent.MouseMoveAbsoluteFlags, LeftDown, LeftUp, LeftDown, LeftUp);
+    }
 
-        // Assert
+    [Fact]
+    public void DoubleClick_WindowChangesBeforeTheBatch_NeitherClickIsSent()
+    {
+        _guard.Setup(g => g.RecheckMouse(500, 300, It.IsAny<InputGuardResult>())).Returns(Refused(InputErrorCode.TargetOccluded, Terminal));
+
+        var result = CreateSut().DoubleClick(500, 300, InputTarget.Window(0x200));
+
         result.ErrorCode.Should().Be(InputErrorCode.TargetOccluded);
-        result.Error.Should().StartWith("The first click was sent, the second was not");
-        _batches.Should().ContainSingle().Which.Select(e => e.Flags).Should().Equal(InputEvent.MouseMoveAbsoluteFlags, LeftDown, LeftUp);
+        result.Error.Should().StartWith("Nothing was clicked");
+        _batches.Should().BeEmpty();
     }
 
     [Fact]

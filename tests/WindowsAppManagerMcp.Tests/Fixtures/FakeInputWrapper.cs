@@ -9,6 +9,7 @@ namespace WindowsAppManagerMcp.Tests.Fixtures;
 public sealed class FakeInputWrapper : INativeInputWrapper
 {
     private const uint KeyUp = 0x0002;
+    private const uint AbsoluteMove = 0x0001 | 0x4000 | 0x8000; // MOUSEEVENTF_MOVE | VIRTUALDESK | ABSOLUTE
     private const ushort VkShift = 0x10, VkControl = 0x11, VkMenu = 0x12;
     private const ushort VkLShift = 0xA0, VkLControl = 0xA2, VkLMenu = 0xA4;
 
@@ -72,6 +73,18 @@ public sealed class FakeInputWrapper : INativeInputWrapper
     /// <summary>Runs after each SetCursorPos, on the calling thread (to move the mouse away, or to pause meanwhile).</summary>
     public Action<int, int>? AfterSetCursorPos { get; set; }
 
+    /// <summary>
+    /// The virtual screen an absolute move (MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK) spans: the fake puts the pointer
+    /// at the pixel Windows maps the move to, left + n * width / 65536 rounded down. Default: one 1920x1080 monitor.
+    /// </summary>
+    public VirtualScreenBounds VirtualScreen { get; set; } = new(0, 0, 1920, 1080);
+
+    /// <summary>
+    /// The rectangle the pointer is confined to (ClipCursor, as a game or remote session sets it; right and bottom
+    /// exclusive), or null. SetCursorPos and absolute moves put the pointer at the nearest point inside it, as Windows does.
+    /// </summary>
+    public (int Left, int Top, int Right, int Bottom)? Clip { get; set; }
+
     /// <summary>Puts the pointer at (x, y), as the user moving the mouse would; not counted in <see cref="CursorMoves"/>.</summary>
     public void MovePointer(int x, int y)
     {
@@ -85,7 +98,7 @@ public sealed class FakeInputWrapper : INativeInputWrapper
     {
         lock (_lock)
         {
-            _cursor = (x, y);
+            _cursor = Clipped(x, y);
             CursorMoves++;
         }
 
@@ -143,7 +156,14 @@ public sealed class FakeInputWrapper : INativeInputWrapper
         }
     }
 
-    /// <summary>Updates the key state as Windows does: a generic modifier counts as its left key too.</summary>
+    private (int X, int Y) Clipped(int x, int y) => Clip is { } clip
+        ? (Math.Clamp(x, clip.Left, clip.Right - 1), Math.Clamp(y, clip.Top, clip.Bottom - 1))
+        : (x, y);
+
+    /// <summary>
+    /// Updates the key state as Windows does (a generic modifier counts as its left key too), and the pointer's position for
+    /// an absolute move.
+    /// </summary>
     private void Apply(InputEvent e)
     {
         switch (e.Kind)
@@ -171,6 +191,12 @@ public sealed class FakeInputWrapper : INativeInputWrapper
                 break;
 
             case InputEventKind.Mouse:
+                if ((e.Flags & AbsoluteMove) == AbsoluteMove)
+                {
+                    _cursor = Clipped(VirtualScreen.X + (int)((long)e.Dx * VirtualScreen.Width / 65536),
+                        VirtualScreen.Y + (int)((long)e.Dy * VirtualScreen.Height / 65536));
+                }
+
                 foreach (var (down, up, vk) in Buttons)
                 {
                     if ((e.Flags & down) != 0)

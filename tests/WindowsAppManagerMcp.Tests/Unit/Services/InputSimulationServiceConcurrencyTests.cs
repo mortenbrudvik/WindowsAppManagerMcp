@@ -188,6 +188,12 @@ public class InputSimulationServiceConcurrencyTests
 
         public uint SendInput(IReadOnlyList<InputEvent> events)
         {
+            // mouse_move's batch is one absolute move (one 1920x1080 monitor); it moves the pointer as SetCursorPos does
+            if (events is [{ Flags: InputEvent.MouseMoveAbsoluteFlags } move])
+            {
+                return SetCursorPos((int)((long)move.Dx * 1920 / 65536), (int)((long)move.Dy * 1080 / 65536)) ? 1u : 0u;
+            }
+
             Record(Describe(events));
             return (uint)events.Count;
         }

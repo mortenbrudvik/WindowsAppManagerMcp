@@ -43,6 +43,18 @@ public sealed class NativeSystemInfoWrapper : INativeSystemInfoWrapper
             ? (MouseWheelRouting)routing
             : null;
 
+    public VirtualScreenBounds? GetVirtualScreen()
+    {
+        var width = NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_CXVIRTUALSCREEN);
+        var height = NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_CYVIRTUALSCREEN);
+        return width > 0 && height > 0
+            ? new VirtualScreenBounds(NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_XVIRTUALSCREEN),
+                NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_YVIRTUALSCREEN), width, height)
+            : null;
+    }
+
+    public bool? AreMouseButtonsSwapped() => NativeMethods.User32.GetSystemMetrics(NativeEnums.SM_SWAPBUTTON) != 0;
+
     public int? GetSessionId()
     {
         try

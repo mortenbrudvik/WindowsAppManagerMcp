@@ -381,6 +381,12 @@ public sealed class FixtureOnlyCallPolicy : IWrapperCallPolicy
                 {
                     return wheel;
                 }
+                // mouse_move's batch only moves the pointer, as SetCursorPos does: only where it ends counts
+                if (batch.All(e => e.Kind == InputEventKind.Mouse &&
+                                   e.Flags == (MouseMoveFlag | MouseAbsoluteFlag | MouseVirtualDeskFlag)))
+                {
+                    return batch.Select(CheckMoveDestination).FirstOrDefault(refusal => refusal != null);
+                }
                 if (batch.Any(e => e.Kind == InputEventKind.Mouse))
                 {
                     if (_probe.GetCursorPos() is not { } cursor)

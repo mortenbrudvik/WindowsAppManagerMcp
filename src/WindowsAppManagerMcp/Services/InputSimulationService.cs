@@ -47,8 +47,10 @@ public class InputSimulationService : IInputSimulationService
     /// <param name="gateTimeout">How long to wait for the input gate; default <see cref="InputGate.InputWaitTimeout"/>.</param>
     /// <param name="hitTest">scroll: the client area of the target window, where it scrolls when no point is given.</param>
     /// <param name="systemInfo">
-    /// scroll: where Windows sends the wheel. Without it the routing is unknown, and scroll then goes only to the
-    /// foreground window, as with focus routing.
+    /// The virtual screen a batch's absolute move spans and whether the mouse buttons are swapped (roadmap M4.2), and for
+    /// scroll where Windows sends the wheel. Without it the monitors' bounding rectangle is the virtual screen, the buttons
+    /// count as not swapped, and the wheel routing is unknown, so scroll goes only to the foreground window, as with focus
+    /// routing. The server always passes it.
     /// </param>
     /// <param name="clipboardOrigin">Told about the batches that can copy, so get_clipboard knows the agent's copies.</param>
     /// <param name="pasteGuard">
@@ -83,17 +85,23 @@ public class InputSimulationService : IInputSimulationService
         _keyboardLayout = keyboardLayout;
     }
 
+    /// <summary>
+    /// How long a mouse call waits, at most, for the pointer to get to the point after its batch: Windows can move the pointer
+    /// after SendInput has returned, so a pointer elsewhere is read again until then before the call reports CursorClamped.
+    /// </summary>
+    public static readonly TimeSpan PointerSettleTime = TimeSpan.FromMilliseconds(50);
+
     public ClickResult Click(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "left", leftButton: true, clicks: 1, delayMs: 0, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "left", MouseButton.Primary, clicks: 1, releaseHeldModifiers, cancellationToken);
 
     public ClickResult RightClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "right", leftButton: false, clicks: 1, delayMs: 0, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "right", MouseButton.Secondary, clicks: 1, releaseHeldModifiers, cancellationToken);
 
-    public ClickResult DoubleClick(int x, int y, int delayMs = 50, InputTarget target = default, bool releaseHeldModifiers = false,
+    public ClickResult DoubleClick(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default) =>
-        ClickAt(x, y, target, "double", leftButton: true, clicks: 2, delayMs: delayMs, releaseHeldModifiers, cancellationToken);
+        ClickAt(x, y, target, "double", MouseButton.Primary, clicks: 2, releaseHeldModifiers, cancellationToken);
 
     public MouseMoveResult MoveMouse(int x, int y, InputTarget target = default, bool releaseHeldModifiers = false,
         CancellationToken cancellationToken = default)
@@ -155,22 +163,26 @@ public class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new MouseMoveResult(false, x, y, buttons, InputErrorCode.MouseInUse), approved));
                 }
 
-                switch (_session.SetCursorPos(x, y))
+                // An injected move, as a click's (roadmap M4.2): applications that watch raw input or a low-level hook see it,
+                // which they do not for SetCursorPos
+                var sent = Send(NewBatch().MoveTo(x, y).Build(), approved);
+                if (sent.PausedByUser)
                 {
-                    case null:
-                        return held.Apply(Finish(new MouseMoveResult(false, x, y, PausedMessage("The pointer was not moved."), InputErrorCode.PausedByUser), approved));
-                    case false:
-                        return held.Apply(Finish(new MouseMoveResult(false, x, y, CursorPositionFailedMessage("The pointer was not moved."),
-                            InputErrorCode.CursorPositionFailed), approved));
+                    return held.Apply(Finish(new MouseMoveResult(false, x, y, PausedMessage("The pointer was not moved."), InputErrorCode.PausedByUser), approved));
                 }
 
-                switch (PointerIsAt(x, y, out var actual))
+                if (!sent.Complete)
                 {
-                    case PointerCheck.Paused:
-                        return held.Apply(Finish(new MouseMoveResult(false, x, y, PausedMessage("The pointer moved away from the point and was not placed there again."), InputErrorCode.PausedByUser), approved));
-                    case PointerCheck.Away:
-                        return held.Apply(Finish(new MouseMoveResult(false, x, y, PointerMovedAway(x, y, actual), InputErrorCode.CursorNotAtPoint),
-                            approved));
+                    return held.Apply(Finish(new MouseMoveResult(false, x, y,
+                        "SendInput did not insert the move, so the pointer was not moved. The input desktop may not be reachable (a UAC " +
+                        "prompt, the lock screen or a disconnected session). Try again; if it keeps failing, ask the user.",
+                        InputErrorCode.SendInputFailed), approved));
+                }
+
+                if (PointerAwayAfterBatch(x, y) is { } at)
+                {
+                    return held.Apply(Finish(new MouseMoveResult(false, x, y, PointerClamped("The move", x, y, at), InputErrorCode.CursorClamped),
+                        approved));
                 }
 
                 return held.Apply(Finish(new MouseMoveResult(Success: true, X: x, Y: y), approved));
@@ -236,7 +248,8 @@ public class InputSimulationService : IInputSimulationService
     /// <summary>
     /// scroll at a checked point, as a click: the guard checks the window at the point before the pointer moves and
     /// again right before the wheel, together with where Windows sends the wheel. The wheel notches go in one SendInput
-    /// call with a move to the checked point, so no other input can come between them.
+    /// call with a move to the checked point (<see cref="InputBatchBuilder"/>), so no other input can come between them; a
+    /// pointer that is not at the point afterwards is CursorClamped.
     /// </summary>
     private ScrollResult ScrollAt(int x, int y, int deltaY, int deltaX, InputTarget target, bool releaseHeldModifiers,
         CancellationToken cancellationToken)
@@ -345,8 +358,7 @@ public class InputSimulationService : IInputSimulationService
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, elsewhereNow, InputErrorCode.WheelFollowsFocus), approved));
                 }
 
-                var batch = ScrollInputs(ToVirtualDesktopAbsolute(x, y, _monitorService.GetAllMonitors()), deltaY, deltaX);
-                var sent = Send(batch, approved);
+                var sent = Send(NewBatch().MoveTo(x, y).Wheel(deltaY, deltaX).Build(), approved);
                 if (sent.PausedByUser)
                 {
                     return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PausedMessage(NothingScrolled), InputErrorCode.PausedByUser), approved));
@@ -358,6 +370,12 @@ public class InputSimulationService : IInputSimulationService
                         $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then one per notch), so " +
                         $"{Math.Max(0, sent.Inserted - 1)} of {Math.Abs(deltaY) + Math.Abs(deltaX)} notches were scrolled. Check the window " +
                         "before scrolling again.", InputErrorCode.SendInputFailed), approved));
+                }
+
+                if (PointerAwayAfterBatch(x, y) is { } at)
+                {
+                    return held.Apply(Finish(new ScrollResult(false, x, y, deltaY, deltaX, PointerClamped("The scroll", x, y, at),
+                        InputErrorCode.CursorClamped), approved));
                 }
 
                 return held.Apply(Finish(new ScrollResult(true, x, y, deltaY, deltaX), approved));
@@ -372,31 +390,6 @@ public class InputSimulationService : IInputSimulationService
                 _session.ReleaseHeldInput("the end of the input call");
             }
         }
-    }
-
-    /// <summary>
-    /// A move to the point, then one wheel event per notch: vertical first, then horizontal. One event per notch
-    /// (WHEEL_DELTA each) rather than one large delta, because some applications scroll one step for any delta.
-    /// deltaY counts down as positive (as a web page's wheel event does), which is a negative wheel movement.
-    /// </summary>
-    public static List<InputEvent> ScrollInputs((int X, int Y) absolute, int deltaY, int deltaX)
-    {
-        var inputs = new List<InputEvent>(1 + Math.Abs(deltaY) + Math.Abs(deltaX))
-        {
-            InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y)
-        };
-
-        for (var i = 0; i < Math.Abs(deltaY); i++)
-        {
-            inputs.Add(InputEvent.Wheel(-Math.Sign(deltaY) * InputEvent.WheelDelta));
-        }
-
-        for (var i = 0; i < Math.Abs(deltaX); i++)
-        {
-            inputs.Add(InputEvent.HorizontalWheel(Math.Sign(deltaX) * InputEvent.WheelDelta));
-        }
-
-        return inputs;
     }
 
     /// <summary>
@@ -808,15 +801,17 @@ public class InputSimulationService : IInputSimulationService
         : $"Sending stopped after {keysSent} of {total} keys, which went to {Describe(approved?.ReceivingWindow)}.";
 
     /// <summary>
-    /// A click or double click at a point: the guard checks the window at the point before the cursor
-    /// moves, and again before every button press, since moving the cursor can open a popup there. Each
-    /// press is sent in one SendInput call together with a move to the checked point, so a user moving the
-    /// mouse in between cannot make it land elsewhere (SendInput does not interleave other input with the
-    /// events of one call).
+    /// One, two or three clicks at a point: the guard checks the window at the point before the cursor moves, and again
+    /// right before the press, since moving the cursor can open a popup there. The clicks are sent in one SendInput call
+    /// together with a move to the checked point (<see cref="InputBatchBuilder"/>), so a user moving the mouse cannot make
+    /// them land elsewhere (SendInput does not interleave other input with the events of one call), and a double click is
+    /// one double click whatever the double-click time. A pointer that is not at the point afterwards is CursorClamped.
     /// </summary>
-    private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, bool leftButton, int clicks, int delayMs,
+    private ClickResult ClickAt(int x, int y, InputTarget target, string clickType, MouseButton button, int clicks,
         bool releaseHeldModifiers, CancellationToken cancellationToken)
     {
+        const string NothingClicked = "Nothing was clicked: ";
+
         if (!IsValidScreenCoordinate(x, y))
         {
             return new ClickResult(
@@ -853,7 +848,6 @@ public class InputSimulationService : IInputSimulationService
         {
             InputGuardResult? approved = null;
             HeldCheck held = default;
-            var clicksSent = 0;
             try
             {
                 held = CheckHeldInput(releaseHeldModifiers, "clicked");
@@ -887,78 +881,72 @@ public class InputSimulationService : IInputSimulationService
                 // Small delay so that a popup the pointer opens there (a hover menu or tooltip) shows up in the re-check
                 Wait(10, call);
 
-                var absolute = ToVirtualDesktopAbsolute(x, y, _monitorService.GetAllMonitors());
-                for (var click = 1; click <= clicks; click++)
+                var recheck = _guard.RecheckMouse(x, y, approved);
+                if (!recheck.Allowed)
                 {
-                    if (click > 1)
-                    {
-                        // Delay between clicks
-                        Wait(Math.Clamp(delayMs, 10, 500), call);
-                    }
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + recheck.Error, recheck.ErrorCode), recheck));
+                }
 
-                    var sentSoFar = ClicksSentSoFar(clicksSent);
-                    var recheck = _guard.RecheckMouse(x, y, approved);
-                    if (!recheck.Allowed)
-                    {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + recheck.Error, recheck.ErrorCode), recheck));
-                    }
-
-                    approved = recheck;
-                    switch (PointerIsAt(x, y, out var actual))
-                    {
-                        case PointerCheck.Paused:
-                            return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage(sentSoFar.TrimEnd(' ', ':') + "."),
-                                InputErrorCode.PausedByUser), approved));
-                        case PointerCheck.Away:
-                            return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + PointerMovedAway(x, y, actual),
-                                InputErrorCode.CursorNotAtPoint), approved));
-                    }
-
-                    // Right before the press: a modifier the user pressed meanwhile would make it a Ctrl- or Shift-click
-                    if (ModifiersDownNow("clicked") is { } downNow)
-                    {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + downNow.Error, InputErrorCode.ModifiersHeld)
-                        {
-                            HeldModifiers = downNow.Names
-                        }, approved));
-                    }
-
-                    // And a button the user pressed meanwhile would send the press to the window it went down on
-                    if (MouseButtonsDownNow("clicked") is { } buttonsNow)
-                    {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + buttonsNow, InputErrorCode.MouseInUse), approved));
-                    }
-
-                    // A right click in a terminal pastes
-                    if (!leftButton && PasteRefusal(ClickInputs(leftButton, absolute), approved) is { } pasteRefused)
-                    {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, sentSoFar + pasteRefused, InputErrorCode.PasteNotAllowed), approved));
-                    }
-
-                    var sent = SendClickInputs(leftButton, absolute, approved);
-                    if (sent.PausedByUser)
-                    {
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage(sentSoFar.TrimEnd(' ', ':') + "."),
+                approved = recheck;
+                switch (PointerIsAt(x, y, out var actual))
+                {
+                    case PointerCheck.Paused:
+                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage("Nothing was clicked."),
                             InputErrorCode.PausedByUser), approved));
-                    }
+                    case PointerCheck.Away:
+                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + PointerMovedAway(x, y, actual),
+                            InputErrorCode.CursorNotAtPoint), approved));
+                }
 
-                    if (!sent.Complete)
+                // Right before the press: a modifier the user pressed meanwhile would make it a Ctrl- or Shift-click
+                if (ModifiersDownNow("clicked") is { } downNow)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + downNow.Error, InputErrorCode.ModifiersHeld)
                     {
-                        var error = clicks == 1 ? "SendInput failed"
-                            : click == 1 ? "First click in double-click failed"
-                            : "Second click in double-click failed";
-                        return held.Apply(Finish(new ClickResult(false, x, y, clickType, error, InputErrorCode.SendInputFailed), approved));
-                    }
+                        HeldModifiers = downNow.Names
+                    }, approved));
+                }
 
-                    clicksSent++;
+                // And a button the user pressed meanwhile would send the press to the window it went down on
+                if (MouseButtonsDownNow("clicked") is { } buttonsNow)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + buttonsNow, InputErrorCode.MouseInUse), approved));
+                }
+
+                var batch = NewBatch().MoveTo(x, y).Click(button, clicks).Build();
+
+                // A right click in a terminal pastes
+                if (button == MouseButton.Secondary && PasteRefusal(batch.AsUnswapped, approved) is { } pasteRefused)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, NothingClicked + pasteRefused, InputErrorCode.PasteNotAllowed), approved));
+                }
+
+                var sent = Send(batch, approved);
+                if (sent.PausedByUser)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, PausedMessage("Nothing was clicked."),
+                        InputErrorCode.PausedByUser), approved));
+                }
+
+                if (!sent.Complete)
+                {
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, ClickBatchCutShort(sent, clicks), InputErrorCode.SendInputFailed),
+                        approved));
+                }
+
+                if (PointerAwayAfterBatch(x, y) is { } at)
+                {
+                    var what = clicks == 1 ? "The click" : "The double click";
+                    return held.Apply(Finish(new ClickResult(false, x, y, clickType, PointerClamped(what, x, y, at), InputErrorCode.CursorClamped),
+                        approved));
                 }
 
                 return held.Apply(Finish(new ClickResult(Success: true, X: x, Y: y, ClickType: clickType), approved));
             }
             catch (OperationCanceledException) when (call.IsPaused)
             {
-                var paused = new ClickResult(false, x, y, clickType, PausedMessage(ClicksSentSoFar(clicksSent).TrimEnd(' ', ':') + "."),
-                    InputErrorCode.PausedByUser);
+                // Only the waits before the batch are cancelled, so nothing was clicked
+                var paused = new ClickResult(false, x, y, clickType, PausedMessage("Nothing was clicked."), InputErrorCode.PausedByUser);
                 return held.Apply(approved == null ? paused : Finish(paused, approved));
             }
             finally
@@ -968,24 +956,62 @@ public class InputSimulationService : IInputSimulationService
         }
     }
 
-    private static string ClicksSentSoFar(int clicksSent) =>
-        clicksSent == 0 ? "Nothing was clicked: " : "The first click was sent, the second was not: ";
-
-    /// <summary>A move to the checked point, the button down and up, in one SendInput call.</summary>
-    private InputSendOutcome SendClickInputs(bool leftButton, (int X, int Y) absolute, InputGuardResult approved) =>
-        Send(ClickInputs(leftButton, absolute), approved);
-
-    private static InputEvent[] ClickInputs(bool leftButton, (int X, int Y) absolute)
+    /// <summary>
+    /// The SendInputFailed message of a click batch SendInput inserted only part of: how many of its clicks went in. The
+    /// session has already released a button whose press went in without its release.
+    /// </summary>
+    private static string ClickBatchCutShort(InputSendOutcome sent, int clicks)
     {
-        var downFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTDOWN : NativeEnums.MOUSEEVENTF_RIGHTDOWN;
-        var upFlag = leftButton ? NativeEnums.MOUSEEVENTF_LEFTUP : NativeEnums.MOUSEEVENTF_RIGHTUP;
-        return
-        [
-            InputEvent.MouseMoveAbsolute(absolute.X, absolute.Y),
-            InputEvent.Mouse(downFlag),
-            InputEvent.Mouse(upFlag)
-        ];
+        var buttonEvents = Math.Max(0, sent.Inserted - 1);
+        var done = buttonEvents / 2;
+        var clicked = clicks == 1
+            ? done == 0 ? "the click was not sent" : "the click went in"
+            : $"{done} of its {clicks} clicks went in";
+        var halfway = buttonEvents % 2 == 1 ? ", and the press after them went in without its release, which was sent at once" : string.Empty;
+        return $"SendInput inserted {sent.Inserted} of {sent.Requested} events (the move to the point, then a press and a release " +
+               $"for each click), so {clicked}{halfway}. Check the window before clicking again.";
     }
+
+    /// <summary>
+    /// A new batch for the desktop as it is now: Windows' virtual screen and whether the user swapped the mouse buttons, read
+    /// for every batch, since the user can change either at any time. Without the system reads (tests), the monitors'
+    /// bounding rectangle and unswapped buttons.
+    /// </summary>
+    private InputBatchBuilder NewBatch() =>
+        new(_systemInfo?.GetVirtualScreen() is { Width: > 0, Height: > 0 } screen ? screen : InputBatchBuilder.VirtualScreenOf(_monitorService.GetAllMonitors()),
+            _systemInfo?.AreMouseButtonsSwapped() ?? false);
+
+    /// <summary>
+    /// Where the pointer is after a batch that moved it to (x, y), when that is not the point; null when it is there, or its
+    /// position cannot be read. Windows can move the pointer after SendInput has returned, so a pointer elsewhere is read
+    /// again until <see cref="PointerSettleTime"/> has passed. Nothing here throws on a pause or cancellation: the batch has
+    /// been sent, and the result must say so.
+    /// </summary>
+    private (int X, int Y)? PointerAwayAfterBatch(int x, int y)
+    {
+        var deadline = Environment.TickCount64 + (long)PointerSettleTime.TotalMilliseconds;
+        while (true)
+        {
+            if (_inputWrapper.GetCursorPos() is not { } at || at == (x, y))
+            {
+                return null;
+            }
+
+            if (Environment.TickCount64 >= deadline)
+            {
+                return at;
+            }
+
+            Thread.Sleep(5);
+        }
+    }
+
+    /// <summary>The CursorClamped message: <paramref name="what"/> was sent, but the pointer is at <paramref name="at"/>.</summary>
+    private static string PointerClamped(string what, int x, int y, (int X, int Y) at) =>
+        $"{what} was sent, but afterwards the mouse pointer is at ({at.X}, {at.Y}), not at ({x}, {y}): Windows kept it off the point " +
+        "(it is confined to a window, as games and remote sessions do, or the point is on no monitor), or the user or the " +
+        $"application moved it at once. The input may have landed at ({at.X}, {at.Y}) instead. Look at the window (a capture or " +
+        "get_ui_elements) before you send it again; do not simply retry.";
 
     /// <summary>
     /// Why <paramref name="batch"/> must not be sent because it pastes content get_clipboard would not return (see
@@ -999,9 +1025,17 @@ public class InputSimulationService : IInputSimulationService
     /// clipboard origin with the process of the window it goes to, so get_clipboard can tell the copy that application
     /// makes from one the user makes.
     /// </summary>
-    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, InputGuardResult approved)
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, InputGuardResult approved) => Send(batch, batch, approved);
+
+    /// <summary>
+    /// Sends a mouse batch as <see cref="Send(IReadOnlyList{InputEvent}, InputGuardResult)"/> does; the clipboard origin is
+    /// told about its buttons as the user knows them (a primary press copies whichever physical button it is).
+    /// </summary>
+    private InputSendOutcome Send(MouseBatch batch, InputGuardResult approved) => Send(batch.Events, batch.AsUnswapped, approved);
+
+    private InputSendOutcome Send(IReadOnlyList<InputEvent> batch, IReadOnlyList<InputEvent> asUnswapped, InputGuardResult approved)
     {
-        var copy = _clipboardOrigin?.BeforeInput(batch, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
+        var copy = _clipboardOrigin?.BeforeInput(asUnswapped, approved.ReceivingWindow?.ProcessId ?? 0, approved.Receiving, approved.Anchor);
         var sent = _session.Send(batch);
         if (copy != null && sent.Inserted > 0)
         {
@@ -1091,31 +1125,6 @@ public class InputSimulationService : IInputSimulationService
         $"The mouse pointer does not stay at ({x}, {y}){(actual is { } at ? $"; it is at ({at.X}, {at.Y})" : string.Empty)}. " +
         "It may be confined to a window (a game or a remote session that captures the mouse, or a drag in progress), or the " +
         "user is moving the mouse, so the input would land where the guard did not check. Try again, or ask the user.";
-
-    /// <summary>
-    /// The normalized absolute coordinates (0..65535 across the virtual desktop, the bounding rectangle of all
-    /// monitors) of the pixel (x, y), for MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK. Windows maps a
-    /// normalized coordinate n to the pixel left + n * width / 65536, rounded down. This returns the middle of
-    /// the pixel's range of n, so the pixel comes back exactly with that mapping, and also with one that
-    /// rounds n * (width - 1) / 65535 to the nearest pixel.
-    /// </summary>
-    public static (int X, int Y) ToVirtualDesktopAbsolute(int x, int y, IReadOnlyCollection<MonitorInfo> monitors)
-    {
-        ArgumentNullException.ThrowIfNull(monitors);
-        if (monitors.Count == 0)
-        {
-            throw new ArgumentException("At least one monitor is needed.", nameof(monitors));
-        }
-
-        var left = monitors.Min(m => m.Bounds.X);
-        var top = monitors.Min(m => m.Bounds.Y);
-        var right = monitors.Max(m => m.Bounds.X + m.Bounds.Width);
-        var bottom = monitors.Max(m => m.Bounds.Y + m.Bounds.Height);
-        return (Normalize(x - left, right - left), Normalize(y - top, bottom - top));
-
-        static int Normalize(int offset, int size) =>
-            (int)Math.Clamp((2L * offset + 1) * 65536 / (2L * Math.Max(size, 1)), 0, 65535);
-    }
 
     /// <summary>
     /// Before any input: releases keys the server itself left down earlier (refusing when that fails), then

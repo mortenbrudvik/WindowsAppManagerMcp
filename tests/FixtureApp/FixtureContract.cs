@@ -298,6 +298,16 @@ public static class FixtureContract
         /// <summary>A context menu item was clicked or invoked. Fields: <c>id</c>.</summary>
         public const string ContextMenuItemClicked = "contextMenuItemClicked";
 
+        /// <summary>
+        /// A mouse button went down in the main window (roadmap M4.2). Fields: <c>button</c> (left, right, middle, x1 or x2:
+        /// the button as the window gets it, after Windows applied the user's button swap), <c>clickCount</c> (WPF's: 2 for
+        /// the second press of a double click, 3 for a triple click), <c>x</c> and <c>y</c> (where the press was, in screen
+        /// coordinates: GetMessagePos of the button message, physical pixels unless the fixture runs DPI unaware) and
+        /// <c>id</c> (the AutomationId of the element under it, or of the nearest element above that has one; empty when
+        /// none has).
+        /// </summary>
+        public const string MouseDown = "mouseDown";
+
         /// <summary>The fixture is exiting. Fields: <c>reason</c> (closed, parentExited or maxLifetime).</summary>
         public const string Exiting = "exiting";
 

@@ -54,12 +54,9 @@ public class InputSimulationServiceTests
     /// </summary>
     private static InputEvent MoveTo(int x, int y)
     {
-        var dx = Enumerable.Range(0, 65536).First(n => (long)n * 1920 / 65536 == x);
-        var dy = Enumerable.Range(0, 65536).First(n => (long)n * 1080 / 65536 == y);
-        var expected = InputSimulationService.ToVirtualDesktopAbsolute(x, y, [TestDataFactory.CreateMonitorInfo(
-            boundsX: 0, boundsY: 0, boundsWidth: 1920, boundsHeight: 1080)]);
-        ((long)expected.X * 1920 / 65536).Should().Be(x, $"normalized x {expected.X} (first is {dx}) must map back to {x}");
-        ((long)expected.Y * 1080 / 65536).Should().Be(y, $"normalized y {expected.Y} (first is {dy}) must map back to {y}");
+        var expected = InputBatchBuilder.ToAbsolute(x, y, new VirtualScreenBounds(0, 0, 1920, 1080));
+        ((long)expected.X * 1920 / 65536).Should().Be(x, $"normalized x {expected.X} must map back to {x}");
+        ((long)expected.Y * 1080 / 65536).Should().Be(y, $"normalized y {expected.Y} must map back to {y}");
         return InputEvent.MouseMoveAbsolute(expected.X, expected.Y);
     }
 
@@ -353,7 +350,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void DoubleClick_WithValidCoordinates_SendsTwoLeftClicks()
+    public void DoubleClick_WithValidCoordinates_SendsBothLeftClicksInOneBatch()
     {
         // Arrange
         SetupSingleMonitor();
@@ -362,19 +359,19 @@ public class InputSimulationServiceTests
         // Act
         var result = sut.DoubleClick(600, 350);
 
-        // Assert
+        // Assert - roadmap M4.2: one SendInput call, so the clicks are one double click whatever the double-click time
         result.Success.Should().BeTrue();
         result.X.Should().Be(600);
         result.Y.Should().Be(350);
         result.ClickType.Should().Be("double");
         _mockInputWrapper.Verify(w => w.SetCursorPos(600, 350), Times.Once);
+        _mockInputWrapper.Verify(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Once);
         _sentEvents.Should().Equal(
-            MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp),
-            MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+            MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
     }
 
     [Fact]
-    public void DoubleClick_WhenFirstClickFails_ReturnsErrorWithoutSecondClick()
+    public void DoubleClick_WhenSendInputInsertsNothing_SaysNoClickWentIn()
     {
         // Arrange
         SetupSingleMonitor();
@@ -387,7 +384,7 @@ public class InputSimulationServiceTests
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
-        result.Error.Should().Contain("First click");
+        result.Error.Should().Contain("inserted 0 of 5 events").And.Contain("0 of its 2 clicks went in");
         _mockInputWrapper.Verify(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()), Times.Once);
     }
 
@@ -413,7 +410,7 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void MoveMouse_WithValidCoordinates_MovesCursorWithoutClicking()
+    public void MoveMouse_WithValidCoordinates_SendsOneAbsoluteMoveWithoutClicking()
     {
         // Arrange
         SetupSingleMonitor();
@@ -422,20 +419,20 @@ public class InputSimulationServiceTests
         // Act
         var result = sut.MoveMouse(800, 600);
 
-        // Assert
+        // Assert - roadmap M4.2: an injected move, as a click's, not SetCursorPos
         result.Success.Should().BeTrue();
         result.X.Should().Be(800);
         result.Y.Should().Be(600);
-        _mockInputWrapper.Verify(w => w.SetCursorPos(800, 600), Times.Once);
-        _sentEvents.Should().BeEmpty();
+        _mockInputWrapper.Verify(w => w.SetCursorPos(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+        _sentEvents.Should().Equal(MoveTo(800, 600));
     }
 
     [Fact]
-    public void MoveMouse_WhenSetCursorPosFails_ReturnsCursorPositionFailed()
+    public void MoveMouse_WhenSendInputInsertsNothing_ReturnsSendInputFailed()
     {
         // Arrange
         SetupSingleMonitor();
-        _mockInputWrapper.Setup(w => w.SetCursorPos(It.IsAny<int>(), It.IsAny<int>())).Returns(false);
+        SetupSendInputFailure();
         var sut = CreateSut();
 
         // Act
@@ -443,13 +440,14 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.CursorPositionFailed);
+        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.Error.Should().Contain("the pointer was not moved");
     }
 
     [Fact]
-    public void MoveMouse_PointerConfinedElsewhere_IsCursorNotAtPoint()
+    public void MoveMouse_PointerConfinedElsewhere_IsCursorClamped_AndSaysTheMoveWasSent()
     {
-        // Arrange - SetCursorPos is clamped (ClipCursor): the pointer never gets to the point
+        // Arrange - the move is clamped (ClipCursor): the pointer never gets to the point
         SetupSingleMonitor();
         _mockInputWrapper.Setup(w => w.GetCursorPos()).Returns((100, 100));
         var sut = CreateSut();
@@ -459,9 +457,10 @@ public class InputSimulationServiceTests
 
         // Assert
         result.Success.Should().BeFalse();
-        result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
-        result.Error.Should().Contain("(800, 600)").And.Contain("(100, 100)");
+        result.ErrorCode.Should().Be(InputErrorCode.CursorClamped);
+        result.Error.Should().StartWith("The move was sent").And.Contain("(800, 600)").And.Contain("(100, 100)");
         (result.ActualX, result.ActualY).Should().Be((100, 100));
+        _sentEvents.Should().Equal(MoveTo(800, 600));
     }
 
     #endregion
@@ -507,14 +506,11 @@ public class InputSimulationServiceTests
     }
 
     [Fact]
-    public void DoubleClick_PointerConfinedBeforeTheSecondClick_SendsOnlyTheFirst()
+    public void DoubleClick_PointerConfinedElsewhere_ClicksNothing()
     {
-        // Arrange
+        // Arrange - the pointer is checked once, before the one batch that holds both clicks
         SetupSingleMonitor();
-        _mockInputWrapper.SetupSequence(w => w.GetCursorPos())
-            .Returns((600, 350))
-            .Returns((20, 20))
-            .Returns((20, 20));
+        _mockInputWrapper.Setup(w => w.GetCursorPos()).Returns((20, 20));
         var sut = CreateSut();
 
         // Act
@@ -522,40 +518,251 @@ public class InputSimulationServiceTests
 
         // Assert
         result.ErrorCode.Should().Be(InputErrorCode.CursorNotAtPoint);
-        result.Error.Should().StartWith("The first click was sent, the second was not");
-        _sentEvents.Should().Equal(MoveTo(600, 350), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+        result.Error.Should().StartWith("Nothing was clicked");
+        _sentEvents.Should().BeEmpty();
     }
 
-    [Theory]
-    [InlineData(0, 0, 1920, 1080)]
-    [InlineData(0, 0, 3840, 2160)]
-    [InlineData(-1920, -300, 6400, 1740)] // a monitor left of and above the primary one
-    [InlineData(0, 0, 7, 3)]
-    public void ToVirtualDesktopAbsolute_EveryPixelMapsBackToItself(int left, int top, int width, int height)
+    #endregion
+
+    #region Mouse correctness (roadmap M4.2)
+
+    private readonly Mock<INativeSystemInfoWrapper> _systemInfo = new();
+
+    private InputSimulationService CreateSutWithSystemInfo(IClipboardPasteGuard? pasteGuard = null, IClipboardOrigin? clipboardOrigin = null) =>
+        new(_mockMonitorService.Object, _mockInputWrapper.Object, _guard.Object, new InputSession(_mockInputWrapper.Object),
+            systemInfo: _systemInfo.Object, pasteGuard: pasteGuard, clipboardOrigin: clipboardOrigin);
+
+    [Fact]
+    public void Click_WithSwappedButtons_SendsTheRightButton_WhichWindowsSwapsBackToTheUsersPrimary()
     {
-        // Arrange - the virtual desktop is the bounding rectangle of the monitors
-        var monitors = new List<MonitorInfo>
-        {
-            TestDataFactory.CreateMonitorInfo(boundsX: left, boundsY: top, boundsWidth: width / 2, boundsHeight: height),
-            TestDataFactory.CreateMonitorInfo(boundsX: left + width / 2, boundsY: top, boundsWidth: width - width / 2, boundsHeight: height / 2)
-        };
+        SetupSingleMonitor();
+        _systemInfo.Setup(s => s.AreMouseButtonsSwapped()).Returns(true);
 
-        // Act & Assert - with the mapping Windows applies (left + n * width / 65536, rounded down) and with
-        // the alternative that rounds n * (width - 1) / 65535
-        for (var x = left; x < left + width; x++)
-        {
-            var (nx, _) = InputSimulationService.ToVirtualDesktopAbsolute(x, top, monitors);
-            nx.Should().BeInRange(0, 65535);
-            (left + (int)((long)nx * width / 65536)).Should().Be(x);
-            (left + (int)Math.Round((double)nx * (width - 1) / 65535, MidpointRounding.AwayFromZero)).Should().Be(x);
-        }
+        var result = CreateSutWithSystemInfo().Click(500, 300);
 
-        for (var y = top; y < top + height; y++)
-        {
-            var (_, ny) = InputSimulationService.ToVirtualDesktopAbsolute(left, y, monitors);
-            (top + (int)((long)ny * height / 65536)).Should().Be(y);
-            (top + (int)Math.Round((double)ny * (height - 1) / 65535, MidpointRounding.AwayFromZero)).Should().Be(y);
-        }
+        result.Success.Should().BeTrue(result.Error);
+        result.ClickType.Should().Be("left");
+        _sentEvents.Should().Equal(MoveTo(500, 300), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp));
+    }
+
+    [Fact]
+    public void RightClick_WithSwappedButtons_SendsTheLeftButton()
+    {
+        SetupSingleMonitor();
+        _systemInfo.Setup(s => s.AreMouseButtonsSwapped()).Returns(true);
+
+        CreateSutWithSystemInfo().RightClick(500, 300).Success.Should().BeTrue();
+
+        _sentEvents.Should().Equal(MoveTo(500, 300), InputEvent.Mouse(LeftDown), InputEvent.Mouse(LeftUp));
+    }
+
+    [Fact]
+    public void DoubleClick_WithSwappedButtons_DoubleClicksTheRightButton()
+    {
+        SetupSingleMonitor();
+        _systemInfo.Setup(s => s.AreMouseButtonsSwapped()).Returns(true);
+
+        CreateSutWithSystemInfo().DoubleClick(600, 350).Success.Should().BeTrue();
+
+        _sentEvents.Should().Equal(
+            MoveTo(600, 350), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp), InputEvent.Mouse(RightDown), InputEvent.Mouse(RightUp));
+    }
+
+    [Fact]
+    public void Click_ReadsTheSwapForEveryCall_SoAChangeInTheSettingsCountsAtOnce()
+    {
+        SetupSingleMonitor();
+        _systemInfo.SetupSequence(s => s.AreMouseButtonsSwapped()).Returns(false).Returns(true);
+        var sut = CreateSutWithSystemInfo();
+
+        sut.Click(500, 300);
+        sut.Click(500, 300);
+
+        _sentEvents.Where(e => e.Flags is LeftDown or RightDown).Select(e => e.Flags).Should().Equal(LeftDown, RightDown);
+    }
+
+    [Fact]
+    public void RightClick_WithSwappedButtons_IsStillCheckedAsAPaste_AndRefused()
+    {
+        // The secondary button pastes in a terminal whichever physical button it is: the paste guard sees the user's buttons
+        SetupSingleMonitor();
+        _systemInfo.Setup(s => s.AreMouseButtonsSwapped()).Returns(true);
+        var pasteGuard = new RefusingPasteGuard();
+
+        var result = CreateSutWithSystemInfo(pasteGuard).RightClick(750, 400);
+
+        result.ErrorCode.Should().Be(InputErrorCode.PasteNotAllowed);
+        pasteGuard.Checked.Should().ContainSingle().Which.Batch.Should().Contain(InputEvent.Mouse(RightDown));
+        _sentEvents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Click_WithSwappedButtons_IsNotCheckedAsAPaste_AndIsReportedAsAClickThatCanCopy()
+    {
+        // A primary click is not a paste although it is the right button's events, and it can copy (a terminal that copies
+        // on selection): the clipboard origin sees it as the left-button press it is to the user
+        SetupSingleMonitor();
+        _systemInfo.Setup(s => s.AreMouseButtonsSwapped()).Returns(true);
+        var pasteGuard = new RefusingPasteGuard();
+        var origin = new Mock<IClipboardOrigin>();
+        IReadOnlyList<InputEvent>? told = null;
+        origin.Setup(o => o.BeforeInput(It.IsAny<IReadOnlyList<InputEvent>>(), It.IsAny<int>(), It.IsAny<nint>(), It.IsAny<nint>()))
+            .Callback((IReadOnlyList<InputEvent> batch, int _, nint _, nint _) => told = batch.ToList())
+            .Returns((ClipboardCopyMark?)null);
+
+        CreateSutWithSystemInfo(pasteGuard, origin.Object).Click(750, 400).Success.Should().BeTrue();
+
+        pasteGuard.Checked.Should().BeEmpty();
+        told.Should().NotBeNull();
+        ClipboardOrigin.CopyTrigger(told!).Should().Be(ClipboardCopyTrigger.Click);
+        _sentEvents.Should().Contain(InputEvent.Mouse(RightDown), "Windows gets the physical button");
+    }
+
+    [Fact]
+    public void Click_NormalizesAcrossWindowsVirtualScreen_WithANegativeOriginAndMixedDpi()
+    {
+        // Arrange - a 100% monitor left of a 150% primary (physical pixels); Windows reports the virtual screen
+        var left = TestDataFactory.CreateMonitorInfo(1, @"\\.\DISPLAY2", false, -1920, 300, 1920, 1080, scaleFactor: 1.0);
+        var primary = TestDataFactory.CreateMonitorInfo(0, @"\\.\DISPLAY1", true, 0, 0, 3840, 2160, scaleFactor: 1.5);
+        _mockMonitorService.Setup(m => m.GetAllMonitors()).Returns([primary, left]);
+        var screen = new VirtualScreenBounds(-1920, 0, 5760, 2160);
+        _systemInfo.Setup(s => s.GetVirtualScreen()).Returns(screen);
+        var sut = CreateSutWithSystemInfo();
+
+        // Act - the left monitor's last column and the primary's last pixel
+        sut.Click(-1, 1379).Success.Should().BeTrue();
+        sut.Click(3839, 2159).Success.Should().BeTrue();
+
+        // Assert - each move maps back, as Windows maps it, to the clicked pixel
+        var moves = _sentEvents.Where(e => e.Flags == InputEvent.MouseMoveAbsoluteFlags).ToList();
+        moves.Select(m => (screen.X + (int)((long)m.Dx * screen.Width / 65536), screen.Y + (int)((long)m.Dy * screen.Height / 65536)))
+            .Should().Equal((-1, 1379), (3839, 2159));
+    }
+
+    [Fact]
+    public void Click_UsesWindowsVirtualScreen_NotTheMonitorList()
+    {
+        // Arrange - the monitor list (read once, and possibly stale) lacks a monitor above the primary that Windows has
+        SetupSingleMonitor();
+        var screen = new VirtualScreenBounds(0, -1440, 2560, 2520);
+        _systemInfo.Setup(s => s.GetVirtualScreen()).Returns(screen);
+
+        // Act
+        CreateSutWithSystemInfo().Click(500, 300).Success.Should().BeTrue();
+
+        // Assert
+        var move = _sentEvents[0];
+        (screen.X + (int)((long)move.Dx * screen.Width / 65536), screen.Y + (int)((long)move.Dy * screen.Height / 65536)).Should().Be((500, 300));
+    }
+
+    [Fact]
+    public void Click_PointerElsewhereAfterTheBatch_IsCursorClamped_AndSaysTheClickWasSent()
+    {
+        // Arrange - a fake that moves the pointer as Windows would; a game confines it right before the batch goes in
+        var input = new FakeInputWrapper();
+        var monitors = TestDataFactory.CreateMockMonitorService();
+        input.BeforeSend = _ => input.Clip = (0, 0, 400, 400);
+        var sut = new InputSimulationService(monitors.Object, input, _guard.Object, new InputSession(input));
+
+        // Act
+        var result = sut.Click(500, 300);
+
+        // Assert - the click went in (where the pointer was held), and the result says so
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be(InputErrorCode.CursorClamped);
+        result.Error.Should().StartWith("The click was sent").And.Contain("(399, 300)").And.Contain("(500, 300)").And.Contain("do not simply retry");
+        (result.ActualX, result.ActualY).Should().Be((399, 300));
+        result.ReceivingWindow.Should().NotBeNull();
+        input.Batches.Should().ContainSingle().Which.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void DoubleClick_PointerElsewhereAfterTheBatch_IsCursorClamped()
+    {
+        var input = new FakeInputWrapper();
+        input.BeforeSend = _ => input.Clip = (0, 0, 400, 400);
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, input, _guard.Object, new InputSession(input));
+
+        var result = sut.DoubleClick(500, 300);
+
+        result.ErrorCode.Should().Be(InputErrorCode.CursorClamped);
+        result.Error.Should().StartWith("The double click was sent");
+    }
+
+    [Fact]
+    public void Click_PointerThatGetsToThePointLate_IsNotClamped()
+    {
+        // Windows can move the pointer after SendInput returns: the first read after the batch still has the old position
+        SetupSingleMonitor();
+        var sends = 0;
+        _mockInputWrapper.Setup(w => w.SendInput(It.IsAny<IReadOnlyList<InputEvent>>()))
+            .Callback(() => sends++)
+            .Returns((IReadOnlyList<InputEvent> events) => (uint)events.Count);
+        var readsAfterTheBatch = 0;
+        _mockInputWrapper.Setup(w => w.GetCursorPos()).Returns(() => sends == 0 ? (500, 300) : ++readsAfterTheBatch == 1 ? (40, 40) : (500, 300));
+
+        var result = CreateSut().Click(500, 300);
+
+        result.Success.Should().BeTrue(result.Error);
+        readsAfterTheBatch.Should().BeGreaterThan(1);
+    }
+
+    [Fact]
+    public void Click_PartOfTheBatchInserted_SaysHowManyClicksWentIn_AndReleasesTheButton()
+    {
+        // Arrange - SendInput stops after the first click's press: the button would stay down
+        var input = new FakeInputWrapper { Insert = (_, call) => call == 0 ? 2u : uint.MaxValue };
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, input, _guard.Object, new InputSession(input));
+
+        // Act
+        var result = sut.DoubleClick(500, 300);
+
+        // Assert
+        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.Error.Should().Contain("inserted 2 of 5 events").And.Contain("0 of its 2 clicks went in")
+            .And.Contain("without its release, which was sent at once");
+        input.Batches.Should().HaveCount(2);
+        input.Batches[1].Should().Equal(InputEvent.Mouse(LeftUp));
+        input.IsKeyDown(0x01).Should().BeFalse("the left button is up again");
+    }
+
+    [Fact]
+    public void DoubleClick_FirstClickInserted_SaysOneOfTwo()
+    {
+        var input = new FakeInputWrapper { Insert = (_, _) => 3u };
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, input, _guard.Object, new InputSession(input));
+
+        var result = sut.DoubleClick(500, 300);
+
+        result.ErrorCode.Should().Be(InputErrorCode.SendInputFailed);
+        result.Error.Should().Contain("1 of its 2 clicks went in").And.NotContain("without its release");
+    }
+
+    [Fact]
+    public void Scroll_PointerElsewhereAfterTheBatch_IsCursorClamped_AndSaysTheScrollWasSent()
+    {
+        var input = new FakeInputWrapper();
+        input.BeforeSend = _ => input.Clip = (0, 0, 400, 400);
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, input, _guard.Object, new InputSession(input));
+
+        var result = sut.Scroll(500, 300, deltaY: 2, deltaX: 0, InputTarget.None, false, default);
+
+        result.ErrorCode.Should().Be(InputErrorCode.CursorClamped);
+        result.Error.Should().StartWith("The scroll was sent");
+    }
+
+    [Fact]
+    public void MoveMouse_WithTheFake_PutsThePointerOnThePixel()
+    {
+        var input = new FakeInputWrapper();
+        input.MovePointer(5, 5);
+        var sut = new InputSimulationService(TestDataFactory.CreateMockMonitorService().Object, input, _guard.Object, new InputSession(input));
+
+        var result = sut.MoveMouse(1919, 1079);
+
+        result.Success.Should().BeTrue(result.Error);
+        input.GetCursorPos().Should().Be((1919, 1079));
+        input.CursorMoves.Should().Be(0, "the move is injected, not SetCursorPos");
     }
 
     #endregion

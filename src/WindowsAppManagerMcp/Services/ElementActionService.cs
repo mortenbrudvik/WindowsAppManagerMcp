@@ -542,7 +542,7 @@ public sealed partial class ElementActionService : IElementActionService
         var clicked = plan.Mouse switch
         {
             MouseKind.Right => _input.RightClick(at.X, at.Y, target, releaseHeldModifiers: false, cancellationToken),
-            MouseKind.Double => _input.DoubleClick(at.X, at.Y, 50, target, releaseHeldModifiers: false, cancellationToken),
+            MouseKind.Double => _input.DoubleClick(at.X, at.Y, target, releaseHeldModifiers: false, cancellationToken),
             _ => _input.Click(at.X, at.Y, target, releaseHeldModifiers: false, cancellationToken)
         };
 

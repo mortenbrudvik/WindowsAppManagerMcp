@@ -44,7 +44,7 @@ public class InputSimulationServiceSessionTests
                 var right = sut.RightClick(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (right.Success, right.ErrorCode, right.Error, right.HeldModifiers, right.ReleasedModifiers);
             case "double_click":
-                var twice = sut.DoubleClick(100, 100, 10, InputTarget.None, releaseHeldModifiers, token);
+                var twice = sut.DoubleClick(100, 100, InputTarget.None, releaseHeldModifiers, token);
                 return (twice.Success, twice.ErrorCode, twice.Error, twice.HeldModifiers, twice.ReleasedModifiers);
             case "mouse_move":
                 var move = sut.MoveMouse(100, 100, InputTarget.None, releaseHeldModifiers, token);
@@ -517,7 +517,6 @@ public class InputSimulationServiceSessionTests
     #region The pointer check and the pause
 
     [Theory]
-    [InlineData("mouse_move")]
     [InlineData("click")]
     [InlineData("scroll")]
     public async Task APauseWhileThePointerIsPlacedAgain_IsPausedByUser_NotCursorNotAtPoint(string path)

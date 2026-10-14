@@ -58,6 +58,10 @@ internal static class E2ENative
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out POINT point);
 
+    /// <summary>The user's double-click time in milliseconds: two presses further apart are two clicks.</summary>
+    [DllImport("user32.dll")]
+    public static extern int GetDoubleClickTime();
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int GetWindowTextW(nint hwnd, StringBuilder text, int maxCount);
 

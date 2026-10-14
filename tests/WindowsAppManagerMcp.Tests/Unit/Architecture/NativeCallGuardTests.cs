@@ -93,7 +93,7 @@ public class NativeCallGuardTests
         ["User32.MapWindowPoints"] = "converts the client rectangle to screen coordinates (the capture origin without the frame)",
         ["User32.GetWindowRect"] = "reads the bounds of a window",
         ["User32.IsWindow"] = "checks that a handle is a window",
-        ["User32.GetSystemMetrics"] = "reads the virtual screen size",
+        ["User32.GetSystemMetrics"] = "reads the virtual screen size and whether the mouse buttons are swapped",
         ["Gdi32.CreateCompatibleDC"] = "creates a memory DC in the server",
         ["Gdi32.SelectObject"] = "selects a bitmap into a memory DC of the server",
         ["Gdi32.BitBlt"] = "copies screen pixels into a memory DC of the server",

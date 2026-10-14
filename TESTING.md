@@ -1957,8 +1957,10 @@ Rules for new tests:
   COM client; `FakeElementEventSource` stands in front of a wait.
 - For the input session (pause, held keys, stuck-input recovery), use `FakeInputWrapper`: it records
   every SendInput batch, keeps a key state the way Windows does (`Press()` and `Lift()` stand in for
-  the user's fingers), and can insert fewer events than asked, throw or block, so short counts,
-  exceptions and a pause in the middle of a batch can be tested without touching the desktop.
+  the user's fingers), puts the pointer where an absolute move takes it (across its `VirtualScreen`, as Windows maps
+  it) and can confine it (`Clip`, as ClipCursor does), and can insert fewer events than asked, throw or block, so short
+  counts, exceptions, a pause in the middle of a batch and a pointer that does not get to its point can be tested without
+  touching the desktop.
 - The guards scan only the server assembly. They do not see code in the test project, so the
   rules above are up to you there.
 - Keep timing tests far from the times they tell apart, because the default run is parallel and CI
@@ -2058,7 +2060,8 @@ fails until a new kind is named in this list).
 - In the input tier the server can act only on the fixture process:
   - keyboard input goes out only while a fixture window is in front;
   - mouse input goes out only while the cursor is over a fixture window, and a batch that moves the
-    pointer (a click carries an absolute move to its point) only when the move ends over a fixture window;
+    pointer (a click carries an absolute move to its point) only when the move ends over a fixture window; a batch
+    that only moves the pointer (mouse_move's) is judged by where it ends, as SetCursorPos is;
   - a mouse wheel batch goes out only while a fixture window is also in front, because Windows can send the
     wheel to the focus window instead of the one under the cursor;
   - window calls go through only when every window they name is a fixture window;
@@ -2150,6 +2153,7 @@ on such a machine; the requirement is only checked once the tier is opted in.
 | `FixtureWebViewTests` | No input | The accessibility warm-up of the WebView2 window's live Chromium content: host WebView2, status Ready, the page read, and no second wait (M3.3, M3.F4); skipped without the WebView2 runtime |
 | `FixtureOtherScaleMonitorTests` | No input | The fixture on a monitor whose scale differs from the primary's (`--other-scale-monitor`): it opens at that monitor's DPI and leaves the agent's host in front, get_ui_elements' bounds and capture_window's client area match what the fixture draws (M3.F30); skipped without such a monitor (`MonitorAtAnotherScale`) |
 | `FixturePlacementTests` | Input | The launch tools' placement of a window (M3.13) |
+| `FixtureMouseTests` | Input | click, right_click, double_click and mouse_move land on the exact pixel aimed at (the corners and centres of the swatches), on the primary and on a monitor at another scale (skipped without one); click presses the user's primary button and right_click the secondary one, as the fixture's `mouseDown` events record them after Windows applied the user's swap; a double click is one press with `clickCount` 1 and one with 2 (M4.2) |
 
 **Running them.** Locally only with an opt-in, as above. On GitHub, `.github/workflows/e2e.yml`
 runs them on demand (Actions, "E2E", "Run workflow"), with a choice of tier, UI Automation engine (`engine`: uia3,
@@ -2407,7 +2411,7 @@ typical result over 300 tokens, and tools/list itself, measured in October 2026:
 | `read_table` | Task Manager's first 50 processes, 5 columns with headers | 643 | 1,000 |
 | `get_server_info` | The default deny list, five host processes, two monitors | 634 | 850 |
 | `get_layout` | A preset of 6 placements, each with the captured window identity | 529 | 800 |
-| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 209,772 bytes (`ToolList_StaysWithinItsBudget`) | 52,443 | 52,479 |
+| tools/list | Every tool's name, title, description, schemas and annotations: 64 tools, 210,172 bytes (`ToolList_StaysWithinItsBudget`) | 52,543 | 52,579 |
 
 Every other typical result is at most 300 tokens. When a change makes a result larger on purpose, raise its
 budget in the same change (the failure message gives the new size); when a change shrinks one a lot, lower it.
